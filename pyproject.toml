@@ -1,0 +1,19 @@
+[project]
+name = "langbot-plugin"
+version = "0.1.0"
+description = "This package contains the SDK, CLI for building plugins for LangBot, plus runtime host for LangBot plugins"
+readme = "README.md"
+authors = [
+    { name = "Junyan Qin", email = "rockchinq@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=3.2.0",
+]
+
+[project.scripts]
+lbp = "langbot_plugin.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
