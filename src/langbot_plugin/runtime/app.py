@@ -5,8 +5,8 @@ from enum import Enum
 
 import asyncio
 
-from langbot_plugin.runtime.controller.stdio import server as stdio_controller_server
-from langbot_plugin.runtime.controller.ws import server as ws_controller_server
+from langbot_plugin.runtime.io.controller.stdio import server as stdio_controller_server
+from langbot_plugin.runtime.io.controller.ws import server as ws_controller_server
 from langbot_plugin.runtime.io import handler
 
 
@@ -18,9 +18,9 @@ class ControlConnectionMode(Enum):
 class Application:
     """Runtime application context."""
 
-    handler_manager: handler.HandlerManager
+    handler_manager: handler.HandlerManager  # communication handler manager
 
-    control_connection_mode: ControlConnectionMode
+    _control_connection_mode: ControlConnectionMode
 
     stdio_server: stdio_controller_server.StdioServer | None = (
         None  # stdio control server
@@ -34,12 +34,12 @@ class Application:
         self.handler_manager = handler.HandlerManager()
 
         if args.stdio_control:
-            self.control_connection_mode = ControlConnectionMode.STDIO
+            self._control_connection_mode = ControlConnectionMode.STDIO
         else:
-            self.control_connection_mode = ControlConnectionMode.WS
+            self._control_connection_mode = ControlConnectionMode.WS
 
         # build controllers layer
-        if self.control_connection_mode == ControlConnectionMode.STDIO:
+        if self._control_connection_mode == ControlConnectionMode.STDIO:
             self.stdio_server = stdio_controller_server.StdioServer(
                 self.handler_manager
             )
@@ -58,3 +58,8 @@ class Application:
             tasks.append(self.ws_server.run())
 
         await asyncio.gather(*tasks)
+
+
+def main(args: argparse.Namespace):
+    app = Application(args)
+    asyncio.run(app.run())

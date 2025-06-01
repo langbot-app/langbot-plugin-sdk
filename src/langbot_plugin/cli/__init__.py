@@ -1,6 +1,6 @@
 import argparse
 from langbot_plugin.version import __version__
-from langbot_plugin.runtime import __main__ as runtime_main
+from langbot_plugin.runtime import app as runtime_app
 
 
 def main():
@@ -30,6 +30,6 @@ def main():
         case "init":
             print(f"Initializing plugin {args.name}")
         case "rt":
-            runtime_main.main(args)
+            runtime_app.main(args)
         case _:
             print(f"Unknown command: {args.command}")
