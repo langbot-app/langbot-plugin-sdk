@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from langbot_plugin.runtime.io import connection
 
 
@@ -14,7 +16,7 @@ class StdioConnection(connection.Connection):
 
     async def receive(self) -> str:
         while True:
-            s = input()
+            s = await asyncio.to_thread(input)
             if s.startswith("{") and s.endswith("}"):
                 return s
 
