@@ -7,7 +7,6 @@ from langbot_plugin.runtime.io import handler as io_handler
 
 
 class StdioServer:
-
     def __init__(self, handler_manager: io_handler.HandlerManager):
         self.handler_manager = handler_manager
 

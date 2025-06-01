@@ -10,7 +10,7 @@ class StdioConnection(connection.Connection):
 
     def __init__(self):
         pass
-    
+
     async def send(self, message: str) -> None:
         print(message)
 

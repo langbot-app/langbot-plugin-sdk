@@ -9,7 +9,8 @@ class ConnectionClosedError(Exception):
 
     def __str__(self):
         return self.message
-    
+
+
 class ActionCallTimeoutError(Exception):
     """The action call timed out."""
 
@@ -18,7 +19,8 @@ class ActionCallTimeoutError(Exception):
 
     def __str__(self):
         return self.message
-    
+
+
 class ActionCallError(Exception):
     """The action call failed."""
 

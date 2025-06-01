@@ -26,6 +26,7 @@ class ControlConnectionWebSocketServer:
         task = self.handler_manager.set_control_handler(handler)
         await task
 
+
 class DebugConnectionWebSocketServer:
     """The server for debug connection WebSocket connections."""
 
@@ -46,15 +47,28 @@ class DebugConnectionWebSocketServer:
 class WebSocketServer:
     """The server for control connection WebSocket connections."""
 
-    def __init__(self, control_port: int, debug_port: int, handler_manager: io_handler.HandlerManager):
+    def __init__(
+        self,
+        control_port: int,
+        debug_port: int,
+        handler_manager: io_handler.HandlerManager,
+    ):
         self.control_port = control_port
         self.debug_port = debug_port
         self.handler_manager = handler_manager
 
     async def run(self):
-        print(f"Starting WebSocket server on port {self.control_port} for control connections")
-        print(f"Starting WebSocket server on port {self.debug_port} for debug connections")
-        control_server = ControlConnectionWebSocketServer(self.control_port, self.handler_manager)
-        debug_server = DebugConnectionWebSocketServer(self.debug_port, self.handler_manager)
+        print(
+            f"Starting WebSocket server on port {self.control_port} for control connections"
+        )
+        print(
+            f"Starting WebSocket server on port {self.debug_port} for debug connections"
+        )
+        control_server = ControlConnectionWebSocketServer(
+            self.control_port, self.handler_manager
+        )
+        debug_server = DebugConnectionWebSocketServer(
+            self.debug_port, self.handler_manager
+        )
 
         await asyncio.gather(control_server.run(), debug_server.run())

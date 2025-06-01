@@ -22,8 +22,12 @@ class Application:
 
     control_connection_mode: ControlConnectionMode
 
-    stdio_server: stdio_controller_server.StdioServer | None = None  # stdio control server
-    ws_server: ws_controller_server.WebSocketServer | None = None  # ws control/debug server
+    stdio_server: stdio_controller_server.StdioServer | None = (
+        None  # stdio control server
+    )
+    ws_server: ws_controller_server.WebSocketServer | None = (
+        None  # ws control/debug server
+    )
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -33,17 +37,18 @@ class Application:
             self.control_connection_mode = ControlConnectionMode.STDIO
         else:
             self.control_connection_mode = ControlConnectionMode.WS
-        
+
         # build controllers layer
         if self.control_connection_mode == ControlConnectionMode.STDIO:
-            self.stdio_server = stdio_controller_server.StdioServer(self.handler_manager)
+            self.stdio_server = stdio_controller_server.StdioServer(
+                self.handler_manager
+            )
 
         self.ws_server = ws_controller_server.WebSocketServer(
             self.args.ws_control_port, self.args.ws_debug_port, self.handler_manager
         )
 
     async def run(self):
-
         tasks = []
 
         if self.stdio_server:

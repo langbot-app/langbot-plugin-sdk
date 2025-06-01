@@ -10,5 +10,7 @@ class ActionRequest(pydantic.BaseModel):
     data: dict[str, Any]
 
     @classmethod
-    def make_request(cls, seq_id: int, action: str, data: dict[str, Any]) -> ActionRequest:
+    def make_request(
+        cls, seq_id: int, action: str, data: dict[str, Any]
+    ) -> ActionRequest:
         return cls(seq_id=seq_id, action=action, data=data)
