@@ -2,6 +2,7 @@ import argparse
 import sys
 from langbot_plugin.version import __version__
 from langbot_plugin.runtime import app as runtime_app
+from langbot_plugin.cli.commands.initplugin import init_plugin_process
 
 """
 Usage:
@@ -48,7 +49,7 @@ def main():
         case "ver":
             print(f"LangBot Plugin CLI v{__version__}")
         case "init":
-            print(f"Initializing plugin {args.plugin_name}")
+            init_plugin_process(args.plugin_name)
         case "dev":
             print("Debugging plugin in current directory")
         case "rt":
