@@ -47,9 +47,6 @@ def init_plugin_process(
         print("!! 请使用一个有效的名称，只能包含字母、数字、下划线和连字符。")
         return
     
-    if not plugin_name.endswith("Plugin"):
-        plugin_name += "Plugin"
-    
     print(f"Creating plugin {plugin_name}, anything you input can be modified later.")
     print(f"创建插件 {plugin_name}，任何输入都可以在之后修改。")
 
