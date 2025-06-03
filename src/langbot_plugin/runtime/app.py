@@ -18,7 +18,7 @@ class ControlConnectionMode(Enum):
 class Application:
     """Runtime application context."""
 
-    handler_manager: handler.HandlerManager  # communication handler manager
+    handler_manager: handler.RuntimeHandlerManager  # communication handler manager
 
     _control_connection_mode: ControlConnectionMode
 
@@ -31,7 +31,7 @@ class Application:
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.handler_manager = handler.HandlerManager()
+        self.handler_manager = handler.RuntimeHandlerManager()
 
         if args.stdio_control:
             self._control_connection_mode = ControlConnectionMode.STDIO

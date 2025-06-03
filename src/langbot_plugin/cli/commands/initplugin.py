@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import re
-from langbot_plugin.assets.templates.manifest import (
+from langbot_plugin.assets.templates.plugin import (
     plugin_manifest_template,
     main_py_template,
     readme_md_template,
     requirements_txt_template,
+    dot_env_example_template,
+    gitignore_template,
 )
 
 name_regexp = r"^[a-zA-Z0-9_-]+$"
@@ -80,6 +82,8 @@ def init_plugin_process(
     main_py = main_py_template.render(values)
     readme_md = readme_md_template.render(values)
     requirements_txt = requirements_txt_template.render(values)
+    dot_env_example = dot_env_example_template.render(values)
+    gitignore = gitignore_template.render(values)
 
     if not os.path.exists(values["plugin_name"]):
         os.makedirs(values["plugin_name"])
@@ -92,6 +96,10 @@ def init_plugin_process(
         f.write(readme_md)
     with open(f"{values['plugin_name']}/requirements.txt", "w", encoding="utf-8") as f:
         f.write(requirements_txt)
+    with open(f"{values['plugin_name']}/.env.example", "w", encoding="utf-8") as f:
+        f.write(dot_env_example)
+    with open(f"{values['plugin_name']}/.gitignore", "w", encoding="utf-8") as f:
+        f.write(gitignore)
 
     print(f"Plugin {values['plugin_name']} created successfully.")
     print(f"插件 {values['plugin_name']} 创建成功。")

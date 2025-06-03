@@ -111,7 +111,7 @@ class Handler(abc.ABC):
         return decorator
 
 
-class HandlerManager:
+class RuntimeHandlerManager:
     """The manager for handlers."""
 
     control_handler: Handler

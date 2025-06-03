@@ -11,7 +11,7 @@ from langbot_plugin.runtime.io import handler as io_handler
 class ControlConnectionWebSocketServer:
     """The server for control connection WebSocket connections."""
 
-    def __init__(self, port: int, handler_manager: io_handler.HandlerManager):
+    def __init__(self, port: int, handler_manager: io_handler.RuntimeHandlerManager):
         self.port = port
         self.handler_manager = handler_manager
 
@@ -30,7 +30,7 @@ class ControlConnectionWebSocketServer:
 class DebugConnectionWebSocketServer:
     """The server for debug connection WebSocket connections."""
 
-    def __init__(self, port: int, handler_manager: io_handler.HandlerManager):
+    def __init__(self, port: int, handler_manager: io_handler.RuntimeHandlerManager):
         self.port = port
         self.handler_manager = handler_manager
 
@@ -51,7 +51,7 @@ class WebSocketServer:
         self,
         control_port: int,
         debug_port: int,
-        handler_manager: io_handler.HandlerManager,
+        handler_manager: io_handler.RuntimeHandlerManager,
     ):
         self.control_port = control_port
         self.debug_port = debug_port
