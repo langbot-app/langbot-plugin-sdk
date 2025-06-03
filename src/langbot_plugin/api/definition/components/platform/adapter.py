@@ -29,7 +29,9 @@ class MessagePlatformAdapter(BaseComponent):
         self.config = config
         self.logger = logger
 
-    async def send_message(self, target_type: str, target_id: str, message: platform_message.MessageChain):
+    async def send_message(
+        self, target_type: str, target_id: str, message: platform_message.MessageChain
+    ):
         """主动发送消息
 
         Args:
@@ -61,7 +63,9 @@ class MessagePlatformAdapter(BaseComponent):
     def register_listener(
         self,
         event_type: typing.Type[platform_events.Event],
-        callback: typing.Callable[[platform_events.Event, MessagePlatformAdapter], None],
+        callback: typing.Callable[
+            [platform_events.Event, MessagePlatformAdapter], None
+        ],
     ):
         """注册事件监听器
 
@@ -74,7 +78,9 @@ class MessagePlatformAdapter(BaseComponent):
     def unregister_listener(
         self,
         event_type: typing.Type[platform_events.Event],
-        callback: typing.Callable[[platform_events.Event, MessagePlatformAdapter], None],
+        callback: typing.Callable[
+            [platform_events.Event, MessagePlatformAdapter], None
+        ],
     ):
         """注销事件监听器
 

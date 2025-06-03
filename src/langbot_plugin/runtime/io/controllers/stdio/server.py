@@ -9,12 +9,9 @@ from langbot_plugin.runtime.io.controller import Controller
 
 
 class StdioServerController(Controller):
-
     async def run(
         self,
-        new_connection_callback: (
-            Callable[[Connection], Coroutine[Any, Any, None]]
-        ),
+        new_connection_callback: (Callable[[Connection], Coroutine[Any, Any, None]]),
     ):
         connection = stdio_connection.StdioConnection()
         await new_connection_callback(connection)

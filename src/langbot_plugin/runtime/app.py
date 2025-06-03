@@ -5,7 +5,9 @@ from enum import Enum
 
 import asyncio
 
-from langbot_plugin.runtime.io.controllers.stdio import server as stdio_controller_server
+from langbot_plugin.runtime.io.controllers.stdio import (
+    server as stdio_controller_server,
+)
 from langbot_plugin.runtime.io.controllers.ws import server as ws_controller_server
 from langbot_plugin.runtime.io import handler as io_handler
 from langbot_plugin.runtime.io.handlers import control as control_handler

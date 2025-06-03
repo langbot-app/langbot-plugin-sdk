@@ -24,22 +24,28 @@ class Event(pydantic.BaseModel):
     def __repr__(self):
         return (
             self.__class__.__name__
-            + '('
-            + ', '.join((f'{k}={repr(v)}' for k, v in self.__dict__.items() if k != 'type' and v))
-            + ')'
+            + "("
+            + ", ".join(
+                (
+                    f"{k}={repr(v)}"
+                    for k, v in self.__dict__.items()
+                    if k != "type" and v
+                )
+            )
+            + ")"
         )
 
     @classmethod
-    def parse_subtype(cls, obj: dict) -> 'Event':
+    def parse_subtype(cls, obj: dict) -> "Event":
         try:
             return typing.cast(Event, super().parse_obj(obj))
         except ValueError:
-            return Event(type=obj['type'])
+            return Event(type=obj["type"])
 
     @classmethod
-    def get_subtype(cls, name: str) -> typing.Type['Event']:
+    def get_subtype(cls, name: str) -> typing.Type["Event"]:
         try:
-            return typing.cast(typing.Type[Event], super().get_subtype(name)) # type: ignore
+            return typing.cast(typing.Type[Event], super().get_subtype(name))  # type: ignore
         except ValueError:
             return Event
 
@@ -77,7 +83,7 @@ class FriendMessage(MessageEvent):
         message_chain: 消息内容。
     """
 
-    type: str = 'FriendMessage'
+    type: str = "FriendMessage"
     """事件名。"""
     sender: platform_entities.Friend
     """发送消息的好友。"""
@@ -94,7 +100,7 @@ class GroupMessage(MessageEvent):
         message_chain: 消息内容。
     """
 
-    type: str = 'GroupMessage'
+    type: str = "GroupMessage"
     """事件名。"""
     sender: platform_entities.GroupMember
     """发送消息的群成员。"""

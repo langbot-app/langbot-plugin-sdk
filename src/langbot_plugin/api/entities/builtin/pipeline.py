@@ -12,19 +12,19 @@ import langbot_plugin.api.entities.builtin.platform.message as platform_message
 
 
 class LifecycleControlScope(enum.Enum):
-    APPLICATION = 'application'
-    PLATFORM = 'platform'
-    PLUGIN = 'plugin'
-    PROVIDER = 'provider'
+    APPLICATION = "application"
+    PLATFORM = "platform"
+    PLUGIN = "plugin"
+    PROVIDER = "provider"
 
 
 class LauncherTypes(enum.Enum):
     """一个请求的发起者类型"""
 
-    PERSON = 'person'
+    PERSON = "person"
     """私聊"""
 
-    GROUP = 'group'
+    GROUP = "group"
     """群聊"""
 
 
@@ -83,7 +83,8 @@ class Query(pydantic.BaseModel):
     """使用的函数，由前置处理器阶段设置"""
 
     resp_messages: (
-        typing.Optional[list[llm_entities.Message]] | typing.Optional[list[platform_message.MessageChain]]
+        typing.Optional[list[llm_entities.Message]]
+        | typing.Optional[list[platform_message.MessageChain]]
     ) = []
     """由Process阶段生成的回复消息对象列表"""
 
@@ -91,7 +92,7 @@ class Query(pydantic.BaseModel):
     """回复消息链，从resp_messages包装而得"""
 
     # ======= 内部保留 =======
-    current_stage: typing.Optional['pkg.pipeline.pipelinemgr.StageInstContainer'] = None
+    current_stage: typing.Optional["pkg.pipeline.pipelinemgr.StageInstContainer"] = None
     """当前所处阶段"""
 
     class Config:
@@ -125,9 +126,13 @@ class Conversation(pydantic.BaseModel):
 
     messages: list[llm_entities.Message]
 
-    create_time: typing.Optional[datetime.datetime] = pydantic.Field(default_factory=datetime.datetime.now)
+    create_time: typing.Optional[datetime.datetime] = pydantic.Field(
+        default_factory=datetime.datetime.now
+    )
 
-    update_time: typing.Optional[datetime.datetime] = pydantic.Field(default_factory=datetime.datetime.now)
+    update_time: typing.Optional[datetime.datetime] = pydantic.Field(
+        default_factory=datetime.datetime.now
+    )
 
     use_llm_model: typing.Optional[requester.RuntimeLLMModel] = None
 
@@ -149,15 +154,21 @@ class Session(pydantic.BaseModel):
 
     sender_id: typing.Optional[typing.Union[int, str]] = 0
 
-    use_prompt_name: typing.Optional[str] = 'default'
+    use_prompt_name: typing.Optional[str] = "default"
 
     using_conversation: typing.Optional[Conversation] = None
 
-    conversations: typing.Optional[list[Conversation]] = pydantic.Field(default_factory=list)
+    conversations: typing.Optional[list[Conversation]] = pydantic.Field(
+        default_factory=list
+    )
 
-    create_time: typing.Optional[datetime.datetime] = pydantic.Field(default_factory=datetime.datetime.now)
+    create_time: typing.Optional[datetime.datetime] = pydantic.Field(
+        default_factory=datetime.datetime.now
+    )
 
-    update_time: typing.Optional[datetime.datetime] = pydantic.Field(default_factory=datetime.datetime.now)
+    update_time: typing.Optional[datetime.datetime] = pydantic.Field(
+        default_factory=datetime.datetime.now
+    )
 
     semaphore: typing.Optional[asyncio.Semaphore] = None
     """当前会话的信号量，用于限制并发"""

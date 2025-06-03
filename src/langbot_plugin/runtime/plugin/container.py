@@ -14,13 +14,13 @@ from langbot_plugin.api.definition.components.manifest import ComponentManifest
 class RuntimeContainerStatus(enum.Enum):
     """插件容器状态"""
 
-    UNMOUNTED = 'unmounted'
+    UNMOUNTED = "unmounted"
     """未加载进内存"""
 
-    MOUNTED = 'mounted'
+    MOUNTED = "mounted"
     """已加载进内存，所有位于运行时记录中的 RuntimeContainer 至少是这个状态"""
 
-    INITIALIZED = 'initialized'
+    INITIALIZED = "initialized"
     """已初始化"""
 
 
@@ -29,13 +29,13 @@ class PluginContainer(pydantic.BaseModel):
 
     manifest: ComponentManifest
     """插件清单"""
-    
+
     plugin_instance: BasePlugin | None
     """插件实例"""
-    
+
     enabled: bool
     """插件是否启用"""
-    
+
     priority: int
     """插件优先级"""
 
@@ -47,7 +47,7 @@ class PluginContainer(pydantic.BaseModel):
 
     components: list[ComponentContainer]
     """组件容器列表"""
-    
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -66,3 +66,6 @@ class ComponentContainer(pydantic.BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+
+PluginContainer.update_forward_refs()

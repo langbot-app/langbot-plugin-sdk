@@ -20,6 +20,7 @@ Commands:
         - [--ws-debug-port]: The port for debug connection
 """
 
+
 def main():
     parser = argparse.ArgumentParser(description="LangBot Plugin CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -33,12 +34,27 @@ def main():
 
     # run command
     run_parser = subparsers.add_parser("run", help="Run/remote debug the plugin")
+    run_parser.add_argument(
+        "-s", "--stdio", action="store_true", help="Use stdio for control connection"
+    )
 
     # rt command
     rt_parser = subparsers.add_parser("rt", help="Run the runtime")
-    rt_parser.add_argument("-s", "--stdio-control", action="store_true", help="Use stdio for control connection")
-    rt_parser.add_argument("--ws-control-port", type=int, help="The port for control connection")
-    rt_parser.add_argument("--ws-debug-port", type=int, help="The port for debug connection")
+    rt_parser.add_argument(
+        "-s",
+        "--stdio-control",
+        action="store_true",
+        help="Use stdio for control connection",
+    )
+    rt_parser.add_argument(
+        "--ws-control-port",
+        type=int,
+        help="The port for control connection",
+        default=5400,
+    )
+    rt_parser.add_argument(
+        "--ws-debug-port", type=int, help="The port for debug connection", default=5401
+    )
 
     args = parser.parse_args()
 
@@ -53,12 +69,13 @@ def main():
             init_plugin_process(args.plugin_name)
         case "run":
             print("Running plugin in current directory")
-            run_plugin_process()
+            run_plugin_process(args.stdio)
         case "rt":
             runtime_app.main(args)
         case _:
             print(f"Unknown command: {args.command}")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

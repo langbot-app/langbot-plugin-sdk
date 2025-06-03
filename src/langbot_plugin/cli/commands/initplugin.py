@@ -26,8 +26,8 @@ form_fields = [
             "error": {
                 "en_US": "Invalid plugin author, please use a valid name, which only contains letters, numbers, underscores and hyphens.",
                 "zh_CN": "无效的插件作者，请使用一个有效的名称，只能包含字母、数字、下划线和连字符。",
-            }
-        }
+            },
+        },
     },
     {
         "name": "plugin_description",
@@ -39,16 +39,18 @@ form_fields = [
     },
 ]
 
+
 def init_plugin_process(
     plugin_name: str,
 ) -> None:
-    
     if not re.match(name_regexp, plugin_name):
         print(f"!! Invalid plugin name: {plugin_name}")
-        print("!! Please use a valid name, which only contains letters, numbers, underscores and hyphens.")
+        print(
+            "!! Please use a valid name, which only contains letters, numbers, underscores and hyphens."
+        )
         print("!! 请使用一个有效的名称，只能包含字母、数字、下划线和连字符。")
         return
-    
+
     print(f"Creating plugin {plugin_name}, anything you input can be modified later.")
     print(f"创建插件 {plugin_name}，任何输入都可以在之后修改。")
 
@@ -63,17 +65,17 @@ def init_plugin_process(
     for field in form_fields:
         if field["required"]:
             while True:
-                value = input(f"{field['label']['en_US']}: ") # type: ignore
-                if "format" in field and "regexp" in field["format"]: # type: ignore
-                    if not re.match(field["format"]["regexp"], value): # type: ignore
-                        print(f"!! {field['format']['error']['en_US']}") # type: ignore
-                        print(f"!! {field['format']['error']['zh_CN']}") # type: ignore
+                value = input(f"{field['label']['en_US']}: ")  # type: ignore
+                if "format" in field and "regexp" in field["format"]:  # type: ignore
+                    if not re.match(field["format"]["regexp"], value):  # type: ignore
+                        print(f"!! {field['format']['error']['en_US']}")  # type: ignore
+                        print(f"!! {field['format']['error']['zh_CN']}")  # type: ignore
                         continue
                 break
-            values[field["name"]] = value # type: ignore
+            values[field["name"]] = value  # type: ignore
         else:
-            value = input(f"{field['label']['en_US']}: ") # type: ignore
-            values[field["name"]] = value # type: ignore
+            value = input(f"{field['label']['en_US']}: ")  # type: ignore
+            values[field["name"]] = value  # type: ignore
 
     values["plugin_attr"] = values["plugin_name"].replace("-", "").replace("_", "")
     values["plugin_label"] = values["plugin_name"].replace("-", " ").replace("_", " ")

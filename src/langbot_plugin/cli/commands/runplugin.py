@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import os
 import asyncio
+import dotenv
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 from langbot_plugin.cli.run.controller import PluginRuntimeController
 
 
-async def arun_plugin_process() -> None:
-    
+async def arun_plugin_process(stdio: bool = False) -> None:
+    # read .env file
+    dotenv.load_dotenv(".env")
+
     discovery_engine = ComponentDiscoveryEngine()
 
     if not os.path.exists("manifest.yaml"):
@@ -25,12 +28,16 @@ async def arun_plugin_process() -> None:
         print("Plugin manifest not found")
         return
 
-    controller = PluginRuntimeController(plugin_manifest)
-    await controller.mount()
+    ws_debug_url = os.getenv("DEBUG_RUNTIME_WS_URL")
+    if ws_debug_url is None:
+        print("DEBUG_RUNTIME_WS_URL is not set in .env file")
+        return
 
+    controller = PluginRuntimeController(plugin_manifest, stdio, ws_debug_url)
+    await controller.initialize()
+    await controller.mount()
     await controller.run()
 
 
-def run_plugin_process() -> None:
-    asyncio.run(arun_plugin_process())
-    
+def run_plugin_process(stdio: bool = False) -> None:
+    asyncio.run(arun_plugin_process(stdio))

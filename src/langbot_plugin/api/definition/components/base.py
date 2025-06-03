@@ -12,4 +12,3 @@ class BaseComponent(abc.ABC):
     @abc.abstractmethod
     def initialize(self) -> None:
         pass
-

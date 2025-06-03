@@ -15,10 +15,11 @@ class ControlConnectionHandler(handler.Handler):
         @self.action("ping")
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "pong"})
-        
+
         @self.action("install_plugin")
         async def install_plugin(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "installing plugin"})
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}
