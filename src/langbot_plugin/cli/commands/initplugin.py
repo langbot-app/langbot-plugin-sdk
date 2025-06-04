@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import os
 import re
-from langbot_plugin.assets.templates.plugin import (
-    plugin_manifest_template,
-    main_py_template,
-    readme_md_template,
-    requirements_txt_template,
-    dot_env_example_template,
-    gitignore_template,
-)
+
+from langbot_plugin.cli.gen.renderer import render_template, files
+from langbot_plugin.cli.utils.form import input_form_values
+
 
 name_regexp = r"^[a-zA-Z0-9_-]+$"
 
@@ -50,6 +46,13 @@ def init_plugin_process(
         )
         print("!! 请使用一个有效的名称，只能包含字母、数字、下划线和连字符。")
         return
+    
+    if os.path.exists(plugin_name):
+        # check if this dir is empty
+        if os.listdir(plugin_name):
+            print(f"!! {plugin_name} is not empty, please use a different name.")
+            print("!! 目录不为空，请使用一个不同的名称。")
+            return
 
     print(f"Creating plugin {plugin_name}, anything you input can be modified later.")
     print(f"创建插件 {plugin_name}，任何输入都可以在之后修改。")
@@ -62,46 +65,22 @@ def init_plugin_process(
         "plugin_attr": "",
     }
 
-    for field in form_fields:
-        if field["required"]:
-            while True:
-                value = input(f"{field['label']['en_US']}: ")  # type: ignore
-                if "format" in field and "regexp" in field["format"]:  # type: ignore
-                    if not re.match(field["format"]["regexp"], value):  # type: ignore
-                        print(f"!! {field['format']['error']['en_US']}")  # type: ignore
-                        print(f"!! {field['format']['error']['zh_CN']}")  # type: ignore
-                        continue
-                break
-            values[field["name"]] = value  # type: ignore
-        else:
-            value = input(f"{field['label']['en_US']}: ")  # type: ignore
-            values[field["name"]] = value  # type: ignore
+    input_values = input_form_values(form_fields)
+    values.update(input_values)
 
     values["plugin_attr"] = values["plugin_name"].replace("-", "").replace("_", "")
     values["plugin_label"] = values["plugin_name"].replace("-", " ").replace("_", " ")
 
-    plugin_manifest = plugin_manifest_template.render(values)
-    main_py = main_py_template.render(values)
-    readme_md = readme_md_template.render(values)
-    requirements_txt = requirements_txt_template.render(values)
-    dot_env_example = dot_env_example_template.render(values)
-    gitignore = gitignore_template.render(values)
-
     if not os.path.exists(values["plugin_name"]):
         os.makedirs(values["plugin_name"])
 
-    with open(f"{values['plugin_name']}/manifest.yaml", "w", encoding="utf-8") as f:
-        f.write(plugin_manifest)
-    with open(f"{values['plugin_name']}/main.py", "w", encoding="utf-8") as f:
-        f.write(main_py)
-    with open(f"{values['plugin_name']}/README.md", "w", encoding="utf-8") as f:
-        f.write(readme_md)
-    with open(f"{values['plugin_name']}/requirements.txt", "w", encoding="utf-8") as f:
-        f.write(requirements_txt)
-    with open(f"{values['plugin_name']}/.env.example", "w", encoding="utf-8") as f:
-        f.write(dot_env_example)
-    with open(f"{values['plugin_name']}/.gitignore", "w", encoding="utf-8") as f:
-        f.write(gitignore)
+    print(f"Creating files in {values['plugin_name']}...")
+    print(f"在 {values['plugin_name']} 中创建文件...")
+
+    for file in files:
+        content = render_template(f"{file}.example", **values)
+        with open(f"{values['plugin_name']}/{file}", "w", encoding="utf-8") as f:
+            f.write(content)
 
     print(f"Plugin {values['plugin_name']} created successfully.")
     print(f"插件 {values['plugin_name']} 创建成功。")

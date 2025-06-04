@@ -33,3 +33,6 @@ build-backend = "hatchling.build"
 Homepage = "https://langbot.app"
 Repository = "https://github.com/langbot-app/langbot-plugin-sdk"
 Issues = "https://github.com/langbot-app/langbot-plugin-sdk/issues"
+
+[tool.setuptools]
+package-data = { "langbot_plugin" = ["assets/templates/*"] }
