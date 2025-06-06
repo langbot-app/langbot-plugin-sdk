@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typing
 import enum
-import pydantic.v1 as pydantic
+import pydantic
 
 from langbot_plugin.api.definition.base import BasePlugin
 from langbot_plugin.api.definition.components.base import BaseComponent
@@ -30,7 +30,7 @@ class PluginContainer(pydantic.BaseModel):
     manifest: ComponentManifest
     """插件清单"""
 
-    plugin_instance: BasePlugin | None
+    plugin_instance: BasePlugin
     """插件实例"""
 
     enabled: bool
@@ -51,6 +51,17 @@ class PluginContainer(pydantic.BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
+    def model_dump(self):
+        return {
+            "manifest": self.manifest.model_dump(),
+            "plugin_instance": None,  # not serializable
+            "enabled": self.enabled,
+            "priority": self.priority,
+            "plugin_config": self.plugin_config,
+            "status": self.status.value,
+            "components": [component.model_dump() for component in self.components]
+        }
+
 
 class ComponentContainer(pydantic.BaseModel):
     """The container for running components."""
@@ -58,7 +69,7 @@ class ComponentContainer(pydantic.BaseModel):
     manifest: ComponentManifest
     """组件清单"""
 
-    component_instance: BaseComponent | None
+    component_instance: BaseComponent
     """组件实例"""
 
     component_config: dict[str, typing.Any]
@@ -66,6 +77,13 @@ class ComponentContainer(pydantic.BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+    def model_dump(self):
+        return {
+            "manifest": self.manifest.model_dump(),
+            "component_instance": None,  # not serializable
+            "component_config": self.component_config,
+        }
 
 
 PluginContainer.update_forward_refs()

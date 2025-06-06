@@ -70,6 +70,7 @@ class Handler(abc.ABC):
                     if seq_id in self.resp_waiters:
                         response = ActionResponse.success(req_data["data"])
                         response.seq_id = seq_id
+                        response.code = req_data["code"]
                         self.resp_waiters[seq_id].set_result(response)
                         del self.resp_waiters[seq_id]
 

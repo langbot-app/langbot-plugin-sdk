@@ -5,6 +5,7 @@ import importlib
 import os
 import yaml
 import pydantic
+import sys
 
 
 class I18nString(pydantic.BaseModel):
@@ -174,6 +175,8 @@ class ComponentManifest(pydantic.BaseModel):
         if module_path.endswith(".py"):
             module_path = module_path[:-3]
         module_path = module_path.replace("/", ".").replace("\\", ".")
+        pwd = os.getcwd()
+        sys.path.append(pwd)
         module = importlib.import_module(module_path)
         return getattr(module, self.execution.python.attr)
 
