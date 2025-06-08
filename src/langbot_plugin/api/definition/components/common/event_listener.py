@@ -16,6 +16,9 @@ class EventListener(BaseComponent):
         type[BaseEventModel], list[Callable[[EventContext], Coroutine[Any, Any, None]]]
     ] = pydantic.Field(default_factory=dict)
 
+    def __init__(self):
+        self.registered_handlers = {}
+
     def handler(
         self,
         event_type: type[BaseEventModel],

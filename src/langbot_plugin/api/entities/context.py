@@ -20,10 +20,10 @@ class EventContext(pydantic.BaseModel):
     event: BaseEventModel
     """此次事件的对象，具体类型为handler注册时指定监听的类型，可查看events.py中的定义"""
 
-    prevent_default: bool = False
+    is_prevent_default: bool = False
     """是否阻止默认行为"""
 
-    prevent_postorder: bool = False
+    is_prevent_postorder: bool = False
     """是否阻止后续插件的执行"""
 
     return_value: dict[str, list[Any]] = pydantic.Field(default_factory=dict)
@@ -71,13 +71,13 @@ class EventContext(pydantic.BaseModel):
         """
         # TODO impl
 
-    def prevent_postorder(self):
-        """阻止后续插件执行"""
-        self.prevent_postorder = True
-
     def prevent_default(self):
         """阻止默认行为"""
-        self.prevent_default = True
+        self.is_prevent_default = True
+
+    def prevent_postorder(self):
+        """阻止后续插件执行"""
+        self.is_prevent_postorder = True
 
     # ========== 以下是内部保留方法，插件不应调用 ==========
 
@@ -95,17 +95,17 @@ class EventContext(pydantic.BaseModel):
 
     def is_prevented_default(self):
         """是否阻止默认行为"""
-        return self.prevent_default
+        return self.is_prevent_default
 
     def is_prevented_postorder(self):
         """是否阻止后序插件执行"""
-        return self.prevent_postorder
+        return self.is_prevent_postorder
 
     def __init__(self, event: BaseEventModel):
         self.eid = EventContext.eid
         self.event = event
-        self.prevent_default = False
-        self.prevent_postorder = False
+        self.is_prevent_default = False
+        self.is_prevent_postorder = False
         self.return_value = {}
         EventContext.eid += 1
 
