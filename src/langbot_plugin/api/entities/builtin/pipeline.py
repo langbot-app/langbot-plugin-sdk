@@ -5,7 +5,7 @@ import typing
 import datetime
 import asyncio
 
-import pydantic.v1 as pydantic
+import pydantic
 
 import langbot_plugin.api.entities.builtin.platform.events as platform_events
 import langbot_plugin.api.entities.builtin.platform.message as platform_message

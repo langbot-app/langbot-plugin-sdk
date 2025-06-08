@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import jinja2
-import pydantic.v1 as pydantic
+import pydantic
 
 from jinja2 import Environment, PackageLoader
 
