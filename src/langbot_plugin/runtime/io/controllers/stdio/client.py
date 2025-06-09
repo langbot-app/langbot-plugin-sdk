@@ -11,6 +11,8 @@ from langbot_plugin.runtime.io.controller import Controller
 class StdioClientController(Controller):
     """The controller for stdio client."""
 
+    process: asyncio.subprocess.Process | None = None
+
     def __init__(
         self,
         command: str,
@@ -25,7 +27,7 @@ class StdioClientController(Controller):
         self,
         new_connection_callback: Callable[[Connection], Coroutine[Any, Any, None]],
     ):
-        proc = await asyncio.create_subprocess_exec(
+        self.process = await asyncio.create_subprocess_exec(
             self.command,
             *self.args,
             stdin=asyncio.subprocess.PIPE,
@@ -33,8 +35,8 @@ class StdioClientController(Controller):
             env=self.env,
         )
 
-        if proc.stdout is None or proc.stdin is None:
+        if self.process.stdout is None or self.process.stdin is None:
             raise RuntimeError("Failed to create subprocess pipes")
 
-        connection = stdio_connection.StdioConnection(proc.stdout, proc.stdin)
+        connection = stdio_connection.StdioConnection(self.process.stdout, self.process.stdin)
         await new_connection_callback(connection)
