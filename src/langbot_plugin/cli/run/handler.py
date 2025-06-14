@@ -17,7 +17,7 @@ class PluginRuntimeHandler(Handler):
     """The handler for running plugins."""
 
     plugin_container: PluginContainer
-    
+
     def __init__(self, connection: connection.Connection):
         super().__init__(connection)
 
@@ -28,7 +28,7 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:
             """Emit an event to the plugin.
-            
+
             {
                 "event_context": dict[str, typing.Any],
             }
@@ -38,14 +38,14 @@ class PluginRuntimeHandler(Handler):
 
             if getattr(events, event_name) is None:
                 return ActionResponse.error(f"Event {event_name} not found")
-            
+
             event_class = getattr(events, event_name)
             assert isinstance(event_class, type(events.BaseEventModel))
             event_instance = event_class(**data["event_context"]["event"])
 
             args = deepcopy(data["event_context"])
             args["event"] = event_instance
-            
+
             event_context = context.EventContext(
                 **args,
             )
@@ -54,39 +54,44 @@ class PluginRuntimeHandler(Handler):
             for component in self.plugin_container.components:
                 if component.manifest.kind == "EventListener":
                     if component.component_instance is None:
-                        return ActionResponse.error(f"Event listener is not initialized")
-                    
+                        return ActionResponse.error(
+                            f"Event listener is not initialized"
+                        )
+
                     assert isinstance(component.component_instance, EventListener)
 
-                    for handler in component.component_instance.registered_handlers[event_class]:
+                    for handler in component.component_instance.registered_handlers[
+                        event_class
+                    ]:
                         await handler(event_context)
 
                     break
-            
-            return ActionResponse.success(data={
-                "event_context": event_context.model_dump(),
-            })
-        
-    async def register_plugin(self) ->dict[str, typing.Any]:
+
+            return ActionResponse.success(
+                data={
+                    "event_context": event_context.model_dump(),
+                }
+            )
+
+    async def register_plugin(self) -> dict[str, typing.Any]:
         resp = await self.call_action(
             PluginToRuntimeAction.REGISTER_PLUGIN,
             {
                 "plugin_container": self.plugin_container.model_dump(),
-            }
+            },
         )
         return resp
-            
 
     async def get_plugin_settings(self) -> dict[str, typing.Any]:
-
         resp = await self.call_action(
             PluginToRuntimeAction.GET_PLUGIN_SETTINGS,
             {
                 "plugin_author": self.plugin_container.manifest.metadata.author,
                 "plugin_name": self.plugin_container.manifest.metadata.name,
-            }
+            },
         )
 
         return resp
+
 
 # {"action": "get_plugin_container", "data": {}, "seq_id": 1}

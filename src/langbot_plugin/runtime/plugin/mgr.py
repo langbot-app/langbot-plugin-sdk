@@ -23,7 +23,7 @@ class PluginManager:
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
     ):
         self.plugin_handlers.append(handler)
-        
+
         await handler.run()
 
     async def register_plugin(
@@ -31,6 +31,8 @@ class PluginManager:
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
         container_data: dict[str, typing.Any],
     ):
-        plugin_container = runtime_plugin_container.PluginContainer.from_dict(container_data)
+        plugin_container = runtime_plugin_container.PluginContainer.from_dict(
+            container_data
+        )
         self.plugins.append(plugin_container)
         print("register_plugin", plugin_container)

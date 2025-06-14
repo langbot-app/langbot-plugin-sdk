@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class MessageComponentMetaclass(PlatformIndexedMetaclass):
-    """消息组件元类。"""
+    """Message component metaclass."""
 
     __message_component__: typing.Type["MessageComponent"] | None = None
 
@@ -46,10 +46,10 @@ class MessageComponentMetaclass(PlatformIndexedMetaclass):
 
 
 class MessageComponent(PlatformIndexedModel, metaclass=MessageComponentMetaclass):
-    """消息组件。"""
+    """Message component."""
 
     type: str
-    """消息组件类型。"""
+    """Type of the message component."""
 
     def __str__(self):
         return ""
@@ -69,16 +69,16 @@ class MessageComponent(PlatformIndexedModel, metaclass=MessageComponentMetaclass
         )
 
     def __init__(self, *args, **kwargs):
-        # 解析参数列表，将位置参数转化为具名参数
+        # parse the parameter list, convert positional parameters to named parameters
         parameter_names = self.__parameter_names__
         if len(args) > len(parameter_names):
             raise TypeError(
-                f"`{self.type}`需要{len(parameter_names)}个参数，但传入了{len(args)}个。"
+                f"`{self.type}` needs {len(parameter_names)} parameters, but {len(args)} were passed."
             )
         for name, value in zip(parameter_names, args):
             if name in kwargs:
                 raise TypeError(
-                    f"在 `{self.type}` 中，具名参数 `{name}` 与位置参数重复。"
+                    f"In `{self.type}`, the named parameter `{name}` conflicts with the positional parameter."
                 )
             kwargs[name] = value
 
@@ -89,9 +89,9 @@ TMessageComponent = typing.TypeVar("TMessageComponent", bound=MessageComponent)
 
 
 class MessageChain(PlatformBaseModel):
-    """消息链。
+    """Message chain.
 
-    一个构造消息链的例子：
+    An example of constructing a message chain:
     ```py
     message_chain = MessageChain([
         AtAll(),
@@ -99,7 +99,7 @@ class MessageChain(PlatformBaseModel):
     ])
     ```
 
-    `Plain` 可以省略。
+    `Plain` can be omitted:
     ```py
     message_chain = MessageChain([
         AtAll(),
@@ -107,8 +107,8 @@ class MessageChain(PlatformBaseModel):
     ])
     ```
 
-    在调用 API 时，参数中需要 MessageChain 的，也可以使用 `List[MessageComponent]` 代替。
-    例如，以下两种写法是等价的：
+    When calling an API, the parameter that requires `MessageChain` can also be replaced with `List[MessageComponent]`.
+    For example, the following two methods are equivalent:
     ```py
     await bot.send_friend_message(12345678, [
         Plain("Hello World!")
@@ -120,9 +120,9 @@ class MessageChain(PlatformBaseModel):
     ]))
     ```
 
-    可以使用 `in` 运算检查消息链中：
-    1. 是否有某个消息组件。
-    2. 是否有某个类型的消息组件。
+    You can use the `in` operation to check the message chain:
+    1. Whether there is a message component.
+    2. Whether there is a message component of a certain type.
 
     ```py
     if AtAll in message_chain:
@@ -148,7 +148,7 @@ class MessageChain(PlatformBaseModel):
                 result.append(Plain(msg))
             else:
                 raise TypeError(
-                    f"消息链中元素需为 dict 或 str 或 MessageComponent，当前类型：{type(msg)}"
+                    f"The element in the message chain must be dict, str, or MessageComponent, current type: {type(msg)}"
                 )
         return result
 
@@ -162,10 +162,10 @@ class MessageChain(PlatformBaseModel):
 
     @classmethod
     def parse_obj(cls, msg_chain: typing.Iterable):
-        """通过列表形式的消息链，构造对应的 `MessageChain` 对象。
+        """Construct the corresponding `MessageChain` object through a list of message chains.
 
         Args:
-            msg_chain: 列表形式的消息链。
+            msg_chain: A list of message chains.
         """
         result = cls._parse_message_chain(msg_chain)
         return cls(__root__=result)
@@ -185,7 +185,7 @@ class MessageChain(PlatformBaseModel):
     def get_first(
         self, t: typing.Type[TMessageComponent]
     ) -> typing.Optional[TMessageComponent]:
-        """获取消息链中第一个符合类型的消息组件。"""
+        """Get the first message component that matches the type in the message chain."""
         for component in self:
             if isinstance(component, t):
                 return component
@@ -245,29 +245,33 @@ class MessageChain(PlatformBaseModel):
             MessageComponent, typing.Type[MessageComponent], "MessageChain", str
         ],
     ) -> bool:
-        """判断消息链中：
-        1. 是否有某个消息组件。
-        2. 是否有某个类型的消息组件。
+        """Check if the message chain:
+        1. Whether there is a message component.
+        2. Whether there is a message component of a certain type.
 
         Args:
             sub (`Union[MessageComponent, Type[MessageComponent], 'MessageChain', str]`):
-                若为 `MessageComponent`，则判断该组件是否在消息链中。
-                若为 `Type[MessageComponent]`，则判断该组件类型是否在消息链中。
+                If it is `MessageComponent`, check if the component is in the message chain.
+                If it is `Type[MessageComponent]`, check if the component type is in the message chain.
 
         Returns:
-            bool: 是否找到。
+            bool: Whether it is found.
         """
-        if isinstance(sub, type):  # 检测消息链中是否有某种类型的对象
+        if isinstance(
+            sub, type
+        ):  # Check if there is an object of a certain type in the message chain
             for i in self:
                 if type(i) is sub:
                     return True
             return False
-        if isinstance(sub, MessageComponent):  # 检查消息链中是否有某个组件
+        if isinstance(
+            sub, MessageComponent
+        ):  # Check if there is a component in the message chain
             for i in self:
                 if i == sub:
                     return True
             return False
-        raise TypeError(f"类型不匹配，当前类型：{type(sub)}")
+        raise TypeError(f"Type mismatch, current type: {type(sub)}")
 
     def __contains__(self, sub) -> bool:
         return self.has(sub)
@@ -312,20 +316,20 @@ class MessageChain(PlatformBaseModel):
         i: int = 0,
         j: int = -1,
     ) -> int:
-        """返回 x 在消息链中首次出现项的索引号（索引号在 i 或其后且在 j 之前）。
+        """Return the index of the first occurrence of x in the message chain (the index is between i and j).
 
         Args:
             x (`Union[MessageComponent, Type[MessageComponent]]`):
-                要查找的消息元素或消息元素类型。
-            i: 从哪个位置开始查找。
-            j: 查找到哪个位置结束。
+                The message element or message element type to find.
+            i: The position to start searching from.
+            j: The position to end searching at.
 
         Returns:
-            int: 如果找到，则返回索引号。
+            int: If found, return the index.
 
         Raises:
-            ValueError: 没有找到。
-            TypeError: 类型不匹配。
+            ValueError: Not found.
+            TypeError: Type mismatch.
         """
         if isinstance(x, type):
             l = len(self)
@@ -340,70 +344,72 @@ class MessageChain(PlatformBaseModel):
             for index in range(i, j):
                 if type(self[index]) is x:
                     return index
-            raise ValueError("消息链中不存在该类型的组件。")
+            raise ValueError(
+                "The message chain does not contain the component of this type."
+            )
         if isinstance(x, MessageComponent):
             return self.__root__.index(x, i, j)
-        raise TypeError(f"类型不匹配，当前类型：{type(x)}")
+        raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     def count(
         self, x: typing.Union[MessageComponent, typing.Type[MessageComponent]]
     ) -> int:
-        """返回消息链中 x 出现的次数。
+        """Return the number of occurrences of x in the message chain.
 
         Args:
             x (`Union[MessageComponent, Type[MessageComponent]]`):
-                要查找的消息元素或消息元素类型。
+                The message element or message element type to find.
 
         Returns:
-            int: 次数。
+            int: The number of occurrences.
         """
         if isinstance(x, type):
             return sum(1 for i in self if type(i) is x)
         if isinstance(x, MessageComponent):
             return self.__root__.count(x)
-        raise TypeError(f"类型不匹配，当前类型：{type(x)}")
+        raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     def extend(self, x: typing.Iterable[typing.Union[MessageComponent, str]]):
-        """将另一个消息链中的元素添加到消息链末尾。
+        """Add the elements of another message chain to the end of the message chain.
 
         Args:
-            x: 另一个消息链，也可为消息元素或字符串元素的序列。
+            x: Another message chain, or a sequence of message elements or string elements.
         """
         self.__root__.extend(Plain(c) if isinstance(c, str) else c for c in x)
 
     def append(self, x: typing.Union[MessageComponent, str]):
-        """将一个消息元素或字符串元素添加到消息链末尾。
+        """Add a message element or string element to the end of the message chain.
 
         Args:
-            x: 消息元素或字符串元素。
+            x: A message element or string element.
         """
         self.__root__.append(Plain(x) if isinstance(x, str) else x)
 
     def insert(self, i: int, x: typing.Union[MessageComponent, str]):
-        """将一个消息元素或字符串添加到消息链中指定位置。
+        """Add a message element or string to the message chain at the specified position.
 
         Args:
-            i: 插入位置。
-            x: 消息元素或字符串元素。
+            i: The insertion position.
+            x: A message element or string element.
         """
         self.__root__.insert(i, Plain(x) if isinstance(x, str) else x)
 
     def pop(self, i: int = -1) -> MessageComponent:
-        """从消息链中移除并返回指定位置的元素。
+        """Remove and return the element at the specified position from the message chain.
 
         Args:
-            i: 移除位置。默认为末尾。
+            i: The position to remove. The default is the last position.
 
         Returns:
-            MessageComponent: 移除的元素。
+            MessageComponent: The removed element.
         """
         return self.__root__.pop(i)
 
     def remove(self, x: typing.Union[MessageComponent, typing.Type[MessageComponent]]):
-        """从消息链中移除指定元素或指定类型的一个元素。
+        """Remove the specified element or the element of the specified type from the message chain.
 
         Args:
-            x: 指定的元素或元素类型。
+            x: The specified element or element type.
         """
         if isinstance(x, type):
             self.pop(self.index(x))
@@ -415,14 +421,14 @@ class MessageChain(PlatformBaseModel):
         x: typing.Union[MessageComponent, typing.Type[MessageComponent]],
         count: int = -1,
     ) -> "MessageChain":
-        """返回移除指定元素或指定类型的元素后剩余的消息链。
+        """Return the message chain after removing the specified element or the element of the specified type.
 
         Args:
-            x: 指定的元素或元素类型。
-            count: 至多移除的数量。默认为全部移除。
+            x: The specified element or element type.
+            count: The maximum number of elements to remove. The default is to remove all.
 
         Returns:
-            MessageChain: 剩余的消息链。
+            MessageChain: The remaining message chain.
         """
 
         def _exclude():
@@ -437,7 +443,7 @@ class MessageChain(PlatformBaseModel):
         return self.__class__(_exclude())
 
     def reverse(self):
-        """将消息链原地翻转。"""
+        """Reverse the message chain in place."""
         self.__root__.reverse()
 
     @classmethod
@@ -448,12 +454,12 @@ class MessageChain(PlatformBaseModel):
 
     @property
     def source(self) -> typing.Optional["Source"]:
-        """获取消息链中的 `Source` 对象。"""
+        """Get the `Source` object in the message chain."""
         return self.get_first(Source)
 
     @property
     def message_id(self) -> typing.Union[int, str]:
-        """获取消息链的 message_id，若无法获取，返回 -1。"""
+        """Get the message_id of the message chain, if it cannot be obtained, return -1."""
         source = self.source
         return source.id if source else -1
 
@@ -464,27 +470,27 @@ TMessage = typing.Union[
     MessageComponent,
     str,
 ]
-"""可以转化为 MessageChain 的类型。"""
+"""Types that can be converted to MessageChain."""
 
 
 class Source(MessageComponent):
-    """源。包含消息的基本信息。"""
+    """Source. Contains basic information about the message."""
 
     type: str = "Source"
-    """消息组件类型。"""
+    """Message component type."""
     id: typing.Union[int, str]
-    """消息的识别号，用于引用回复（Source 类型永远为 MessageChain 的第一个元素）。"""
+    """The identification number of the message, used for reference reply (the Source type is always the first element of MessageChain)."""
     time: datetime
-    """消息时间。"""
+    """Message time."""
 
 
 class Plain(MessageComponent):
-    """纯文本。"""
+    """Plain text."""
 
     type: str = "Plain"
-    """消息组件类型。"""
+    """Message component type."""
     text: str
-    """文字消息。"""
+    """Text message."""
 
     def __str__(self):
         return self.text
@@ -494,20 +500,20 @@ class Plain(MessageComponent):
 
 
 class Quote(MessageComponent):
-    """引用。"""
+    """Quote."""
 
     type: str = "Quote"
-    """消息组件类型。"""
+    """Message component type."""
     id: typing.Optional[int] = None
-    """被引用回复的原消息的 message_id。"""
+    """The message_id of the original message to be quoted."""
     group_id: typing.Optional[typing.Union[int, str]] = None
-    """被引用回复的原消息所接收的群号，当为好友消息时为0。"""
+    """The group number of the original message to be quoted, 0 when it is a friend message."""
     sender_id: typing.Optional[typing.Union[int, str]] = None
-    """被引用回复的原消息的发送者的ID。"""
+    """The ID of the sender of the original message to be quoted."""
     target_id: typing.Optional[typing.Union[int, str]] = None
-    """被引用回复的原消息的接收者者的ID或群ID。"""
+    """The ID or group ID of the receiver of the original message to be quoted."""
     origin: MessageChain
-    """被引用回复的原消息的消息链对象。"""
+    """The message chain object of the original message to be quoted."""
 
     @pydantic.validator("origin", always=True, pre=True)
     def origin_formater(cls, v):
@@ -515,14 +521,14 @@ class Quote(MessageComponent):
 
 
 class At(MessageComponent):
-    """At某人。"""
+    """At someone."""
 
     type: str = "At"
-    """消息组件类型。"""
+    """Message component type."""
     target: typing.Union[int, str]
-    """群员 ID。"""
+    """Group member ID."""
     display: typing.Optional[str] = None
-    """At时显示的文字，发送消息时无效，自动使用群名片。"""
+    """The text displayed when At, invalid when sending messages, automatically using the group nickname."""
 
     def __eq__(self, other):
         return isinstance(other, At) and self.target == other.target
@@ -532,28 +538,28 @@ class At(MessageComponent):
 
 
 class AtAll(MessageComponent):
-    """At全体。"""
+    """At all."""
 
     type: str = "AtAll"
-    """消息组件类型。"""
+    """Message component type."""
 
     def __str__(self):
-        return "@全体成员"
+        return "@All"
 
 
 class Image(MessageComponent):
-    """图片。"""
+    """Image."""
 
     type: str = "Image"
-    """消息组件类型。"""
+    """Message component type."""
     image_id: typing.Optional[str] = None
-    """图片的 image_id，不为空时将忽略 url 属性。"""
+    """The image_id of the image, if not empty, the url attribute will be ignored."""
     url: typing.Optional[pydantic.HttpUrl] = None
-    """图片的 URL，发送时可作网络图片的链接；接收时为图片的链接，可用于图片下载。"""
+    """The URL of the image, can be used as a network image link when sending; when receiving, it is the link of the image, which can be used for image download."""
     path: typing.Union[str, Path, None] = None
-    """图片的路径，发送本地图片。"""
+    """The path of the image, send local image."""
     base64: typing.Optional[str] = None
-    """图片的 Base64 编码。"""
+    """The Base64 encoding of the image."""
 
     def __eq__(self, other):
         return (
@@ -563,30 +569,30 @@ class Image(MessageComponent):
         )
 
     def __str__(self):
-        return "[图片]"
+        return "[Image]"
 
     @pydantic.validator("path")
     def validate_path(cls, path: typing.Union[str, Path, None]):
-        """修复 path 参数的行为，使之相对于 LangBot 的启动路径。"""
+        """Fix the behavior of the path parameter, making it relative to the LangBot startup path."""
         if path:
             try:
                 return str(Path(path).resolve(strict=True))
             except FileNotFoundError:
-                raise ValueError(f"无效路径：{path}")
+                raise ValueError(f"Invalid path: {path}")
         else:
             return path
 
     @property
     def uuid(self):
         image_id = self.image_id
-        if image_id[0] == "{":  # 群图片
+        if image_id[0] == "{":  # Group image
             image_id = image_id[1:37]
-        elif image_id[0] == "/":  # 好友图片
+        elif image_id[0] == "/":  # Friend image
             image_id = image_id[1:]
         return image_id
 
     async def get_bytes(self) -> typing.Tuple[bytes, str]:
-        """获取图片的 bytes 和 mime type"""
+        """Get the bytes and mime type of the image"""
         if self.url:
             async with httpx.AsyncClient() as client:
                 response = await client.get(self.url)
@@ -615,14 +621,14 @@ class Image(MessageComponent):
         filename: typing.Union[str, Path, None] = None,
         content: typing.Optional[bytes] = None,
     ) -> "Image":
-        """从本地文件路径加载图片，以 base64 的形式传递。
+        """Load the image from the local file path, passed in the form of base64.
 
         Args:
-            filename: 从本地文件路径加载图片，与 `content` 二选一。
-            content: 从本地文件内容加载图片，与 `filename` 二选一。
+            filename: Load the image from the local file path, one of `content` and `filename`.
+            content: Load the image from the local file content, one of `content` and `filename`.
 
         Returns:
-            Image: 图片对象。
+            Image: The image object.
         """
         if content:
             pass
@@ -633,7 +639,7 @@ class Image(MessageComponent):
             async with aiofiles.open(path, "rb") as f:
                 content = await f.read()
         else:
-            raise ValueError("请指定图片路径或图片内容！")
+            raise ValueError("Please specify the image path or image content!")
         import base64
 
         img = cls(base64=base64.b64encode(content).decode())
@@ -641,72 +647,74 @@ class Image(MessageComponent):
 
     @classmethod
     def from_unsafe_path(cls, path: typing.Union[str, Path]) -> "Image":
-        """从不安全的路径加载图片。
+        """Load the image from the unsafe path.
 
         Args:
-            path: 从不安全的路径加载图片。
+            path: Load the image from the unsafe path.
 
         Returns:
-            Image: 图片对象。
+            Image: The image object.
         """
         return cls.construct(path=str(path))
 
 
 class Unknown(MessageComponent):
-    """未知。"""
+    """Unknown."""
 
     type: str = "Unknown"
-    """消息组件类型。"""
+    """Message component type."""
     text: str
-    """文本。"""
+    """Text."""
 
     def __str__(self):
         return f"Unknown Message: {self.text}"
 
 
 class Voice(MessageComponent):
-    """语音。"""
+    """Voice."""
 
     type: str = "Voice"
-    """消息组件类型。"""
+    """Message component type."""
     voice_id: typing.Optional[str] = None
-    """语音的 voice_id，不为空时将忽略 url 属性。"""
+    """The voice_id of the voice, if not empty, the url attribute will be ignored."""
     url: typing.Optional[str] = None
-    """语音的 URL，发送时可作网络语音的链接；接收时为语音文件的链接，可用于语音下载。"""
+    """The URL of the voice, can be used as a network voice link when sending; when receiving, it is the link of the voice file, which can be used for voice download."""
     path: typing.Optional[str] = None
-    """语音的路径，发送本地语音。"""
+    """The path of the voice, send local voice."""
     base64: typing.Optional[str] = None
-    """语音的 Base64 编码。"""
+    """The Base64 encoding of the voice."""
     length: typing.Optional[int] = None
-    """语音的长度，单位为秒。"""
+    """The length of the voice, in seconds."""
 
     @pydantic.validator("path")
     def validate_path(cls, path: typing.Optional[str]):
-        """修复 path 参数的行为，使之相对于 LangBot 的启动路径。"""
+        """Fix the behavior of the path parameter, making it relative to the LangBot startup path."""
         if path:
             try:
                 return str(Path(path).resolve(strict=True))
             except FileNotFoundError:
-                raise ValueError(f"无效路径：{path}")
+                raise ValueError(f"Invalid path: {path}")
         else:
             return path
 
     def __str__(self):
-        return "[语音]"
+        return "[Voice]"
 
     async def download(
         self,
         filename: typing.Union[str, Path, None] = None,
         directory: typing.Union[str, Path, None] = None,
     ):
-        """下载语音到本地。
+        """Download the voice to the local.
 
         Args:
-            filename: 下载到本地的文件路径。与 `directory` 二选一。
-            directory: 下载到本地的文件夹路径。与 `filename` 二选一。
+            filename: The path to download the voice to the local. One of `filename` and `directory`.
+            directory: The path to download the voice to the local. One of `filename` and `directory`.
         """
         if not self.url:
-            logger.warning(f"语音 `{self.voice_id}` 无 url 参数，下载失败。")
+            logger.warning(
+                f"Voice `{self.voice_id}` has no url parameter, download failed."
+            )
             return
 
         import httpx
@@ -724,7 +732,7 @@ class Voice(MessageComponent):
                 path.mkdir(parents=True, exist_ok=True)
                 path = path / f"{self.voice_id}.silk"
             else:
-                raise ValueError("请指定文件路径或文件夹路径！")
+                raise ValueError("Please specify the file path or directory path!")
 
             import aiofiles
 
@@ -737,11 +745,11 @@ class Voice(MessageComponent):
         filename: typing.Union[str, Path, None] = None,
         content: typing.Optional[bytes] = None,
     ) -> "Voice":
-        """从本地文件路径加载语音，以 base64 的形式传递。
+        """Load the voice from the local file path, passed in the form of base64.
 
         Args:
-            filename: 从本地文件路径加载语音，与 `content` 二选一。
-            content: 从本地文件内容加载语音，与 `filename` 二选一。
+            filename: Load the voice from the local file path, one of `content` and `filename`.
+            content: Load the voice from the local file content, one of `content` and `filename`.
         """
         if content:
             pass
@@ -752,7 +760,7 @@ class Voice(MessageComponent):
             async with aiofiles.open(path, "rb") as f:
                 content = await f.read()
         else:
-            raise ValueError("请指定语音路径或语音内容！")
+            raise ValueError("Please specify the voice path or voice content!")
         import base64
 
         img = cls(base64=base64.b64encode(content).decode())
@@ -760,18 +768,18 @@ class Voice(MessageComponent):
 
 
 class ForwardMessageNode(pydantic.BaseModel):
-    """合并转发中的一条消息。"""
+    """A message in a merged forward."""
 
     sender_id: typing.Optional[typing.Union[int, str]] = None
-    """发送人ID。"""
+    """Sender ID."""
     sender_name: typing.Optional[str] = None
-    """显示名称。"""
+    """Display name."""
     message_chain: typing.Optional[MessageChain] = None
-    """消息内容。"""
+    """Message content."""
     message_id: typing.Optional[int] = None
-    """消息的 message_id。"""
+    """The message_id of the message."""
     time: typing.Optional[datetime] = None
-    """发送时间。"""
+    """The time of the message."""
 
     @pydantic.validator("message_chain", check_fields=False)
     def _validate_message_chain(cls, value: typing.Union[MessageChain, list]):
@@ -785,14 +793,14 @@ class ForwardMessageNode(pydantic.BaseModel):
         sender: typing.Union[platform_entities.Friend, platform_entities.GroupMember],
         message: MessageChain,
     ) -> "ForwardMessageNode":
-        """从消息链生成转发消息。
+        """Generate a merged forward message from a message chain.
 
         Args:
-            sender: 发送人。
-            message: 消息内容。
+            sender: The sender of the message.
+            message: The message content.
 
         Returns:
-            ForwardMessageNode: 生成的一条消息。
+            ForwardMessageNode: A message in a merged forward.
         """
         return ForwardMessageNode(
             sender_id=sender.id, sender_name=sender.get_name(), message_chain=message
@@ -800,22 +808,22 @@ class ForwardMessageNode(pydantic.BaseModel):
 
 
 class ForwardMessageDiaplay(pydantic.BaseModel):
-    title: str = "群聊的聊天记录"
-    brief: str = "[聊天记录]"
-    source: str = "聊天记录"
+    title: str = "Chat history of the group"
+    brief: str = "[Chat history]"
+    source: str = "Chat history"
     preview: typing.List[str] = []
-    summary: str = "查看x条转发消息"
+    summary: str = "View x forwarded messages"
 
 
 class Forward(MessageComponent):
-    """合并转发。"""
+    """Merged forward."""
 
     type: str = "Forward"
-    """消息组件类型。"""
+    """Message component type."""
     display: ForwardMessageDiaplay
-    """显示信息"""
+    """Display information"""
     node_list: typing.List[ForwardMessageNode]
-    """转发消息节点列表。"""
+    """List of forwarded message nodes."""
 
     def __init__(self, *args, **kwargs):
         if len(args) == 1:
@@ -824,53 +832,53 @@ class Forward(MessageComponent):
         super().__init__(*args, **kwargs)
 
     def __str__(self):
-        return "[聊天记录]"
+        return "[Chat history]"
 
 
 class File(MessageComponent):
-    """文件。"""
+    """File."""
 
     type: str = "File"
-    """消息组件类型。"""
+    """Message component type."""
     id: str
-    """文件识别 ID。"""
+    """File recognition ID."""
     name: str
-    """文件名称。"""
+    """File name."""
     size: int
-    """文件大小。"""
+    """File size."""
 
     def __str__(self):
-        return f"[文件]{self.name}"
+        return f"[File]{self.name}"
 
 
 # ================ 个人微信专用组件 ================
 
 
 class WeChatMiniPrograms(MessageComponent):
-    """小程序。个人微信专用组件。"""
+    """Mini program. Personal WeChat only."""
 
     type: str = "WeChatMiniPrograms"
-    """小程序id"""
+    """Mini program ID"""
     mini_app_id: str
-    """小程序归属用户id"""
+    """Mini program owner ID"""
     user_name: str
-    """小程序名称"""
+    """Mini program name"""
     display_name: typing.Optional[str] = ""
-    """打开地址"""
+    """Open address"""
     page_path: typing.Optional[str] = ""
-    """小程序标题"""
+    """Mini program title"""
     title: typing.Optional[str] = ""
-    """首页图片"""
+    """Home page image"""
     image_url: typing.Optional[str] = ""
 
 
 class WeChatForwardMiniPrograms(MessageComponent):
-    """转发小程序。个人微信专用组件。"""
+    """Forward mini program. Personal WeChat only."""
 
     type: str = "WeChatForwardMiniPrograms"
-    """xml数据"""
+    """xml data"""
     xml_data: str
-    """首页图片"""
+    """Home page image"""
     image_url: typing.Optional[str] = None
 
     def __str__(self):
@@ -878,34 +886,34 @@ class WeChatForwardMiniPrograms(MessageComponent):
 
 
 class WeChatEmoji(MessageComponent):
-    """emoji表情。个人微信专用组件。"""
+    """Emoji. Personal WeChat only."""
 
     type: str = "WeChatEmoji"
     """emojimd5"""
     emoji_md5: str
-    """emoji大小"""
+    """Emoji size"""
     emoji_size: int
 
 
 class WeChatLink(MessageComponent):
-    """发送链接。个人微信专用组件。"""
+    """Send link. Personal WeChat only."""
 
     type: str = "WeChatLink"
-    """标题"""
+    """Title"""
     link_title: str = ""
-    """链接描述"""
+    """Link description"""
     link_desc: str = ""
-    """链接地址"""
+    """Link address"""
     link_url: str = ""
-    """链接略缩图"""
+    """Link thumbnail"""
     link_thumb_url: str = ""
 
 
 class WeChatForwardLink(MessageComponent):
-    """转发链接。个人微信专用组件。"""
+    """Forward link. Personal WeChat only."""
 
     type: str = "WeChatForwardLink"
-    """xml数据"""
+    """xml data"""
     xml_data: str
 
     def __str__(self):
@@ -913,10 +921,10 @@ class WeChatForwardLink(MessageComponent):
 
 
 class WeChatForwardImage(MessageComponent):
-    """转发图片。个人微信专用组件。"""
+    """Forward image. Personal WeChat only."""
 
     type: str = "WeChatForwardImage"
-    """xml数据"""
+    """xml data"""
     xml_data: str
 
     def __str__(self):
@@ -924,10 +932,10 @@ class WeChatForwardImage(MessageComponent):
 
 
 class WeChatForwardFile(MessageComponent):
-    """转发文件。个人微信专用组件。"""
+    """Forward file. Personal WeChat only."""
 
     type: str = "WeChatForwardFile"
-    """xml数据"""
+    """xml data"""
     xml_data: str
 
     def __str__(self):
@@ -935,10 +943,10 @@ class WeChatForwardFile(MessageComponent):
 
 
 class WeChatAppMsg(MessageComponent):
-    """通用appmsg发送。个人微信专用组件。"""
+    """Send appmsg. Personal WeChat only."""
 
     type: str = "WeChatAppMsg"
-    """xml数据"""
+    """xml data"""
     app_msg: str
 
     def __str__(self):
@@ -946,10 +954,10 @@ class WeChatAppMsg(MessageComponent):
 
 
 class WeChatForwardQuote(MessageComponent):
-    """转发引用消息。个人微信专用组件。"""
+    """Forward quoted message. Personal WeChat only."""
 
     type: str = "WeChatForwardQuote"
-    """xml数据"""
+    """xml data"""
     app_msg: str
 
     def __str__(self):

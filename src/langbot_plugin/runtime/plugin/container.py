@@ -60,9 +60,9 @@ class PluginContainer(pydantic.BaseModel):
             "priority": self.priority,
             "plugin_config": self.plugin_config,
             "status": self.status.value,
-            "components": [component.model_dump() for component in self.components]
+            "components": [component.model_dump() for component in self.components],
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict[str, typing.Any]) -> PluginContainer:
         return cls(
@@ -72,7 +72,10 @@ class PluginContainer(pydantic.BaseModel):
             priority=data["priority"],
             plugin_config=data["plugin_config"],
             status=RuntimeContainerStatus(data["status"]),
-            components=[ComponentContainer.from_dict(component) for component in data["components"]],
+            components=[
+                ComponentContainer.from_dict(component)
+                for component in data["components"]
+            ],
         )
 
 

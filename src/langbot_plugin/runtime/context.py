@@ -10,7 +10,7 @@ from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 
 class RuntimeContext:
     """This class stores the shared context of langbot plugin runtime, for resolving recursive dependencies.
-    
+
     This module (should) not depend on any other implementation modules.
     """
 

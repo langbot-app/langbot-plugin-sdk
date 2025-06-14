@@ -38,5 +38,7 @@ class StdioClientController(Controller):
         if self.process.stdout is None or self.process.stdin is None:
             raise RuntimeError("Failed to create subprocess pipes")
 
-        connection = stdio_connection.StdioConnection(self.process.stdout, self.process.stdin)
+        connection = stdio_connection.StdioConnection(
+            self.process.stdout, self.process.stdin
+        )
         await new_connection_callback(connection)

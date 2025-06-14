@@ -27,23 +27,24 @@ async def arun_plugin_process(stdio: bool = False) -> None:
     if plugin_manifest is None:
         print("Plugin manifest not found")
         return
-    
-    ws_debug_url = ""
-    
-    if not stdio:
 
+    ws_debug_url = ""
+
+    if not stdio:
         ws_debug_url = os.getenv("DEBUG_RUNTIME_WS_URL", "")
         if ws_debug_url == "":
             print("DEBUG_RUNTIME_WS_URL is not set in .env file")
             return
-    
+
     # discover components
     component_manifests = []
 
     for comp_group in plugin_manifest.spec["components"].values():
-        manifests = discovery_engine.load_blueprint_comp_group(comp_group, owner="builtin", no_save=True)
+        manifests = discovery_engine.load_blueprint_comp_group(
+            comp_group, owner="builtin", no_save=True
+        )
         component_manifests.extend(manifests)
-    
+
     controller = PluginRuntimeController(
         plugin_manifest,
         component_manifests,

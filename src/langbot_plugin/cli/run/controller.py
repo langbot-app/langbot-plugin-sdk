@@ -86,7 +86,9 @@ class PluginRuntimeController:
                 self.ws_debug_url
             )
 
-        self._controller_task = asyncio.create_task(controller.run(new_connection_callback))
+        self._controller_task = asyncio.create_task(
+            controller.run(new_connection_callback)
+        )
 
         # wait for the connection to be established
         _ = await self._connection_waiter
@@ -112,16 +114,22 @@ class PluginRuntimeController:
         plugin_cls = self.plugin_container.manifest.get_python_component_class()
         assert isinstance(plugin_cls, type(BasePlugin))
         self.plugin_container.plugin_instance = plugin_cls()
-        self.plugin_container.plugin_instance.config = self.plugin_container.plugin_config
+        self.plugin_container.plugin_instance.config = (
+            self.plugin_container.plugin_config
+        )
         await self.plugin_container.plugin_instance.initialize()
 
         # initialize event listener component
         for component_container in self.plugin_container.components:
             if component_container.manifest.kind == "EventListener":
-                event_listener_cls = component_container.manifest.get_python_component_class()
+                event_listener_cls = (
+                    component_container.manifest.get_python_component_class()
+                )
                 assert isinstance(event_listener_cls, type(EventListener))
                 component_container.component_instance = event_listener_cls()
-                component_container.component_instance.plugin_instance = self.plugin_container.plugin_instance
+                component_container.component_instance.plugin_instance = (
+                    self.plugin_container.plugin_instance
+                )
                 await component_container.component_instance.initialize()
                 break
 
@@ -129,5 +137,6 @@ class PluginRuntimeController:
 
     async def run(self) -> None:
         await self._controller_task
+
 
 # {"seq_id": 1, "code": 0, "data": {"enabled": true, "priority": 0, "plugin_config": {}}}

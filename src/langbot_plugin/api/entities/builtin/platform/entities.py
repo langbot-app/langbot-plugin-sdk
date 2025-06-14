@@ -1,8 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-此模块提供实体和配置项模型。
-"""
-
 import abc
 from datetime import datetime
 from enum import Enum

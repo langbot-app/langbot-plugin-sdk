@@ -22,9 +22,15 @@ class EventListener(BaseComponent):
     def handler(
         self,
         event_type: type[BaseEventModel],
-    ) -> Callable[[Callable[[EventContext], Coroutine[Any, Any, None]]], Callable[[EventContext], Coroutine[Any, Any, None]]]:
+    ) -> Callable[
+        [Callable[[EventContext], Coroutine[Any, Any, None]]],
+        Callable[[EventContext], Coroutine[Any, Any, None]],
+    ]:
         """Register a handler for the event."""
-        def decorator(handler: Callable[[EventContext], Coroutine[Any, Any, None]]) -> Callable[[EventContext], Coroutine[Any, Any, None]]:
+
+        def decorator(
+            handler: Callable[[EventContext], Coroutine[Any, Any, None]],
+        ) -> Callable[[EventContext], Coroutine[Any, Any, None]]:
             if event_type not in self.registered_handlers:
                 self.registered_handlers[event_type] = []
             self.registered_handlers[event_type].append(handler)

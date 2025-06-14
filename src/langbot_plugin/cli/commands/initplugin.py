@@ -46,7 +46,7 @@ def init_plugin_process(
         )
         print("!! 请使用一个有效的名称，只能包含字母、数字、下划线和连字符。")
         return
-    
+
     if os.path.exists(plugin_name):
         # check if this dir is empty
         if os.listdir(plugin_name):

@@ -15,7 +15,7 @@ def generate_component_process(component_type: str) -> None:
         return
 
     component_type_obj = None
-    
+
     for component_type_obj in component_types:
         if component_type_obj.type_name == component_type:
             print(f"Generating component {component_type_obj.type_name}...")
@@ -27,7 +27,7 @@ def generate_component_process(component_type: str) -> None:
         for component_type_obj in component_types:
             print(f"!! - {component_type_obj.type_name}")
         return
-    
+
     values = {}
 
     if component_type_obj.form_fields:
@@ -42,20 +42,25 @@ def generate_component_process(component_type: str) -> None:
         os.makedirs(component_type_obj.target_dir)
 
     if not os.path.exists(f"{component_type_obj.target_dir}/__init__.py"):
-        with open(f"{component_type_obj.target_dir}/__init__.py", "w", encoding="utf-8") as f:
+        with open(
+            f"{component_type_obj.target_dir}/__init__.py", "w", encoding="utf-8"
+        ) as f:
             f.write("")
-    
+
     # render templates
     for file in component_type_obj.template_files:
-        content = render_template(f"{component_type_obj.target_dir}/{file}.example", **values)
-        with open(f"{component_type_obj.target_dir}/{file}", "w", encoding="utf-8") as f:
+        content = render_template(
+            f"{component_type_obj.target_dir}/{file}.example", **values
+        )
+        with open(
+            f"{component_type_obj.target_dir}/{file}", "w", encoding="utf-8"
+        ) as f:
             f.write(content)
 
     # update plugin manifest
     with open("manifest.yaml", "r", encoding="utf-8") as f:
         manifest = yaml.safe_load(f)
 
-    
     plugin_components = manifest["spec"]["components"]
 
     if component_type_obj.type_name not in plugin_components:

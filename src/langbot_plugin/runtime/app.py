@@ -44,8 +44,10 @@ class RuntimeApplication:
             self.context.stdio_server = stdio_controller_server.StdioServerController()
 
         elif self._control_connection_mode == ControlConnectionMode.WS:
-            self.context.ws_control_server = ws_controller_server.WebSocketServerController(
-                self.args.ws_control_port
+            self.context.ws_control_server = (
+                ws_controller_server.WebSocketServerController(
+                    self.args.ws_control_port
+                )
             )
 
         # enable debugging ws server
@@ -53,7 +55,9 @@ class RuntimeApplication:
             self.args.ws_debug_port
         )
 
-    def set_control_handler(self, handler: control_handler_cls.ControlConnectionHandler):
+    def set_control_handler(
+        self, handler: control_handler_cls.ControlConnectionHandler
+    ):
         print("set_control_handler", handler)
         self.context.control_handler = handler
         return asyncio.create_task(handler.run())
@@ -63,22 +67,30 @@ class RuntimeApplication:
 
         # ==== control server ====
         async def new_control_connection_callback(connection: Connection):
-            handler = control_handler_cls.ControlConnectionHandler(connection, self.context)
+            handler = control_handler_cls.ControlConnectionHandler(
+                connection, self.context
+            )
             await self.set_control_handler(handler)
 
         if self.context.stdio_server:
             tasks.append(self.context.stdio_server.run(new_control_connection_callback))
 
         if self.context.ws_control_server:
-            tasks.append(self.context.ws_control_server.run(new_control_connection_callback))
+            tasks.append(
+                self.context.ws_control_server.run(new_control_connection_callback)
+            )
 
         # ==== plugin debug server ====
         async def new_plugin_debug_connection_callback(connection: Connection):
-            handler = plugin_handler_cls.PluginConnectionHandler(connection, self.context)
+            handler = plugin_handler_cls.PluginConnectionHandler(
+                connection, self.context
+            )
             await self.context.plugin_mgr.add_plugin_handler(handler)
 
         if self.context.ws_debug_server:
-            tasks.append(self.context.ws_debug_server.run(new_plugin_debug_connection_callback))
+            tasks.append(
+                self.context.ws_debug_server.run(new_plugin_debug_connection_callback)
+            )
 
         await asyncio.gather(*tasks)
 

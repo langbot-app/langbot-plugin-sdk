@@ -32,7 +32,12 @@ class Handler(abc.ABC):
 
     _disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]] | None
 
-    def __init__(self, connection: connection.Connection, disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]] | None = None):
+    def __init__(
+        self,
+        connection: connection.Connection,
+        disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]]
+        | None = None,
+    ):
         self.conn = connection
         self.actions = {}
 
@@ -88,7 +93,7 @@ class Handler(abc.ABC):
                             response.seq_id = seq_id
                             response.code = req_data["code"]
                             self.resp_waiters[seq_id].set_result(response)
-                        
+
                         del self.resp_waiters[seq_id]
 
             asyncio.create_task(handle_message(message))

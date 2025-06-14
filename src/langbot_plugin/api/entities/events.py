@@ -4,8 +4,8 @@ import typing
 
 import pydantic
 
-from langbot_plugin.api.entities.builtin.platform import entities as platform_entities
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
+from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.pipeline import Query, Session
 
 
@@ -163,8 +163,8 @@ class PromptPreProcessing(BaseEventModel):
 
     session_name: str
 
-    default_prompt: list[llm_entities.Message]
+    default_prompt: list[provider_message.Message]
     """此对话的情景预设，可修改"""
 
-    prompt: list[llm_entities.Message]
+    prompt: list[provider_message.Message]
     """此对话现有消息记录，可修改"""

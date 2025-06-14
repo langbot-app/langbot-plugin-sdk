@@ -58,10 +58,12 @@ class EventContext(pydantic.BaseModel):
             message_chain (platform.types.MessageChain): 源平台的消息链，若用户使用的不是源平台适配器，程序也能自动转换为目标平台消息链
         """
         # TODO 添加 at_sender 和 quote_origin 参数
-        
+
         # TODO impl
 
-    async def send_message(self, target_type: str, target_id: str, message: platform_message.MessageChain):
+    async def send_message(
+        self, target_type: str, target_id: str, message: platform_message.MessageChain
+    ):
         """主动发送消息
 
         Args:
@@ -108,4 +110,3 @@ class EventContext(pydantic.BaseModel):
         self.is_prevent_postorder = False
         self.return_value = {}
         EventContext.eid += 1
-

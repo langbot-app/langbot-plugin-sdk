@@ -9,7 +9,7 @@ class ActionType(Enum):
 
 class CommonAction(ActionType):
     """The common action."""
-    
+
     PING = "ping"
 
 
@@ -32,6 +32,7 @@ class LangBotToRuntimeAction(ActionType):
 
     LIST_PLUGINS = "list_plugins"
     INSTALL_PLUGIN = "install_plugin"
+    EMIT_EVENT = "emit_event"
 
 
 class RuntimeToLangBotAction(ActionType):
