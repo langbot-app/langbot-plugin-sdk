@@ -24,17 +24,12 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_PLUGIN_SETTINGS)
         async def get_plugin_settings(data: dict[str, Any]) -> handler.ActionResponse:
-            return handler.ActionResponse.success({
-                "enabled": True,
-                "priority": 1,
-                "plugin_config": {},
-            })
-            # lb_resp = await self.context.control_handler.call_action(
-            #     RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
-            #     data
-            # )
+            lb_resp = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
+                data
+            )
 
-            # return handler.ActionResponse.success(lb_resp)
+            return handler.ActionResponse.success(lb_resp)
 
     async def get_plugin_container(self) -> dict[str, Any]:
         resp = await self.call_action(

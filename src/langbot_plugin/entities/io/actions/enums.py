@@ -30,6 +30,7 @@ class RuntimeToPluginAction(ActionType):
 class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
 
+    LIST_PLUGINS = "list_plugins"
     INSTALL_PLUGIN = "install_plugin"
 
 

@@ -27,4 +27,3 @@ class RuntimeContext:
     control_handler: control_handler_cls.ControlConnectionHandler
 
     plugin_mgr: plugin_mgr_cls.PluginManager
-

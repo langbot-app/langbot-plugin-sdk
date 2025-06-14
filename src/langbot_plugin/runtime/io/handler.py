@@ -30,9 +30,13 @@ class Handler(abc.ABC):
 
     seq_id_index: int = 0
 
-    def __init__(self, connection: connection.Connection):
+    _disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]] | None
+
+    def __init__(self, connection: connection.Connection, disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]] | None = None):
         self.conn = connection
         self.actions = {}
+
+        self._disconnect_callback = disconnect_callback
 
     async def run(self) -> None:
         while True:
@@ -40,6 +44,10 @@ class Handler(abc.ABC):
             try:
                 message = await self.conn.receive()
             except ConnectionClosedError:
+                if self._disconnect_callback is not None:
+                    reconnected = await self._disconnect_callback(self)
+                    if reconnected:
+                        continue
                 print("Connection closed")
                 break
             if message is None:

@@ -20,6 +20,10 @@ class ControlConnectionHandler(handler.Handler):
         @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "pong"})
+        
+        @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
+        async def list_plugins(data: dict[str, Any]) -> handler.ActionResponse:
+            return handler.ActionResponse.success({"plugins": [plugin.model_dump() for plugin in self.context.plugin_mgr.plugins]})
 
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(data: dict[str, Any]) -> handler.ActionResponse:
