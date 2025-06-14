@@ -9,6 +9,8 @@ from langbot_plugin.runtime.plugin.container import PluginContainer
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.api.entities import events, context
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
+from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 
 
 class PluginRuntimeHandler(Handler):
@@ -19,11 +21,11 @@ class PluginRuntimeHandler(Handler):
     def __init__(self, connection: connection.Connection):
         super().__init__(connection)
 
-        @self.action("get_plugin_container")
+        @self.action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER)
         async def get_plugin_container(data: dict[str, typing.Any]) -> ActionResponse:
             return ActionResponse.success(self.plugin_container.model_dump())
 
-        @self.action("emit_event")
+        @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:
             """Emit an event to the plugin.
             
@@ -64,12 +66,21 @@ class PluginRuntimeHandler(Handler):
             return ActionResponse.success(data={
                 "event_context": event_context.model_dump(),
             })
+        
+    async def register_plugin(self) ->dict[str, typing.Any]:
+        resp = await self.call_action(
+            PluginToRuntimeAction.REGISTER_PLUGIN,
+            {
+                "plugin_container": self.plugin_container.model_dump(),
+            }
+        )
+        return resp
             
 
     async def get_plugin_settings(self) -> dict[str, typing.Any]:
 
         resp = await self.call_action(
-            "get_plugin_settings",
+            PluginToRuntimeAction.GET_PLUGIN_SETTINGS,
             {
                 "plugin_author": self.plugin_container.manifest.metadata.author,
                 "plugin_name": self.plugin_container.manifest.metadata.name,

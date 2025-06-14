@@ -92,12 +92,17 @@ class PluginRuntimeController:
         _ = await self._connection_waiter
 
         # send manifest info to runtime
+        print("get_plugin_settings")
         plugin_settings = await self.handler.get_plugin_settings()
+        print("plugin_settings", plugin_settings)
         self.plugin_container.enabled = plugin_settings["enabled"]
         self.plugin_container.priority = plugin_settings["priority"]
         self.plugin_container.plugin_config = plugin_settings["plugin_config"]
 
         self.plugin_container.status = RuntimeContainerStatus.MOUNTED
+
+        # register plugin
+        await self.handler.register_plugin()
 
         print("Plugin mounted")
 

@@ -9,9 +9,11 @@ from langbot_plugin.runtime.io.controllers.stdio import (
     server as stdio_controller_server,
 )
 from langbot_plugin.runtime.io.controllers.ws import server as ws_controller_server
-from langbot_plugin.runtime.io import handler as io_handler
-from langbot_plugin.runtime.io.handlers import control as control_handler
+from langbot_plugin.runtime.io.handlers import control as control_handler_cls
+from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_cls
 from langbot_plugin.runtime.io.connection import Connection
+from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
+from langbot_plugin.runtime import context
 
 
 class ControlConnectionMode(Enum):
@@ -19,23 +21,18 @@ class ControlConnectionMode(Enum):
     WS = "ws"
 
 
-class Application:
+class RuntimeApplication:
     """Runtime application context."""
-
-    handler_manager: io_handler.RuntimeHandlerManager  # communication handler manager
 
     _control_connection_mode: ControlConnectionMode
 
-    stdio_server: stdio_controller_server.StdioServerController | None = (
-        None  # stdio control server
-    )
-    ws_control_server: ws_controller_server.WebSocketServerController | None = (
-        None  # ws control/debug server
-    )
+    context: context.RuntimeContext
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.handler_manager = io_handler.RuntimeHandlerManager()
+        self.context = context.RuntimeContext()
+
+        self.context.plugin_mgr = plugin_mgr_cls.PluginManager(self.context)
 
         if args.stdio_control:
             self._control_connection_mode = ControlConnectionMode.STDIO
@@ -44,30 +41,48 @@ class Application:
 
         # build controllers layer
         if self._control_connection_mode == ControlConnectionMode.STDIO:
-            self.stdio_server = stdio_controller_server.StdioServerController()
+            self.context.stdio_server = stdio_controller_server.StdioServerController()
 
         elif self._control_connection_mode == ControlConnectionMode.WS:
-            self.ws_control_server = ws_controller_server.WebSocketServerController(
+            self.context.ws_control_server = ws_controller_server.WebSocketServerController(
                 self.args.ws_control_port
             )
+
+        # enable debugging ws server
+        self.context.ws_debug_server = ws_controller_server.WebSocketServerController(
+            self.args.ws_debug_port
+        )
+
+    def set_control_handler(self, handler: control_handler_cls.ControlConnectionHandler):
+        print("set_control_handler", handler)
+        self.context.control_handler = handler
+        return asyncio.create_task(handler.run())
 
     async def run(self):
         tasks = []
 
+        # ==== control server ====
         async def new_control_connection_callback(connection: Connection):
-            handler = control_handler.ControlConnectionHandler(connection)
-            task = self.handler_manager.set_control_handler(handler)
-            await task
+            handler = control_handler_cls.ControlConnectionHandler(connection, self.context)
+            await self.set_control_handler(handler)
 
-        if self.stdio_server:
-            tasks.append(self.stdio_server.run(new_control_connection_callback))
+        if self.context.stdio_server:
+            tasks.append(self.context.stdio_server.run(new_control_connection_callback))
 
-        if self.ws_control_server:
-            tasks.append(self.ws_control_server.run(new_control_connection_callback))
+        if self.context.ws_control_server:
+            tasks.append(self.context.ws_control_server.run(new_control_connection_callback))
+
+        # ==== plugin debug server ====
+        async def new_plugin_debug_connection_callback(connection: Connection):
+            handler = plugin_handler_cls.PluginConnectionHandler(connection, self.context)
+            await self.context.plugin_mgr.add_plugin_handler(handler)
+
+        if self.context.ws_debug_server:
+            tasks.append(self.context.ws_debug_server.run(new_plugin_debug_connection_callback))
 
         await asyncio.gather(*tasks)
 
 
 def main(args: argparse.Namespace):
-    app = Application(args)
+    app = RuntimeApplication(args)
     asyncio.run(app.run())

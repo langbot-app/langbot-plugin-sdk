@@ -4,19 +4,24 @@ from __future__ import annotations
 from typing import Any
 
 from langbot_plugin.runtime.io import handler, connection
+from langbot_plugin.entities.io.actions.enums import CommonAction, LangBotToRuntimeAction
+from langbot_plugin.runtime import context as context_module
 
 
 class ControlConnectionHandler(handler.Handler):
     """The handler for control connection."""
 
-    def __init__(self, connection: connection.Connection):
-        super().__init__(connection)
+    context: context_module.RuntimeContext
 
-        @self.action("ping")
+    def __init__(self, connection: connection.Connection, context: context_module.RuntimeContext):
+        super().__init__(connection)
+        self.context = context
+
+        @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "pong"})
 
-        @self.action("install_plugin")
+        @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "installing plugin"})
 

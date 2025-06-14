@@ -101,7 +101,7 @@ class ComponentManifest(pydantic.BaseModel):
     rel_path: str
     """组件清单相对main.py的路径"""
 
-    rel_dir: str
+    _rel_dir: str
     """组件清单相对main.py的目录"""
 
     _metadata: Metadata
@@ -120,10 +120,10 @@ class ComponentManifest(pydantic.BaseModel):
             owner=owner,
             manifest=manifest,
             rel_path=rel_path,
-            rel_dir=os.path.dirname(rel_path),
         )
         self._metadata = Metadata(**manifest["metadata"])
         self._spec = manifest["spec"]
+        self._rel_dir = os.path.dirname(rel_path)
         self._execution = (
             Execution(**manifest["execution"]) if "execution" in manifest else None
         )
@@ -162,7 +162,7 @@ class ComponentManifest(pydantic.BaseModel):
     def icon_rel_path(self) -> str | None:
         """图标相对路径"""
         return (
-            os.path.join(self.rel_dir, self.metadata.icon)
+            os.path.join(self._rel_dir, self.metadata.icon)
             if self.metadata.icon is not None and self.metadata.icon.strip() != ""
             else None
         )
@@ -171,7 +171,7 @@ class ComponentManifest(pydantic.BaseModel):
         """获取Python组件类"""
         if self.execution is None:
             raise ValueError("Execution is not set")
-        module_path = os.path.join(self.rel_dir, self.execution.python.path)
+        module_path = os.path.join(self._rel_dir, self.execution.python.path)
         if module_path.endswith(".py"):
             module_path = module_path[:-3]
         module_path = module_path.replace("/", ".").replace("\\", ".")

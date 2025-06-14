@@ -4,6 +4,7 @@ import abc
 import asyncio
 import json
 from typing import Callable, Any, Dict, Awaitable, Coroutine
+import traceback
 
 import pydantic
 
@@ -15,6 +16,7 @@ from langbot_plugin.entities.io.errors import (
     ActionCallTimeoutError,
     ActionCallError,
 )
+from langbot_plugin.entities.io.actions.enums import ActionType
 
 
 class Handler(abc.ABC):
@@ -60,6 +62,7 @@ class Handler(abc.ABC):
                         response.seq_id = seq_id
                         await self.conn.send(json.dumps(response.model_dump()))
                     except Exception as e:
+                        traceback.print_exc()
                         error_response = ActionResponse.error(
                             f"{e.__class__.__name__}: {str(e)}"
                         )
@@ -68,20 +71,26 @@ class Handler(abc.ABC):
 
                 elif "code" in req_data:  # action response from peer
                     if seq_id in self.resp_waiters:
-                        response = ActionResponse.success(req_data["data"])
-                        response.seq_id = seq_id
-                        response.code = req_data["code"]
-                        self.resp_waiters[seq_id].set_result(response)
+                        if req_data["code"] != 0:
+                            error_response = ActionResponse.error(req_data["message"])
+                            error_response.seq_id = seq_id
+                            self.resp_waiters[seq_id].set_result(error_response)
+                        else:
+                            response = ActionResponse.success(req_data["data"])
+                            response.seq_id = seq_id
+                            response.code = req_data["code"]
+                            self.resp_waiters[seq_id].set_result(response)
+                        
                         del self.resp_waiters[seq_id]
 
             asyncio.create_task(handle_message(message))
 
     async def call_action(
-        self, action: str, data: dict[str, Any], timeout: float = 10.0
+        self, action: ActionType, data: dict[str, Any], timeout: float = 10.0
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
         self.seq_id_index += 1
-        request = ActionRequest.make_request(self.seq_id_index, action, data)
+        request = ActionRequest.make_request(self.seq_id_index, action.value, data)
         await self.conn.send(json.dumps(request.model_dump()))
         # wait for response
         future = asyncio.Future[ActionResponse]()
@@ -92,13 +101,13 @@ class Handler(abc.ABC):
                 raise ActionCallError(f"{response.message}")
             return response.data
         except asyncio.TimeoutError:
-            raise ActionCallTimeoutError(f"Action {action} call timed out")
+            raise ActionCallTimeoutError(f"Action {action.value} call timed out")
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
 
     # decorator to register an action
     def action(
-        self, name: str
+        self, name: ActionType
     ) -> Callable[
         [Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]]],
         Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]],
@@ -106,25 +115,7 @@ class Handler(abc.ABC):
         def decorator(
             func: Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]],
         ) -> Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]]:
-            self.actions[name] = func
+            self.actions[name.value] = func
             return func
 
         return decorator
-
-
-class RuntimeHandlerManager:
-    """The manager for handlers."""
-
-    control_handler: Handler
-    plugin_handlers: dict[str, Handler]
-
-    def __init__(self):
-        self.langbot_handler = None
-        self.plugin_handlers = {}
-
-    def set_control_handler(self, handler: Handler) -> asyncio.Task:
-        self.control_handler = handler
-        return asyncio.create_task(handler.run())
-
-    def set_plugin_handler(self, name: str, handler: Handler) -> None:
-        self.plugin_handlers[name] = handler

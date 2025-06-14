@@ -6,8 +6,9 @@ import typing
 import enum
 import pydantic
 
+from langbot_plugin.api.definition.base import NonePlugin
 from langbot_plugin.api.definition.base import BasePlugin
-from langbot_plugin.api.definition.components.base import BaseComponent
+from langbot_plugin.api.definition.components.base import BaseComponent, NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 
 
@@ -18,7 +19,7 @@ class RuntimeContainerStatus(enum.Enum):
     """未加载进内存"""
 
     MOUNTED = "mounted"
-    """已加载进内存，所有位于运行时记录中的 RuntimeContainer 至少是这个状态"""
+    """已加载进内存"""
 
     INITIALIZED = "initialized"
     """已初始化"""
@@ -61,6 +62,18 @@ class PluginContainer(pydantic.BaseModel):
             "status": self.status.value,
             "components": [component.model_dump() for component in self.components]
         }
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, typing.Any]) -> PluginContainer:
+        return cls(
+            manifest=ComponentManifest.model_validate(data["manifest"]),
+            plugin_instance=NonePlugin(),
+            enabled=data["enabled"],
+            priority=data["priority"],
+            plugin_config=data["plugin_config"],
+            status=RuntimeContainerStatus(data["status"]),
+            components=[ComponentContainer.from_dict(component) for component in data["components"]],
+        )
 
 
 class ComponentContainer(pydantic.BaseModel):
@@ -85,5 +98,13 @@ class ComponentContainer(pydantic.BaseModel):
             "component_config": self.component_config,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, typing.Any]) -> ComponentContainer:
+        return cls(
+            manifest=ComponentManifest.model_validate(data["manifest"]),
+            component_instance=NoneComponent(),
+            component_config=data["component_config"],
+        )
 
-PluginContainer.update_forward_refs()
+
+PluginContainer.model_rebuild()
