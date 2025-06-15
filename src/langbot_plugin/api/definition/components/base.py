@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 
-from langbot_plugin.api.definition.base import BasePlugin
+from langbot_plugin.api.definition.plugin import BasePlugin
 
 
 class BaseComponent(abc.ABC):
@@ -18,7 +18,7 @@ class BaseComponent(abc.ABC):
 
 
 class NoneComponent(BaseComponent):
-    """The component that does nothing."""
+    """The component that does nothing, just acts as a placeholder."""
 
     def __init__(self):
         super().__init__()

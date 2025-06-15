@@ -18,7 +18,7 @@ from langbot_plugin.runtime.io.controllers.ws import (
     client as ws_controller_client,
 )
 from langbot_plugin.runtime.io.controller import Controller
-from langbot_plugin.api.definition.base import NonePlugin, BasePlugin
+from langbot_plugin.api.definition.plugin import NonePlugin, BasePlugin
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 

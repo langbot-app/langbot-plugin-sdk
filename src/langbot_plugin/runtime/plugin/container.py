@@ -6,8 +6,8 @@ import typing
 import enum
 import pydantic
 
-from langbot_plugin.api.definition.base import NonePlugin
-from langbot_plugin.api.definition.base import BasePlugin
+from langbot_plugin.api.definition.plugin import NonePlugin
+from langbot_plugin.api.definition.plugin import BasePlugin
 from langbot_plugin.api.definition.components.base import BaseComponent, NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 

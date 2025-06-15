@@ -20,7 +20,7 @@ class BasePlugin(abc.ABC):
 
 
 class NonePlugin(BasePlugin):
-    """The plugin that does nothing."""
+    """The plugin that does nothing, just acts as a placeholder."""
 
     def __init__(self):
         super().__init__()

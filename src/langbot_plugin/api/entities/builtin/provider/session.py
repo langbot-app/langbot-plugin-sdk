@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import typing
+import enum
 import datetime
 import asyncio
 
@@ -6,11 +9,20 @@ import pydantic
 
 import langbot_plugin.api.entities.builtin.provider.prompt as provider_prompt
 import langbot_plugin.api.entities.builtin.provider.message as provider_message
-import langbot_plugin.api.entities.builtin.pipeline as pipeline_entities
+
+
+class LauncherTypes(enum.Enum):
+    """一个请求的发起者类型"""
+
+    PERSON = "person"
+    """私聊"""
+
+    GROUP = "group"
+    """群聊"""
 
 
 class Conversation(pydantic.BaseModel):
-    """对话，包含于 Session 中，一个 Session 可以有多个历史 Conversation，但只有一个当前使用的 Conversation"""
+    """Conversation, contained in Session, a Session can have multiple historical Conversations, but only one current used Conversation"""
 
     prompt: provider_prompt.Prompt
 
@@ -24,6 +36,12 @@ class Conversation(pydantic.BaseModel):
         default_factory=datetime.datetime.now
     )
 
+    pipeline_uuid: str
+    """流水线UUID。"""
+
+    bot_uuid: str
+    """机器人UUID。"""
+
     uuid: typing.Optional[str] = None
     """The uuid of the conversation, not automatically generated when created.
     Instead, when using Dify API or other services that manage conversation information externally,
@@ -36,7 +54,7 @@ class Conversation(pydantic.BaseModel):
 class Session(pydantic.BaseModel):
     """Session, one Session corresponds to a {launcher_type.value}_{launcher_id}"""
 
-    launcher_type: pipeline_entities.LauncherTypes
+    launcher_type: LauncherTypes
 
     launcher_id: typing.Union[int, str]
 

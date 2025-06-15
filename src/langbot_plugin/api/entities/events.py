@@ -6,13 +6,14 @@ import pydantic
 
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
-from langbot_plugin.api.entities.builtin.pipeline import Query, Session
+from langbot_plugin.api.entities.builtin.pipeline import query as pipeline_query
+from langbot_plugin.api.entities.builtin.provider import session as provider_session
 
 
 class BaseEventModel(pydantic.BaseModel):
     """事件模型基类"""
 
-    query: typing.Union[Query, None]
+    query: typing.Union[pipeline_query.Query, None]
     """此次请求的query对象，非请求过程的事件时为None"""
 
     class Config:
@@ -139,7 +140,7 @@ class NormalMessageResponded(BaseEventModel):
 
     sender_id: typing.Union[int, str]
 
-    session: Session
+    session: provider_session.Session
     """会话对象"""
 
     prefix: str

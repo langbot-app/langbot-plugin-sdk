@@ -1,33 +1,16 @@
 from __future__ import annotations
 
-import enum
 import typing
-import datetime
-import asyncio
 
 import pydantic
 
+import langbot_plugin.api.entities.builtin.provider.session as provider_session
 import langbot_plugin.api.entities.builtin.platform.events as platform_events
 import langbot_plugin.api.entities.builtin.platform.message as platform_message
 import langbot_plugin.api.entities.builtin.provider.message as provider_message
 import langbot_plugin.api.entities.builtin.provider.prompt as provider_prompt
-
-
-class LifecycleControlScope(enum.Enum):
-    APPLICATION = "application"
-    PLATFORM = "platform"
-    PLUGIN = "plugin"
-    PROVIDER = "provider"
-
-
-class LauncherTypes(enum.Enum):
-    """一个请求的发起者类型"""
-
-    PERSON = "person"
-    """私聊"""
-
-    GROUP = "group"
-    """群聊"""
+import langbot_plugin.api.entities.builtin.resource.tool as resource_tool
+import langbot_plugin.api.definition.abstract.platform.adapter as abstract_platform_adapter
 
 
 class Query(pydantic.BaseModel):
@@ -36,7 +19,7 @@ class Query(pydantic.BaseModel):
     query_id: int
     """请求ID，添加进请求池时生成"""
 
-    launcher_type: LauncherTypes
+    launcher_type: provider_session.LauncherTypes
     """会话类型，platform处理阶段设置"""
 
     launcher_id: typing.Union[int, str]
@@ -60,10 +43,10 @@ class Query(pydantic.BaseModel):
     pipeline_config: typing.Optional[dict[str, typing.Any]] = None
     """流水线配置，由 Pipeline 在运行开始时设置。"""
 
-    adapter: msadapter.MessagePlatformAdapter
+    adapter: abstract_platform_adapter.AbstractMessagePlatformAdapter = pydantic.Field(exclude=True)
     """消息平台适配器对象，单个app中可能启用了多个消息平台适配器，此对象表明发起此query的适配器"""
 
-    session: typing.Optional[Session] = None
+    session: typing.Optional[provider_session.Session] = None
     """会话对象，由前置处理器阶段设置"""
 
     messages: typing.Optional[list[provider_message.Message]] = []
@@ -78,10 +61,10 @@ class Query(pydantic.BaseModel):
     variables: typing.Optional[dict[str, typing.Any]] = None
     """变量，由前置处理器阶段设置。在prompt中嵌入或由 Runner 传递到 LLMOps 平台。"""
 
-    use_llm_model: typing.Optional[requester.RuntimeLLMModel] = None
+    use_llm_model_uuid: typing.Optional[str] = None
     """使用的对话模型，由前置处理器阶段设置"""
 
-    use_funcs: typing.Optional[list[tools_entities.LLMFunction]] = None
+    use_funcs: typing.Optional[list[resource_tool.LLMTool]] = None
     """使用的函数，由前置处理器阶段设置"""
 
     resp_messages: (
@@ -94,7 +77,7 @@ class Query(pydantic.BaseModel):
     """回复消息链，从resp_messages包装而得"""
 
     # ======= 内部保留 =======
-    current_stage: typing.Optional["pkg.pipeline.pipelinemgr.StageInstContainer"] = None
+    current_stage_name: typing.Optional[str] = None
     """当前所处阶段"""
 
     class Config:
