@@ -8,7 +8,7 @@ import langbot_plugin.api.entities.builtin.platform.message as platform_message
 
 class AbstractEventLogger(abc.ABC):
     """This is the interface for all event loggers.
-    
+
     langbot plugin sdk will implement the proxy class for plugin to use.
     langbot will implement the real logger class.
     """

@@ -43,7 +43,9 @@ class Query(pydantic.BaseModel):
     pipeline_config: typing.Optional[dict[str, typing.Any]] = None
     """流水线配置，由 Pipeline 在运行开始时设置。"""
 
-    adapter: abstract_platform_adapter.AbstractMessagePlatformAdapter = pydantic.Field(exclude=True)
+    adapter: abstract_platform_adapter.AbstractMessagePlatformAdapter = pydantic.Field(
+        exclude=True
+    )
     """消息平台适配器对象，单个app中可能启用了多个消息平台适配器，此对象表明发起此query的适配器"""
 
     session: typing.Optional[provider_session.Session] = None

@@ -9,10 +9,10 @@ import pydantic
 class EventLogLevel(enum.Enum):
     """Event log level"""
 
-    DEBUG = 'debug'
-    INFO = 'info'
-    WARNING = 'warning'
-    ERROR = 'error'
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
 
 
 class EventLog(pydantic.BaseModel):
@@ -36,10 +36,10 @@ class EventLog(pydantic.BaseModel):
 
     def to_json(self) -> dict:
         return {
-            'seq_id': self.seq_id,
-            'timestamp': self.timestamp,
-            'level': self.level.value,
-            'text': self.text,
-            'images': self.images,
-            'message_session_id': self.message_session_id,
+            "seq_id": self.seq_id,
+            "timestamp": self.timestamp,
+            "level": self.level.value,
+            "text": self.text,
+            "images": self.images,
+            "message_session_id": self.message_session_id,
         }

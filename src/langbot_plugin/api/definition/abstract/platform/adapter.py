@@ -25,7 +25,9 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self, config: dict, logger: abstract_platform_logger.AbstractEventLogger):
+    def __init__(
+        self, config: dict, logger: abstract_platform_logger.AbstractEventLogger
+    ):
         """初始化适配器
 
         Args:
@@ -36,7 +38,9 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
         self.logger = logger
 
     @abc.abstractmethod
-    async def send_message(self, target_type: str, target_id: str, message: platform_message.MessageChain):
+    async def send_message(
+        self, target_type: str, target_id: str, message: platform_message.MessageChain
+    ):
         """主动发送消息
 
         Args:
@@ -71,7 +75,9 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     def register_listener(
         self,
         event_type: typing.Type[platform_events.Event],
-        callback: typing.Callable[[platform_events.Event, AbstractMessagePlatformAdapter], None],
+        callback: typing.Callable[
+            [platform_events.Event, AbstractMessagePlatformAdapter], None
+        ],
     ):
         """注册事件监听器
 
@@ -85,7 +91,9 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     def unregister_listener(
         self,
         event_type: typing.Type[platform_events.Event],
-        callback: typing.Callable[[platform_events.Event, AbstractMessagePlatformAdapter], None],
+        callback: typing.Callable[
+            [platform_events.Event, AbstractMessagePlatformAdapter], None
+        ],
     ):
         """注销事件监听器
 
