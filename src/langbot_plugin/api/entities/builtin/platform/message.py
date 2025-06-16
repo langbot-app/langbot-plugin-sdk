@@ -8,7 +8,7 @@ import base64
 import aiofiles
 import httpx
 import pydantic
-from pydantic import RootModel
+from pydantic import RootModel, ValidationError
 
 from langbot_plugin.api.entities.builtin.platform.base import (
     PlatformIndexedMetaclass,
@@ -70,393 +70,257 @@ class MessageComponent(PlatformIndexedModel, metaclass=MessageComponentMetaclass
         )
 
     def __init__(self, *args, **kwargs):
-        # parse the parameter list, convert positional parameters to named parameters
-        parameter_names = self.__parameter_names__
-        if len(args) > len(parameter_names):
-            raise TypeError(
-                f"`{self.type}` needs {len(parameter_names)} parameters, but {len(args)} were passed."
-            )
-        for name, value in zip(parameter_names, args):
-            if name in kwargs:
+        if args:
+            # parse the parameter list, convert positional parameters to named parameters
+            parameter_names = self.__parameter_names__
+            if len(args) > len(parameter_names):
                 raise TypeError(
-                    f"In `{self.type}`, the named parameter `{name}` conflicts with the positional parameter."
+                    f"`{self.type}` needs {len(parameter_names)} parameters, but {len(args)} were passed."
                 )
-            kwargs[name] = value
-
+            for name, value in zip(parameter_names, args):
+                if name in kwargs:
+                    raise TypeError(
+                        f"In `{self.type}`, the named parameter `{name}` conflicts with the positional parameter."
+                    )
+                kwargs[name] = value
         super().__init__(**kwargs)
 
 
 TMessageComponent = typing.TypeVar("TMessageComponent", bound=MessageComponent)
 
 
-class MessageChain(RootModel[typing.List[MessageComponent]]):
-    """Message chain.
-
-    An example of constructing a message chain:
-    ```py
-    message_chain = MessageChain([
-        AtAll(),
-        Plain("Hello World!"),
-    ])
-    ```
-
-    `Plain` can be omitted:
-    ```py
-    message_chain = MessageChain([
-        AtAll(),
-        "Hello World!",
-    ])
-    ```
-
-    When calling an API, the parameter that requires `MessageChain` can also be replaced with `List[MessageComponent]`.
-    For example, the following two methods are equivalent:
-    ```py
-    await bot.send_friend_message(12345678, [
-        Plain("Hello World!")
-    ])
-    ```
-    ```py
-    await bot.send_friend_message(12345678, MessageChain([
-        Plain("Hello World!")
-    ]))
-    ```
-
-    You can use the `in` operation to check the message chain:
-    1. Whether there is a message component.
-    2. Whether there is a message component of a certain type.
-
-    ```py
-    if AtAll in message_chain:
-        print('AtAll')
-
-    if At(bot.qq) in message_chain:
-        print('At Me')
-    ```
-
+class MessageChain:
+    """消息链。
+    
+    一个简单的消息组件列表包装器，支持基本的列表操作和序列化。
+    
+    示例:
+        ```python
+        chain = MessageChain([Plain("Hello"), At(123456)])
+        ```
     """
-
-    @staticmethod
-    def _parse_message_chain(msg_chain: typing.Iterable):
-        result = []
-        for msg in msg_chain:
-            if isinstance(msg, dict):
-                result.append(MessageComponent.parse_subtype(msg))
-            elif isinstance(msg, MessageComponent):
-                result.append(msg)
-            elif isinstance(msg, str):
-                result.append(Plain(msg))
-            else:
-                raise TypeError(
-                    f"The element in the message chain must be dict, str, or MessageComponent, current type: {type(msg)}"
-                )
-        return result
-
-    @pydantic.validator("__root__", always=True, pre=True, check_fields=False)
-    def _parse_component(cls, msg_chain):
-        if isinstance(msg_chain, (str, MessageComponent)):
-            msg_chain = [msg_chain]
-        if not msg_chain:
-            msg_chain = []
-        return cls._parse_message_chain(msg_chain)
-
-    @classmethod
-    def parse_obj(cls, msg_chain: typing.Iterable):
-        """Construct the corresponding `MessageChain` object through a list of message chains.
-
+    
+    def __init__(self, components: typing.List[MessageComponent]):
+        """初始化消息链。
+        
         Args:
-            msg_chain: A list of message chains.
+            components: 消息组件列表
+            
+        Raises:
+            TypeError: 如果输入不是 MessageComponent 列表
         """
-        result = cls._parse_message_chain(msg_chain)
-        return cls(result)
+        self._components = []  # 先初始化，避免异常时 repr 报错
+        if not isinstance(components, list):
+            raise TypeError("MessageChain 只能从 MessageComponent 列表创建")
+        if not all(isinstance(item, MessageComponent) for item in components):
+            raise TypeError("列表中的所有元素必须是 MessageComponent 类型")
+        self._components = components
+    
+    def __str__(self) -> str:
+        """返回消息链的字符串表示。"""
+        return "".join(str(component) for component in self._components)
+    
+    def __repr__(self) -> str:
+        """返回消息链的代码表示。"""
+        return f"{self.__class__.__name__}({self._components})"
+    
+    def __len__(self) -> int:
+        """返回消息链的长度。"""
+        return len(self._components)
+    
+    def __iter__(self) -> typing.Iterator[MessageComponent]:
+        """返回消息链的迭代器。"""
+        return iter(self._components)
+    
+    def __getitem__(self, index: int | slice) -> MessageComponent | typing.List[MessageComponent]:
+        """获取指定位置的消息组件。"""
+        return self._components[index]
+    
+    def __setitem__(self, index: int | slice, value: MessageComponent | typing.List[MessageComponent]) -> None:
+        """设置指定位置的消息组件。"""
+        if isinstance(index, int):
+            if not isinstance(value, MessageComponent):
+                raise TypeError("值必须是 MessageComponent 类型")
+            self._components[index] = value
+        elif isinstance(index, slice):
+            if not isinstance(value, list) or not all(isinstance(item, MessageComponent) for item in value):
+                raise TypeError("值必须是 MessageComponent 列表")
+            self._components[index] = value
+    
+    def __delitem__(self, index: int | slice) -> None:
+        """删除指定位置的消息组件。"""
+        del self._components[index]
+    
+    def append(self, component: MessageComponent) -> None:
+        """在消息链末尾添加一个消息组件。"""
+        if not isinstance(component, MessageComponent):
+            raise TypeError("只能添加 MessageComponent 类型的组件")
+        self._components.append(component)
+    
+    def insert(self, index: int, component: MessageComponent) -> None:
+        """在指定位置插入一个消息组件。"""
+        if not isinstance(component, MessageComponent):
+            raise TypeError("只能插入 MessageComponent 类型的组件")
+        self._components.insert(index, component)
+    
+    def extend(self, components: typing.List[MessageComponent]) -> None:
+        """在消息链末尾添加多个消息组件。"""
+        if not isinstance(components, list) or not all(isinstance(item, MessageComponent) for item in components):
+            raise TypeError("只能添加 MessageComponent 列表")
+        self._components.extend(components)
+    
+    def pop(self, index: int = -1) -> MessageComponent:
+        """移除并返回指定位置的消息组件。"""
+        return self._components.pop(index)
+    
+    def remove(self, component: MessageComponent) -> None:
+        """移除指定的消息组件。"""
+        self._components.remove(component)
+    
+    def clear(self) -> None:
+        """清空消息链。"""
+        self._components.clear()
+    
+    def __add__(self, other: "MessageChain") -> "MessageChain":
+        """连接两个消息链。"""
+        if not isinstance(other, MessageChain):
+            raise TypeError("只能与 MessageChain 类型进行连接")
+        return self.__class__(self._components + other._components)
+    
+    def __iadd__(self, other: "MessageChain") -> "MessageChain":
+        """原地连接两个消息链。"""
+        if not isinstance(other, MessageChain):
+            raise TypeError("只能与 MessageChain 类型进行连接")
+        self._components.extend(other._components)
+        return self
+    
+    def model_dump(self, **kwargs) -> typing.List[typing.Dict[str, typing.Any]]:
+        """序列化消息链。"""
+        return [component.model_dump(**kwargs) for component in self._components]
+    
+    @classmethod
+    def model_validate(cls, obj: typing.List[typing.Dict[str, typing.Any]]) -> "MessageChain":
+        """反序列化消息链。"""
+        components = [MessageComponent.parse_subtype(item) for item in obj]
+        return cls(typing.cast(typing.List[MessageComponent], components))
+    
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: typing.Any,
+        _handler: typing.Callable[[typing.Any], typing.Any],
+    ) -> typing.Any:
+        """为 Pydantic 提供序列化支持。"""
+        from pydantic_core import core_schema
+        
+        def validate_message_chain(value: typing.Any) -> "MessageChain":
+            if isinstance(value, MessageChain):
+                return value
+            if isinstance(value, list):
+                return cls(value)
+            raise ValueError("Invalid MessageChain")
+        
+        return core_schema.json_or_python_schema(
+            json_schema=core_schema.list_schema(
+                core_schema.union_schema([
+                    core_schema.is_instance_schema(MessageComponent),
+                    core_schema.dict_schema()
+                ])
+            ),
+            python_schema=core_schema.union_schema([
+                core_schema.is_instance_schema(MessageChain),
+                core_schema.list_schema(
+                    core_schema.union_schema([
+                        core_schema.is_instance_schema(MessageComponent),
+                        core_schema.dict_schema()
+                    ])
+                )
+            ]),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: x.model_dump(),
+                return_schema=core_schema.list_schema(),
+                when_used='json'
+            )
+        )
 
-    def __str__(self):
-        return "".join(str(component) for component in self.root)
+    def count(self, x: type | MessageComponent) -> int:
+        """返回消息链中某类型或某组件的出现次数。"""
+        if isinstance(x, type):
+            return sum(1 for i in self._components if isinstance(i, x))
+        if isinstance(x, MessageComponent):
+            return self._components.count(x)
+        raise TypeError(f"Type mismatch, current type: {type(x)}")
 
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.root})"
-
-    def __len__(self):
-        return len(self.root)
-
-    def __iter__(self):
-        return iter(self.root)
-
-    def get_first(
-        self, t: typing.Type[TMessageComponent]
-    ) -> typing.Optional[TMessageComponent]:
-        """Get the first message component that matches the type in the message chain."""
-        for component in self.root:
+    def get_first(self, t: type) -> MessageComponent | None:
+        """获取第一个指定类型的消息组件。"""
+        for component in self._components:
             if isinstance(component, t):
                 return component
         return None
 
-    @typing.overload
-    def __getitem__(self, index: int) -> MessageComponent: ...
+    @property
+    def source(self):
+        """获取消息链中的 Source 组件。"""
+        return self.get_first(Source)
 
-    @typing.overload
-    def __getitem__(self, index: slice) -> typing.List[MessageComponent]: ...
-
-    @typing.overload
-    def __getitem__(
-        self, index: typing.Type[TMessageComponent]
-    ) -> typing.List[TMessageComponent]: ...
-
-    @typing.overload
-    def __getitem__(
-        self, index: typing.Tuple[typing.Type[TMessageComponent], int]
-    ) -> typing.List[TMessageComponent]: ...
-
-    def __getitem__(
-        self,
-        index: typing.Union[
-            int,
-            slice,
-            typing.Type[TMessageComponent],
-            typing.Tuple[typing.Type[TMessageComponent], int],
-        ],
-    ) -> typing.Union[
-        MessageComponent, typing.List[MessageComponent], typing.List[TMessageComponent]
-    ]:
-        if isinstance(index, type):
-            return [c for c in self.root if isinstance(c, index)]
-        if isinstance(index, tuple):
-            t, i = index
-            return [c for c in self.root if isinstance(c, t)][i]
-        return self.root[index]
-
-    def __setitem__(
-        self,
-        key: typing.Union[int, slice],
-        value: typing.Union[
-            MessageComponent, str, typing.Iterable[typing.Union[MessageComponent, str]]
-        ],
-    ):
-        # 如果 value 是 str，直接转为 Plain
-        if isinstance(value, str):
-            value = Plain(value)
-        # 如果 key 是 int，value 应该是 MessageComponent
-        if isinstance(key, int):
-            if isinstance(value, MessageComponent):
-                self.root[key] = value
-            else:
-                raise TypeError("Value must be MessageComponent when key is int.")
-        # 如果 key 是 slice，value 应该是可迭代对象
-        elif isinstance(key, slice):
-            # 明确只接受 list/tuple，不接受 dict_items 等
-            if isinstance(value, (list, tuple)) and not isinstance(value, (str, bytes)):
-                value_list = [Plain(c) if isinstance(c, str) else c for c in value]
-                self.root[key] = value_list
-            else:
-                raise TypeError("Value must be list/tuple of MessageComponent or str when key is slice.")
-        else:
-            raise TypeError("Key must be int or slice.")
-
-    def __delitem__(self, key: typing.Union[int, slice]):
-        del self.root[key]
-
-    def has(
-        self,
-        sub: typing.Union[
-            MessageComponent, typing.Type[MessageComponent], "MessageChain", str
-        ],
-    ) -> bool:
-        """Check if the message chain:
-        1. Whether there is a message component.
-        2. Whether there is a message component of a certain type.
-
-        Args:
-            sub (`Union[MessageComponent, Type[MessageComponent], 'MessageChain', str]`):
-                If it is `MessageComponent`, check if the component is in the message chain.
-                If it is `Type[MessageComponent]`, check if the component type is in the message chain.
-
-        Returns:
-            bool: Whether it is found.
-        """
+    def has(self, sub: type | MessageComponent) -> bool:
+        """判断消息链中是否包含某类型或某组件。"""
         if isinstance(sub, type):
-            return any(isinstance(i, sub) for i in self.root)
+            return any(isinstance(i, sub) for i in self._components)
         if isinstance(sub, MessageComponent):
-            return any(i == sub for i in self.root)
+            return any(i == sub for i in self._components)
         raise TypeError(f"Type mismatch, current type: {type(sub)}")
 
     def __contains__(self, sub) -> bool:
         return self.has(sub)
 
-    def __ge__(self, other):
-        return other in self
+    @classmethod
+    def parse_obj(cls, obj):
+        """兼容老代码，等价于 MessageChain(list(obj))。"""
+        if isinstance(obj, MessageChain):
+            return obj
+        if not isinstance(obj, list):
+            raise TypeError("MessageChain.parse_obj 只接受 list")
+        return cls(obj)
 
-    def __add__(
-        self, other: typing.Union["MessageChain", MessageComponent, str]
-    ) -> "MessageChain":
-        if isinstance(other, MessageChain):
-            return self.__class__(self.root + other.root)
-        if isinstance(other, str):
-            return self.__class__(self.root + [Plain(other)])
-        if isinstance(other, MessageComponent):
-            return self.__class__(self.root + [other])
-        return NotImplemented
-
-    def __radd__(self, other: typing.Union[MessageComponent, str]) -> "MessageChain":
-        if isinstance(other, MessageComponent):
-            return self.__class__([other] + self.root)
-        if isinstance(other, str):
-            return self.__class__([Plain(other)] + self.root)
-        return NotImplemented
-
-    def __mul__(self, other: int):
-        if isinstance(other, int):
-            return self.__class__(self.root * other)
-        return NotImplemented
-
-    def __rmul__(self, other: int):
-        return self.__mul__(other)
-
-    def index(
-        self,
-        x: typing.Union[MessageComponent, typing.Type[MessageComponent]],
-        i: int = 0,
-        j: int = -1,
-    ) -> int:
-        """Return the index of the first occurrence of x in the message chain (the index is between i and j).
-
-        Args:
-            x (`Union[MessageComponent, Type[MessageComponent]]`):
-                The message element or message element type to find.
-            i: The position to start searching from.
-            j: The position to end searching at.
-
-        Returns:
-            int: If found, return the index.
-
-        Raises:
-            ValueError: Not found.
-            TypeError: Type mismatch.
-        """
+    def index(self, x: type | MessageComponent, i: int = 0, j: int = -1) -> int:
+        """返回 x 在消息链中的索引。"""
+        l = len(self._components)
+        if i < 0:
+            i += l
+        if i < 0:
+            i = 0
+        if j < 0:
+            j += l
+        if j > l:
+            j = l
         if isinstance(x, type):
-            l = len(self.root)
-            if i < 0:
-                i += l
-            if i < 0:
-                i = 0
-            if j < 0:
-                j += l
-            if j > l:
-                j = l
-            for index in range(i, j):
-                if isinstance(self.root[index], x):
-                    return index
-            raise ValueError(
-                "The message chain does not contain the component of this type."
-            )
+            for idx in range(i, j):
+                if isinstance(self._components[idx], x):
+                    return idx
+            raise ValueError("The message chain does not contain the component of this type.")
         if isinstance(x, MessageComponent):
-            return self.root.index(x, i, j)
+            return self._components.index(x, i, j)
         raise TypeError(f"Type mismatch, current type: {type(x)}")
 
-    def count(
-        self, x: typing.Union[MessageComponent, typing.Type[MessageComponent]]
-    ) -> int:
-        """Return the number of occurrences of x in the message chain.
+    @property
+    def message_id(self):
+        """获取消息链的 message_id，如果没有 source 返回 -1。"""
+        src = self.source
+        return src.id if src else -1
 
-        Args:
-            x (`Union[MessageComponent, Type[MessageComponent]]`):
-                The message element or message element type to find.
-
-        Returns:
-            int: The number of occurrences.
-        """
-        if isinstance(x, type):
-            return sum(1 for i in self.root if isinstance(i, x))
-        if isinstance(x, MessageComponent):
-            return self.root.count(x)
-        raise TypeError(f"Type mismatch, current type: {type(x)}")
-
-    def extend(self, x: typing.Iterable[typing.Union[MessageComponent, str]]):
-        """Add the elements of another message chain to the end of the message chain.
-
-        Args:
-            x: Another message chain, or a sequence of message elements or string elements.
-        """
-        self.root.extend(Plain(c) if isinstance(c, str) else c for c in x)
-
-    def append(self, x: typing.Union[MessageComponent, str]):
-        """Add a message element or string element to the end of the message chain.
-
-        Args:
-            x: A message element or string element.
-        """
-        self.root.append(Plain(x) if isinstance(x, str) else x)
-
-    def insert(self, i: int, x: typing.Union[MessageComponent, str]):
-        """Add a message element or string to the message chain at the specified position.
-
-        Args:
-            i: The insertion position.
-            x: A message element or string element.
-        """
-        self.root.insert(i, Plain(x) if isinstance(x, str) else x)
-
-    def pop(self, i: int = -1) -> MessageComponent:
-        """Remove and return the element at the specified position from the message chain.
-
-        Args:
-            i: The position to remove. The default is the last position.
-
-        Returns:
-            MessageComponent: The removed element.
-        """
-        return self.root.pop(i)
-
-    def remove(self, x: typing.Union[MessageComponent, typing.Type[MessageComponent]]):
-        """Remove the specified element or the element of the specified type from the message chain.
-
-        Args:
-            x: The specified element or element type.
-        """
-        if isinstance(x, type):
-            self.root.pop(self.index(x))
-        if isinstance(x, MessageComponent):
-            self.root.remove(x)
-
-    def exclude(
-        self,
-        x: typing.Union[MessageComponent, typing.Type[MessageComponent]],
-        count: int = -1,
-    ) -> "MessageChain":
-        """Return the message chain after removing the specified element or the element of the specified type.
-
-        Args:
-            x: The specified element or element type.
-            count: The maximum number of elements to remove. The default is to remove all.
-
-        Returns:
-            MessageChain: The remaining message chain.
-        """
-
+    def exclude(self, x: type | MessageComponent, count: int = -1) -> "MessageChain":
+        """返回排除指定类型或组件后的新消息链。"""
         def _exclude():
             nonlocal count
             x_is_type = isinstance(x, type)
-            for c in self.root:
+            for c in self._components:
                 if (count != 0) and ((x_is_type and isinstance(c, x)) or c == x):
                     if count > 0:
                         count -= 1
                     continue
                 yield c
-
-        return self.__class__(_exclude())
-
-    def reverse(self):
-        """Reverse the message chain in place."""
-        self.root.reverse()
-
-    @property
-    def source(self) -> typing.Optional["Source"]:
-        """Get the `Source` object in the message chain."""
-        return self.get_first(Source)
-
-    @property
-    def message_id(self) -> typing.Union[int, str]:
-        """Get the message_id of the message chain, if it cannot be obtained, return -1."""
-        source = self.source
-        return source.id if source else -1
+        return MessageChain(list(_exclude()))
 
 
 class Source(MessageComponent):
@@ -770,7 +634,7 @@ class ForwardMessageNode(pydantic.BaseModel):
     @pydantic.validator("message_chain", check_fields=False)
     def _validate_message_chain(cls, value: typing.Union[MessageChain, list]):
         if isinstance(value, list):
-            return MessageChain.parse_obj(value)
+            return MessageChain(value)
         return value
 
     @classmethod
