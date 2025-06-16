@@ -1,10 +1,10 @@
 from typing import Dict, List, Type
 
-import pydantic.v1.main as pdm
-from pydantic.v1 import BaseModel
+import pydantic
+from pydantic._internal._model_construction import ModelMetaclass
 
 
-class PlatformMetaclass(pdm.ModelMetaclass):
+class PlatformMetaclass(ModelMetaclass):
     """此类是平台中使用的 pydantic 模型的元类的基类。"""
 
 
@@ -16,7 +16,7 @@ def to_camel(name: str) -> str:
     return "".join(name_parts[:1] + [x.title() for x in name_parts[1:]])
 
 
-class PlatformBaseModel(BaseModel, metaclass=PlatformMetaclass):
+class PlatformBaseModel(pydantic.BaseModel, metaclass=PlatformMetaclass):
     """模型基类。
 
     启用了三项配置：
@@ -39,7 +39,7 @@ class PlatformBaseModel(BaseModel, metaclass=PlatformMetaclass):
 
     class Config:
         extra = "allow"
-        allow_population_by_field_name = True
+        validate_by_name = True
         alias_generator = to_camel
 
 

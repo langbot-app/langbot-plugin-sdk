@@ -7,7 +7,8 @@ import base64
 
 import aiofiles
 import httpx
-import pydantic.v1 as pydantic
+import pydantic
+from pydantic import RootModel
 
 from langbot_plugin.api.entities.builtin.platform.base import (
     PlatformIndexedMetaclass,
@@ -88,7 +89,7 @@ class MessageComponent(PlatformIndexedModel, metaclass=MessageComponentMetaclass
 TMessageComponent = typing.TypeVar("TMessageComponent", bound=MessageComponent)
 
 
-class MessageChain(PlatformBaseModel):
+class MessageChain(RootModel[typing.List[MessageComponent]]):
     """Message chain.
 
     An example of constructing a message chain:
@@ -134,8 +135,6 @@ class MessageChain(PlatformBaseModel):
 
     """
 
-    __root__: typing.List[MessageComponent]
-
     @staticmethod
     def _parse_message_chain(msg_chain: typing.Iterable):
         result = []
@@ -152,7 +151,7 @@ class MessageChain(PlatformBaseModel):
                 )
         return result
 
-    @pydantic.validator("__root__", always=True, pre=True)
+    @pydantic.validator("__root__", always=True, pre=True, check_fields=False)
     def _parse_component(cls, msg_chain):
         if isinstance(msg_chain, (str, MessageComponent)):
             msg_chain = [msg_chain]
@@ -234,10 +233,10 @@ class MessageChain(PlatformBaseModel):
         self.__root__[key] = value  # type: ignore
 
     def __delitem__(self, key: typing.Union[int, slice]):
-        del self.__root__[key]
+        del self[key]
 
     def __reversed__(self) -> typing.Iterable[MessageComponent]:
-        return reversed(self.__root__)
+        return reversed(self)
 
     def has(
         self,
@@ -280,31 +279,31 @@ class MessageChain(PlatformBaseModel):
         return other in self
 
     def __len__(self) -> int:
-        return len(self.__root__)
+        return len(self)
 
     def __add__(
         self, other: typing.Union["MessageChain", MessageComponent, str]
     ) -> "MessageChain":
         if isinstance(other, MessageChain):
-            return self.__class__(self.__root__ + other.__root__)
+            return self.__class__(self + other)
         if isinstance(other, str):
-            return self.__class__(self.__root__ + [Plain(other)])
+            final_list = self + MessageChain([Plain(other)])
+            return self.__class__(final_list)
         if isinstance(other, MessageComponent):
-            return self.__class__(self.__root__ + [other])
+            final_list = self + MessageChain([other])
+            return self.__class__(final_list)
         return NotImplemented
 
     def __radd__(self, other: typing.Union[MessageComponent, str]) -> "MessageChain":
         if isinstance(other, MessageComponent):
-            return self.__class__([other] + self.__root__)
+            return self.__class__(MessageChain([other]) + self)
         if isinstance(other, str):
-            return self.__class__(
-                [typing.cast(MessageComponent, Plain(other))] + self.__root__
-            )
+            return self.__class__(MessageChain([typing.cast(MessageComponent, Plain(other))]) + self)
         return NotImplemented
 
     def __mul__(self, other: int):
         if isinstance(other, int):
-            return self.__class__(self.__root__ * other)
+            return self.__class__(self * other)
         return NotImplemented
 
     def __rmul__(self, other: int):
@@ -348,7 +347,7 @@ class MessageChain(PlatformBaseModel):
                 "The message chain does not contain the component of this type."
             )
         if isinstance(x, MessageComponent):
-            return self.__root__.index(x, i, j)
+            return self.index(x, i, j)
         raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     def count(
@@ -366,7 +365,7 @@ class MessageChain(PlatformBaseModel):
         if isinstance(x, type):
             return sum(1 for i in self if type(i) is x)
         if isinstance(x, MessageComponent):
-            return self.__root__.count(x)
+            return self.count(x)
         raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     def extend(self, x: typing.Iterable[typing.Union[MessageComponent, str]]):
@@ -375,7 +374,7 @@ class MessageChain(PlatformBaseModel):
         Args:
             x: Another message chain, or a sequence of message elements or string elements.
         """
-        self.__root__.extend(Plain(c) if isinstance(c, str) else c for c in x)
+        self.extend(Plain(c) if isinstance(c, str) else c for c in x)
 
     def append(self, x: typing.Union[MessageComponent, str]):
         """Add a message element or string element to the end of the message chain.
@@ -383,7 +382,7 @@ class MessageChain(PlatformBaseModel):
         Args:
             x: A message element or string element.
         """
-        self.__root__.append(Plain(x) if isinstance(x, str) else x)
+        self.append(Plain(x) if isinstance(x, str) else x)
 
     def insert(self, i: int, x: typing.Union[MessageComponent, str]):
         """Add a message element or string to the message chain at the specified position.
@@ -392,7 +391,7 @@ class MessageChain(PlatformBaseModel):
             i: The insertion position.
             x: A message element or string element.
         """
-        self.__root__.insert(i, Plain(x) if isinstance(x, str) else x)
+        self.insert(i, Plain(x) if isinstance(x, str) else x)
 
     def pop(self, i: int = -1) -> MessageComponent:
         """Remove and return the element at the specified position from the message chain.
@@ -403,7 +402,7 @@ class MessageChain(PlatformBaseModel):
         Returns:
             MessageComponent: The removed element.
         """
-        return self.__root__.pop(i)
+        return self.pop(i)
 
     def remove(self, x: typing.Union[MessageComponent, typing.Type[MessageComponent]]):
         """Remove the specified element or the element of the specified type from the message chain.
@@ -414,7 +413,7 @@ class MessageChain(PlatformBaseModel):
         if isinstance(x, type):
             self.pop(self.index(x))
         if isinstance(x, MessageComponent):
-            self.__root__.remove(x)
+            self.remove(x)
 
     def exclude(
         self,
@@ -444,7 +443,7 @@ class MessageChain(PlatformBaseModel):
 
     def reverse(self):
         """Reverse the message chain in place."""
-        self.__root__.reverse()
+        self.reverse()
 
     @classmethod
     def join(cls, *args: typing.Iterable[typing.Union[str, MessageComponent]]):
@@ -462,15 +461,6 @@ class MessageChain(PlatformBaseModel):
         """Get the message_id of the message chain, if it cannot be obtained, return -1."""
         source = self.source
         return source.id if source else -1
-
-
-TMessage = typing.Union[
-    MessageChain,
-    typing.Iterable[typing.Union[MessageComponent, str]],
-    MessageComponent,
-    str,
-]
-"""Types that can be converted to MessageChain."""
 
 
 class Source(MessageComponent):
@@ -595,7 +585,7 @@ class Image(MessageComponent):
         """Get the bytes and mime type of the image"""
         if self.url:
             async with httpx.AsyncClient() as client:
-                response = await client.get(self.url)
+                response = await client.get(str(self.url))
                 response.raise_for_status()
                 return response.content, response.headers.get("Content-Type")
         elif self.base64:
@@ -962,3 +952,22 @@ class WeChatForwardQuote(MessageComponent):
 
     def __str__(self):
         return self.app_msg
+
+
+class WeChatFile(MessageComponent):
+    """文件。"""
+
+    type: str = 'File'
+    """消息组件类型。"""
+    file_id: str = ''
+    """文件识别 ID。"""
+    file_name: str = ''
+    """文件名称。"""
+    file_size: int = 0
+    """文件大小。"""
+    file_path: str = ''
+    """文件地址"""
+    file_base64: str = ''
+    """base64"""
+    def __str__(self):
+        return f'[文件]{self.file_name}'

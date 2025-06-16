@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 import typing
 
-import pydantic.v1 as pydantic
+import pydantic
 
 
 class Entity(pydantic.BaseModel):

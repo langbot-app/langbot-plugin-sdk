@@ -13,9 +13,7 @@ import langbot_plugin.api.definition.abstract.platform.event_logger as abstract_
 class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     """消息平台适配器基类"""
 
-    name: str
-
-    bot_account_id: int
+    bot_account_id: str = pydantic.Field(default="")
     """机器人账号ID，需要在初始化时设置"""
 
     config: dict
@@ -25,17 +23,8 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(
-        self, config: dict, logger: abstract_platform_logger.AbstractEventLogger
-    ):
-        """初始化适配器
-
-        Args:
-            config (dict): 对应的配置
-            ap (app.Application): 应用上下文
-        """
-        self.config = config
-        self.logger = logger
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     @abc.abstractmethod
     async def send_message(
@@ -118,7 +107,7 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
         raise NotImplementedError
 
 
-class MessageConverter:
+class AbstractMessageConverter:
     """消息链转换器基类"""
 
     @staticmethod
@@ -146,7 +135,7 @@ class MessageConverter:
         raise NotImplementedError
 
 
-class EventConverter:
+class AbstractEventConverter:
     """事件转换器基类"""
 
     @staticmethod
