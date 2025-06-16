@@ -167,19 +167,13 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             msg_chain: A list of message chains.
         """
         result = cls._parse_message_chain(msg_chain)
-        return cls(__root__=result)
-
-    def __init__(self, __root__: typing.Iterable[MessageComponent] | None = None):
-        super().__init__(__root__=__root__)
+        return cls(result)
 
     def __str__(self):
-        return "".join(str(component) for component in self.__root__)
+        return "".join(str(component) for component in self)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self.__root__!r})"
-
-    def __iter__(self):
-        yield from self.__root__
+        return f"{self.__class__.__name__}({self})"
 
     def get_first(
         self, t: typing.Type[TMessageComponent]
@@ -235,9 +229,6 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
     def __delitem__(self, key: typing.Union[int, slice]):
         del self[key]
 
-    def __reversed__(self) -> typing.Iterable[MessageComponent]:
-        return reversed(self)
-
     def has(
         self,
         sub: typing.Union[
@@ -278,27 +269,22 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
     def __ge__(self, other):
         return other in self
 
-    def __len__(self) -> int:
-        return len(self)
-
     def __add__(
         self, other: typing.Union["MessageChain", MessageComponent, str]
     ) -> "MessageChain":
         if isinstance(other, MessageChain):
-            return self.__class__(self + other)
+            return self.__class__(self.root + other.root)
         if isinstance(other, str):
-            final_list = self + MessageChain([Plain(other)])
-            return self.__class__(final_list)
+            return self.__class__(self.root + [Plain(other)])
         if isinstance(other, MessageComponent):
-            final_list = self + MessageChain([other])
-            return self.__class__(final_list)
+            return self.__class__(self.root + [other])
         return NotImplemented
 
     def __radd__(self, other: typing.Union[MessageComponent, str]) -> "MessageChain":
         if isinstance(other, MessageComponent):
-            return self.__class__(MessageChain([other]) + self)
+            return self.__class__([other] + self.root)
         if isinstance(other, str):
-            return self.__class__(MessageChain([typing.cast(MessageComponent, Plain(other))]) + self)
+            return self.__class__([typing.cast(MessageComponent, Plain(other))] + self.root)
         return NotImplemented
 
     def __mul__(self, other: int):
@@ -331,7 +317,7 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             TypeError: Type mismatch.
         """
         if isinstance(x, type):
-            l = len(self)
+            l = len(self.root)
             if i < 0:
                 i += l
             if i < 0:
@@ -443,13 +429,7 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
 
     def reverse(self):
         """Reverse the message chain in place."""
-        self.reverse()
-
-    @classmethod
-    def join(cls, *args: typing.Iterable[typing.Union[str, MessageComponent]]):
-        return cls(
-            Plain(c) if isinstance(c, str) else c for c in itertools.chain(*args)
-        )
+        self.root.reverse()
 
     @property
     def source(self) -> typing.Optional["Source"]:
