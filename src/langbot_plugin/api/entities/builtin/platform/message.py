@@ -170,16 +170,22 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         return cls(result)
 
     def __str__(self):
-        return "".join(str(component) for component in self)
+        return "".join(str(component) for component in self.root)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}({self})"
+        return f"{self.__class__.__name__}({self.root})"
+
+    def __len__(self):
+        return len(self.root)
+
+    def __iter__(self):
+        return iter(self.root)
 
     def get_first(
         self, t: typing.Type[TMessageComponent]
     ) -> typing.Optional[TMessageComponent]:
         """Get the first message component that matches the type in the message chain."""
-        for component in self:
+        for component in self.root:
             if isinstance(component, t):
                 return component
         return None
@@ -211,7 +217,12 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
     ) -> typing.Union[
         MessageComponent, typing.List[MessageComponent], typing.List[TMessageComponent]
     ]:
-        return self.get(index)  # type: ignore
+        if isinstance(index, type):
+            return [c for c in self.root if isinstance(c, index)]
+        if isinstance(index, tuple):
+            t, i = index
+            return [c for c in self.root if isinstance(c, t)][i]
+        return self.root[index]
 
     def __setitem__(
         self,
@@ -220,14 +231,28 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             MessageComponent, str, typing.Iterable[typing.Union[MessageComponent, str]]
         ],
     ):
+        # 如果 value 是 str，直接转为 Plain
         if isinstance(value, str):
             value = Plain(value)
-        if isinstance(value, typing.Iterable):
-            value = (Plain(c) if isinstance(c, str) else c for c in value)  # type: ignore
-        self.__root__[key] = value  # type: ignore
+        # 如果 key 是 int，value 应该是 MessageComponent
+        if isinstance(key, int):
+            if isinstance(value, MessageComponent):
+                self.root[key] = value
+            else:
+                raise TypeError("Value must be MessageComponent when key is int.")
+        # 如果 key 是 slice，value 应该是可迭代对象
+        elif isinstance(key, slice):
+            # 明确只接受 list/tuple，不接受 dict_items 等
+            if isinstance(value, (list, tuple)) and not isinstance(value, (str, bytes)):
+                value_list = [Plain(c) if isinstance(c, str) else c for c in value]
+                self.root[key] = value_list
+            else:
+                raise TypeError("Value must be list/tuple of MessageComponent or str when key is slice.")
+        else:
+            raise TypeError("Key must be int or slice.")
 
     def __delitem__(self, key: typing.Union[int, slice]):
-        del self[key]
+        del self.root[key]
 
     def has(
         self,
@@ -247,20 +272,10 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         Returns:
             bool: Whether it is found.
         """
-        if isinstance(
-            sub, type
-        ):  # Check if there is an object of a certain type in the message chain
-            for i in self:
-                if type(i) is sub:
-                    return True
-            return False
-        if isinstance(
-            sub, MessageComponent
-        ):  # Check if there is a component in the message chain
-            for i in self:
-                if i == sub:
-                    return True
-            return False
+        if isinstance(sub, type):
+            return any(isinstance(i, sub) for i in self.root)
+        if isinstance(sub, MessageComponent):
+            return any(i == sub for i in self.root)
         raise TypeError(f"Type mismatch, current type: {type(sub)}")
 
     def __contains__(self, sub) -> bool:
@@ -284,12 +299,12 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         if isinstance(other, MessageComponent):
             return self.__class__([other] + self.root)
         if isinstance(other, str):
-            return self.__class__([typing.cast(MessageComponent, Plain(other))] + self.root)
+            return self.__class__([Plain(other)] + self.root)
         return NotImplemented
 
     def __mul__(self, other: int):
         if isinstance(other, int):
-            return self.__class__(self * other)
+            return self.__class__(self.root * other)
         return NotImplemented
 
     def __rmul__(self, other: int):
@@ -327,13 +342,13 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             if j > l:
                 j = l
             for index in range(i, j):
-                if type(self[index]) is x:
+                if isinstance(self.root[index], x):
                     return index
             raise ValueError(
                 "The message chain does not contain the component of this type."
             )
         if isinstance(x, MessageComponent):
-            return self.index(x, i, j)
+            return self.root.index(x, i, j)
         raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     def count(
@@ -349,9 +364,9 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             int: The number of occurrences.
         """
         if isinstance(x, type):
-            return sum(1 for i in self if type(i) is x)
+            return sum(1 for i in self.root if isinstance(i, x))
         if isinstance(x, MessageComponent):
-            return self.count(x)
+            return self.root.count(x)
         raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     def extend(self, x: typing.Iterable[typing.Union[MessageComponent, str]]):
@@ -360,7 +375,7 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         Args:
             x: Another message chain, or a sequence of message elements or string elements.
         """
-        self.extend(Plain(c) if isinstance(c, str) else c for c in x)
+        self.root.extend(Plain(c) if isinstance(c, str) else c for c in x)
 
     def append(self, x: typing.Union[MessageComponent, str]):
         """Add a message element or string element to the end of the message chain.
@@ -368,7 +383,7 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         Args:
             x: A message element or string element.
         """
-        self.append(Plain(x) if isinstance(x, str) else x)
+        self.root.append(Plain(x) if isinstance(x, str) else x)
 
     def insert(self, i: int, x: typing.Union[MessageComponent, str]):
         """Add a message element or string to the message chain at the specified position.
@@ -377,7 +392,7 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             i: The insertion position.
             x: A message element or string element.
         """
-        self.insert(i, Plain(x) if isinstance(x, str) else x)
+        self.root.insert(i, Plain(x) if isinstance(x, str) else x)
 
     def pop(self, i: int = -1) -> MessageComponent:
         """Remove and return the element at the specified position from the message chain.
@@ -388,7 +403,7 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         Returns:
             MessageComponent: The removed element.
         """
-        return self.pop(i)
+        return self.root.pop(i)
 
     def remove(self, x: typing.Union[MessageComponent, typing.Type[MessageComponent]]):
         """Remove the specified element or the element of the specified type from the message chain.
@@ -397,9 +412,9 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
             x: The specified element or element type.
         """
         if isinstance(x, type):
-            self.pop(self.index(x))
+            self.root.pop(self.index(x))
         if isinstance(x, MessageComponent):
-            self.remove(x)
+            self.root.remove(x)
 
     def exclude(
         self,
@@ -419,9 +434,10 @@ class MessageChain(RootModel[typing.List[MessageComponent]]):
         def _exclude():
             nonlocal count
             x_is_type = isinstance(x, type)
-            for c in self:
-                if count > 0 and ((x_is_type and type(c) is x) or c == x):
-                    count -= 1
+            for c in self.root:
+                if (count != 0) and ((x_is_type and isinstance(c, x)) or c == x):
+                    if count > 0:
+                        count -= 1
                     continue
                 yield c
 
