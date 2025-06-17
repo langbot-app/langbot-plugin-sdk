@@ -43,18 +43,16 @@ class Query(pydantic.BaseModel):
     pipeline_config: typing.Optional[dict[str, typing.Any]] = None
     """流水线配置，由 Pipeline 在运行开始时设置。"""
 
-    adapter: abstract_platform_adapter.AbstractMessagePlatformAdapter = pydantic.Field(
-        exclude=True
-    )
+    adapter: abstract_platform_adapter.AbstractMessagePlatformAdapter | None = None
     """消息平台适配器对象，单个app中可能启用了多个消息平台适配器，此对象表明发起此query的适配器"""
 
-    session: typing.Optional[provider_session.Session] = None
+    session: provider_session.Session | None = None
     """会话对象，由前置处理器阶段设置"""
 
     messages: typing.Optional[list[provider_message.Message]] = []
     """历史消息列表，由前置处理器阶段设置"""
 
-    prompt: typing.Optional[provider_prompt.Prompt] = None
+    prompt: provider_prompt.Prompt | None = None
     """情景预设内容，由前置处理器阶段设置"""
 
     user_message: typing.Optional[provider_message.Message] = None
@@ -84,6 +82,22 @@ class Query(pydantic.BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+    def model_dump(self, **kwargs):
+        return {
+            "query_id": self.query_id,
+            "launcher_type": self.launcher_type.value,
+            "launcher_id": self.launcher_id,
+            "sender_id": self.sender_id,
+            "message_event": self.message_event.model_dump(),
+            "message_chain": self.message_chain.model_dump(),
+            "bot_uuid": self.bot_uuid,
+            "pipeline_uuid": self.pipeline_uuid,
+            "pipeline_config": self.pipeline_config,
+            "session": self.session.model_dump() if self.session else None,
+            "messages": [message.model_dump() for message in self.messages],
+            "prompt": self.prompt.model_dump() if self.prompt else None,
+        }
 
     # ========== 插件可调用的 API（请求 API） ==========
 

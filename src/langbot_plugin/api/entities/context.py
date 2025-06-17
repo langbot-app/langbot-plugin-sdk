@@ -6,6 +6,10 @@ import pydantic
 
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.events import BaseEventModel
+import langbot_plugin.api.entities.events as events_module
+
+
+global_eid_index = 0
 
 
 class EventContext(pydantic.BaseModel):
@@ -104,9 +108,47 @@ class EventContext(pydantic.BaseModel):
         return self.is_prevent_postorder
 
     def __init__(self, event: BaseEventModel):
-        self.eid = EventContext.eid
-        self.event = event
-        self.is_prevent_default = False
-        self.is_prevent_postorder = False
-        self.return_value = {}
-        EventContext.eid += 1
+        global global_eid_index
+        eid = global_eid_index
+        event = event
+        event_name = event.__class__.__name__
+        is_prevent_default = False
+        is_prevent_postorder = False
+        return_value: dict[str, list[Any]] = {}
+
+        super().__init__(
+            eid=eid,
+            event_name=event_name,
+            event=event,
+            is_prevent_default=is_prevent_default,
+            is_prevent_postorder=is_prevent_postorder,
+            return_value=return_value,
+        )
+
+        global_eid_index += 1
+
+    @classmethod
+    def parse_from_dict(cls, data: dict[str, Any]) -> EventContext:
+        event_name = data["event_name"]
+        event_class = getattr(events_module, event_name)
+        event = event_class.model_validate(data["event"])
+
+        inst = cls(
+            event=event,
+        )
+        inst.eid = data["eid"]
+        inst.is_prevent_default = data["is_prevent_default"]
+        inst.is_prevent_postorder = data["is_prevent_postorder"]
+        inst.return_value = data["return_value"]
+        print(inst)
+        return inst
+
+    def model_dump(self, **kwargs):
+        return {
+            "eid": self.eid,
+            "event_name": self.event_name,
+            "event": self.event.model_dump(),
+            "is_prevent_default": self.is_prevent_default,
+            "is_prevent_postorder": self.is_prevent_postorder,
+            "return_value": self.return_value,
+        }

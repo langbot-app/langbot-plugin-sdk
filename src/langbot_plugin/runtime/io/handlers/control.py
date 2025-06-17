@@ -9,6 +9,7 @@ from langbot_plugin.entities.io.actions.enums import (
     LangBotToRuntimeAction,
 )
 from langbot_plugin.runtime import context as context_module
+from langbot_plugin.api.entities.context import EventContext
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -43,6 +44,8 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.EMIT_EVENT)
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
+            event_context_data = data["event_context"]
+            event_context = EventContext.parse_from_dict(event_context_data)
             return handler.ActionResponse.success({})
 
 

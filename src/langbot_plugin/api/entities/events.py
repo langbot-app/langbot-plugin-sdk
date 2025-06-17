@@ -34,6 +34,15 @@ class PersonMessageReceived(BaseEventModel):
 
     message_chain: platform_message.MessageChain
 
+    def model_dump(self, **kwargs):
+        return {
+            "query": self.query.model_dump(),
+            "launcher_type": self.launcher_type,
+            "launcher_id": self.launcher_id,
+            "sender_id": self.sender_id,
+            "message_chain": self.message_chain.model_dump(),
+        }
+
 
 class GroupMessageReceived(BaseEventModel):
     """收到任何群聊消息时"""
@@ -45,6 +54,16 @@ class GroupMessageReceived(BaseEventModel):
     sender_id: typing.Union[int, str]
 
     message_chain: platform_message.MessageChain
+
+    def model_dump(self, **kwargs):
+
+        return {
+            "query": self.query.model_dump(),
+            "launcher_type": self.launcher_type,
+            "launcher_id": self.launcher_id,
+            "sender_id": self.sender_id,
+            "message_chain": self.message_chain.model_dump(),
+        }
 
 
 class PersonNormalMessageReceived(BaseEventModel):

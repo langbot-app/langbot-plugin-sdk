@@ -8,12 +8,10 @@ import base64
 import aiofiles
 import httpx
 import pydantic
-from pydantic import RootModel, ValidationError
 
 from langbot_plugin.api.entities.builtin.platform.base import (
     PlatformIndexedMetaclass,
     PlatformIndexedModel,
-    PlatformBaseModel,
 )
 from langbot_plugin.api.entities.builtin.platform import entities as platform_entities
 
@@ -333,6 +331,13 @@ class Source(MessageComponent):
     time: datetime
     """Message time."""
 
+    def model_dump(self, **kwargs):
+        return {
+            "type": self.type,
+            "id": self.id,
+            "time": self.time.timestamp(),
+        }
+
 
 class Plain(MessageComponent):
     """Plain text."""
@@ -628,8 +633,6 @@ class ForwardMessageNode(pydantic.BaseModel):
     """Message content."""
     message_id: typing.Optional[int] = None
     """The message_id of the message."""
-    time: typing.Optional[datetime] = None
-    """The time of the message."""
 
     @pydantic.validator("message_chain", check_fields=False)
     def _validate_message_chain(cls, value: typing.Union[MessageChain, list]):
@@ -656,6 +659,13 @@ class ForwardMessageNode(pydantic.BaseModel):
             sender_id=sender.id, sender_name=sender.get_name(), message_chain=message
         )
 
+    def model_dump(self, **kwargs):
+        return {
+            "sender_id": self.sender_id,
+            "sender_name": self.sender_name,
+            "message_chain": self.message_chain.model_dump(),
+            "message_id": self.message_id,
+        }
 
 class ForwardMessageDiaplay(pydantic.BaseModel):
     title: str = "Chat history of the group"

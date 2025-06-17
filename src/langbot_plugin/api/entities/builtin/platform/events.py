@@ -90,6 +90,13 @@ class FriendMessage(MessageEvent):
     message_chain: platform_message.MessageChain
     """消息内容。"""
 
+    def model_dump(self, **kwargs):
+        return {
+            "type": self.type,
+            "sender": self.sender.model_dump(),
+            "message_chain": self.message_chain.model_dump(),
+            "time": self.time,
+        }
 
 class GroupMessage(MessageEvent):
     """群消息。
@@ -110,3 +117,11 @@ class GroupMessage(MessageEvent):
     @property
     def group(self) -> platform_entities.Group:
         return self.sender.group
+
+    def model_dump(self, **kwargs):
+        return {
+            "type": self.type,
+            "sender": self.sender.model_dump(),
+            "message_chain": self.message_chain.model_dump(),
+            "time": self.time,
+        }
