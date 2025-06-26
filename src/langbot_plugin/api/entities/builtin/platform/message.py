@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import itertools
 import logging
 import typing
@@ -9,297 +11,105 @@ import aiofiles
 import httpx
 import pydantic
 
-from langbot_plugin.api.entities.builtin.platform.base import (
-    PlatformIndexedMetaclass,
-    PlatformIndexedModel,
-)
 from langbot_plugin.api.entities.builtin.platform import entities as platform_entities
 
 logger = logging.getLogger(__name__)
 
 
-class MessageComponentMetaclass(PlatformIndexedMetaclass):
-    """Message component metaclass."""
-
-    __message_component__: typing.Type["MessageComponent"] | None = None
-
-    def __new__(cls, name, bases, attrs, **kwargs):
-        new_cls = super().__new__(cls, name, bases, attrs, **kwargs)
-        if name == "MessageComponent":
-            cls.__message_component__ = new_cls
-
-        if not cls.__message_component__:
-            return new_cls
-
-        for base in bases:
-            if issubclass(base, cls.__message_component__):
-                # 获取字段名
-                if hasattr(new_cls, "__fields__"):
-                    # 忽略 type 字段
-                    new_cls.__parameter_names__ = list(new_cls.__fields__)[1:]
-                else:
-                    new_cls.__parameter_names__ = []
-                break
-
-        return new_cls
-
-
-class MessageComponent(PlatformIndexedModel, metaclass=MessageComponentMetaclass):
+class MessageComponent(pydantic.BaseModel):
     """Message component."""
 
     type: str
     """Type of the message component."""
 
-    def __str__(self):
-        return ""
 
-    def __repr__(self):
-        return (
-            self.__class__.__name__
-            + "("
-            + ", ".join(
-                (
-                    f"{k}={repr(v)}"
-                    for k, v in self.__dict__.items()
-                    if k != "type" and v
-                )
-            )
-            + ")"
-        )
-
-    def __init__(self, *args, **kwargs):
-        if args:
-            # parse the parameter list, convert positional parameters to named parameters
-            parameter_names = self.__parameter_names__
-            if len(args) > len(parameter_names):
-                raise TypeError(
-                    f"`{self.type}` needs {len(parameter_names)} parameters, but {len(args)} were passed."
-                )
-            for name, value in zip(parameter_names, args):
-                if name in kwargs:
-                    raise TypeError(
-                        f"In `{self.type}`, the named parameter `{name}` conflicts with the positional parameter."
-                    )
-                kwargs[name] = value
-        super().__init__(**kwargs)
-
-
-TMessageComponent = typing.TypeVar("TMessageComponent", bound=MessageComponent)
-
-
-class MessageChain:
-    """消息链。
+class MessageChain(pydantic.RootModel[list[MessageComponent]]):
+    """Message chain, a list of message components."""
     
-    一个简单的消息组件列表包装器，支持基本的列表操作和序列化。
-    
-    示例:
-        ```python
-        chain = MessageChain([Plain("Hello"), At(123456)])
-        ```
-    """
-    
-    def __init__(self, components: typing.List[MessageComponent]):
-        """初始化消息链。
+    def __init__(self, root: list[MessageComponent] = []):
+        """初始化消息链
         
         Args:
-            components: 消息组件列表
-            
-        Raises:
-            TypeError: 如果输入不是 MessageComponent 列表
+            root: 消息组件列表，默认为空列表
         """
-        self._components = []  # 先初始化，避免异常时 repr 报错
-        if not isinstance(components, list):
-            raise TypeError("MessageChain 只能从 MessageComponent 列表创建")
-        if not all(isinstance(item, MessageComponent) for item in components):
-            raise TypeError("列表中的所有元素必须是 MessageComponent 类型")
-        self._components = components
+        if not isinstance(root, list):
+            raise ValueError("root must be a list")
+        for item in root:
+            if not isinstance(item, MessageComponent):
+                raise ValueError(f"root must be a list of MessageComponent, but got {type(item)}")
+        super().__init__(root=root)
     
-    def __str__(self) -> str:
-        """返回消息链的字符串表示。"""
-        return "".join(str(component) for component in self._components)
-    
-    def __repr__(self) -> str:
-        """返回消息链的代码表示。"""
-        return f"{self.__class__.__name__}({self._components})"
-    
-    def __len__(self) -> int:
-        """返回消息链的长度。"""
-        return len(self._components)
-    
-    def __iter__(self) -> typing.Iterator[MessageComponent]:
-        """返回消息链的迭代器。"""
-        return iter(self._components)
-    
-    def __getitem__(self, index: int | slice) -> MessageComponent | typing.List[MessageComponent]:
-        """获取指定位置的消息组件。"""
-        return self._components[index]
-    
-    def __setitem__(self, index: int | slice, value: MessageComponent | typing.List[MessageComponent]) -> None:
-        """设置指定位置的消息组件。"""
-        if isinstance(index, int):
-            if not isinstance(value, MessageComponent):
-                raise TypeError("值必须是 MessageComponent 类型")
-            self._components[index] = value
-        elif isinstance(index, slice):
-            if not isinstance(value, list) or not all(isinstance(item, MessageComponent) for item in value):
-                raise TypeError("值必须是 MessageComponent 列表")
-            self._components[index] = value
-    
-    def __delitem__(self, index: int | slice) -> None:
-        """删除指定位置的消息组件。"""
-        del self._components[index]
-    
-    def append(self, component: MessageComponent) -> None:
-        """在消息链末尾添加一个消息组件。"""
-        if not isinstance(component, MessageComponent):
-            raise TypeError("只能添加 MessageComponent 类型的组件")
-        self._components.append(component)
-    
-    def insert(self, index: int, component: MessageComponent) -> None:
-        """在指定位置插入一个消息组件。"""
-        if not isinstance(component, MessageComponent):
-            raise TypeError("只能插入 MessageComponent 类型的组件")
-        self._components.insert(index, component)
-    
-    def extend(self, components: typing.List[MessageComponent]) -> None:
-        """在消息链末尾添加多个消息组件。"""
-        if not isinstance(components, list) or not all(isinstance(item, MessageComponent) for item in components):
-            raise TypeError("只能添加 MessageComponent 列表")
-        self._components.extend(components)
-    
-    def pop(self, index: int = -1) -> MessageComponent:
-        """移除并返回指定位置的消息组件。"""
-        return self._components.pop(index)
-    
-    def remove(self, component: MessageComponent) -> None:
-        """移除指定的消息组件。"""
-        self._components.remove(component)
-    
-    def clear(self) -> None:
-        """清空消息链。"""
-        self._components.clear()
-    
-    def __add__(self, other: "MessageChain") -> "MessageChain":
-        """连接两个消息链。"""
-        if not isinstance(other, MessageChain):
-            raise TypeError("只能与 MessageChain 类型进行连接")
-        return self.__class__(self._components + other._components)
-    
-    def __iadd__(self, other: "MessageChain") -> "MessageChain":
-        """原地连接两个消息链。"""
-        if not isinstance(other, MessageChain):
-            raise TypeError("只能与 MessageChain 类型进行连接")
-        self._components.extend(other._components)
-        return self
-    
-    def model_dump(self, **kwargs) -> typing.List[typing.Dict[str, typing.Any]]:
-        """序列化消息链。"""
-        return [component.model_dump(**kwargs) for component in self._components]
-    
-    @classmethod
-    def model_validate(cls, obj: typing.List[typing.Dict[str, typing.Any]]) -> "MessageChain":
-        """反序列化消息链。"""
-        components = [MessageComponent.parse_subtype(item) for item in obj]
-        return cls(typing.cast(typing.List[MessageComponent], components))
-    
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls,
-        _source_type: typing.Any,
-        _handler: typing.Callable[[typing.Any], typing.Any],
-    ) -> typing.Any:
-        """为 Pydantic 提供序列化支持。"""
-        from pydantic_core import core_schema
-        
-        def validate_message_chain(value: typing.Any) -> "MessageChain":
-            if isinstance(value, MessageChain):
-                return value
-            if isinstance(value, list):
-                return cls(value)
-            raise ValueError("Invalid MessageChain")
-        
-        return core_schema.json_or_python_schema(
-            json_schema=core_schema.list_schema(
-                core_schema.union_schema([
-                    core_schema.is_instance_schema(MessageComponent),
-                    core_schema.dict_schema()
-                ])
-            ),
-            python_schema=core_schema.union_schema([
-                core_schema.is_instance_schema(MessageChain),
-                core_schema.list_schema(
-                    core_schema.union_schema([
-                        core_schema.is_instance_schema(MessageComponent),
-                        core_schema.dict_schema()
-                    ])
-                )
-            ]),
-            serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda x: x.model_dump(),
-                return_schema=core_schema.list_schema(),
-                when_used='json'
-            )
-        )
-
-    def count(self, x: type | MessageComponent) -> int:
-        """返回消息链中某类型或某组件的出现次数。"""
-        if isinstance(x, type):
-            return sum(1 for i in self._components if isinstance(i, x))
-        if isinstance(x, MessageComponent):
-            return self._components.count(x)
-        raise TypeError(f"Type mismatch, current type: {type(x)}")
-
-    def get_first(self, t: type) -> MessageComponent | None:
+    def get_first(self, t: type[MessageComponent]) -> MessageComponent | None:
         """获取第一个指定类型的消息组件。"""
-        for component in self._components:
+        for component in self.root:
             if isinstance(component, t):
                 return component
         return None
-
+    
+    def __len__(self):
+        return len(self.root)
+    
+    def __getitem__(self, index: int) -> MessageComponent:
+        return self.root[index]
+    
+    def __setitem__(self, index: int, value: MessageComponent):
+        self.root[index] = value
+    
+    def __delitem__(self, index: int):
+        del self.root[index]
+    
+    def __iter__(self):
+        return iter(self.root)
+    
+    def __contains__(self, item: typing.Union[MessageComponent, type[MessageComponent]]):
+        if isinstance(item, type):
+            return any(isinstance(component, item) for component in self.root)
+        else:
+            return item in self.root
+    
+    def __str__(self):
+        return "".join(str(component) for component in self.root)
+    
+    def __repr__(self):
+        return f"MessageChain({self.root})"
+    
+    def __eq__(self, other):
+        return isinstance(other, MessageChain) and self.root == other.root
+    
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    
+    def __hash__(self):
+        return hash(tuple(self.root))
+    
+    def __add__(self, other):
+        return MessageChain(self.root + other.root)
+    
+    def __radd__(self, other):
+        return MessageChain(other.root + self.root)
+    
+    def append(self, item: MessageComponent):
+        self.root.append(item)
+    
+    def extend(self, items: list[MessageComponent]):
+        self.root.extend(items)
+    
+    def insert(self, index: int, item: MessageComponent):
+        self.root.insert(index, item)
+    
+    def pop(self, index: int = -1):
+        return self.root.pop(index)
+    
+    def remove(self, item: MessageComponent):
+        self.root.remove(item)
+    
+    def clear(self):
+        self.root.clear()
+    
     @property
     def source(self):
         """获取消息链中的 Source 组件。"""
         return self.get_first(Source)
-
-    def has(self, sub: type | MessageComponent) -> bool:
-        """判断消息链中是否包含某类型或某组件。"""
-        if isinstance(sub, type):
-            return any(isinstance(i, sub) for i in self._components)
-        if isinstance(sub, MessageComponent):
-            return any(i == sub for i in self._components)
-        raise TypeError(f"Type mismatch, current type: {type(sub)}")
-
-    def __contains__(self, sub) -> bool:
-        return self.has(sub)
-
-    @classmethod
-    def parse_obj(cls, obj):
-        """兼容老代码，等价于 MessageChain(list(obj))。"""
-        if isinstance(obj, MessageChain):
-            return obj
-        if not isinstance(obj, list):
-            raise TypeError("MessageChain.parse_obj 只接受 list")
-        return cls(obj)
-
-    def index(self, x: type | MessageComponent, i: int = 0, j: int = -1) -> int:
-        """返回 x 在消息链中的索引。"""
-        l = len(self._components)
-        if i < 0:
-            i += l
-        if i < 0:
-            i = 0
-        if j < 0:
-            j += l
-        if j > l:
-            j = l
-        if isinstance(x, type):
-            for idx in range(i, j):
-                if isinstance(self._components[idx], x):
-                    return idx
-            raise ValueError("The message chain does not contain the component of this type.")
-        if isinstance(x, MessageComponent):
-            return self._components.index(x, i, j)
-        raise TypeError(f"Type mismatch, current type: {type(x)}")
 
     @property
     def message_id(self):
@@ -307,18 +117,11 @@ class MessageChain:
         src = self.source
         return src.id if src else -1
 
-    def exclude(self, x: type | MessageComponent, count: int = -1) -> "MessageChain":
-        """返回排除指定类型或组件后的新消息链。"""
-        def _exclude():
-            nonlocal count
-            x_is_type = isinstance(x, type)
-            for c in self._components:
-                if (count != 0) and ((x_is_type and isinstance(c, x)) or c == x):
-                    if count > 0:
-                        count -= 1
-                    continue
-                yield c
-        return MessageChain(list(_exclude()))
+    def model_dump(self, **kwargs):
+        return [
+            component.model_dump() for component in self.root
+        ]
+
 
 
 class Source(MessageComponent):
@@ -370,10 +173,6 @@ class Quote(MessageComponent):
     origin: MessageChain
     """The message chain object of the original message to be quoted."""
 
-    @pydantic.validator("origin", always=True, pre=True)
-    def origin_formater(cls, v):
-        return MessageChain.parse_obj(v)
-
 
 class At(MessageComponent):
     """At someone."""
@@ -382,7 +181,7 @@ class At(MessageComponent):
     """Message component type."""
     target: typing.Union[int, str]
     """Group member ID."""
-    display: typing.Optional[str] = None
+    display: typing.Optional[str] = pydantic.Field(default="")
     """The text displayed when At, invalid when sending messages, automatically using the group nickname."""
 
     def __eq__(self, other):
@@ -407,13 +206,13 @@ class Image(MessageComponent):
 
     type: str = "Image"
     """Message component type."""
-    image_id: typing.Optional[str] = None
+    image_id: typing.Optional[str] = pydantic.Field(default="")
     """The image_id of the image, if not empty, the url attribute will be ignored."""
-    url: typing.Optional[pydantic.HttpUrl] = None
+    url: typing.Optional[str] = pydantic.Field(default="")
     """The URL of the image, can be used as a network image link when sending; when receiving, it is the link of the image, which can be used for image download."""
-    path: typing.Union[str, Path, None] = None
+    path: typing.Union[str, Path, None] = pydantic.Field(default="")
     """The path of the image, send local image."""
-    base64: typing.Optional[str] = None
+    base64: typing.Optional[str] = pydantic.Field(default="")
     """The Base64 encoding of the image."""
 
     def __eq__(self, other):
@@ -425,26 +224,6 @@ class Image(MessageComponent):
 
     def __str__(self):
         return "[Image]"
-
-    @pydantic.validator("path")
-    def validate_path(cls, path: typing.Union[str, Path, None]):
-        """Fix the behavior of the path parameter, making it relative to the LangBot startup path."""
-        if path:
-            try:
-                return str(Path(path).resolve(strict=True))
-            except FileNotFoundError:
-                raise ValueError(f"Invalid path: {path}")
-        else:
-            return path
-
-    @property
-    def uuid(self):
-        image_id = self.image_id
-        if image_id[0] == "{":  # Group image
-            image_id = image_id[1:37]
-        elif image_id[0] == "/":  # Friend image
-            image_id = image_id[1:]
-        return image_id
 
     async def get_bytes(self) -> typing.Tuple[bytes, str]:
         """Get the bytes and mime type of the image"""
@@ -500,25 +279,13 @@ class Image(MessageComponent):
         img = cls(base64=base64.b64encode(content).decode())
         return img
 
-    @classmethod
-    def from_unsafe_path(cls, path: typing.Union[str, Path]) -> "Image":
-        """Load the image from the unsafe path.
-
-        Args:
-            path: Load the image from the unsafe path.
-
-        Returns:
-            Image: The image object.
-        """
-        return cls.construct(path=str(path))
-
 
 class Unknown(MessageComponent):
     """Unknown."""
 
     type: str = "Unknown"
     """Message component type."""
-    text: str
+    text: str = pydantic.Field(default="")
     """Text."""
 
     def __str__(self):
@@ -530,69 +297,19 @@ class Voice(MessageComponent):
 
     type: str = "Voice"
     """Message component type."""
-    voice_id: typing.Optional[str] = None
+    voice_id: typing.Optional[str] = pydantic.Field(default="")
     """The voice_id of the voice, if not empty, the url attribute will be ignored."""
-    url: typing.Optional[str] = None
+    url: typing.Optional[str] = pydantic.Field(default="")
     """The URL of the voice, can be used as a network voice link when sending; when receiving, it is the link of the voice file, which can be used for voice download."""
-    path: typing.Optional[str] = None
+    path: typing.Optional[str] = pydantic.Field(default="")
     """The path of the voice, send local voice."""
-    base64: typing.Optional[str] = None
+    base64: typing.Optional[str] = pydantic.Field(default="")
     """The Base64 encoding of the voice."""
-    length: typing.Optional[int] = None
+    length: typing.Optional[int] = pydantic.Field(default=0)
     """The length of the voice, in seconds."""
-
-    @pydantic.validator("path")
-    def validate_path(cls, path: typing.Optional[str]):
-        """Fix the behavior of the path parameter, making it relative to the LangBot startup path."""
-        if path:
-            try:
-                return str(Path(path).resolve(strict=True))
-            except FileNotFoundError:
-                raise ValueError(f"Invalid path: {path}")
-        else:
-            return path
 
     def __str__(self):
         return "[Voice]"
-
-    async def download(
-        self,
-        filename: typing.Union[str, Path, None] = None,
-        directory: typing.Union[str, Path, None] = None,
-    ):
-        """Download the voice to the local.
-
-        Args:
-            filename: The path to download the voice to the local. One of `filename` and `directory`.
-            directory: The path to download the voice to the local. One of `filename` and `directory`.
-        """
-        if not self.url:
-            logger.warning(
-                f"Voice `{self.voice_id}` has no url parameter, download failed."
-            )
-            return
-
-        import httpx
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(self.url)
-            response.raise_for_status()
-            content = response.content
-
-            if filename:
-                path = Path(filename)
-                path.parent.mkdir(parents=True, exist_ok=True)
-            elif directory:
-                path = Path(directory)
-                path.mkdir(parents=True, exist_ok=True)
-                path = path / f"{self.voice_id}.silk"
-            else:
-                raise ValueError("Please specify the file path or directory path!")
-
-            import aiofiles
-
-            async with aiofiles.open(path, "wb") as f:
-                await f.write(content)
 
     @classmethod
     async def from_local(
@@ -625,54 +342,22 @@ class Voice(MessageComponent):
 class ForwardMessageNode(pydantic.BaseModel):
     """A message in a merged forward."""
 
-    sender_id: typing.Optional[typing.Union[int, str]] = None
+    sender_id: typing.Optional[typing.Union[int, str]] = pydantic.Field(default="")
     """Sender ID."""
-    sender_name: typing.Optional[str] = None
+    sender_name: typing.Optional[str] = pydantic.Field(default="")
     """Display name."""
-    message_chain: typing.Optional[MessageChain] = None
+    message_chain: typing.Optional[MessageChain] = pydantic.Field(default=MessageChain([]))
     """Message content."""
-    message_id: typing.Optional[int] = None
+    message_id: typing.Optional[int] = pydantic.Field(default=0)
     """The message_id of the message."""
 
-    @pydantic.validator("message_chain", check_fields=False)
-    def _validate_message_chain(cls, value: typing.Union[MessageChain, list]):
-        if isinstance(value, list):
-            return MessageChain(value)
-        return value
-
-    @classmethod
-    def create(
-        cls,
-        sender: typing.Union[platform_entities.Friend, platform_entities.GroupMember],
-        message: MessageChain,
-    ) -> "ForwardMessageNode":
-        """Generate a merged forward message from a message chain.
-
-        Args:
-            sender: The sender of the message.
-            message: The message content.
-
-        Returns:
-            ForwardMessageNode: A message in a merged forward.
-        """
-        return ForwardMessageNode(
-            sender_id=sender.id, sender_name=sender.get_name(), message_chain=message
-        )
-
-    def model_dump(self, **kwargs):
-        return {
-            "sender_id": self.sender_id,
-            "sender_name": self.sender_name,
-            "message_chain": self.message_chain.model_dump(),
-            "message_id": self.message_id,
-        }
 
 class ForwardMessageDiaplay(pydantic.BaseModel):
-    title: str = "Chat history of the group"
-    brief: str = "[Chat history]"
-    source: str = "Chat history"
-    preview: typing.List[str] = []
-    summary: str = "View x forwarded messages"
+    title: str = pydantic.Field(default="Chat history of the group")
+    brief: str = pydantic.Field(default="[Chat history]")
+    source: str = pydantic.Field(default="Chat history")
+    preview: typing.List[str] = pydantic.Field(default_factory=list)
+    summary: str = pydantic.Field(default="View x forwarded messages")
 
 
 class Forward(MessageComponent):
@@ -680,16 +365,10 @@ class Forward(MessageComponent):
 
     type: str = "Forward"
     """Message component type."""
-    display: ForwardMessageDiaplay
+    display: ForwardMessageDiaplay = pydantic.Field(default=ForwardMessageDiaplay())
     """Display information"""
-    node_list: typing.List[ForwardMessageNode]
+    node_list: typing.List[ForwardMessageNode] = pydantic.Field(default_factory=list)
     """List of forwarded message nodes."""
-
-    def __init__(self, *args, **kwargs):
-        if len(args) == 1:
-            self.node_list = args[0]
-            super().__init__(**kwargs)
-        super().__init__(*args, **kwargs)
 
     def __str__(self):
         return "[Chat history]"
@@ -700,11 +379,11 @@ class File(MessageComponent):
 
     type: str = "File"
     """Message component type."""
-    id: str
+    id: str = pydantic.Field(default="")
     """File recognition ID."""
-    name: str
+    name: str = pydantic.Field(default="")
     """File name."""
-    size: int
+    size: int = pydantic.Field(default=0)
     """File size."""
 
     def __str__(self):

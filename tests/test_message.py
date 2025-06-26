@@ -19,7 +19,7 @@ from langbot_plugin.api.entities.builtin.platform.message import (
 def test_message_chain_creation():
     """测试消息链的创建"""
     # 测试从组件列表创建
-    chain = MessageChain([Plain("Hello"), At(123456)])
+    chain = MessageChain([Plain(text="Hello"), At(target=123456)])
     assert len(chain) == 2
     assert isinstance(chain[0], Plain)
     assert isinstance(chain[1], At)
@@ -27,15 +27,15 @@ def test_message_chain_creation():
     assert chain[1].target == 123456
 
     # 测试无效输入
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError):
         MessageChain("Hello")  # 不能直接传入字符串
     
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError):
         MessageChain([123])  # 不能传入非 MessageComponent 类型
 
 def test_message_chain_operations():
     """测试消息链的操作"""
-    chain = MessageChain([Plain("Hello"), At(123456)])
+    chain = MessageChain([Plain(text="Hello"), At(target=123456)])
     
     # 测试字符串表示
     assert str(chain) == "Hello@123456"
@@ -50,7 +50,7 @@ def test_message_chain_operations():
     assert isinstance(sliced[0], Plain)
     
     # 测试修改元素
-    chain[0] = Plain("Hi")
+    chain[0] = Plain(text="Hi")
     assert chain[0].text == "Hi"
     
     # 测试删除元素
@@ -60,10 +60,10 @@ def test_message_chain_operations():
 
 def test_message_chain_list_operations():
     """测试消息链的列表操作"""
-    chain = MessageChain([Plain("Hello")])
+    chain = MessageChain([Plain(text="Hello")])
     
     # 测试 append
-    chain.append(At(123456))
+    chain.append(At(target=123456))
     assert len(chain) == 2
     assert isinstance(chain[1], At)
     
@@ -73,7 +73,7 @@ def test_message_chain_list_operations():
     assert isinstance(chain[0], AtAll)
     
     # 测试 extend
-    chain.extend([Plain("World"), At(789012)])
+    chain.extend([Plain(text="World"), At(target=789012)])
     assert len(chain) == 5
     assert isinstance(chain[3], Plain)
     assert isinstance(chain[4], At)
@@ -84,7 +84,7 @@ def test_message_chain_list_operations():
     assert component.target == 789012
     
     # 测试 remove
-    chain.remove(At(123456))
+    chain.remove(At(target=123456))
     assert len(chain) == 3
     
     # 测试 clear
@@ -93,8 +93,8 @@ def test_message_chain_list_operations():
 
 def test_message_chain_concatenation():
     """测试消息链的连接操作"""
-    chain1 = MessageChain([Plain("Hello")])
-    chain2 = MessageChain([Plain("World")])
+    chain1 = MessageChain([Plain(text="Hello")])
+    chain2 = MessageChain([Plain(text="World")])
     
     # 测试加法操作
     result = chain1 + chain2
@@ -112,8 +112,8 @@ def test_message_chain_serialization():
     current_time = datetime.now()
     original_chain = MessageChain([
         Source(id=12345, time=current_time),
-        Plain("Hello"),
-        At(123456),
+        Plain(text="Hello"),
+        At(target=123456),
         AtAll(),
         Image(image_id="test_image_id", url="http://example.com/image.jpg"),
         Quote(
@@ -121,7 +121,7 @@ def test_message_chain_serialization():
             group_id=67890,
             sender_id=11111,
             target_id=22222,
-            origin=MessageChain([Plain("Original message")])
+            origin=MessageChain([Plain(text="Original message")])
         )
     ])
     
@@ -161,7 +161,7 @@ def test_message_chain_serialization():
 
 def test_message_chain_contains():
     """测试消息链的包含操作"""
-    chain = MessageChain([Plain("Hello"), At(123456), AtAll()])
+    chain = MessageChain([Plain(text="Hello"), At(target=123456), AtAll()])
     
     # 测试类型检查
     assert Plain in chain
@@ -169,31 +169,15 @@ def test_message_chain_contains():
     assert AtAll in chain
     
     # 测试组件检查
-    assert Plain("Hello") in chain
-    assert At(123456) in chain
-    assert At(789012) not in chain
+    assert Plain(text="Hello") in chain
+    assert At(target=123456) in chain
+    assert At(target=789012) not in chain
 
-def test_message_chain_methods():
-    """测试消息链的方法"""
-    chain = MessageChain([Plain("Hello"), At(123456), Plain("World")])
-    
-    # 测试 count 方法
-    assert chain.count(Plain) == 2
-    assert chain.count(At) == 1
-    
-    # 测试 index 方法
-    assert chain.index(Plain) == 0
-    assert chain.index(At) == 1
-    
-    # 测试 exclude 方法
-    filtered = chain.exclude(Plain)
-    assert len(filtered) == 1
-    assert isinstance(filtered[0], At)
 
 def test_message_chain_with_source():
     """测试带源信息的消息链"""
     source = Source(id=12345, time=datetime.now())
-    chain = MessageChain([source, Plain("Hello")])
+    chain = MessageChain([source, Plain(text="Hello")])
     
     assert chain.source is not None
     assert chain.source.id == 12345
@@ -206,9 +190,9 @@ def test_message_chain_with_quote():
         group_id=67890,
         sender_id=11111,
         target_id=22222,
-        origin=MessageChain([Plain("Original message")])
+        origin=MessageChain([Plain(text="Original message")])
     )
-    chain = MessageChain([quote, Plain("Reply")])
+    chain = MessageChain([quote, Plain(text="Reply")])
     
     assert len(chain) == 2
     assert isinstance(chain[0], Quote)
@@ -226,7 +210,7 @@ def test_message_chain_with_forward():
     node = ForwardMessageNode(
         sender_id=12345,
         sender_name="Test User",
-        message_chain=MessageChain([Plain("Test message")]),
+        message_chain=MessageChain([Plain(text="Test message")]),
         time=datetime.now()
     )
     forward = Forward(display=display, node_list=[node])
@@ -242,7 +226,7 @@ def test_message_chain_with_image():
         image_id="test_image_id",
         url="http://example.com/image.jpg"
     )
-    chain = MessageChain([image, Plain("Image description")])
+    chain = MessageChain([image, Plain(text="Image description")])
     
     assert len(chain) == 2
     assert isinstance(chain[0], Image)
@@ -255,9 +239,5 @@ def test_message_chain_validation():
     assert len(chain) == 0
     
     # 测试无效组件类型
-    with pytest.raises(TypeError):
-        MessageChain([123])  # 整数不是有效的消息组件
-    
-    # 测试无效的组件参数
     with pytest.raises(ValueError):
-        Image(path="nonexistent.jpg")  # 不存在的图片路径 
+        MessageChain([123])  # 整数不是有效的消息组件

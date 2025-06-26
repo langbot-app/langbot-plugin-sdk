@@ -98,13 +98,14 @@ class Message(pydantic.BaseModel):
             return None
         elif isinstance(self.content, str):
             return platform_message.MessageChain(
-                [platform_message.Plain(prefix_text + self.content)]
+                [platform_message.Plain(text=(prefix_text + self.content))]
             )
         elif isinstance(self.content, list):
             mc: list[platform_message.MessageComponent] = []
             for ce in self.content:
                 if ce.type == "text":
-                    mc.append(platform_message.Plain(ce.text))
+                    if ce.text is not None:
+                        mc.append(platform_message.Plain(text=ce.text))
                 elif ce.type == "image_url":
                     assert ce.image_url is not None
                     if ce.image_url.url.startswith("http"):
@@ -121,9 +122,9 @@ class Message(pydantic.BaseModel):
             if prefix_text:
                 for i, c in enumerate(mc):
                     if isinstance(c, platform_message.Plain):
-                        mc[i] = platform_message.Plain(prefix_text + c.text)
+                        mc[i] = platform_message.Plain(text=(prefix_text + c.text))
                         break
                 else:
-                    mc.insert(0, platform_message.Plain(prefix_text))
+                    mc.insert(0, platform_message.Plain(text=prefix_text))
 
             return platform_message.MessageChain(mc)

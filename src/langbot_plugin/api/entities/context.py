@@ -133,6 +133,12 @@ class EventContext(pydantic.BaseModel):
         event_class = getattr(events_module, event_name)
         event = event_class.model_validate(data["event"])
 
+        print(event)
+        print()
+        print(event.query.message_chain)
+        print(type(event.query.message_chain))
+        print(type(event))
+
         inst = cls(
             event=event,
         )
