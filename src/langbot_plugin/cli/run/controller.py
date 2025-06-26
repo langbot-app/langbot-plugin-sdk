@@ -121,7 +121,7 @@ class PluginRuntimeController:
 
         # initialize event listener component
         for component_container in self.plugin_container.components:
-            if component_container.manifest.kind == "EventListener":
+            if component_container.manifest.kind == EventListener.__kind__:
                 event_listener_cls = (
                     component_container.manifest.get_python_component_class()
                 )

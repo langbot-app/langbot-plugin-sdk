@@ -10,6 +10,7 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
+from langbot_plugin.runtime.plugin.container import PluginContainer
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -46,7 +47,17 @@ class ControlConnectionHandler(handler.Handler):
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
             event_context_data = data["event_context"]
             event_context = EventContext.parse_from_dict(event_context_data)
-            return handler.ActionResponse.success({})
+
+            emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(event_context)
+
+            return handler.ActionResponse.success(
+                {
+                    "emitted_plugins": [
+                        plugin.model_dump() for plugin in emitted_plugins
+                    ],
+                    "event_context": event_context.model_dump(),
+                }
+            )
 
 
 # {"action": "ping", "data": {}, "seq_id": 1}

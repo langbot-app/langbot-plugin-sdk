@@ -12,6 +12,8 @@ from langbot_plugin.api.entities.context import EventContext
 class EventListener(BaseComponent):
     """The event listener component."""
 
+    __kind__ = "EventListener"
+
     registered_handlers: dict[
         type[BaseEventModel], list[Callable[[EventContext], Coroutine[Any, Any, None]]]
     ] = pydantic.Field(default_factory=dict)
