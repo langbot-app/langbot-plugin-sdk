@@ -27,11 +27,7 @@ class MessageChain(pydantic.RootModel[list[MessageComponent]]):
     """Message chain, a list of message components."""
     
     def __init__(self, root: list[MessageComponent] = []):
-        """初始化消息链
-        
-        Args:
-            root: 消息组件列表，默认为空列表
-        """
+        """Initialize the message chain."""
         if not isinstance(root, list):
             raise ValueError("root must be a list")
         for item in root:
@@ -39,8 +35,34 @@ class MessageChain(pydantic.RootModel[list[MessageComponent]]):
                 raise ValueError(f"root must be a list of MessageComponent, but got {type(item)}")
         super().__init__(root=root)
     
+    @classmethod
+    def _get_component_types(cls) -> dict[str, type[MessageComponent]]:
+        """Get the component type mapping dictionary."""
+        return {
+            "Source": Source,
+            "Plain": Plain,
+            "Quote": Quote,
+            "At": At,
+            "AtAll": AtAll,
+            "Image": Image,
+            "Unknown": Unknown,
+            "Voice": Voice,
+            "Forward": Forward,
+            "File": File,
+            "WeChatMiniPrograms": WeChatMiniPrograms,
+            "WeChatForwardMiniPrograms": WeChatForwardMiniPrograms,
+            "WeChatEmoji": WeChatEmoji,
+            "WeChatLink": WeChatLink,
+            "WeChatForwardLink": WeChatForwardLink,
+            "WeChatForwardImage": WeChatForwardImage,
+            "WeChatForwardFile": WeChatForwardFile,
+            "WeChatAppMsg": WeChatAppMsg,
+            "WeChatForwardQuote": WeChatForwardQuote,
+            "WeChatFile": WeChatFile,
+        }
+    
     def get_first(self, t: type[MessageComponent]) -> MessageComponent | None:
-        """获取第一个指定类型的消息组件。"""
+        """Get the first message component of the specified type."""
         for component in self.root:
             if isinstance(component, t):
                 return component
@@ -108,19 +130,61 @@ class MessageChain(pydantic.RootModel[list[MessageComponent]]):
     
     @property
     def source(self):
-        """获取消息链中的 Source 组件。"""
+        """Get the Source component in the message chain."""
         return self.get_first(Source)
 
     @property
     def message_id(self):
-        """获取消息链的 message_id，如果没有 source 返回 -1。"""
+        """Get the message_id of the message chain, return -1 if there is no source."""
         src = self.source
         return src.id if src else -1
 
     def model_dump(self, **kwargs):
-        return [
-            component.model_dump() for component in self.root
-        ]
+        result = []
+        for component in self.root:
+            data = component.model_dump()
+            # Recursively process the MessageChain type field
+            for field_name, field_info in component.__class__.model_fields.items():
+                if field_info.annotation is MessageChain and field_name in data:
+                    field_value = getattr(component, field_name)
+                    if isinstance(field_value, MessageChain):
+                        data[field_name] = field_value.model_dump()
+            result.append(data)
+        return result
+    
+    @classmethod
+    def model_validate(cls, obj):
+        """Custom deserialization logic, create the correct MessageComponent subclass instance according to the type field, and recursively process the MessageChain field"""
+        if isinstance(obj, list):
+            components = []
+            component_types = cls._get_component_types()
+            for item in obj:
+                if isinstance(item, dict) and "type" in item:
+                    component_type = item["type"]
+                    if component_type in component_types:
+                        component_class = component_types[component_type]
+                        # Recursively process the MessageChain type field
+                        for field_name, field_info in component_class.model_fields.items():
+                            if field_info.annotation is MessageChain and field_name in item:
+                                field_value = item[field_name]
+                                if isinstance(field_value, MessageChain):
+                                    # It is already a MessageChain, no need to process
+                                    pass
+                                elif isinstance(field_value, list):
+                                    item[field_name] = MessageChain.model_validate(field_value)
+                        # Special processing of the time field of the Source class
+                        if component_type == "Source" and "time" in item:
+                            item["time"] = datetime.fromtimestamp(item["time"])
+                        components.append(component_class.model_validate(item))
+                    else:
+                        # Unknown type, create Unknown component
+                        components.append(Unknown(text=f"Unknown component type: {component_type}"))
+                else:
+                    # Not a dictionary or no type field, create Unknown component
+                    components.append(Unknown(text=f"Invalid component data: {item}"))
+            return cls(root=components)
+        else:
+            return super().model_validate(obj)
 
 
 
