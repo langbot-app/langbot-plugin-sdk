@@ -298,60 +298,6 @@ class Image(MessageComponent):
     def __str__(self):
         return "[Image]"
 
-    async def get_bytes(self) -> typing.Tuple[bytes, str]:
-        """Get the bytes and mime type of the image"""
-        if self.url:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(str(self.url))
-                response.raise_for_status()
-                return response.content, response.headers.get("Content-Type")
-        elif self.base64:
-            mime_type = "image/jpeg"
-
-            split_index = self.base64.find(";base64,")
-            if split_index == -1:
-                raise ValueError("Invalid base64 string")
-
-            mime_type = self.base64[5:split_index]
-            base64_data = self.base64[split_index + 8 :]
-
-            return base64.b64decode(base64_data), mime_type
-        elif self.path:
-            async with aiofiles.open(self.path, "rb") as f:
-                return await f.read(), "image/jpeg"
-        else:
-            raise ValueError("Can not get bytes from image")
-
-    @classmethod
-    async def from_local(
-        cls,
-        filename: typing.Union[str, Path, None] = None,
-        content: typing.Optional[bytes] = None,
-    ) -> "Image":
-        """Load the image from the local file path, passed in the form of base64.
-
-        Args:
-            filename: Load the image from the local file path, one of `content` and `filename`.
-            content: Load the image from the local file content, one of `content` and `filename`.
-
-        Returns:
-            Image: The image object.
-        """
-        if content:
-            pass
-        elif filename:
-            path = Path(filename)
-            import aiofiles
-
-            async with aiofiles.open(path, "rb") as f:
-                content = await f.read()
-        else:
-            raise ValueError("Please specify the image path or image content!")
-        import base64
-
-        img = cls(base64=base64.b64encode(content).decode())
-        return img
-
 
 class Unknown(MessageComponent):
     """Unknown."""
@@ -383,33 +329,6 @@ class Voice(MessageComponent):
 
     def __str__(self):
         return "[Voice]"
-
-    @classmethod
-    async def from_local(
-        cls,
-        filename: typing.Union[str, Path, None] = None,
-        content: typing.Optional[bytes] = None,
-    ) -> "Voice":
-        """Load the voice from the local file path, passed in the form of base64.
-
-        Args:
-            filename: Load the voice from the local file path, one of `content` and `filename`.
-            content: Load the voice from the local file content, one of `content` and `filename`.
-        """
-        if content:
-            pass
-        if filename:
-            path = Path(filename)
-            import aiofiles
-
-            async with aiofiles.open(path, "rb") as f:
-                content = await f.read()
-        else:
-            raise ValueError("Please specify the voice path or voice content!")
-        import base64
-
-        img = cls(base64=base64.b64encode(content).decode())
-        return img
 
 
 class ForwardMessageNode(pydantic.BaseModel):
