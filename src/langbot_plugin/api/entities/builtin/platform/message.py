@@ -23,7 +23,7 @@ class MessageComponent(pydantic.BaseModel):
     """Type of the message component."""
 
 
-class MessageChain(pydantic.RootModel[list[MessageComponent]]):
+class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageComponent]]]):
     """Message chain, a list of message components."""
     
     def __init__(self, root: list[MessageComponent] = []):
@@ -155,6 +155,7 @@ class MessageChain(pydantic.RootModel[list[MessageComponent]]):
     @classmethod
     def model_validate(cls, obj):
         """Custom deserialization logic, create the correct MessageComponent subclass instance according to the type field, and recursively process the MessageChain field"""
+        
         if isinstance(obj, list):
             components = []
             component_types = cls._get_component_types()
@@ -187,7 +188,6 @@ class MessageChain(pydantic.RootModel[list[MessageComponent]]):
             return super().model_validate(obj)
 
 
-
 class Source(MessageComponent):
     """Source. Contains basic information about the message."""
 
@@ -195,16 +195,25 @@ class Source(MessageComponent):
     """Message component type."""
     id: typing.Union[int, str]
     """The identification number of the message, used for reference reply (the Source type is always the first element of MessageChain)."""
-    time: datetime
+    time: datetime = pydantic.Field(serialization_alias="timestamp")
     """Message time."""
 
     def model_dump(self, **kwargs):
-        return {
-            "type": self.type,
-            "id": self.id,
-            "time": self.time.timestamp(),
-        }
+        data = super().model_dump(**kwargs)
+        # 将datetime转换为时间戳
+        if "time" in data:
+            data["timestamp"] = int(self.time.timestamp())
+            del data["time"]
+        return data
 
+    @classmethod
+    def model_validate(cls, obj):
+        if isinstance(obj, dict) and "timestamp" in obj:
+            # 将时间戳转换为datetime
+            timestamp = obj["timestamp"]
+            obj["time"] = datetime.fromtimestamp(timestamp)
+            del obj["timestamp"]
+        return super().model_validate(obj)
 
 class Plain(MessageComponent):
     """Plain text."""

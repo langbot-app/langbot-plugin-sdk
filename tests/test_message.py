@@ -1,4 +1,5 @@
 import pytest # type: ignore
+import json
 from datetime import datetime
 from pathlib import Path
 from pydantic import ValidationError
@@ -241,3 +242,108 @@ def test_message_chain_validation():
     # 测试无效组件类型
     with pytest.raises(ValueError):
         MessageChain([123])  # 整数不是有效的消息组件
+
+def test_person_message_received_serialization():
+    """测试 PersonMessageReceived 事件的自动序列化"""
+    from langbot_plugin.api.entities.events import PersonMessageReceived
+    from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain, At
+    
+    # 创建一个消息链
+    message_chain = MessageChain([Plain(text="Hello"), At(target=123456)])
+    
+    # 创建 PersonMessageReceived 事件
+    event = PersonMessageReceived(
+        launcher_type="person",
+        launcher_id="123456",
+        sender_id="789012",
+        message_chain=message_chain
+    )
+    
+    # 测试自动序列化
+    serialized = event.model_dump()
+    
+    # 验证序列化结果
+    assert serialized["launcher_type"] == "person"
+    assert serialized["launcher_id"] == "123456"
+    assert serialized["sender_id"] == "789012"
+    assert "message_chain" in serialized
+    
+    # 验证 message_chain 被正确序列化
+    message_chain_data = serialized["message_chain"]
+    assert isinstance(message_chain_data, list)
+    assert len(message_chain_data) == 2
+    
+    # 验证 Plain 组件
+    assert message_chain_data[0]["type"] == "Plain"
+    assert message_chain_data[0]["text"] == "Hello"
+    
+    # 验证 At 组件
+    assert message_chain_data[1]["type"] == "At"
+    assert message_chain_data[1]["target"] == 123456
+
+def test_source_time_serialization():
+    """测试 Source 组件的 time 字段序列化"""
+    from langbot_plugin.api.entities.builtin.platform.message import Source, MessageChain, Plain
+    from datetime import datetime
+    
+    # 创建一个带时间的 Source 组件
+    current_time = datetime.now()
+    source = Source(id=12345, time=current_time)
+    
+    # 测试 Source 组件的序列化
+    source_data = source.model_dump()
+    
+    # 验证 time 字段被正确序列化
+    assert "timestamp" in source_data  # 使用 serialization_alias
+    assert source_data["timestamp"] == int(current_time.timestamp())  # 使用整数时间戳
+    
+    # 测试在 MessageChain 中的序列化
+    chain = MessageChain([source, Plain(text="Hello")])
+    chain_data = chain.model_dump()
+    
+    # 验证 MessageChain 中的 Source 组件 time 字段被正确序列化
+    assert len(chain_data) == 2
+    assert chain_data[0]["type"] == "Source"
+    assert "timestamp" in chain_data[0]
+    assert chain_data[0]["timestamp"] == int(current_time.timestamp())  # 使用整数时间戳
+    
+    # 测试反序列化
+    deserialized_source = Source.model_validate(source_data)
+    # 由于时间戳转换可能损失精度，我们比较整数时间戳
+    assert int(deserialized_source.time.timestamp()) == int(current_time.timestamp())
+
+def test_person_message_received_with_source():
+    """测试 PersonMessageReceived 事件中带有 Source 的 message_chain 的序列化和反序列化"""
+    from langbot_plugin.api.entities.events import PersonMessageReceived
+    from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain, Source
+    from datetime import datetime
+
+    current_time = datetime.now()
+    source = Source(id=12345, time=current_time)
+    message_chain = MessageChain([source, Plain(text="Hello")])
+
+    event = PersonMessageReceived(
+        launcher_type="person",
+        launcher_id="123456",
+        sender_id="789012",
+        message_chain=message_chain
+    )
+
+    # 序列化
+    serialized = event.model_dump()
+    assert "message_chain" in serialized
+    chain_data = serialized["message_chain"]
+    assert isinstance(chain_data, list)
+    assert chain_data[0]["type"] == "Source"
+    assert chain_data[0]["timestamp"] == int(current_time.timestamp())
+    assert chain_data[1]["type"] == "Plain"
+    assert chain_data[1]["text"] == "Hello"
+
+    # 反序列化
+    from langbot_plugin.api.entities.events import PersonMessageReceived as PRcv
+    deserialized_event = PRcv.model_validate(serialized)
+    assert isinstance(deserialized_event.message_chain, MessageChain)
+    assert isinstance(deserialized_event.message_chain[0], Source)
+    assert int(deserialized_event.message_chain[0].time.timestamp()) == int(current_time.timestamp())
+    assert isinstance(deserialized_event.message_chain[1], Plain)
+    assert deserialized_event.message_chain[1].text == "Hello"

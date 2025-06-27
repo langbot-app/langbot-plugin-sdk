@@ -50,12 +50,16 @@ class ControlConnectionHandler(handler.Handler):
 
             emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(event_context)
 
+            event_context_dump = event_context.model_dump()
+
+            print(event_context_dump)
+
             return handler.ActionResponse.success(
                 {
                     "emitted_plugins": [
                         plugin.model_dump() for plugin in emitted_plugins
                     ],
-                    "event_context": event_context.model_dump(),
+                    "event_context": event_context_dump,
                 }
             )
 

@@ -21,7 +21,7 @@ class EventContext(pydantic.BaseModel):
     event_name: str
     """事件名称"""
 
-    event: BaseEventModel
+    event: pydantic.SerializeAsAny[BaseEventModel]
     """此次事件的对象，具体类型为handler注册时指定监听的类型，可查看events.py中的定义"""
 
     is_prevent_default: bool = False
@@ -131,13 +131,8 @@ class EventContext(pydantic.BaseModel):
     def parse_from_dict(cls, data: dict[str, Any]) -> EventContext:
         event_name = data["event_name"]
         event_class = getattr(events_module, event_name)
+        print(data['event'])
         event = event_class.model_validate(data["event"])
-
-        print(event)
-        print()
-        print(event.query.message_chain)
-        print(type(event.query.message_chain))
-        print(type(event))
 
         inst = cls(
             event=event,
@@ -148,6 +143,14 @@ class EventContext(pydantic.BaseModel):
         inst.return_value = data["return_value"]
         print(inst)
         return inst
+    
+    def update(
+        self,
+        **kwargs
+    ):
+        """更新事件上下文"""
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def model_dump(self, **kwargs):
         return {
