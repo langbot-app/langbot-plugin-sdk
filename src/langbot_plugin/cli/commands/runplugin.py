@@ -51,9 +51,11 @@ async def arun_plugin_process(stdio: bool = False) -> None:
         stdio,
         ws_debug_url,
     )
+
+    controller_run_task = asyncio.create_task(controller.run())
     await controller.mount()
-    await controller.initialize()
-    await controller.run()
+    
+    await controller_run_task
 
 
 def run_plugin_process(stdio: bool = False) -> None:

@@ -30,15 +30,21 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success({})
 
-        @self.action(PluginToRuntimeAction.GET_PLUGIN_SETTINGS)
-        async def get_plugin_settings(data: dict[str, Any]) -> handler.ActionResponse:
-            lb_resp = await self.context.control_handler.call_action(
-                RuntimeToLangBotAction.GET_PLUGIN_SETTINGS, data
-            )
+    async def initialize_plugin(self, plugin_settings: dict[str, Any]) -> dict[str, Any]:
+        resp = await self.call_action(RuntimeToPluginAction.INITIALIZE_PLUGIN, {
+            "plugin_settings": plugin_settings
+        })
 
-            return handler.ActionResponse.success(lb_resp)
+        return resp
 
     async def get_plugin_container(self) -> dict[str, Any]:
         resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER, {})
+
+        return resp
+    
+    async def emit_event(self, event_context: dict[str, Any]) -> dict[str, Any]:
+        resp = await self.call_action(RuntimeToPluginAction.EMIT_EVENT, {
+            "event_context": event_context
+        })
 
         return resp

@@ -67,6 +67,9 @@ class PluginRuntimeController:
             components=components_containers,
         )
 
+    async def run(self) -> None:
+        await self._controller_task
+
     async def mount(self) -> None:
         print("Mounting plugin...")
         controller: Controller
@@ -74,7 +77,7 @@ class PluginRuntimeController:
         self._connection_waiter = asyncio.Future()
 
         async def new_connection_callback(connection: Connection):
-            self.handler = PluginRuntimeHandler(connection)
+            self.handler = PluginRuntimeHandler(connection, self.initialize)
             self.handler.plugin_container = self.plugin_container
             self._connection_waiter.set_result(connection)
             await self.handler.run()
@@ -94,22 +97,20 @@ class PluginRuntimeController:
         _ = await self._connection_waiter
 
         # send manifest info to runtime
-        print("get_plugin_settings")
-        plugin_settings = await self.handler.get_plugin_settings()
-        print("plugin_settings", plugin_settings)
-        self.plugin_container.enabled = plugin_settings["enabled"]
-        self.plugin_container.priority = plugin_settings["priority"]
-        self.plugin_container.plugin_config = plugin_settings["plugin_config"]
-
         self.plugin_container.status = RuntimeContainerStatus.MOUNTED
+
+        print("Plugin mounted")
 
         # register plugin
         await self.handler.register_plugin()
 
-        print("Plugin mounted")
-
-    async def initialize(self) -> None:
+    async def initialize(self, plugin_settings: dict[str, typing.Any]) -> None:
         print("Initializing plugin...")
+        print("plugin_settings", plugin_settings)
+
+        self.plugin_container.enabled = plugin_settings["enabled"]
+        self.plugin_container.priority = plugin_settings["priority"]
+        self.plugin_container.plugin_config = plugin_settings["plugin_config"]
         # initialize plugin instance
         plugin_cls = self.plugin_container.manifest.get_python_component_class()
         assert isinstance(plugin_cls, type(BasePlugin))
@@ -135,8 +136,7 @@ class PluginRuntimeController:
 
         print("Plugin initialized")
 
-    async def run(self) -> None:
-        await self._controller_task
+        self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
 
 
 # {"seq_id": 1, "code": 0, "data": {"enabled": true, "priority": 0, "plugin_config": {}}}

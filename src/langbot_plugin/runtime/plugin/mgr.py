@@ -6,6 +6,7 @@ from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
 
 
 class PluginManager:
@@ -36,8 +37,31 @@ class PluginManager:
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
         )
-        self.plugins.append(plugin_container)
+
+        # get plugin settings from LangBot
+        plugin_settings = await self.context.control_handler.call_action(
+            RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
+            {
+                "plugin_author": plugin_container.manifest.metadata.author,
+                "plugin_name": plugin_container.manifest.metadata.name,
+            },
+        )
+
+        print("initialize plugin with plugin_settings", plugin_settings)
+
+        # initialize plugin
+        await handler.initialize_plugin(plugin_settings)
+
+        # get plugin container from plugin
+        plugin_container = runtime_plugin_container.PluginContainer.from_dict(
+            await handler.get_plugin_container()
+        )
+
+        plugin_container._runtime_plugin_handler = handler
+
         print("register_plugin", plugin_container)
+
+        self.plugins.append(plugin_container)
 
     async def emit_event(self, event_context: EventContext) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
@@ -50,27 +74,17 @@ class PluginManager:
             if not plugin.enabled:
                 continue
 
-            event_listener_component: runtime_plugin_container.ComponentContainer | None = None
-
-            for component in plugin.components:
-                if component.manifest.kind == EventListener.__kind__:
-                    event_listener_component = component
-                    break
-
-            if event_listener_component is None:
+            if plugin._runtime_plugin_handler is None:
                 continue
 
-            # emit event to event listener component
-            event_listener_inst = event_listener_component.component_instance
-            assert isinstance(event_listener_inst, EventListener)
+            resp = await plugin._runtime_plugin_handler.emit_event(event_context.model_dump())
 
-            if event_context.event.__class__ not in event_listener_inst.registered_handlers:
-                continue
-
-            for handler in event_listener_inst.registered_handlers[event_context.event.__class__]:
-                await handler(event_context)
+            if resp["emitted"]:
+                emitted_plugins.append(plugin)
 
             emitted_plugins.append(plugin)
+
+            event_context = EventContext.parse_from_dict(resp["event_context"])
 
             if event_context.is_prevented_postorder():
                 break

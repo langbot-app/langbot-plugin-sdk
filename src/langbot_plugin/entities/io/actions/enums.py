@@ -17,12 +17,12 @@ class PluginToRuntimeAction(ActionType):
     """The action from plugin to runtime."""
 
     REGISTER_PLUGIN = "register_plugin"
-    GET_PLUGIN_SETTINGS = "get_plugin_settings"
 
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
 
+    INITIALIZE_PLUGIN = "initialize_plugin"
     GET_PLUGIN_CONTAINER = "get_plugin_container"
     EMIT_EVENT = "emit_event"
 
