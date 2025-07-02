@@ -131,7 +131,6 @@ class EventContext(pydantic.BaseModel):
     def parse_from_dict(cls, data: dict[str, Any]) -> EventContext:
         event_name = data["event_name"]
         event_class = getattr(events_module, event_name)
-        print(data['event'])
         event = event_class.model_validate(data["event"])
 
         inst = cls(
@@ -141,7 +140,6 @@ class EventContext(pydantic.BaseModel):
         inst.is_prevent_default = data["is_prevent_default"]
         inst.is_prevent_postorder = data["is_prevent_postorder"]
         inst.return_value = data["return_value"]
-        print(inst)
         return inst
     
     def update(
