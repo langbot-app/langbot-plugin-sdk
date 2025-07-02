@@ -11,6 +11,7 @@ class CommonAction(ActionType):
     """The common action."""
 
     PING = "ping"
+    HEARTBEAT = "heartbeat"
 
 
 class PluginToRuntimeAction(ActionType):

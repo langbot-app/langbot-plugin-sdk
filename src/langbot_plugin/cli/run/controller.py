@@ -21,6 +21,7 @@ from langbot_plugin.runtime.io.controller import Controller
 from langbot_plugin.api.definition.plugin import NonePlugin, BasePlugin
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.entities.io.errors import ConnectionClosedError
 
 
 class PluginRuntimeController:
@@ -82,11 +83,17 @@ class PluginRuntimeController:
             self._connection_waiter.set_result(connection)
             await self.handler.run()
 
+        async def make_connection_failed_callback(controller: Controller):
+            print("Connection failed, exit")
+            self._connection_waiter.set_exception(ConnectionClosedError("Connection failed"))
+            exit(1)
+
         if self._stdio:
             controller = stdio_controller_server.StdioServerController()
         else:
             controller = ws_controller_client.WebSocketClientController(
-                self.ws_debug_url
+                self.ws_debug_url,
+                make_connection_failed_callback
             )
 
         self._controller_task = asyncio.create_task(

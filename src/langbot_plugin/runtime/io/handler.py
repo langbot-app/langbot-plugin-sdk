@@ -53,7 +53,6 @@ class Handler(abc.ABC):
                     reconnected = await self._disconnect_callback(self)
                     if reconnected:
                         continue
-                print("Connection closed")
                 break
             if message is None:
                 continue
