@@ -90,7 +90,7 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
             return item in self.root
     
     def __str__(self):
-        return "".join(str(component) for component in self.root)
+        return "".join(str(component) for component in self.root if not isinstance(component, Source))
     
     def __repr__(self):
         return f"MessageChain({self.root})"

@@ -60,6 +60,9 @@ class PluginRuntimeHandler(Handler):
 
                     assert isinstance(component.component_instance, EventListener)
 
+                    if event_context.event.__class__ not in component.component_instance.registered_handlers:
+                        continue
+
                     for handler in component.component_instance.registered_handlers[
                         event_context.event.__class__
                     ]:
