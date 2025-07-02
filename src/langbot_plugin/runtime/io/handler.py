@@ -60,6 +60,7 @@ class Handler(abc.ABC):
             async def handle_message(message: str):
                 # sh*t, i dont really know how to use generic type here
                 # so just use dict[str, Any] for now
+                # 2025/07/02: i know now, learned from dify-plugin-sdk, but maybe i will implement it later
                 req_data = json.loads(message)
                 seq_id = req_data["seq_id"] if "seq_id" in req_data else -1
 
