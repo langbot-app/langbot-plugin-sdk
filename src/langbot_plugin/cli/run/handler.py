@@ -8,9 +8,11 @@ from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.runtime.plugin.container import PluginContainer
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.api.entities import events, context
+from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+from langbot_plugin.api.definition.components.tool.tool import Tool
 
 
 class PluginRuntimeHandler(Handler):
@@ -77,6 +79,37 @@ class PluginRuntimeHandler(Handler):
                     "event_context": event_context.model_dump(),
                 }
             )
+        
+        @self.action(RuntimeToPluginAction.CALL_TOOL)
+        async def call_tool(data: dict[str, typing.Any]) -> ActionResponse:
+            """Call a tool.
+            """
+            tool_name = data["tool_name"]
+            tool_parameters = data["tool_parameters"]
+
+            for component in self.plugin_container.components:
+                if component.manifest.kind == Tool.__kind__:
+                    if component.manifest.metadata.name != tool_name:
+                        continue
+
+                    if isinstance(component.component_instance, NoneComponent):
+                        return ActionResponse.error(
+                            f"Tool is not initialized"
+                        )
+                    
+                    assert isinstance(component.component_instance, Tool)
+
+                    tool_instance = component.component_instance
+                    resp = await tool_instance.call(tool_parameters)
+
+                    return ActionResponse.success(
+                        data={
+                            "tool_response": resp,
+                        }
+                    )
+
+            return ActionResponse.error(f"Tool {tool_name} not found")
+    
 
     async def register_plugin(self) -> dict[str, typing.Any]:
         resp = await self.call_action(

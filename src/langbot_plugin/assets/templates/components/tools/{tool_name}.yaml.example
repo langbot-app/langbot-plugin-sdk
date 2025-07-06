@@ -9,7 +9,7 @@ metadata:
     en_US: '{{ tool_description }}'
     zh_CN: '{{ tool_description }}'
 spec:
-  params: []
+  parameters: []
   llm_prompt: '{{ tool_description }}'
 execution:
   python:

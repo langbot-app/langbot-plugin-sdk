@@ -48,3 +48,11 @@ class PluginConnectionHandler(handler.Handler):
         })
 
         return resp
+
+    async def call_tool(self, tool_name: str, tool_parameters: dict[str, Any]) -> dict[str, Any]:
+        resp = await self.call_action(RuntimeToPluginAction.CALL_TOOL, {
+            "tool_name": tool_name,
+            "tool_parameters": tool_parameters
+        })
+
+        return resp

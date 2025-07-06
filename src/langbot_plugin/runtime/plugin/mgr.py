@@ -5,7 +5,9 @@ from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
+from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
 
 
@@ -94,3 +96,29 @@ class PluginManager:
                 setattr(event_context.event, key, event_context.get_return_value(key))
 
         return emitted_plugins, event_context
+
+    async def list_tools(self) -> list[ComponentManifest]:
+        tools: list[ComponentManifest] = []
+        
+        for plugin in self.plugins:
+            for component in plugin.components:
+                if component.manifest.kind == Tool.__kind__:
+                    tools.append(component.manifest)
+
+        return tools
+
+    async def call_tool(self, tool_name: str, tool_parameters: dict[str, typing.Any]) -> dict[str, typing.Any]:
+        for plugin in self.plugins:
+            for component in plugin.components:
+                if component.manifest.kind == Tool.__kind__:
+                    if component.manifest.metadata.name != tool_name:
+                        continue
+                    
+                    if plugin._runtime_plugin_handler is None:
+                        continue
+                    
+                    resp = await plugin._runtime_plugin_handler.call_tool(tool_name, tool_parameters)
+
+                    return resp["tool_response"]
+        
+        return {}

@@ -21,6 +21,7 @@ from langbot_plugin.runtime.io.controller import Controller
 from langbot_plugin.api.definition.plugin import NonePlugin, BasePlugin
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 
 
@@ -140,6 +141,14 @@ class PluginRuntimeController:
                 )
                 await component_container.component_instance.initialize()
                 break
+
+        # initialize tool component
+        for component_container in self.plugin_container.components:
+            if component_container.manifest.kind == Tool.__kind__:
+                tool_cls = component_container.manifest.get_python_component_class()
+                assert isinstance(tool_cls, type(Tool))
+                component_container.component_instance = tool_cls()
+                await component_container.component_instance.initialize()
 
         print("Plugin initialized")
 

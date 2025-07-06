@@ -11,3 +11,4 @@ class {{ tool_attr }}(Tool):
 
     async def call(self, params: dict[str, Any]) -> dict[str, Any]:
         """Fill your tool code here"""
+        return {}

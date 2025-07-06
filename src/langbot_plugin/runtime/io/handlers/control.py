@@ -63,6 +63,29 @@ class ControlConnectionHandler(handler.Handler):
                 }
             )
 
+        @self.action(LangBotToRuntimeAction.LIST_TOOLS)
+        async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
+            tools = await self.context.plugin_mgr.list_tools()
+            return handler.ActionResponse.success(
+                {
+                    "tools": [
+                        tool.model_dump() for tool in tools
+                    ]
+                }
+            )
+
+        @self.action(LangBotToRuntimeAction.CALL_TOOL)
+        async def call_tool(data: dict[str, Any]) -> handler.ActionResponse:
+            tool_name = data["tool_name"]
+            tool_parameters = data["tool_parameters"]
+
+            resp = await self.context.plugin_mgr.call_tool(tool_name, tool_parameters)
+
+            return handler.ActionResponse.success(
+                {
+                    "tool_response": resp,
+                }
+            )
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}
