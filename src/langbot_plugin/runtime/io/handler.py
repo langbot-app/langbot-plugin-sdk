@@ -43,6 +43,13 @@ class Handler(abc.ABC):
 
         self._disconnect_callback = disconnect_callback
 
+    def set_disconnect_callback(
+        self,
+        disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]]
+        | None = None,
+    ):
+        self._disconnect_callback = disconnect_callback
+
     async def run(self) -> None:
         while True:
             message = None

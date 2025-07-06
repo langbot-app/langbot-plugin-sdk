@@ -1,7 +1,7 @@
 # handle connection to/from plugin
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
@@ -20,7 +20,14 @@ class PluginConnectionHandler(handler.Handler):
     def __init__(
         self, connection: connection.Connection, context: context_module.RuntimeContext
     ):
-        super().__init__(connection)
+        async def disconnect_callback(hdl: handler.Handler):
+            for plugin_container in self.context.plugin_mgr.plugins:
+                if plugin_container._runtime_plugin_handler == self:
+                    print(f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect")
+                    await self.context.plugin_mgr.remove_plugin(plugin_container)
+                    break
+
+        super().__init__(connection, disconnect_callback)
         self.context = context
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)

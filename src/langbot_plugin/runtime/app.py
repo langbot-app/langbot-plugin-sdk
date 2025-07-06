@@ -14,6 +14,7 @@ from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_cls
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
+from langbot_plugin.runtime.io import handler
 
 
 class ControlConnectionMode(Enum):
@@ -82,10 +83,11 @@ class RuntimeApplication:
 
         # ==== plugin debug server ====
         async def new_plugin_debug_connection_callback(connection: Connection):
-            handler = plugin_handler_cls.PluginConnectionHandler(
+            plugin_handler = plugin_handler_cls.PluginConnectionHandler(
                 connection, self.context
             )
-            await self.context.plugin_mgr.add_plugin_handler(handler)
+
+            await self.context.plugin_mgr.add_plugin_handler(plugin_handler)
 
         if self.context.ws_debug_server:
             tasks.append(

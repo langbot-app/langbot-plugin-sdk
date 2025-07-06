@@ -31,6 +31,15 @@ class PluginManager:
 
         await handler.run()
 
+    async def remove_plugin_handler(
+        self,
+        handler: runtime_plugin_handler_cls.PluginConnectionHandler,
+    ):
+        if handler not in self.plugin_handlers:
+            return
+        
+        self.plugin_handlers.remove(handler)
+
     async def register_plugin(
         self,
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
@@ -64,6 +73,15 @@ class PluginManager:
         print("register_plugin", plugin_container)
 
         self.plugins.append(plugin_container)
+        
+    async def remove_plugin(
+        self,
+        plugin_container: runtime_plugin_container.PluginContainer,
+    ):
+        if plugin_container._runtime_plugin_handler is not None:
+            await self.remove_plugin_handler(plugin_container._runtime_plugin_handler)
+
+        self.plugins.remove(plugin_container)
 
     async def emit_event(self, event_context: EventContext) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
