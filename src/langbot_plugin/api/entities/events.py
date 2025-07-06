@@ -12,6 +12,7 @@ from langbot_plugin.api.entities.builtin.provider import session as provider_ses
 
 class BaseEventModel(pydantic.BaseModel):
     """事件模型基类"""
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -28,12 +29,14 @@ class PersonMessageReceived(BaseEventModel):
     sender_id: typing.Union[int, str]
     """发送者ID(QQ号)"""
 
-    message_chain: platform_message.MessageChain = pydantic.Field(serialization_alias="message_chain")
+    message_chain: platform_message.MessageChain = pydantic.Field(
+        serialization_alias="message_chain"
+    )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
         return v.model_dump()
-    
+
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
         return platform_message.MessageChain.model_validate(v)
@@ -48,12 +51,14 @@ class GroupMessageReceived(BaseEventModel):
 
     sender_id: typing.Union[int, str]
 
-    message_chain: platform_message.MessageChain = pydantic.Field(serialization_alias="message_chain")
+    message_chain: platform_message.MessageChain = pydantic.Field(
+        serialization_alias="message_chain"
+    )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
         return v.model_dump()
-    
+
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
         return platform_message.MessageChain.model_validate(v)

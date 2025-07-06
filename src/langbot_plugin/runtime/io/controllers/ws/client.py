@@ -12,7 +12,13 @@ from langbot_plugin.runtime.io.controller import Controller
 class WebSocketClientController(Controller):
     """The controller for WebSocket client."""
 
-    def __init__(self, ws_url: str, make_connection_failed_callback: Callable[[Controller], Coroutine[Any, Any, None]]):
+    def __init__(
+        self,
+        ws_url: str,
+        make_connection_failed_callback: Callable[
+            [Controller], Coroutine[Any, Any, None]
+        ],
+    ):
         self.ws_url = ws_url
         self.make_connection_failed_callback = make_connection_failed_callback
 

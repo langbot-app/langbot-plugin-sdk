@@ -37,7 +37,7 @@ class PluginManager:
     ):
         if handler not in self.plugin_handlers:
             return
-        
+
         self.plugin_handlers.remove(handler)
 
     async def register_plugin(
@@ -73,7 +73,7 @@ class PluginManager:
         print("register_plugin", plugin_container)
 
         self.plugins.append(plugin_container)
-        
+
     async def remove_plugin(
         self,
         plugin_container: runtime_plugin_container.PluginContainer,
@@ -83,12 +83,16 @@ class PluginManager:
 
         self.plugins.remove(plugin_container)
 
-    async def emit_event(self, event_context: EventContext) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
+    async def emit_event(
+        self, event_context: EventContext
+    ) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
 
         for plugin in self.plugins:
-
-            if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
+            if (
+                plugin.status
+                != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+            ):
                 continue
 
             if not plugin.enabled:
@@ -97,7 +101,9 @@ class PluginManager:
             if plugin._runtime_plugin_handler is None:
                 continue
 
-            resp = await plugin._runtime_plugin_handler.emit_event(event_context.model_dump())
+            resp = await plugin._runtime_plugin_handler.emit_event(
+                event_context.model_dump()
+            )
 
             if resp["emitted"]:
                 emitted_plugins.append(plugin)
@@ -117,7 +123,7 @@ class PluginManager:
 
     async def list_tools(self) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
-        
+
         for plugin in self.plugins:
             for component in plugin.components:
                 if component.manifest.kind == Tool.__kind__:
@@ -125,18 +131,22 @@ class PluginManager:
 
         return tools
 
-    async def call_tool(self, tool_name: str, tool_parameters: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    async def call_tool(
+        self, tool_name: str, tool_parameters: dict[str, typing.Any]
+    ) -> dict[str, typing.Any]:
         for plugin in self.plugins:
             for component in plugin.components:
                 if component.manifest.kind == Tool.__kind__:
                     if component.manifest.metadata.name != tool_name:
                         continue
-                    
+
                     if plugin._runtime_plugin_handler is None:
                         continue
-                    
-                    resp = await plugin._runtime_plugin_handler.call_tool(tool_name, tool_parameters)
+
+                    resp = await plugin._runtime_plugin_handler.call_tool(
+                        tool_name, tool_parameters
+                    )
 
                     return resp["tool_response"]
-        
+
         return {}

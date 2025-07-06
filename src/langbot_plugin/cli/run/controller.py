@@ -86,15 +86,16 @@ class PluginRuntimeController:
 
         async def make_connection_failed_callback(controller: Controller):
             print("Connection failed, exit")
-            self._connection_waiter.set_exception(ConnectionClosedError("Connection failed"))
+            self._connection_waiter.set_exception(
+                ConnectionClosedError("Connection failed")
+            )
             exit(1)
 
         if self._stdio:
             controller = stdio_controller_server.StdioServerController()
         else:
             controller = ws_controller_client.WebSocketClientController(
-                self.ws_debug_url,
-                make_connection_failed_callback
+                self.ws_debug_url, make_connection_failed_callback
             )
 
         self._controller_task = asyncio.create_task(

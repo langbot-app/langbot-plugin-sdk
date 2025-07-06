@@ -49,15 +49,15 @@ class Conversation(pydantic.BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
-        
+
     @pydantic.field_serializer("create_time")
     def serialize_create_time(self, v, _info):
         return v.timestamp()
-    
+
     @pydantic.field_validator("create_time", mode="before")
     def validate_create_time(cls, v):
         return datetime.datetime.fromtimestamp(v)
-    
+
     @pydantic.field_serializer("update_time")
     def serialize_update_time(self, v, _info):
         return v.timestamp()
@@ -101,19 +101,19 @@ class Session(pydantic.BaseModel):
     @pydantic.field_serializer("launcher_type")
     def serialize_launcher_type(self, v, _info):
         return v.value
-    
+
     @pydantic.field_validator("launcher_type", mode="before")
     def validate_launcher_type(cls, v):
         return LauncherTypes(v)
-        
+
     @pydantic.field_serializer("create_time")
     def serialize_create_time(self, v, _info):
         return v.timestamp()
-    
+
     @pydantic.field_validator("create_time", mode="before")
     def validate_create_time(cls, v):
         return datetime.datetime.fromtimestamp(v)
-    
+
     @pydantic.field_serializer("update_time")
     def serialize_update_time(self, v, _info):
         return v.timestamp()

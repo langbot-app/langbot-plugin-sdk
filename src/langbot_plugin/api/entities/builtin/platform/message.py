@@ -25,16 +25,18 @@ class MessageComponent(pydantic.BaseModel):
 
 class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageComponent]]]):
     """Message chain, a list of message components."""
-    
+
     def __init__(self, root: list[MessageComponent] = []):
         """Initialize the message chain."""
         if not isinstance(root, list):
             raise ValueError("root must be a list")
         for item in root:
             if not isinstance(item, MessageComponent):
-                raise ValueError(f"root must be a list of MessageComponent, but got {type(item)}")
+                raise ValueError(
+                    f"root must be a list of MessageComponent, but got {type(item)}"
+                )
         super().__init__(root=root)
-    
+
     @classmethod
     def _get_component_types(cls) -> dict[str, type[MessageComponent]]:
         """Get the component type mapping dictionary."""
@@ -60,74 +62,80 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
             "WeChatForwardQuote": WeChatForwardQuote,
             "WeChatFile": WeChatFile,
         }
-    
+
     def get_first(self, t: type[MessageComponent]) -> MessageComponent | None:
         """Get the first message component of the specified type."""
         for component in self.root:
             if isinstance(component, t):
                 return component
         return None
-    
+
     def __len__(self):
         return len(self.root)
-    
+
     def __getitem__(self, index: int) -> MessageComponent:
         return self.root[index]
-    
+
     def __setitem__(self, index: int, value: MessageComponent):
         self.root[index] = value
-    
+
     def __delitem__(self, index: int):
         del self.root[index]
-    
+
     def __iter__(self):
         return iter(self.root)
-    
-    def __contains__(self, item: typing.Union[MessageComponent, type[MessageComponent]]):
+
+    def __contains__(
+        self, item: typing.Union[MessageComponent, type[MessageComponent]]
+    ):
         if isinstance(item, type):
             return any(isinstance(component, item) for component in self.root)
         else:
             return item in self.root
-    
+
     def __str__(self):
-        return "".join(str(component) for component in self.root if not isinstance(component, Source))
-    
+        return "".join(
+            str(component)
+            for component in self.root
+            if not isinstance(component, Source)
+        )
+
     def __repr__(self):
         return f"MessageChain({self.root})"
-    
+
     def __eq__(self, other):
         return isinstance(other, MessageChain) and self.root == other.root
-    
+
     def __ne__(self, other):
         return not self.__eq__(other)
-    
+
     def __hash__(self):
         return hash(tuple(self.root))
-    
+
     def __add__(self, other):
         return MessageChain(self.root + other.root)
-    
+
     def __radd__(self, other):
         return MessageChain(other.root + self.root)
-    
+
     def append(self, item: MessageComponent):
         self.root.append(item)
-    
+
     def extend(self, items: list[MessageComponent]):
         self.root.extend(items)
-    
+
     def insert(self, index: int, item: MessageComponent):
         self.root.insert(index, item)
-    
+
     def pop(self, index: int = -1):
         return self.root.pop(index)
-    
+
     def remove(self, item: MessageComponent):
         self.root.remove(item)
-    
+
     def clear(self):
         self.root.clear()
-    
+
     @property
     def source(self):
         """Get the Source component in the message chain."""
@@ -151,11 +159,11 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
                         data[field_name] = field_value.model_dump()
             result.append(data)
         return result
-    
+
     @classmethod
     def model_validate(cls, obj):
         """Custom deserialization logic, create the correct MessageComponent subclass instance according to the type field, and recursively process the MessageChain field"""
-        
+
         if isinstance(obj, list):
             components = []
             component_types = cls._get_component_types()
@@ -165,21 +173,31 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
                     if component_type in component_types:
                         component_class = component_types[component_type]
                         # Recursively process the MessageChain type field
-                        for field_name, field_info in component_class.model_fields.items():
-                            if field_info.annotation is MessageChain and field_name in item:
+                        for (
+                            field_name,
+                            field_info,
+                        ) in component_class.model_fields.items():
+                            if (
+                                field_info.annotation is MessageChain
+                                and field_name in item
+                            ):
                                 field_value = item[field_name]
                                 if isinstance(field_value, MessageChain):
                                     # It is already a MessageChain, no need to process
                                     pass
                                 elif isinstance(field_value, list):
-                                    item[field_name] = MessageChain.model_validate(field_value)
+                                    item[field_name] = MessageChain.model_validate(
+                                        field_value
+                                    )
                         # Special processing of the time field of the Source class
                         if component_type == "Source" and "time" in item:
                             item["time"] = datetime.fromtimestamp(item["time"])
                         components.append(component_class.model_validate(item))
                     else:
                         # Unknown type, create Unknown component
-                        components.append(Unknown(text=f"Unknown component type: {component_type}"))
+                        components.append(
+                            Unknown(text=f"Unknown component type: {component_type}")
+                        )
                 else:
                     # Not a dictionary or no type field, create Unknown component
                     components.append(Unknown(text=f"Invalid component data: {item}"))
@@ -214,6 +232,7 @@ class Source(MessageComponent):
             obj["time"] = datetime.fromtimestamp(timestamp)
             del obj["timestamp"]
         return super().model_validate(obj)
+
 
 class Plain(MessageComponent):
     """Plain text."""
@@ -338,7 +357,9 @@ class ForwardMessageNode(pydantic.BaseModel):
     """Sender ID."""
     sender_name: typing.Optional[str] = pydantic.Field(default="")
     """Display name."""
-    message_chain: typing.Optional[MessageChain] = pydantic.Field(default=MessageChain([]))
+    message_chain: typing.Optional[MessageChain] = pydantic.Field(
+        default=MessageChain([])
+    )
     """Message content."""
     message_id: typing.Optional[int] = pydantic.Field(default=0)
     """The message_id of the message."""
@@ -388,29 +409,31 @@ class Face(MessageComponent):
     当face_type为rps(划拳)时 face_id 对应的是手势
     当face_type为dice(骰子)时 face_id 对应的是点数
     """
-    type: str = 'Face'
+
+    type: str = "Face"
     """表情类型"""
-    face_type: str = 'face'
+    face_type: str = "face"
     """表情id"""
     face_id: int = 0
     """表情名"""
-    face_name: str = ''
+    face_name: str = ""
 
     def __str__(self):
-        if self.face_type == 'face':
-            return f'[表情]{self.face_name}'
-        elif self.face_type == 'dice':
-            return f'[表情]{self.face_id}点的{self.face_name}'
-        elif self.face_type == 'rps':
-            return f'[表情]{self.face_name}({self.rps_data(self.face_id)})'
+        if self.face_type == "face":
+            return f"[表情]{self.face_name}"
+        elif self.face_type == "dice":
+            return f"[表情]{self.face_id}点的{self.face_name}"
+        elif self.face_type == "rps":
+            return f"[表情]{self.face_name}({self.rps_data(self.face_id)})"
 
-    def rps_data(self,face_id):
-        rps_dict ={
-            1 : "布",
-            2 : "剪刀",
-            3 : "石头",
+    def rps_data(self, face_id):
+        rps_dict = {
+            1: "布",
+            2: "剪刀",
+            3: "石头",
         }
         return rps_dict[face_id]
+
 
 # ================ 个人微信专用组件 ================
 
@@ -528,17 +551,18 @@ class WeChatForwardQuote(MessageComponent):
 class WeChatFile(MessageComponent):
     """文件。"""
 
-    type: str = 'File'
+    type: str = "File"
     """消息组件类型。"""
-    file_id: str = ''
+    file_id: str = ""
     """文件识别 ID。"""
-    file_name: str = ''
+    file_name: str = ""
     """文件名称。"""
     file_size: int = 0
     """文件大小。"""
-    file_path: str = ''
+    file_path: str = ""
     """文件地址"""
-    file_base64: str = ''
+    file_base64: str = ""
     """base64"""
+
     def __str__(self):
-        return f'[文件]{self.file_name}'
+        return f"[文件]{self.file_name}"

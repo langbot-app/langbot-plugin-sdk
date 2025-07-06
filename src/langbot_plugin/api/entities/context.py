@@ -141,11 +141,8 @@ class EventContext(pydantic.BaseModel):
         inst.is_prevent_postorder = data["is_prevent_postorder"]
         inst.return_value = data["return_value"]
         return inst
-    
-    def update(
-        self,
-        **kwargs
-    ):
+
+    def update(self, **kwargs):
         """更新事件上下文"""
         for key, value in kwargs.items():
             setattr(self, key, value)

@@ -58,7 +58,9 @@ def generate_component_process(component_type: str) -> None:
 
         rendered_file_name = simple_render(file, **values)
         with open(
-            f"{component_type_obj.target_dir}/{rendered_file_name}", "w", encoding="utf-8"
+            f"{component_type_obj.target_dir}/{rendered_file_name}",
+            "w",
+            encoding="utf-8",
         ) as f:
             f.write(content)
 

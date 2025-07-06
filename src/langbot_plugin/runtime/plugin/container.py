@@ -50,7 +50,9 @@ class PluginContainer(pydantic.BaseModel):
     components: list[ComponentContainer]
     """组件容器列表"""
 
-    _runtime_plugin_handler: PluginConnectionHandler | None = pydantic.PrivateAttr(default=None)
+    _runtime_plugin_handler: PluginConnectionHandler | None = pydantic.PrivateAttr(
+        default=None
+    )
 
     class Config:
         arbitrary_types_allowed = True

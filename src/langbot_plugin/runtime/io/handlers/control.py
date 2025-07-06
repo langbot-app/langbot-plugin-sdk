@@ -48,7 +48,9 @@ class ControlConnectionHandler(handler.Handler):
             event_context_data = data["event_context"]
             event_context = EventContext.parse_from_dict(event_context_data)
 
-            emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(event_context)
+            emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(
+                event_context
+            )
 
             event_context_dump = event_context.model_dump()
 
@@ -67,11 +69,7 @@ class ControlConnectionHandler(handler.Handler):
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
             tools = await self.context.plugin_mgr.list_tools()
             return handler.ActionResponse.success(
-                {
-                    "tools": [
-                        tool.model_dump() for tool in tools
-                    ]
-                }
+                {"tools": [tool.model_dump() for tool in tools]}
             )
 
         @self.action(LangBotToRuntimeAction.CALL_TOOL)
@@ -86,6 +84,7 @@ class ControlConnectionHandler(handler.Handler):
                     "tool_response": resp,
                 }
             )
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}

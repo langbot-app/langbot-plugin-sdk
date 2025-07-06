@@ -98,6 +98,7 @@ class FriendMessage(MessageEvent):
             "time": self.time,
         }
 
+
 class GroupMessage(MessageEvent):
     """群消息。
 

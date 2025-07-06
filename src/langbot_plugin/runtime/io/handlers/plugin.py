@@ -23,7 +23,9 @@ class PluginConnectionHandler(handler.Handler):
         async def disconnect_callback(hdl: handler.Handler):
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    print(f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect")
+                    print(
+                        f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect"
+                    )
                     await self.context.plugin_mgr.remove_plugin(plugin_container)
                     break
 
@@ -37,10 +39,13 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success({})
 
-    async def initialize_plugin(self, plugin_settings: dict[str, Any]) -> dict[str, Any]:
-        resp = await self.call_action(RuntimeToPluginAction.INITIALIZE_PLUGIN, {
-            "plugin_settings": plugin_settings
-        })
+    async def initialize_plugin(
+        self, plugin_settings: dict[str, Any]
+    ) -> dict[str, Any]:
+        resp = await self.call_action(
+            RuntimeToPluginAction.INITIALIZE_PLUGIN,
+            {"plugin_settings": plugin_settings},
+        )
 
         return resp
 
@@ -48,18 +53,20 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER, {})
 
         return resp
-    
+
     async def emit_event(self, event_context: dict[str, Any]) -> dict[str, Any]:
-        resp = await self.call_action(RuntimeToPluginAction.EMIT_EVENT, {
-            "event_context": event_context
-        })
+        resp = await self.call_action(
+            RuntimeToPluginAction.EMIT_EVENT, {"event_context": event_context}
+        )
 
         return resp
 
-    async def call_tool(self, tool_name: str, tool_parameters: dict[str, Any]) -> dict[str, Any]:
-        resp = await self.call_action(RuntimeToPluginAction.CALL_TOOL, {
-            "tool_name": tool_name,
-            "tool_parameters": tool_parameters
-        })
+    async def call_tool(
+        self, tool_name: str, tool_parameters: dict[str, Any]
+    ) -> dict[str, Any]:
+        resp = await self.call_action(
+            RuntimeToPluginAction.CALL_TOOL,
+            {"tool_name": tool_name, "tool_parameters": tool_parameters},
+        )
 
         return resp

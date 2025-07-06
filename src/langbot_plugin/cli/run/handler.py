@@ -20,7 +20,13 @@ class PluginRuntimeHandler(Handler):
 
     plugin_container: PluginContainer
 
-    def __init__(self, connection: connection.Connection, plugin_initialize_callback: typing.Callable[[dict[str, typing.Any]], typing.Coroutine[typing.Any, typing.Any, None]]):
+    def __init__(
+        self,
+        connection: connection.Connection,
+        plugin_initialize_callback: typing.Callable[
+            [dict[str, typing.Any]], typing.Coroutine[typing.Any, typing.Any, None]
+        ],
+    ):
         super().__init__(connection)
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
@@ -62,7 +68,10 @@ class PluginRuntimeHandler(Handler):
 
                     assert isinstance(component.component_instance, EventListener)
 
-                    if event_context.event.__class__ not in component.component_instance.registered_handlers:
+                    if (
+                        event_context.event.__class__
+                        not in component.component_instance.registered_handlers
+                    ):
                         continue
 
                     for handler in component.component_instance.registered_handlers[
@@ -79,11 +88,10 @@ class PluginRuntimeHandler(Handler):
                     "event_context": event_context.model_dump(),
                 }
             )
-        
+
         @self.action(RuntimeToPluginAction.CALL_TOOL)
         async def call_tool(data: dict[str, typing.Any]) -> ActionResponse:
-            """Call a tool.
-            """
+            """Call a tool."""
             tool_name = data["tool_name"]
             tool_parameters = data["tool_parameters"]
 
@@ -93,10 +101,8 @@ class PluginRuntimeHandler(Handler):
                         continue
 
                     if isinstance(component.component_instance, NoneComponent):
-                        return ActionResponse.error(
-                            f"Tool is not initialized"
-                        )
-                    
+                        return ActionResponse.error(f"Tool is not initialized")
+
                     assert isinstance(component.component_instance, Tool)
 
                     tool_instance = component.component_instance
@@ -109,7 +115,6 @@ class PluginRuntimeHandler(Handler):
                     )
 
             return ActionResponse.error(f"Tool {tool_name} not found")
-    
 
     async def register_plugin(self) -> dict[str, typing.Any]:
         resp = await self.call_action(

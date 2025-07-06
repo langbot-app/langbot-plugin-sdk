@@ -54,7 +54,7 @@ async def arun_plugin_process(stdio: bool = False) -> None:
 
     controller_run_task = asyncio.create_task(controller.run())
     await controller.mount()
-    
+
     await controller_run_task
 
 

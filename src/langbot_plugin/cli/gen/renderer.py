@@ -65,6 +65,7 @@ class ComponentType(pydantic.BaseModel):
         default=lambda x: x,
     )
 
+
 def tool_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
     result = {
         "tool_name": values["tool_name"],
@@ -73,10 +74,13 @@ def tool_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
         "tool_attr": values["tool_name"],
     }
 
-    python_attr_valid_name = "".join(word.capitalize() for word in values["tool_name"].split("_"))
+    python_attr_valid_name = "".join(
+        word.capitalize() for word in values["tool_name"].split("_")
+    )
     result["tool_label"] = python_attr_valid_name
     result["tool_attr"] = python_attr_valid_name
     return result
+
 
 component_types = [
     ComponentType(
