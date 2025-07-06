@@ -4,10 +4,8 @@ import os
 import re
 
 from langbot_plugin.cli.gen.renderer import render_template, files
-from langbot_plugin.cli.utils.form import input_form_values
+from langbot_plugin.cli.utils.form import input_form_values, NAME_REGEXP
 
-
-name_regexp = r"^[a-zA-Z0-9_-]+$"
 
 form_fields = [
     {
@@ -18,7 +16,7 @@ form_fields = [
         },
         "required": True,
         "format": {
-            "regexp": name_regexp,
+            "regexp": NAME_REGEXP,
             "error": {
                 "en_US": "Invalid plugin author, please use a valid name, which only contains letters, numbers, underscores and hyphens.",
                 "zh_CN": "无效的插件作者，请使用一个有效的名称，只能包含字母、数字、下划线和连字符。",
@@ -39,7 +37,7 @@ form_fields = [
 def init_plugin_process(
     plugin_name: str,
 ) -> None:
-    if not re.match(name_regexp, plugin_name):
+    if not re.match(NAME_REGEXP, plugin_name):
         print(f"!! Invalid plugin name: {plugin_name}")
         print(
             "!! Please use a valid name, which only contains letters, numbers, underscores and hyphens."

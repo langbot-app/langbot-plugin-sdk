@@ -6,6 +6,7 @@ import yaml
 
 from langbot_plugin.cli.gen.renderer import component_types, render_template
 from langbot_plugin.cli.utils.form import input_form_values
+from langbot_plugin.cli.gen.renderer import simple_render
 
 
 def generate_component_process(component_type: str) -> None:
@@ -33,6 +34,8 @@ def generate_component_process(component_type: str) -> None:
     if component_type_obj.form_fields:
         values = input_form_values(component_type_obj.form_fields)
 
+    values = component_type_obj.input_post_process(values)  # type: ignore
+
     if not os.path.exists(f"components"):
         os.makedirs(f"components")
         with open(f"components/__init__.py", "w", encoding="utf-8") as f:
@@ -52,8 +55,10 @@ def generate_component_process(component_type: str) -> None:
         content = render_template(
             f"{component_type_obj.target_dir}/{file}.example", **values
         )
+
+        rendered_file_name = simple_render(file, **values)
         with open(
-            f"{component_type_obj.target_dir}/{file}", "w", encoding="utf-8"
+            f"{component_type_obj.target_dir}/{rendered_file_name}", "w", encoding="utf-8"
         ) as f:
             f.write(content)
 

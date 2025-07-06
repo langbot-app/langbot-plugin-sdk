@@ -5,6 +5,10 @@ from typing import Any
 import re
 
 
+NAME_REGEXP = r"^[a-zA-Z0-9_-]+$"
+NUMBER_LOWER_UNDERSCORE_REGEXP = r"^[a-z][0-9a-z_]*$"
+
+
 def input_form_values(
     form_fields: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -23,4 +27,5 @@ def input_form_values(
         else:
             value = input(f"{field['label']['en_US']}: ")  # type: ignore
             values[field["name"]] = value  # type: ignore
+
     return values

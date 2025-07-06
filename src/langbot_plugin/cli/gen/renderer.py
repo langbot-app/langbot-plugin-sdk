@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import jinja2
 import pydantic
 
 from jinja2 import Environment, PackageLoader
+from langbot_plugin.cli.utils.form import NAME_REGEXP, NUMBER_LOWER_UNDERSCORE_REGEXP
 
 
 def get_template_environment():
@@ -31,6 +32,13 @@ def render_template(template_name: str, **context) -> str:
     return template.render(**context)
 
 
+def simple_render(
+    origin_text: str,
+    **context,
+) -> str:
+    return origin_text.format(**context)
+
+
 files = [
     "manifest.yaml",
     "main.py",
@@ -52,7 +60,23 @@ class ComponentType(pydantic.BaseModel):
     form_fields: list[dict[str, Any]] = pydantic.Field(
         description="The form fields of the component"
     )
+    input_post_process: Callable[[dict[str, Any]], dict[str, Any]] = pydantic.Field(
+        description="The input post process of the component",
+        default=lambda x: x,
+    )
 
+def tool_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "tool_name": values["tool_name"],
+        "tool_label": values["tool_name"],
+        "tool_description": values["tool_description"],
+        "tool_attr": values["tool_name"],
+    }
+
+    python_attr_valid_name = "".join(word.capitalize() for word in values["tool_name"].split("_"))
+    result["tool_label"] = python_attr_valid_name
+    result["tool_attr"] = python_attr_valid_name
+    return result
 
 component_types = [
     ComponentType(
@@ -63,5 +87,39 @@ component_types = [
             "default.py",
         ],
         form_fields=[],
-    )
+    ),
+    ComponentType(
+        type_name="Tool",
+        target_dir="components/tools",
+        template_files=[
+            "{tool_name}.yaml",
+            "{tool_name}.py",
+        ],
+        form_fields=[
+            {
+                "name": "tool_name",
+                "label": {
+                    "en_US": "Tool name",
+                    "zh_CN": "工具名称",
+                },
+                "required": True,
+                "format": {
+                    "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
+                    "error": {
+                        "en_US": "Invalid tool name, please use a valid name, which only contains letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_CN": "无效的工具名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
+                    },
+                },
+            },
+            {
+                "name": "tool_description",
+                "label": {
+                    "en_US": "Tool description",
+                    "zh_CN": "工具描述",
+                },
+                "required": True,
+            },
+        ],
+        input_post_process=tool_component_input_post_process,
+    ),
 ]

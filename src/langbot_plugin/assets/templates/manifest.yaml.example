@@ -6,8 +6,8 @@ metadata:
   repository: '{{ plugin_repository }}'
   version: 0.1.0
   description:
-    en_US: {{ plugin_description }}
-    zh_CN: {{ plugin_description }}
+    en_US: '{{ plugin_description }}'
+    zh_CN: '{{ plugin_description }}'
   label:
     en_US: {{ plugin_label }}
     zh_CN: {{ plugin_label }}
