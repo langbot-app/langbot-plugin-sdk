@@ -18,10 +18,12 @@ class StdioClientController(Controller):
         command: str,
         args: list[str],
         env: dict[str, str],
+        working_dir: str = ".",
     ):
         self.command = command
         self.args = args
         self.env = env
+        self.working_dir = working_dir
 
     async def run(
         self,
@@ -33,6 +35,7 @@ class StdioClientController(Controller):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             env=self.env,
+            cwd=self.working_dir,
         )
 
         if self.process.stdout is None or self.process.stdin is None:

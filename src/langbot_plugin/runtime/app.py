@@ -94,6 +94,9 @@ class RuntimeApplication:
                 self.context.ws_debug_server.run(new_plugin_debug_connection_callback)
             )
 
+        # ==== launch plugin processes ====
+        tasks.append(self.context.plugin_mgr.launch_all_plugins())
+
         await asyncio.gather(*tasks)
 
 
