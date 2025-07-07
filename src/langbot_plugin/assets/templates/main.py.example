@@ -2,7 +2,7 @@
 # Please refer to https://docs.langbot.app/en/plugin/dev/tutor.html for more details.
 from __future__ import annotations
 
-from langbot_plugin.api.definition.base import BasePlugin
+from langbot_plugin.api.definition.plugin import BasePlugin
 
 class {{ plugin_attr }}(BasePlugin):
 
