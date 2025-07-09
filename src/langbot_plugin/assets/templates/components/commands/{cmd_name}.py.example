@@ -8,5 +8,8 @@ from langbot_plugin.api.definition.components.command.command import Command, Su
 
 
 class {{ cmd_attr }}(Command):
-
-    "Fill with your code here"
+    
+    def __init__(self):
+        super().__init__()
+        
+        "Fill with your code here"

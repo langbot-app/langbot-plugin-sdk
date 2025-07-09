@@ -7,4 +7,7 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 
 class DefaultEventListener(EventListener):
 
-    "Fill with your code here"
+    def __init__(self):
+        super().__init__()
+        
+        "Fill with your code here"
