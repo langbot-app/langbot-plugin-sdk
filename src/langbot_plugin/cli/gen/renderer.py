@@ -82,6 +82,21 @@ def tool_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def command_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "cmd_name": values["cmd_name"],
+        "cmd_label": values["cmd_name"],
+        "cmd_description": values["cmd_description"],
+        "cmd_attr": values["cmd_name"],
+    }
+
+    python_attr_valid_name = "".join(
+        word.capitalize() for word in values["cmd_name"].split("_")
+    )
+    result["cmd_label"] = python_attr_valid_name
+    result["cmd_attr"] = python_attr_valid_name
+    return result
+
 component_types = [
     ComponentType(
         type_name="EventListener",
@@ -126,4 +141,38 @@ component_types = [
         ],
         input_post_process=tool_component_input_post_process,
     ),
+    ComponentType(
+        type_name="Command",
+        target_dir="components/commands",
+        template_files=[
+            "{cmd_name}.yaml",
+            "{cmd_name}.py",
+        ],
+        form_fields=[
+            {
+                "name": "cmd_name",
+                "label": {
+                    "en_US": "Command name",
+                    "zh_CN": "命令名称",
+                },
+                "required": True,
+                "format": {
+                    "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
+                    "error": {
+                        "en_US": "Invalid command name, please use a valid name, which only contains letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_CN": "无效的命令名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
+                    },
+                },
+            },
+            {
+                "name": "cmd_description",
+                "label": {
+                    "en_US": "Command description",
+                    "zh_CN": "命令描述",
+                },
+                "required": True,
+            },
+        ],
+        input_post_process=command_component_input_post_process,
+    )
 ]
