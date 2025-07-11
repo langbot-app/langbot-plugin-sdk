@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, AsyncGenerator
 
 import pydantic
 from pydantic import BaseModel
 
 from langbot_plugin.api.definition.components.base import BaseComponent
+from langbot_plugin.api.entities.builtin.command import context
 
 
 class Subcommand(BaseModel):
     """The subcommand model."""
 
-    subcommand: Callable[[list[str]], Coroutine[Any, Any, None]]
+    subcommand: Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]
     """The subcommand function."""
     help: str
     """The help message."""
@@ -37,10 +38,10 @@ class Command(BaseComponent):
         help: str = '',
         usage: str = '',
         aliases: list[str] = [],
-    ) -> Callable[[Callable[[list[str]], Coroutine[Any, Any, None]]], Callable[[list[str]], Coroutine[Any, Any, None]]]:
+    ) -> Callable[[Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]], Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]]:
         """Register a subcommand."""
 
-        def decorator(subcommand: Callable[[list[str]], Coroutine[Any, Any, None]]) -> Callable[[list[str]], Coroutine[Any, Any, None]]:
+        def decorator(subcommand: Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]) -> Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]:
             self.registered_subcommands[name] = Subcommand(
                 subcommand=subcommand,
                 help=help,

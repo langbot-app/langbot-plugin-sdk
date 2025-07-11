@@ -95,7 +95,8 @@ class RuntimeApplication:
             )
 
         # ==== launch plugin processes ====
-        tasks.append(self.context.plugin_mgr.launch_all_plugins())
+        if not self.args.debug_only:
+            tasks.append(self.context.plugin_mgr.launch_all_plugins())
 
         await asyncio.gather(*tasks)
 

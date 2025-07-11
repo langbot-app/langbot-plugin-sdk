@@ -62,6 +62,9 @@ def main():
     rt_parser.add_argument(
         "--ws-debug-port", type=int, help="The port for debug connection", default=5401
     )
+    rt_parser.add_argument(
+        "--debug-only", action="store_true", help="Only run the debug server"
+    )
 
     args = parser.parse_args()
 
