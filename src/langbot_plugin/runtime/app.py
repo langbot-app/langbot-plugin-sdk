@@ -14,7 +14,6 @@ from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_cls
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
-from langbot_plugin.runtime.io import handler
 
 
 class ControlConnectionMode(Enum):

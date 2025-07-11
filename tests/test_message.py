@@ -1,11 +1,7 @@
 import pytest  # type: ignore
-import json
 from datetime import datetime
-from pathlib import Path
-from pydantic import ValidationError
 from langbot_plugin.api.entities.builtin.platform.message import (
     MessageChain,
-    MessageComponent,
     Plain,
     At,
     AtAll,

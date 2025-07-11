@@ -30,5 +30,5 @@ class WebSocketClientController(Controller):
             async with websockets.connect(self.ws_url, open_timeout=10) as websocket:
                 connection = ws_connection.WebSocketConnection(websocket)
                 await new_connection_callback(connection)
-        except Exception as e:
+        except Exception:
             await self.make_connection_failed_callback(self)

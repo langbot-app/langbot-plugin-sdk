@@ -3,7 +3,6 @@ from __future__ import annotations
 import typing
 import importlib
 import os
-import yaml
 import pydantic
 import sys
 

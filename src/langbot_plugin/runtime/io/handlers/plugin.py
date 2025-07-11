@@ -1,12 +1,11 @@
 # handle connection to/from plugin
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
     PluginToRuntimeAction,
-    RuntimeToLangBotAction,
     RuntimeToPluginAction,
 )
 from langbot_plugin.runtime import context as context_module

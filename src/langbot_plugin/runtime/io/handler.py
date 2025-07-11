@@ -3,10 +3,16 @@ from __future__ import annotations
 import abc
 import asyncio
 import json
-from typing import Callable, Any, Dict, Awaitable, Coroutine, AsyncGenerator, Union, AsyncIterator
+from typing import (
+    Callable,
+    Any,
+    Coroutine,
+    AsyncGenerator,
+    Union,
+    AsyncIterator,
+)
 import traceback
 
-import pydantic
 
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
@@ -81,7 +87,9 @@ class Handler(abc.ABC):
                         )
 
                         if not isinstance(response, AsyncIterator):
-                            print(f"response is not AsyncIterator, type: {type(response)}")
+                            print(
+                                f"response is not AsyncIterator, type: {type(response)}"
+                            )
                             response.seq_id = seq_id
                             await self.conn.send(json.dumps(response.model_dump()))
                         elif isinstance(response, AsyncIterator):
@@ -140,7 +148,7 @@ class Handler(abc.ABC):
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
-        
+
     async def call_action_generator(
         self, action: ActionType, data: dict[str, Any], timeout: float = 10.0
     ) -> AsyncIterator[dict[str, Any]]:
@@ -168,12 +176,38 @@ class Handler(abc.ABC):
     def action(
         self, name: ActionType
     ) -> Callable[
-        [Callable[[dict[str, Any]], Coroutine[Any, Any, Union[ActionResponse, AsyncGenerator[ActionResponse, None]]]]],
-        Callable[[dict[str, Any]], Coroutine[Any, Any, Union[ActionResponse, AsyncGenerator[ActionResponse, None]]]],
+        [
+            Callable[
+                [dict[str, Any]],
+                Coroutine[
+                    Any,
+                    Any,
+                    Union[ActionResponse, AsyncGenerator[ActionResponse, None]],
+                ],
+            ]
+        ],
+        Callable[
+            [dict[str, Any]],
+            Coroutine[
+                Any, Any, Union[ActionResponse, AsyncGenerator[ActionResponse, None]]
+            ],
+        ],
     ]:
         def decorator(
-            func: Callable[[dict[str, Any]], Coroutine[Any, Any, Union[ActionResponse, AsyncGenerator[ActionResponse, None]]]],
-        ) -> Callable[[dict[str, Any]], Coroutine[Any, Any, Union[ActionResponse, AsyncGenerator[ActionResponse, None]]]]:
+            func: Callable[
+                [dict[str, Any]],
+                Coroutine[
+                    Any,
+                    Any,
+                    Union[ActionResponse, AsyncGenerator[ActionResponse, None]],
+                ],
+            ],
+        ) -> Callable[
+            [dict[str, Any]],
+            Coroutine[
+                Any, Any, Union[ActionResponse, AsyncGenerator[ActionResponse, None]]
+            ],
+        ]:
             self.actions[name.value] = func
             return func
 

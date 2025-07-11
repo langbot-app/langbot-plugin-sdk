@@ -6,13 +6,14 @@ import typing
 import asyncio
 import sys
 from langbot_plugin.runtime.io.connection import Connection
-from langbot_plugin.runtime.io.controllers.stdio import client as stdio_client_controller
+from langbot_plugin.runtime.io.controllers.stdio import (
+    client as stdio_client_controller,
+)
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
-from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
 
@@ -36,7 +37,7 @@ class PluginManager:
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
                 continue
-            
+
             # launch plugin process
             ctrl = stdio_client_controller.StdioClientController(
                 command=python_path,

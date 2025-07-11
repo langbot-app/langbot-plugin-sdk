@@ -1,5 +1,4 @@
 import pytest
-from datetime import datetime
 from langbot_plugin.api.entities.events import (
     BaseEventModel,
     PersonMessageReceived,

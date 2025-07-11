@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-import jinja2
 import pydantic
 
 from jinja2 import Environment, PackageLoader
-from langbot_plugin.cli.utils.form import NAME_REGEXP, NUMBER_LOWER_UNDERSCORE_REGEXP
+from langbot_plugin.cli.utils.form import NUMBER_LOWER_UNDERSCORE_REGEXP
 
 
 def get_template_environment():
@@ -97,6 +96,7 @@ def command_component_input_post_process(values: dict[str, Any]) -> dict[str, An
     result["cmd_attr"] = python_attr_valid_name
     return result
 
+
 component_types = [
     ComponentType(
         type_name="EventListener",
@@ -174,5 +174,5 @@ component_types = [
             },
         ],
         input_post_process=command_component_input_post_process,
-    )
+    ),
 ]

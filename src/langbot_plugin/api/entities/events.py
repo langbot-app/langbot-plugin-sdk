@@ -6,7 +6,6 @@ import pydantic
 
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
-from langbot_plugin.api.entities.builtin.pipeline import query as pipeline_query
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
 
 

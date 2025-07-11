@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import websockets
 from typing import Callable, Coroutine, Any
 

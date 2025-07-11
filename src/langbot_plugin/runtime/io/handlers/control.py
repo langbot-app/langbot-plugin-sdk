@@ -10,7 +10,6 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
-from langbot_plugin.runtime.plugin.container import PluginContainer
 
 
 class ControlConnectionHandler(handler.Handler):

@@ -63,7 +63,7 @@ class PluginRuntimeHandler(Handler):
                 if component.manifest.kind == EventListener.__kind__:
                     if component.component_instance is None:
                         return ActionResponse.error(
-                            f"Event listener is not initialized"
+                            "Event listener is not initialized"
                         )
 
                     assert isinstance(component.component_instance, EventListener)
@@ -101,7 +101,7 @@ class PluginRuntimeHandler(Handler):
                         continue
 
                     if isinstance(component.component_instance, NoneComponent):
-                        return ActionResponse.error(f"Tool is not initialized")
+                        return ActionResponse.error("Tool is not initialized")
 
                     assert isinstance(component.component_instance, Tool)
 

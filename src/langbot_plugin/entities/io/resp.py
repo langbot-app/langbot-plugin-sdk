@@ -7,6 +7,7 @@ import enum
 
 class ChunkStatus(enum.Enum):
     """The status of the chunk."""
+
     CONTINUE = "continue"
     """Continue the chunk."""
 
@@ -31,7 +32,7 @@ class ActionResponse(pydantic.BaseModel):
     @classmethod
     def error(cls, message: str) -> ActionResponse:
         return cls(code=1, message=message, data={})
-    
+
     @pydantic.field_serializer("chunk_status")
     def serialize_chunk_status(
         self, chunk_status: ChunkStatus, _info: pydantic.FieldSerializationInfo

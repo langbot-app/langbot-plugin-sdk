@@ -36,9 +36,9 @@ def generate_component_process(component_type: str) -> None:
 
     values = component_type_obj.input_post_process(values)  # type: ignore
 
-    if not os.path.exists(f"components"):
-        os.makedirs(f"components")
-        with open(f"components/__init__.py", "w", encoding="utf-8") as f:
+    if not os.path.exists("components"):
+        os.makedirs("components")
+        with open("components/__init__.py", "w", encoding="utf-8") as f:
             f.write("")
 
     if not os.path.exists(component_type_obj.target_dir):

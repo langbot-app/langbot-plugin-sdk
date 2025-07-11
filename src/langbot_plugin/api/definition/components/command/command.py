@@ -12,7 +12,10 @@ from langbot_plugin.api.entities.builtin.command import context
 class Subcommand(BaseModel):
     """The subcommand model."""
 
-    subcommand: Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]
+    subcommand: Callable[
+        [context.ExecuteContext],
+        Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]],
+    ]
     """The subcommand function."""
     help: str
     """The help message."""
@@ -35,13 +38,32 @@ class Command(BaseComponent):
     def subcommand(
         self,
         name: str,
-        help: str = '',
-        usage: str = '',
+        help: str = "",
+        usage: str = "",
         aliases: list[str] = [],
-    ) -> Callable[[Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]], Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]]:
+    ) -> Callable[
+        [
+            Callable[
+                [context.ExecuteContext],
+                Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]],
+            ]
+        ],
+        Callable[
+            [context.ExecuteContext],
+            Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]],
+        ],
+    ]:
         """Register a subcommand."""
 
-        def decorator(subcommand: Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]) -> Callable[[context.ExecuteContext], Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]]]:
+        def decorator(
+            subcommand: Callable[
+                [context.ExecuteContext],
+                Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]],
+            ],
+        ) -> Callable[
+            [context.ExecuteContext],
+            Coroutine[Any, Any, AsyncGenerator[context.CommandReturn, None]],
+        ]:
             self.registered_subcommands[name] = Subcommand(
                 subcommand=subcommand,
                 help=help,
