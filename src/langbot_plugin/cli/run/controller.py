@@ -19,8 +19,9 @@ from langbot_plugin.runtime.io.controllers.ws import (
 )
 from langbot_plugin.runtime.io.controller import Controller
 from langbot_plugin.api.definition.plugin import NonePlugin, BasePlugin
-from langbot_plugin.api.definition.components.base import NoneComponent
+from langbot_plugin.api.definition.components.base import NoneComponent, BaseComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 
@@ -129,27 +130,15 @@ class PluginRuntimeController:
         )
         await self.plugin_container.plugin_instance.initialize()
 
-        # initialize event listener component
-        for component_container in self.plugin_container.components:
-            if component_container.manifest.kind == EventListener.__kind__:
-                event_listener_cls = (
-                    component_container.manifest.get_python_component_class()
-                )
-                assert isinstance(event_listener_cls, type(EventListener))
-                component_container.component_instance = event_listener_cls()
-                component_container.component_instance.plugin_instance = (
-                    self.plugin_container.plugin_instance
-                )
-                await component_container.component_instance.initialize()
-                break
+        preinitialize_component_classes: list[type[BaseComponent]] = [EventListener, Tool, Command]
 
-        # initialize tool component
-        for component_container in self.plugin_container.components:
-            if component_container.manifest.kind == Tool.__kind__:
-                tool_cls = component_container.manifest.get_python_component_class()
-                assert isinstance(tool_cls, type(Tool))
-                component_container.component_instance = tool_cls()
-                await component_container.component_instance.initialize()
+        for component_cls in preinitialize_component_classes:
+            for component_container in self.plugin_container.components:
+                if component_container.manifest.kind == component_cls.__kind__:
+                    component_impl_cls = component_container.manifest.get_python_component_class()
+                    assert issubclass(component_impl_cls, component_cls)
+                    component_container.component_instance = component_impl_cls()
+                    await component_container.component_instance.initialize()
 
         print("Plugin initialized")
 
