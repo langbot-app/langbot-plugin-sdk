@@ -41,6 +41,15 @@ class ControlConnectionHandler(handler.Handler):
                 }
             )
 
+        @self.action(LangBotToRuntimeAction.GET_PLUGIN_INFO)
+        async def get_plugin_info(data: dict[str, Any]) -> handler.ActionResponse:
+            author = data["author"]
+            plugin_name = data["plugin_name"]
+            for plugin in self.context.plugin_mgr.plugins:
+                if plugin.manifest.metadata.author == author and plugin.manifest.metadata.name == plugin_name:
+                    return handler.ActionResponse.success({"plugin": plugin.model_dump()})
+            return handler.ActionResponse.success({"plugin": None})
+
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "installing plugin"})

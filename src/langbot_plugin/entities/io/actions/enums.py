@@ -65,6 +65,7 @@ class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
 
     LIST_PLUGINS = "list_plugins"
+    GET_PLUGIN_INFO = "get_plugin_info"
     INSTALL_PLUGIN = "install_plugin"
     EMIT_EVENT = "emit_event"
     LIST_TOOLS = "list_tools"
