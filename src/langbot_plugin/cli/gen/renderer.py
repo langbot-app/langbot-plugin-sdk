@@ -119,14 +119,14 @@ component_types = [
                 "name": "tool_name",
                 "label": {
                     "en_US": "Tool name",
-                    "zh_CN": "工具名称",
+                    "zh_Hans": "工具名称",
                 },
                 "required": True,
                 "format": {
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
                         "en_US": "Invalid tool name, please use a valid name, which only contains letters, numbers, underscores and hyphens, and start with a letter.",
-                        "zh_CN": "无效的工具名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hans": "无效的工具名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
                     },
                 },
             },
@@ -134,7 +134,7 @@ component_types = [
                 "name": "tool_description",
                 "label": {
                     "en_US": "Tool description",
-                    "zh_CN": "工具描述",
+                    "zh_Hans": "工具描述",
                 },
                 "required": True,
             },
@@ -153,14 +153,14 @@ component_types = [
                 "name": "cmd_name",
                 "label": {
                     "en_US": "Command name",
-                    "zh_CN": "命令名称",
+                    "zh_Hans": "命令名称",
                 },
                 "required": True,
                 "format": {
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
                         "en_US": "Invalid command name, please use a valid name, which only contains letters, numbers, underscores and hyphens, and start with a letter.",
-                        "zh_CN": "无效的命令名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hans": "无效的命令名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
                     },
                 },
             },
@@ -168,7 +168,7 @@ component_types = [
                 "name": "cmd_description",
                 "label": {
                     "en_US": "Command description",
-                    "zh_CN": "命令描述",
+                    "zh_Hans": "命令描述",
                 },
                 "required": True,
             },

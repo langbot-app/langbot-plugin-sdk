@@ -7,7 +7,7 @@ metadata:
     zh_Hans: {{ tool_label }}
   description:
     en_US: '{{ tool_description }}'
-    zh_CN: '{{ tool_description }}'
+    zh_Hans: '{{ tool_description }}'
 spec:
   parameters: []
   llm_prompt: '{{ tool_description }}'

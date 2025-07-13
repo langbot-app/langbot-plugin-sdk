@@ -12,14 +12,14 @@ form_fields = [
         "name": "plugin_author",
         "label": {
             "en_US": "Plugin author",
-            "zh_CN": "插件作者",
+            "zh_Hans": "插件作者",
         },
         "required": True,
         "format": {
             "regexp": NAME_REGEXP,
             "error": {
                 "en_US": "Invalid plugin author, please use a valid name, which only contains letters, numbers, underscores and hyphens.",
-                "zh_CN": "无效的插件作者，请使用一个有效的名称，只能包含字母、数字、下划线和连字符。",
+                "zh_Hans": "无效的插件作者，请使用一个有效的名称，只能包含字母、数字、下划线和连字符。",
             },
         },
     },
@@ -27,7 +27,7 @@ form_fields = [
         "name": "plugin_description",
         "label": {
             "en_US": "Plugin description",
-            "zh_CN": "插件描述",
+            "zh_Hans": "插件描述",
         },
         "required": True,
     },

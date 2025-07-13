@@ -7,10 +7,10 @@ metadata:
   version: 0.1.0
   description:
     en_US: '{{ plugin_description }}'
-    zh_CN: '{{ plugin_description }}'
+    zh_Hans: '{{ plugin_description }}'
   label:
     en_US: {{ plugin_label }}
-    zh_CN: {{ plugin_label }}
+    zh_Hans: {{ plugin_label }}
 spec:
   config: []
   components: {}

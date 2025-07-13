@@ -20,7 +20,7 @@ def input_form_values(
                 if "format" in field and "regexp" in field["format"]:  # type: ignore
                     if not re.match(field["format"]["regexp"], value):  # type: ignore
                         print(f"!! {field['format']['error']['en_US']}")  # type: ignore
-                        print(f"!! {field['format']['error']['zh_CN']}")  # type: ignore
+                        print(f"!! {field['format']['error']['zh_Hans']}")  # type: ignore
                         continue
                 break
             values[field["name"]] = value  # type: ignore

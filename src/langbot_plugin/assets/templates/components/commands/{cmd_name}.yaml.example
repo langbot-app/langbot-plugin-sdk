@@ -7,7 +7,7 @@ metadata:
     zh_Hans: {{ cmd_label }}
   description:
     en_US: '{{ cmd_description }}'
-    zh_CN: '{{ cmd_description }}'
+    zh_Hans: '{{ cmd_description }}'
 spec:
 execution:
   python:
