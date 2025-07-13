@@ -33,6 +33,7 @@ class Handler(abc.ABC):
     actions: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]]]
 
     resp_waiters: dict[int, asyncio.Future[ActionResponse]] = {}
+    resp_queues: dict[int, asyncio.Queue[ActionResponse]] = {}
 
     seq_id_index: int = 0
 
@@ -115,18 +116,15 @@ class Handler(abc.ABC):
                         await self.conn.send(json.dumps(error_response.model_dump()))
 
                 elif "code" in req_data:  # action response from peer
+                    response = ActionResponse.model_validate(req_data)
+                    
+                    # Handle single response (for call_action)
                     if seq_id in self.resp_waiters:
-                        # if req_data["code"] != 0:
-                        #     error_response = ActionResponse.error(req_data["message"])
-                        #     error_response.seq_id = seq_id
-                        #     self.resp_waiters[seq_id].set_result(error_response)
-                        # else:
-                        #     response = ActionResponse.success(req_data["data"])
-                        #     response.seq_id = seq_id
-                        #     response.code = req_data["code"]
-                        #     self.resp_waiters[seq_id].set_result(response)
-                        response = ActionResponse.model_validate(req_data)
                         self.resp_waiters[seq_id].set_result(response)
+                    
+                    # Handle streaming response (for call_action_generator)
+                    if seq_id in self.resp_queues:
+                        await self.resp_queues[seq_id].put(response)
 
             asyncio.create_task(handle_message(message))
 
@@ -153,6 +151,8 @@ class Handler(abc.ABC):
         finally:
             if this_seq_id in self.resp_waiters:
                 del self.resp_waiters[this_seq_id]
+            if this_seq_id in self.resp_queues:
+                del self.resp_queues[this_seq_id]
 
     async def call_action_generator(
         self, action: ActionType, data: dict[str, Any], timeout: float = 10.0
@@ -161,28 +161,31 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(this_seq_id, action.value, data)
         await self.conn.send(json.dumps(request.model_dump()))
-        # wait for response
-        while True:
-            future = asyncio.Future[ActionResponse]()
-            self.resp_waiters[this_seq_id] = future
-            try:
-                response = await asyncio.wait_for(future, timeout)
-                if response.code != 0:
-                    raise ActionCallError(f"{response.message}")
-                
-                if response.chunk_status == ChunkStatus.CONTINUE:
-                    yield response.data
-                elif response.chunk_status == ChunkStatus.END:
+        
+        # Create a queue for streaming responses
+        queue = asyncio.Queue[ActionResponse]()
+        self.resp_queues[this_seq_id] = queue
+        
+        try:
+            while True:
+                try:
+                    response = await asyncio.wait_for(queue.get(), timeout)
+                    if response.code != 0:
+                        raise ActionCallError(f"{response.message}")
+                    
+                    if response.chunk_status == ChunkStatus.CONTINUE:
+                        yield response.data
+                    elif response.chunk_status == ChunkStatus.END:
+                        break
+                except asyncio.CancelledError:
                     break
-            except asyncio.CancelledError:
-                break
-            except asyncio.TimeoutError:
-                raise ActionCallTimeoutError(f"Action {action.value} call timed out")
-            except Exception as e:
-                raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
-            finally:
-                if this_seq_id in self.resp_waiters:
-                    del self.resp_waiters[this_seq_id]
+                except asyncio.TimeoutError:
+                    raise ActionCallTimeoutError(f"Action {action.value} call timed out")
+                except Exception as e:
+                    raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
+        finally:
+            if this_seq_id in self.resp_queues:
+                del self.resp_queues[this_seq_id]
 
     # decorator to register an action
     def action(
