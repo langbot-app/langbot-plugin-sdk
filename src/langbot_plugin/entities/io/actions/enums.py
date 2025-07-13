@@ -19,6 +19,28 @@ class PluginToRuntimeAction(ActionType):
 
     REGISTER_PLUGIN = "register_plugin"
 
+    # ========== APIs for plugin code ==========
+    """Event APIs"""
+    REPLY_MESSAGE = "reply_message"
+    GET_BOT_UUID = "get_bot_uuid"
+
+    """Query APIs"""
+    SET_QUERY_VAR = "set_query_var"
+    GET_QUERY_VAR = "get_query_var"
+    GET_QUERY_VARS = "get_query_vars"
+
+    """LangBot APIs"""
+    GET_LANGBOT_VERSION = "get_langbot_version"
+
+    GET_BOTS = "get_bots"
+    GET_BOT_INFO = "get_bot_info"
+    SEND_MESSAGE = "send_message"
+
+    GET_LLM_MODELS = "get_llm_models"
+    GET_LLM_MODEL_INFO = "get_llm_model_info"
+    INVOKE_LLM = "invoke_llm"
+    INVOKE_LLM_STREAMING = "invoke_llm_streaming"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""

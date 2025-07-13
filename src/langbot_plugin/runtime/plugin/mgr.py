@@ -17,7 +17,10 @@ from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
-from langbot_plugin.api.entities.builtin.command.context import ExecuteContext, CommandReturn
+from langbot_plugin.api.entities.builtin.command.context import (
+    ExecuteContext,
+    CommandReturn,
+)
 
 
 class PluginManager:
@@ -146,7 +149,7 @@ class PluginManager:
 
             emitted_plugins.append(plugin)
 
-            event_context = EventContext.parse_from_dict(resp["event_context"])
+            event_context = EventContext.model_validate(resp["event_context"])
 
             if event_context.is_prevented_postorder():
                 break
@@ -212,7 +215,6 @@ class PluginManager:
                     async for resp in plugin._runtime_plugin_handler.execute_command(
                         command_context.model_dump(mode="json")
                     ):
-                        print("execute_command", resp)
                         yield CommandReturn.model_validate(resp["command_response"])
 
                     break

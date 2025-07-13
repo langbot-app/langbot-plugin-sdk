@@ -38,6 +38,16 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success({})
 
+        @self.action(PluginToRuntimeAction.REPLY_MESSAGE)
+        async def reply_message(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.REPLY_MESSAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
     ) -> dict[str, Any]:
@@ -69,7 +79,7 @@ class PluginConnectionHandler(handler.Handler):
         )
 
         return resp
-    
+
     async def execute_command(
         self, command_context: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:

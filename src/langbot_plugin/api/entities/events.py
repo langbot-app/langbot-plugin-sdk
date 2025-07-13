@@ -7,10 +7,17 @@ import pydantic
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
+from langbot_plugin.api.entities.builtin.pipeline import query as pipeline_query
 
 
 class BaseEventModel(pydantic.BaseModel):
     """事件模型基类"""
+
+    query: pipeline_query.Query = pydantic.Field(
+        exclude=True,
+        default=None,
+    )
+    """Only stored in LangBot process"""
 
     class Config:
         arbitrary_types_allowed = True
@@ -18,6 +25,8 @@ class BaseEventModel(pydantic.BaseModel):
 
 class PersonMessageReceived(BaseEventModel):
     """收到任何私聊消息时"""
+
+    event_name: str = "PersonMessageReceived"
 
     launcher_type: str
     """发起对象类型(group/person)"""
@@ -44,6 +53,8 @@ class PersonMessageReceived(BaseEventModel):
 class GroupMessageReceived(BaseEventModel):
     """收到任何群聊消息时"""
 
+    event_name: str = "GroupMessageReceived"
+
     launcher_type: str
 
     launcher_id: typing.Union[int, str]
@@ -66,6 +77,8 @@ class GroupMessageReceived(BaseEventModel):
 class PersonNormalMessageReceived(BaseEventModel):
     """判断为应该处理的私聊普通消息时触发"""
 
+    event_name: str = "PersonNormalMessageReceived"
+
     launcher_type: str
 
     launcher_id: typing.Union[int, str]
@@ -83,6 +96,8 @@ class PersonNormalMessageReceived(BaseEventModel):
 
 class PersonCommandSent(BaseEventModel):
     """判断为应该处理的私聊命令时触发"""
+
+    event_name: str = "PersonCommandSent"
 
     launcher_type: str
 
@@ -108,6 +123,8 @@ class PersonCommandSent(BaseEventModel):
 class GroupNormalMessageReceived(BaseEventModel):
     """判断为应该处理的群聊普通消息时触发"""
 
+    event_name: str = "GroupNormalMessageReceived"
+
     launcher_type: str
 
     launcher_id: typing.Union[int, str]
@@ -125,6 +142,8 @@ class GroupNormalMessageReceived(BaseEventModel):
 
 class GroupCommandSent(BaseEventModel):
     """判断为应该处理的群聊命令时触发"""
+
+    event_name: str = "GroupCommandSent"
 
     launcher_type: str
 
@@ -149,6 +168,8 @@ class GroupCommandSent(BaseEventModel):
 
 class NormalMessageResponded(BaseEventModel):
     """回复普通消息时触发"""
+
+    event_name: str = "NormalMessageResponded"
 
     launcher_type: str
 
@@ -177,6 +198,8 @@ class NormalMessageResponded(BaseEventModel):
 
 class PromptPreProcessing(BaseEventModel):
     """会话中的Prompt预处理时触发"""
+
+    event_name: str = "PromptPreProcessing"
 
     session_name: str
 

@@ -11,6 +11,8 @@ import langbot_plugin.api.entities.events as events_module
 
 global_eid_index = 0
 
+cached_event_contexts: dict[int, EventContext] = {}
+
 
 class EventContext(pydantic.BaseModel):
     """事件上下文, 保存此次事件运行的信息"""
@@ -55,59 +57,48 @@ class EventContext(pydantic.BaseModel):
             self.return_value[key] = []
         self.return_value[key].append(ret)
 
-    async def reply(self, message_chain: platform_message.MessageChain):
-        """回复此次消息请求
-
-        Args:
-            message_chain (platform.types.MessageChain): 源平台的消息链，若用户使用的不是源平台适配器，程序也能自动转换为目标平台消息链
-        """
-        # TODO 添加 at_sender 和 quote_origin 参数
-
-        # TODO impl
-
-    async def send_message(
-        self, target_type: str, target_id: str, message: platform_message.MessageChain
+    async def reply(
+        self, message_chain: platform_message.MessageChain, quote_origin: bool = False
     ):
-        """主动发送消息
+        """Reply to the message request
 
         Args:
-            target_type (str): 目标类型，`person`或`group`
-            target_id (str): 目标ID
-            message (platform.types.MessageChain): 源平台的消息链，若用户使用的不是源平台适配器，程序也能自动转换为目标平台消息链
+            message_chain (platform.types.MessageChain): LangBot message chain
+            quote_origin (bool): Whether to quote the original message
         """
-        # TODO impl
 
     def prevent_default(self):
-        """阻止默认行为"""
+        """Prevent default behavior"""
         self.is_prevent_default = True
 
     def prevent_postorder(self):
-        """阻止后续插件执行"""
+        """Prevent subsequent plugin execution"""
         self.is_prevent_postorder = True
 
-    # ========== 以下是内部保留方法，插件不应调用 ==========
+    # ========== The following methods are reserved for internal use, and plugins should not call them ==========
 
     def get_return(self, key: str) -> list:
-        """获取key的所有返回值"""
+        """Get all return values for key"""
         if key in self.return_value:
             return self.return_value[key]
         return []
 
     def get_return_value(self, key: str):
-        """获取key的首个返回值"""
+        """Get the first return value for key"""
         if key in self.return_value:
             return self.return_value[key][0]
         return None
 
     def is_prevented_default(self):
-        """是否阻止默认行为"""
+        """Whether to prevent default behavior"""
         return self.is_prevent_default
 
     def is_prevented_postorder(self):
-        """是否阻止后序插件执行"""
+        """Whether to prevent subsequent plugin execution"""
         return self.is_prevent_postorder
 
-    def __init__(self, event: BaseEventModel):
+    @classmethod
+    def from_event(cls, event: BaseEventModel) -> EventContext:
         global global_eid_index
         eid = global_eid_index
         event = event
@@ -116,7 +107,7 @@ class EventContext(pydantic.BaseModel):
         is_prevent_postorder = False
         return_value: dict[str, list[Any]] = {}
 
-        super().__init__(
+        obj = cls(
             eid=eid,
             event_name=event_name,
             event=event,
@@ -125,34 +116,18 @@ class EventContext(pydantic.BaseModel):
             return_value=return_value,
         )
 
+        cached_event_contexts[eid] = obj
+
         global_eid_index += 1
 
-    @classmethod
-    def parse_from_dict(cls, data: dict[str, Any]) -> EventContext:
-        event_name = data["event_name"]
+        return obj
+
+    @pydantic.field_validator("event", mode="before")
+    def validate_event(cls, v):
+        if isinstance(v, BaseEventModel):
+            return v
+
+        event_name = v["event_name"]
         event_class = getattr(events_module, event_name)
-        event = event_class.model_validate(data["event"])
-
-        inst = cls(
-            event=event,
-        )
-        inst.eid = data["eid"]
-        inst.is_prevent_default = data["is_prevent_default"]
-        inst.is_prevent_postorder = data["is_prevent_postorder"]
-        inst.return_value = data["return_value"]
-        return inst
-
-    def update(self, **kwargs):
-        """更新事件上下文"""
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def model_dump(self, **kwargs):
-        return {
-            "eid": self.eid,
-            "event_name": self.event_name,
-            "event": self.event.model_dump(),
-            "is_prevent_default": self.is_prevent_default,
-            "is_prevent_postorder": self.is_prevent_postorder,
-            "return_value": self.return_value,
-        }
+        event = event_class.model_validate(v)
+        return event

@@ -46,15 +46,13 @@ class ControlConnectionHandler(handler.Handler):
         @self.action(LangBotToRuntimeAction.EMIT_EVENT)
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
             event_context_data = data["event_context"]
-            event_context = EventContext.parse_from_dict(event_context_data)
+            event_context = EventContext.model_validate(event_context_data)
 
             emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(
                 event_context
             )
 
             event_context_dump = event_context.model_dump()
-
-            print(event_context_dump)
 
             return handler.ActionResponse.success(
                 {
@@ -91,9 +89,11 @@ class ControlConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(
                 {"commands": [command.model_dump() for command in commands]}
             )
-        
+
         @self.action(LangBotToRuntimeAction.EXECUTE_COMMAND)
-        async def execute_command(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+        async def execute_command(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
             command_context = ExecuteContext.model_validate(data["command_context"])
             async for resp in self.context.plugin_mgr.execute_command(command_context):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))

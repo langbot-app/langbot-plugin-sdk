@@ -58,7 +58,6 @@ class RuntimeApplication:
     def set_control_handler(
         self, handler: control_handler_cls.ControlConnectionHandler
     ):
-        print("set_control_handler", handler)
         self.context.control_handler = handler
         return asyncio.create_task(handler.run())
 

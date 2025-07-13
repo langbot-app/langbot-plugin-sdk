@@ -7,7 +7,7 @@ from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.runtime.plugin.container import PluginContainer
 from langbot_plugin.runtime.io.handler import Handler
-from langbot_plugin.api.entities import events, context
+from langbot_plugin.api.entities import events
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
@@ -15,6 +15,7 @@ from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.api.definition.components.command.command import Command
+from langbot_plugin.api.proxies.event_context import EventContextProxy
 
 
 class PluginRuntimeHandler(Handler):
@@ -56,7 +57,9 @@ class PluginRuntimeHandler(Handler):
 
             args = deepcopy(data["event_context"])
 
-            event_context = context.EventContext.parse_from_dict(args)
+            args["plugin_runtime_handler"] = self
+
+            event_context = EventContextProxy.model_validate(args)
 
             emitted: bool = False
 
@@ -137,7 +140,9 @@ class PluginRuntimeHandler(Handler):
                         command_context
                     ):
                         yield ActionResponse.success(
-                            data={"command_response": return_value.model_dump(mode="json")}
+                            data={
+                                "command_response": return_value.model_dump(mode="json")
+                            }
                         )
                     break
             else:

@@ -7,7 +7,6 @@ import pydantic
 import langbot_plugin.api.entities.builtin.provider.session as provider_session
 from langbot_plugin.api.entities.builtin.command import errors
 import langbot_plugin.api.entities.builtin.platform.message as platform_message
-import langbot_plugin.api.entities.builtin.pipeline.query as pipeline_query
 
 
 class CommandReturn(pydantic.BaseModel):

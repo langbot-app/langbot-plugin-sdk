@@ -83,9 +83,7 @@ class Handler(abc.ABC):
                         if req_data["action"] not in self.actions:
                             raise ValueError(f"Action {req_data['action']} not found")
 
-                        response = self.actions[req_data["action"]](
-                            req_data["data"]
-                        )
+                        response = self.actions[req_data["action"]](req_data["data"])
 
                         if not isinstance(response, AsyncGenerator):
                             if isinstance(response, Coroutine):
@@ -99,13 +97,11 @@ class Handler(abc.ABC):
                                 assert isinstance(chunk, ActionResponse)
                                 chunk.seq_id = seq_id
                                 chunk.chunk_status = ChunkStatus.CONTINUE
-                                print("generator chunk", chunk)
                                 await self.conn.send(json.dumps(chunk.model_dump()))
 
                             end_response = ActionResponse.success({})
                             end_response.seq_id = seq_id
                             end_response.chunk_status = ChunkStatus.END
-                            print("generator end response", end_response)
                             await self.conn.send(json.dumps(end_response.model_dump()))
                     except Exception as e:
                         traceback.print_exc()
@@ -117,11 +113,11 @@ class Handler(abc.ABC):
 
                 elif "code" in req_data:  # action response from peer
                     response = ActionResponse.model_validate(req_data)
-                    
+
                     # Handle single response (for call_action)
                     if seq_id in self.resp_waiters:
                         self.resp_waiters[seq_id].set_result(response)
-                    
+
                     # Handle streaming response (for call_action_generator)
                     if seq_id in self.resp_queues:
                         await self.resp_queues[seq_id].put(response)
@@ -161,18 +157,18 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(this_seq_id, action.value, data)
         await self.conn.send(json.dumps(request.model_dump()))
-        
+
         # Create a queue for streaming responses
         queue = asyncio.Queue[ActionResponse]()
         self.resp_queues[this_seq_id] = queue
-        
+
         try:
             while True:
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
                     if response.code != 0:
                         raise ActionCallError(f"{response.message}")
-                    
+
                     if response.chunk_status == ChunkStatus.CONTINUE:
                         yield response.data
                     elif response.chunk_status == ChunkStatus.END:
@@ -180,7 +176,9 @@ class Handler(abc.ABC):
                 except asyncio.CancelledError:
                     break
                 except asyncio.TimeoutError:
-                    raise ActionCallTimeoutError(f"Action {action.value} call timed out")
+                    raise ActionCallTimeoutError(
+                        f"Action {action.value} call timed out"
+                    )
                 except Exception as e:
                     raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:
