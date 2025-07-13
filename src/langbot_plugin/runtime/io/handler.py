@@ -12,7 +12,7 @@ from typing import (
     AsyncIterator,
 )
 import traceback
-
+import random
 
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
@@ -27,6 +27,7 @@ from langbot_plugin.entities.io.actions.enums import ActionType
 
 class Handler(abc.ABC):
     """The abstract base class for all handlers."""
+    name: str = "Handler"
 
     conn: connection.Connection
 
@@ -47,6 +48,9 @@ class Handler(abc.ABC):
     ):
         self.conn = connection
         self.actions = {}
+        self.seq_id_index = random.randint(0, 1000000)
+        self.resp_waiters = {}
+        self.resp_queues = {}
 
         self._disconnect_callback = disconnect_callback
 
@@ -79,6 +83,7 @@ class Handler(abc.ABC):
                 seq_id = req_data["seq_id"] if "seq_id" in req_data else -1
 
                 if "action" in req_data:  # action request from peer
+
                     try:
                         if req_data["action"] not in self.actions:
                             raise ValueError(f"Action {req_data['action']} not found")
@@ -125,16 +130,16 @@ class Handler(abc.ABC):
             asyncio.create_task(handle_message(message))
 
     async def call_action(
-        self, action: ActionType, data: dict[str, Any], timeout: float = 10.0
+        self, action: ActionType, data: dict[str, Any], timeout: float = 15.0
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(this_seq_id, action.value, data)
-        await self.conn.send(json.dumps(request.model_dump()))
         # wait for response
         future = asyncio.Future[ActionResponse]()
         self.resp_waiters[this_seq_id] = future
+        await self.conn.send(json.dumps(request.model_dump()))
         try:
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
@@ -151,16 +156,17 @@ class Handler(abc.ABC):
                 del self.resp_queues[this_seq_id]
 
     async def call_action_generator(
-        self, action: ActionType, data: dict[str, Any], timeout: float = 10.0
+        self, action: ActionType, data: dict[str, Any], timeout: float = 15.0
     ) -> AsyncIterator[dict[str, Any]]:
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(this_seq_id, action.value, data)
-        await self.conn.send(json.dumps(request.model_dump()))
 
         # Create a queue for streaming responses
         queue = asyncio.Queue[ActionResponse]()
         self.resp_queues[this_seq_id] = queue
+
+        await self.conn.send(json.dumps(request.model_dump()))
 
         try:
             while True:

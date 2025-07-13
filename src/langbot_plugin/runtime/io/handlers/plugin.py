@@ -30,6 +30,7 @@ class PluginConnectionHandler(handler.Handler):
 
         super().__init__(connection, disconnect_callback)
         self.context = context
+        self.name = "FromPlugin"
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
@@ -42,6 +43,46 @@ class PluginConnectionHandler(handler.Handler):
         async def reply_message(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.REPLY_MESSAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.GET_BOT_UUID)
+        async def get_bot_uuid(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_BOT_UUID,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.SET_QUERY_VAR)
+        async def set_query_var(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.SET_QUERY_VAR,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.GET_QUERY_VAR)
+        async def get_query_var(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_QUERY_VAR,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.GET_QUERY_VARS)
+        async def get_query_vars(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_QUERY_VARS,
                 {
                     **data,
                 },

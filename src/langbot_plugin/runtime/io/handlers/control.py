@@ -11,6 +11,7 @@ from langbot_plugin.entities.io.actions.enums import (
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
+import traceback
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -22,6 +23,7 @@ class ControlConnectionHandler(handler.Handler):
         self, connection: connection.Connection, context: context_module.RuntimeContext
     ):
         super().__init__(connection)
+        self.name = "FromLangBot"
         self.context = context
 
         @self.action(CommonAction.PING)

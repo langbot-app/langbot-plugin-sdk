@@ -20,11 +20,10 @@ class PluginToRuntimeAction(ActionType):
     REGISTER_PLUGIN = "register_plugin"
 
     # ========== APIs for plugin code ==========
-    """Event APIs"""
+
+    """Query-based APIs"""
     REPLY_MESSAGE = "reply_message"
     GET_BOT_UUID = "get_bot_uuid"
-
-    """Query APIs"""
     SET_QUERY_VAR = "set_query_var"
     GET_QUERY_VAR = "get_query_var"
     GET_QUERY_VARS = "get_query_vars"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 import typing
 
 import pydantic
@@ -33,6 +34,9 @@ class CommandReturn(pydantic.BaseModel):
 
 class ExecuteContext(pydantic.BaseModel):
     """单次命令执行上下文"""
+
+    query_id: int
+    """请求ID"""
 
     session: provider_session.Session
     """本次消息所属的会话对象"""
@@ -75,3 +79,26 @@ class ExecuteContext(pydantic.BaseModel):
         self.crt_command = self.crt_params[0]
         self.crt_params = self.crt_params[1:]
         return self
+
+    # ========== 插件可调用的 API ==========
+    async def reply(
+        self, message_chain: platform_message.MessageChain, quote_origin: bool = False
+    ):
+        """Reply to the message request
+
+        Args:
+            message_chain (platform.types.MessageChain): LangBot message chain
+            quote_origin (bool): Whether to quote the original message
+        """
+
+    async def get_bot_uuid(self) -> str:
+        """Get the bot uuid"""
+
+    async def set_query_var(self, key: str, value: Any):
+        """Set a query variable"""
+
+    async def get_query_var(self, key: str) -> Any:
+        """Get a query variable"""
+
+    async def get_query_vars(self) -> dict[str, Any]:
+        """Get all query variables"""

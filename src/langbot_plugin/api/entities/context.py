@@ -17,6 +17,9 @@ cached_event_contexts: dict[int, EventContext] = {}
 class EventContext(pydantic.BaseModel):
     """事件上下文, 保存此次事件运行的信息"""
 
+    query_id: int
+    """请求ID"""
+
     eid: int = 0
     """事件编号"""
 
@@ -67,6 +70,18 @@ class EventContext(pydantic.BaseModel):
             quote_origin (bool): Whether to quote the original message
         """
 
+    async def get_bot_uuid(self) -> str:
+        """Get the bot uuid"""
+
+    async def set_query_var(self, key: str, value: Any):
+        """Set a query variable"""
+
+    async def get_query_var(self, key: str) -> Any:
+        """Get a query variable"""
+
+    async def get_query_vars(self) -> dict[str, Any]:
+        """Get all query variables"""
+
     def prevent_default(self):
         """Prevent default behavior"""
         self.is_prevent_default = True
@@ -100,6 +115,7 @@ class EventContext(pydantic.BaseModel):
     @classmethod
     def from_event(cls, event: BaseEventModel) -> EventContext:
         global global_eid_index
+        query_id = event.query.query_id
         eid = global_eid_index
         event = event
         event_name = event.__class__.__name__
@@ -108,6 +124,7 @@ class EventContext(pydantic.BaseModel):
         return_value: dict[str, list[Any]] = {}
 
         obj = cls(
+            query_id=query_id,
             eid=eid,
             event_name=event_name,
             event=event,

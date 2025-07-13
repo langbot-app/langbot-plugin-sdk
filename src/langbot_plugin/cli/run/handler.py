@@ -13,9 +13,9 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
-from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.proxies.event_context import EventContextProxy
+from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
 
 
 class PluginRuntimeHandler(Handler):
@@ -31,6 +31,7 @@ class PluginRuntimeHandler(Handler):
         ],
     ):
         super().__init__(connection)
+        self.name = "FromRuntime"
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
         async def initialize_plugin(data: dict[str, typing.Any]) -> ActionResponse:
@@ -124,7 +125,10 @@ class PluginRuntimeHandler(Handler):
             data: dict[str, typing.Any],
         ) -> typing.AsyncGenerator[ActionResponse, None]:
             """Execute a command."""
-            command_context = ExecuteContext.model_validate(data["command_context"])
+
+            args = deepcopy(data["command_context"])
+            args["plugin_runtime_handler"] = self
+            command_context = ExecuteContextProxy.model_validate(args)
 
             for component in self.plugin_container.components:
                 if component.manifest.kind == Command.__kind__:
