@@ -88,6 +88,76 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.GET_LANGBOT_VERSION)
+        async def get_langbot_version(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_LANGBOT_VERSION,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.GET_BOTS)
+        async def get_bots(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_BOTS,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        # @self.action(PluginToRuntimeAction.GET_BOT_INFO)
+        # async def get_bot_info(data: dict[str, Any]) -> handler.ActionResponse:
+        #     result = await self.context.control_handler.call_action(
+        #         PluginToRuntimeAction.GET_BOT_INFO,
+        #         {
+        #             **data,
+        #         },
+        #     )
+        #     return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.SEND_MESSAGE)
+        async def send_message(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.SEND_MESSAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.GET_LLM_MODELS)
+        async def get_llm_models(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_LLM_MODELS,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        # @self.action(PluginToRuntimeAction.GET_LLM_MODEL_INFO)
+        # async def get_llm_model_info(data: dict[str, Any]) -> handler.ActionResponse:
+        #     result = await self.context.control_handler.call_action(
+        #         PluginToRuntimeAction.GET_LLM_MODEL_INFO,
+        #         {
+        #             **data,
+        #         },
+        #     )
+        #     return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.INVOKE_LLM)
+        async def invoke_llm(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.INVOKE_LLM,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]

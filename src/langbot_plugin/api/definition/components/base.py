@@ -8,7 +8,7 @@ from langbot_plugin.api.definition.plugin import BasePlugin
 class BaseComponent(abc.ABC):
     """The abstract base class for all components."""
 
-    plugin_instance: BasePlugin
+    plugin: BasePlugin
 
     def __init__(self):
         pass

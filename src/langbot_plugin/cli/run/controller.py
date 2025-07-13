@@ -128,6 +128,7 @@ class PluginRuntimeController:
         self.plugin_container.plugin_instance.config = (
             self.plugin_container.plugin_config
         )
+        self.plugin_container.plugin_instance.plugin_runtime_handler = self.handler
         await self.plugin_container.plugin_instance.initialize()
 
         preinitialize_component_classes: list[type[BaseComponent]] = [
@@ -145,7 +146,7 @@ class PluginRuntimeController:
                     assert issubclass(component_impl_cls, component_cls)
                     component_container.component_instance = component_impl_cls()
                     await component_container.component_instance.initialize()
-                    component_container.component_instance.plugin_instance = (
+                    component_container.component_instance.plugin = (
                         self.plugin_container.plugin_instance
                     )
 

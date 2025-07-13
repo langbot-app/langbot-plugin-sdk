@@ -3,8 +3,10 @@ from __future__ import annotations
 import abc
 import typing
 
+from langbot_plugin.api.proxies import langbot_api
 
-class BasePlugin(abc.ABC):
+
+class BasePlugin(abc.ABC, langbot_api.LangBotAPIProxy):
     """The base class for all plugins."""
 
     config: dict[str, typing.Any]
