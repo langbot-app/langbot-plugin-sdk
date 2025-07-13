@@ -1,7 +1,7 @@
 # handle connection from LangBot
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
@@ -10,6 +10,7 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
+from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -83,6 +84,19 @@ class ControlConnectionHandler(handler.Handler):
                     "tool_response": resp,
                 }
             )
+
+        @self.action(LangBotToRuntimeAction.LIST_COMMANDS)
+        async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
+            commands = await self.context.plugin_mgr.list_commands()
+            return handler.ActionResponse.success(
+                {"commands": [command.model_dump() for command in commands]}
+            )
+        
+        @self.action(LangBotToRuntimeAction.EXECUTE_COMMAND)
+        async def execute_command(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+            command_context = ExecuteContext.model_validate(data["command_context"])
+            async for resp in self.context.plugin_mgr.execute_command(command_context):
+                yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
 
 # {"action": "ping", "data": {}, "seq_id": 1}

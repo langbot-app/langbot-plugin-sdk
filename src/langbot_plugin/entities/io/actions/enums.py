@@ -27,6 +27,7 @@ class RuntimeToPluginAction(ActionType):
     GET_PLUGIN_CONTAINER = "get_plugin_container"
     EMIT_EVENT = "emit_event"
     CALL_TOOL = "call_tool"
+    EXECUTE_COMMAND = "execute_command"
 
 
 class LangBotToRuntimeAction(ActionType):
@@ -37,6 +38,8 @@ class LangBotToRuntimeAction(ActionType):
     EMIT_EVENT = "emit_event"
     LIST_TOOLS = "list_tools"
     CALL_TOOL = "call_tool"
+    LIST_COMMANDS = "list_commands"
+    EXECUTE_COMMAND = "execute_command"
 
 
 class RuntimeToLangBotAction(ActionType):

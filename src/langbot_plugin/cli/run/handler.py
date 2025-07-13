@@ -13,6 +13,8 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
+from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
+from langbot_plugin.api.definition.components.command.command import Command
 
 
 class PluginRuntimeHandler(Handler):
@@ -62,9 +64,7 @@ class PluginRuntimeHandler(Handler):
             for component in self.plugin_container.components:
                 if component.manifest.kind == EventListener.__kind__:
                     if component.component_instance is None:
-                        return ActionResponse.error(
-                            "Event listener is not initialized"
-                        )
+                        return ActionResponse.error("Event listener is not initialized")
 
                     assert isinstance(component.component_instance, EventListener)
 
@@ -115,6 +115,35 @@ class PluginRuntimeHandler(Handler):
                     )
 
             return ActionResponse.error(f"Tool {tool_name} not found")
+
+        @self.action(RuntimeToPluginAction.EXECUTE_COMMAND)
+        async def execute_command(
+            data: dict[str, typing.Any],
+        ) -> typing.AsyncGenerator[ActionResponse, None]:
+            """Execute a command."""
+            command_context = ExecuteContext.model_validate(data["command_context"])
+
+            for component in self.plugin_container.components:
+                if component.manifest.kind == Command.__kind__:
+                    if component.manifest.metadata.name != command_context.command:
+                        continue
+
+                    if isinstance(component.component_instance, NoneComponent):
+                        yield ActionResponse.error("Command is not initialized")
+
+                    command_instance = component.component_instance
+                    assert isinstance(command_instance, Command)
+                    async for return_value in command_instance._execute(
+                        command_context
+                    ):
+                        yield ActionResponse.success(
+                            data={"command_response": return_value.model_dump(mode="json")}
+                        )
+                    break
+            else:
+                yield ActionResponse.error(
+                    f"Command {command_context.command} not found"
+                )
 
     async def register_plugin(self) -> dict[str, typing.Any]:
         resp = await self.call_action(

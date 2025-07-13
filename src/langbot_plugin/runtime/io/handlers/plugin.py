@@ -1,7 +1,7 @@
 # handle connection to/from plugin
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
@@ -69,3 +69,13 @@ class PluginConnectionHandler(handler.Handler):
         )
 
         return resp
+    
+    async def execute_command(
+        self, command_context: dict[str, Any]
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        gen = self.call_action_generator(
+            RuntimeToPluginAction.EXECUTE_COMMAND, {"command_context": command_context}
+        )
+
+        async for resp in gen:
+            yield resp

@@ -82,28 +82,29 @@ class Handler(abc.ABC):
                         if req_data["action"] not in self.actions:
                             raise ValueError(f"Action {req_data['action']} not found")
 
-                        response = await self.actions[req_data["action"]](
+                        response = self.actions[req_data["action"]](
                             req_data["data"]
                         )
 
-                        if not isinstance(response, AsyncIterator):
-                            print(
-                                f"response is not AsyncIterator, type: {type(response)}"
-                            )
+                        if not isinstance(response, AsyncGenerator):
+                            if isinstance(response, Coroutine):
+                                response = await response
+
                             response.seq_id = seq_id
                             await self.conn.send(json.dumps(response.model_dump()))
-                        elif isinstance(response, AsyncIterator):
-                            print(f"response is AsyncIterator, type: {type(response)}")
+                        elif isinstance(response, AsyncGenerator):
                             response_generator = response
                             async for chunk in response_generator:
                                 assert isinstance(chunk, ActionResponse)
                                 chunk.seq_id = seq_id
                                 chunk.chunk_status = ChunkStatus.CONTINUE
+                                print("generator chunk", chunk)
                                 await self.conn.send(json.dumps(chunk.model_dump()))
 
                             end_response = ActionResponse.success({})
                             end_response.seq_id = seq_id
                             end_response.chunk_status = ChunkStatus.END
+                            print("generator end response", end_response)
                             await self.conn.send(json.dumps(end_response.model_dump()))
                     except Exception as e:
                         traceback.print_exc()
@@ -115,17 +116,17 @@ class Handler(abc.ABC):
 
                 elif "code" in req_data:  # action response from peer
                     if seq_id in self.resp_waiters:
-                        if req_data["code"] != 0:
-                            error_response = ActionResponse.error(req_data["message"])
-                            error_response.seq_id = seq_id
-                            self.resp_waiters[seq_id].set_result(error_response)
-                        else:
-                            response = ActionResponse.success(req_data["data"])
-                            response.seq_id = seq_id
-                            response.code = req_data["code"]
-                            self.resp_waiters[seq_id].set_result(response)
-
-                        del self.resp_waiters[seq_id]
+                        # if req_data["code"] != 0:
+                        #     error_response = ActionResponse.error(req_data["message"])
+                        #     error_response.seq_id = seq_id
+                        #     self.resp_waiters[seq_id].set_result(error_response)
+                        # else:
+                        #     response = ActionResponse.success(req_data["data"])
+                        #     response.seq_id = seq_id
+                        #     response.code = req_data["code"]
+                        #     self.resp_waiters[seq_id].set_result(response)
+                        response = ActionResponse.model_validate(req_data)
+                        self.resp_waiters[seq_id].set_result(response)
 
             asyncio.create_task(handle_message(message))
 
@@ -134,11 +135,12 @@ class Handler(abc.ABC):
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
         self.seq_id_index += 1
-        request = ActionRequest.make_request(self.seq_id_index, action.value, data)
+        this_seq_id = self.seq_id_index
+        request = ActionRequest.make_request(this_seq_id, action.value, data)
         await self.conn.send(json.dumps(request.model_dump()))
         # wait for response
         future = asyncio.Future[ActionResponse]()
-        self.resp_waiters[self.seq_id_index] = future
+        self.resp_waiters[this_seq_id] = future
         try:
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
@@ -148,29 +150,39 @@ class Handler(abc.ABC):
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
+        finally:
+            if this_seq_id in self.resp_waiters:
+                del self.resp_waiters[this_seq_id]
 
     async def call_action_generator(
         self, action: ActionType, data: dict[str, Any], timeout: float = 10.0
     ) -> AsyncIterator[dict[str, Any]]:
         self.seq_id_index += 1
-        request = ActionRequest.make_request(self.seq_id_index, action.value, data)
+        this_seq_id = self.seq_id_index
+        request = ActionRequest.make_request(this_seq_id, action.value, data)
         await self.conn.send(json.dumps(request.model_dump()))
         # wait for response
         while True:
             future = asyncio.Future[ActionResponse]()
-            self.resp_waiters[self.seq_id_index] = future
+            self.resp_waiters[this_seq_id] = future
             try:
                 response = await asyncio.wait_for(future, timeout)
                 if response.code != 0:
                     raise ActionCallError(f"{response.message}")
-                yield response.data
+                
+                if response.chunk_status == ChunkStatus.CONTINUE:
+                    yield response.data
+                elif response.chunk_status == ChunkStatus.END:
+                    break
             except asyncio.CancelledError:
                 break
             except asyncio.TimeoutError:
                 raise ActionCallTimeoutError(f"Action {action.value} call timed out")
             except Exception as e:
                 raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
-        del self.resp_waiters[self.seq_id_index]
+            finally:
+                if this_seq_id in self.resp_waiters:
+                    del self.resp_waiters[this_seq_id]
 
     # decorator to register an action
     def action(

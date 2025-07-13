@@ -15,7 +15,9 @@ from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
+from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
+from langbot_plugin.api.entities.builtin.command.context import ExecuteContext, CommandReturn
 
 
 class PluginManager:
@@ -184,3 +186,33 @@ class PluginManager:
                     return resp["tool_response"]
 
         return {}
+
+    async def list_commands(self) -> list[ComponentManifest]:
+        commands: list[ComponentManifest] = []
+
+        for plugin in self.plugins:
+            for component in plugin.components:
+                if component.manifest.kind == Command.__kind__:
+                    commands.append(component.manifest)
+
+        return commands
+
+    async def execute_command(
+        self, command_context: ExecuteContext
+    ) -> typing.AsyncGenerator[CommandReturn, None]:
+        for plugin in self.plugins:
+            for component in plugin.components:
+                if component.manifest.kind == Command.__kind__:
+                    if component.manifest.metadata.name != command_context.command:
+                        continue
+
+                    if plugin._runtime_plugin_handler is None:
+                        continue
+
+                    async for resp in plugin._runtime_plugin_handler.execute_command(
+                        command_context.model_dump(mode="json")
+                    ):
+                        print("execute_command", resp)
+                        yield CommandReturn.model_validate(resp["command_response"])
+
+                    break

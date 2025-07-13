@@ -22,5 +22,50 @@
 }
 ```
 
+## `install_plugin`
+
+### Request
+
+```json
+```
+
+### Response
+
+```json
+```
+
 ## `emit_event`
 
+### Request
+
+```json
+```
+
+### Response
+
+```json
+```
+
+## `list_tools`
+
+### Request
+
+```json
+```
+
+### Response
+
+```json
+```
+
+## `call_tool`
+
+### Request
+
+```json
+```
+
+### Response
+
+```json
+```

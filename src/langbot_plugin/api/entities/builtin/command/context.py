@@ -35,9 +35,6 @@ class CommandReturn(pydantic.BaseModel):
 class ExecuteContext(pydantic.BaseModel):
     """单次命令执行上下文"""
 
-    query: pipeline_query.Query
-    """本次消息的请求对象"""
-
     session: provider_session.Session
     """本次消息所属的会话对象"""
 
@@ -73,3 +70,9 @@ class ExecuteContext(pydantic.BaseModel):
 
     privilege: int
     """发起人权限"""
+
+    def shift(self) -> ExecuteContext:
+        """Shift the command context."""
+        self.crt_command = self.crt_params[0]
+        self.crt_params = self.crt_params[1:]
+        return self

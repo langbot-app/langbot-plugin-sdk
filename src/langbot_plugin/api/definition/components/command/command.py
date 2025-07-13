@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from langbot_plugin.api.definition.components.base import BaseComponent
 from langbot_plugin.api.entities.builtin.command import context
+from langbot_plugin.api.entities.builtin.command.errors import CommandNotFoundError
 
 
 class Subcommand(BaseModel):
@@ -73,3 +74,14 @@ class Command(BaseComponent):
             return subcommand
 
         return decorator
+
+    async def _execute(
+        self, context: context.ExecuteContext
+    ) -> AsyncGenerator[context.CommandReturn, None]:
+        """Execute the command."""
+        if context.crt_command not in self.registered_subcommands:
+            raise CommandNotFoundError(context.crt_command)
+
+        subcommand = self.registered_subcommands[context.crt_command]
+        async for return_value in subcommand.subcommand(self, context):
+            yield return_value

@@ -130,12 +130,18 @@ class PluginRuntimeController:
         )
         await self.plugin_container.plugin_instance.initialize()
 
-        preinitialize_component_classes: list[type[BaseComponent]] = [EventListener, Tool, Command]
+        preinitialize_component_classes: list[type[BaseComponent]] = [
+            EventListener,
+            Tool,
+            Command,
+        ]
 
         for component_cls in preinitialize_component_classes:
             for component_container in self.plugin_container.components:
                 if component_container.manifest.kind == component_cls.__kind__:
-                    component_impl_cls = component_container.manifest.get_python_component_class()
+                    component_impl_cls = (
+                        component_container.manifest.get_python_component_class()
+                    )
                     assert issubclass(component_impl_cls, component_cls)
                     component_container.component_instance = component_impl_cls()
                     await component_container.component_instance.initialize()
