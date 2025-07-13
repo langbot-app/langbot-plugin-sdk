@@ -7,6 +7,7 @@ from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
     PluginToRuntimeAction,
     RuntimeToPluginAction,
+    RuntimeToLangBotAction,
 )
 from langbot_plugin.runtime import context as context_module
 
@@ -153,6 +154,126 @@ class PluginConnectionHandler(handler.Handler):
         async def invoke_llm(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.INVOKE_LLM,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.SET_PLUGIN_STORAGE)
+        async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "plugin"
+
+            for plugin_container in self.context.plugin_mgr.plugins:
+                if plugin_container._runtime_plugin_handler == self:
+                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    break
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.SET_BINARY_STORAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.GET_PLUGIN_STORAGE)
+        async def get_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "plugin"
+
+            for plugin_container in self.context.plugin_mgr.plugins:
+                if plugin_container._runtime_plugin_handler == self:
+                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    break
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_BINARY_STORAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.GET_PLUGIN_STORAGE_KEYS)
+        async def get_plugin_storage_keys(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "plugin"
+
+            for plugin_container in self.context.plugin_mgr.plugins:
+                if plugin_container._runtime_plugin_handler == self:
+                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    break
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.DELETE_PLUGIN_STORAGE)
+        async def delete_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "plugin"
+
+            for plugin_container in self.context.plugin_mgr.plugins:
+                if plugin_container._runtime_plugin_handler == self:
+                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    break
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.SET_WORKSPACE_STORAGE)
+        async def set_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "workspace"
+            data["owner"] = "default"
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.SET_BINARY_STORAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE)
+        async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "workspace"
+            data["owner"] = "default"
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_BINARY_STORAGE,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE_KEYS)
+        async def get_workspace_storage_keys(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "workspace"
+            data["owner"] = "default"
+            
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+        
+        @self.action(PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE)
+        async def delete_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
+            data["owner_type"] = "workspace"
+            data["owner"] = "default"
+
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
                 {
                     **data,
                 },

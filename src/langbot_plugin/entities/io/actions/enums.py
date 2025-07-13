@@ -40,6 +40,16 @@ class PluginToRuntimeAction(ActionType):
     INVOKE_LLM = "invoke_llm"
     # INVOKE_LLM_STREAMING = "invoke_llm_streaming"
 
+    SET_PLUGIN_STORAGE = "set_plugin_storage"
+    GET_PLUGIN_STORAGE = "get_plugin_storage"
+    GET_PLUGIN_STORAGE_KEYS = "get_plugin_storage_keys"
+    DELETE_PLUGIN_STORAGE = "delete_plugin_storage"
+
+    SET_WORKSPACE_STORAGE = "set_workspace_storage"
+    GET_WORKSPACE_STORAGE = "get_workspace_storage"
+    GET_WORKSPACE_STORAGE_KEYS = "get_workspace_storage_keys"
+    DELETE_WORKSPACE_STORAGE = "delete_workspace_storage"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
@@ -67,3 +77,8 @@ class RuntimeToLangBotAction(ActionType):
     """The action from runtime to langbot."""
 
     GET_PLUGIN_SETTINGS = "get_plugin_settings"
+
+    SET_BINARY_STORAGE = "set_binary_storage"
+    GET_BINARY_STORAGE = "get_binary_storage"
+    GET_BINARY_STORAGE_KEYS = "get_binary_storage_keys"
+    DELETE_BINARY_STORAGE = "delete_binary_storage"

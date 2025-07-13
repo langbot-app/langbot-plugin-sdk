@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from langbot_plugin.runtime.io.handler import Handler
@@ -87,3 +88,64 @@ class LangBotAPIProxy:
         )["message"]
 
         return provider_message.Message.model_validate(resp)
+
+    async def set_plugin_storage(self, key: str, value: bytes) -> None:
+        """Set a plugin storage value"""
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.SET_PLUGIN_STORAGE,
+            {"key": key, "value_base64": base64.b64encode(value).decode("utf-8")},
+        )
+
+    async def get_plugin_storage(self, key: str) -> bytes:
+        """Get a plugin storage value"""
+        resp = (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_PLUGIN_STORAGE, {"key": key}
+            )
+        )["value_base64"]
+
+        return base64.b64decode(resp)
+    
+    async def get_plugin_storage_keys(self) -> list[str]:
+        """Get all plugin storage keys"""
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_PLUGIN_STORAGE_KEYS, {}
+            )
+        )["keys"]
+    
+    async def delete_plugin_storage(self, key: str) -> None:
+        """Delete a plugin storage value"""
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.DELETE_PLUGIN_STORAGE, {"key": key}
+        )
+
+    async def set_workspace_storage(self, key: str, value: bytes) -> None:
+        """Set a workspace storage value"""
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.SET_WORKSPACE_STORAGE, {"key": key, "value_base64": base64.b64encode(value).decode("utf-8")}
+        )
+
+    async def get_workspace_storage(self, key: str) -> bytes:
+        """Get a workspace storage value"""
+        resp = (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_WORKSPACE_STORAGE, {"key": key}
+            )
+        )["value_base64"]
+
+        return base64.b64decode(resp)
+    
+    async def get_workspace_storage_keys(self) -> list[str]:
+        """Get all workspace storage keys"""
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_WORKSPACE_STORAGE_KEYS, {}
+            )
+        )["keys"]
+    
+    async def delete_workspace_storage(self, key: str) -> None:
+        """Delete a workspace storage value"""
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE, {"key": key}
+        )

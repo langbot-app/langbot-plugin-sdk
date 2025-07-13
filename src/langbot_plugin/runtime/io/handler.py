@@ -48,7 +48,7 @@ class Handler(abc.ABC):
     ):
         self.conn = connection
         self.actions = {}
-        self.seq_id_index = random.randint(0, 1000000)
+        self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
 
