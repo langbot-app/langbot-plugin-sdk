@@ -5,6 +5,7 @@ from langbot_plugin.runtime import app as runtime_app
 from langbot_plugin.cli.commands.initplugin import init_plugin_process
 from langbot_plugin.cli.commands.gencomponent import generate_component_process
 from langbot_plugin.cli.commands.runplugin import run_plugin_process
+from langbot_plugin.cli.commands.buildplugin import build_plugin_process
 
 """
 Usage:
@@ -45,6 +46,12 @@ def main():
         "-s", "--stdio", action="store_true", help="Use stdio for control connection"
     )
 
+    # build command
+    build_parser = subparsers.add_parser("build", help="Build the plugin")
+    build_parser.add_argument(
+        "-o", "--output", help="The output directory", default="dist"
+    )
+
     # rt command
     rt_parser = subparsers.add_parser("rt", help="Run the runtime")
     rt_parser.add_argument(
@@ -82,6 +89,8 @@ def main():
         case "run":
             print("Running plugin in current directory")
             run_plugin_process(args.stdio)
+        case "build":
+            build_plugin_process(args.output)
         case "rt":
             runtime_app.main(args)
         case _:
