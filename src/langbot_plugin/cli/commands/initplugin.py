@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 
-from langbot_plugin.cli.gen.renderer import render_template, files
+from langbot_plugin.cli.gen.renderer import render_template, init_plugin_files
 from langbot_plugin.cli.utils.form import input_form_values, NAME_REGEXP
 
 
@@ -75,7 +76,9 @@ def init_plugin_process(
     print(f"Creating files in {values['plugin_name']}...")
     print(f"在 {values['plugin_name']} 中创建文件...")
 
-    for file in files:
+    os.makedirs(f"{values['plugin_name']}/assets", exist_ok=True)
+
+    for file in init_plugin_files:
         content = render_template(f"{file}.example", **values)
         with open(f"{values['plugin_name']}/{file}", "w", encoding="utf-8") as f:
             f.write(content)

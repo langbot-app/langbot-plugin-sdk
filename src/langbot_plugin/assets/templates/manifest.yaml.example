@@ -11,6 +11,7 @@ metadata:
   label:
     en_US: {{ plugin_label }}
     zh_Hans: {{ plugin_label }}
+  icon: assets/icon.svg  # replace in assets/icon.svg
 spec:
   config: []
   components: {}

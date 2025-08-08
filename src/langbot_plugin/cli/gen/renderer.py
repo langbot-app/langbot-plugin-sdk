@@ -38,13 +38,14 @@ def simple_render(
     return origin_text.format(**context)
 
 
-files = [
+init_plugin_files = [
     "manifest.yaml",
     "main.py",
     "README.md",
     "requirements.txt",
     ".env.example",
     ".gitignore",
+    "assets/icon.svg",
 ]
 
 
