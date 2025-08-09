@@ -76,8 +76,8 @@ class ExecuteContext(pydantic.BaseModel):
 
     def shift(self) -> ExecuteContext:
         """Shift the command context."""
-        self.crt_command = self.crt_params[0]
-        self.crt_params = self.crt_params[1:]
+        self.crt_command = self.crt_params[0] if len(self.crt_params) > 0 else ''
+        self.crt_params = self.crt_params[1:] if len(self.crt_params) > 0 else []
         return self
 
     # ========== 插件可调用的 API ==========

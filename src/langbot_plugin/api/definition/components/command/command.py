@@ -79,6 +79,7 @@ class Command(BaseComponent):
         self, context: context.ExecuteContext
     ) -> AsyncGenerator[context.CommandReturn, None]:
         """Execute the command."""
+        context.shift()
         if context.crt_command not in self.registered_subcommands:
             raise CommandNotFoundError(context.crt_command)
 
