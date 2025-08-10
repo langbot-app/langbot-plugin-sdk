@@ -11,6 +11,10 @@ class BasePlugin(abc.ABC, langbot_api.LangBotAPIProxy):
 
     config: dict[str, typing.Any]
 
+    def get_config(self) -> dict[str, typing.Any]:
+        """Get the config of the plugin."""
+        return self.config
+
     def __init__(self):
         pass
 

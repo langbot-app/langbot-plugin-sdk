@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
+from langbot_plugin.api.entities import events, context
 
 
 class DefaultEventListener(EventListener):

@@ -8,9 +8,6 @@ from pathlib import Path
 import pydantic
 
 
-logger = logging.getLogger(__name__)
-
-
 class MessageComponent(pydantic.BaseModel):
     """Message component."""
 
