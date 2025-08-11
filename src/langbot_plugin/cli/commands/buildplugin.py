@@ -6,6 +6,8 @@ import fnmatch
 from pathlib import Path
 from typing import List
 
+from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
+
 
 def parse_gitignore(gitignore_path: str) -> List[str]:
     """Parse .gitignore file and return list of patterns."""
@@ -74,7 +76,19 @@ def build_plugin_process(output_dir: str) -> None:
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
-    zipfile_path = os.path.join(output_dir, "plugin.zip")
+    discovery_engine = ComponentDiscoveryEngine()
+
+    plugin_manifest = discovery_engine.load_component_manifest(
+        path="manifest.yaml",
+        owner="builtin",
+        no_save=True,
+    )
+
+    plugin_author = plugin_manifest.metadata.author
+    plugin_name = plugin_manifest.metadata.name
+    plugin_version = plugin_manifest.metadata.version
+
+    zipfile_path = os.path.join(output_dir, f"{plugin_author}-{plugin_name}-{plugin_version}.zip")
 
     # Parse .gitignore patterns
     gitignore_patterns = parse_gitignore(".gitignore")
