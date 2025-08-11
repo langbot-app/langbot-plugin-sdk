@@ -6,6 +6,8 @@ from langbot_plugin.cli.commands.initplugin import init_plugin_process
 from langbot_plugin.cli.commands.gencomponent import generate_component_process
 from langbot_plugin.cli.commands.runplugin import run_plugin_process
 from langbot_plugin.cli.commands.buildplugin import build_plugin_process
+from langbot_plugin.cli.commands.login import login_process
+from langbot_plugin.cli.commands.logout import logout_process
 
 """
 Usage:
@@ -13,6 +15,8 @@ Usage:
 
 Commands:
     ver: Show the version of the CLI
+    login: Login to LangBot account
+    logout: Logout from LangBot account
     init: Initialize a new plugin
         - <plugin_name>: The name of the plugin
     comp: Generate a component
@@ -45,6 +49,12 @@ def main():
     run_parser.add_argument(
         "-s", "--stdio", action="store_true", help="Use stdio for control connection"
     )
+
+    # login command
+    login_parser = subparsers.add_parser("login", help="Login to LangBot account")
+
+    # logout command
+    logout_parser = subparsers.add_parser("logout", help="Logout from LangBot account")
 
     # build command
     build_parser = subparsers.add_parser("build", help="Build the plugin")
@@ -82,6 +92,10 @@ def main():
     match args.command:
         case "ver":
             print(f"LangBot Plugin CLI v{__version__}")
+        case "login":
+            login_process()
+        case "logout":
+            logout_process()
         case "init":
             init_plugin_process(args.plugin_name)
         case "comp":
