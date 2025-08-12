@@ -66,7 +66,7 @@ def should_ignore(path: str, gitignore_patterns: List[str]) -> bool:
     return False
 
 
-def build_plugin_process(output_dir: str) -> None:
+def build_plugin_process(output_dir: str) -> str:
     if not os.path.exists("manifest.yaml"):
         print("Plugin manifest not found")
         return
@@ -134,3 +134,4 @@ def build_plugin_process(output_dir: str) -> None:
                     print(f"  - Error adding {relative_path}: {e}")
 
     print(f"Plugin built successfully: {zipfile_path}")
+    return zipfile_path

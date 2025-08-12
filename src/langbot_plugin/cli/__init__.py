@@ -8,15 +8,20 @@ from langbot_plugin.cli.commands.runplugin import run_plugin_process
 from langbot_plugin.cli.commands.buildplugin import build_plugin_process
 from langbot_plugin.cli.commands.login import login_process
 from langbot_plugin.cli.commands.logout import logout_process
+from langbot_plugin.cli.commands.publish import publish_process
 
 """
 Usage:
-    langbot-plugin <command>
+    lbp <command>
 
 Commands:
+    help: Show the help of the CLI
     ver: Show the version of the CLI
     login: Login to LangBot account
     logout: Logout from LangBot account
+    build: Build the plugin
+        - [--output]: The output directory, default is `dist`
+    publish: Publish the plugin to LangBot Marketplace
     init: Initialize a new plugin
         - <plugin_name>: The name of the plugin
     comp: Generate a component
@@ -32,6 +37,9 @@ Commands:
 def main():
     parser = argparse.ArgumentParser(description="LangBot Plugin CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    
+    # help command
+    help_parser = subparsers.add_parser("help", help="Show the help of the CLI")
 
     # ver command
     ver_parser = subparsers.add_parser("ver", help="Show the version of the CLI")
@@ -57,8 +65,14 @@ def main():
     logout_parser = subparsers.add_parser("logout", help="Logout from LangBot account")
 
     # build command
-    build_parser = subparsers.add_parser("build", help="Build the plugin")
+    build_parser = subparsers.add_parser("build", help="Build the plugin to a zip file")
     build_parser.add_argument(
+        "-o", "--output", help="The output directory", default="dist"
+    )
+
+    # publish command
+    publish_parser = subparsers.add_parser("publish", help="Publish the plugin to LangBot Marketplace")
+    publish_parser.add_argument(
         "-o", "--output", help="The output directory", default="dist"
     )
 
@@ -90,6 +104,8 @@ def main():
         sys.exit(1)
 
     match args.command:
+        case "help":
+            parser.print_help()
         case "ver":
             print(f"LangBot Plugin CLI v{__version__}")
         case "login":
@@ -105,6 +121,8 @@ def main():
             run_plugin_process(args.stdio)
         case "build":
             build_plugin_process(args.output)
+        case "publish":
+            publish_process()
         case "rt":
             runtime_app.main(args)
         case _:
