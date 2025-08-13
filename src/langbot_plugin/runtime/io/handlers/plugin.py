@@ -110,15 +110,15 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
         
-        # @self.action(PluginToRuntimeAction.GET_BOT_INFO)
-        # async def get_bot_info(data: dict[str, Any]) -> handler.ActionResponse:
-        #     result = await self.context.control_handler.call_action(
-        #         PluginToRuntimeAction.GET_BOT_INFO,
-        #         {
-        #             **data,
-        #         },
-        #     )
-        #     return handler.ActionResponse.success(result)
+        @self.action(PluginToRuntimeAction.GET_BOT_INFO)
+        async def get_bot_info(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_BOT_INFO,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
         
         @self.action(PluginToRuntimeAction.SEND_MESSAGE)
         async def send_message(data: dict[str, Any]) -> handler.ActionResponse:

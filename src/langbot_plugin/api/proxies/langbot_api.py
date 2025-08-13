@@ -33,6 +33,14 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.GET_BOTS, {}
             )
         )["bots"]
+    
+    async def get_bot_info(self, bot_uuid: str) -> dict[str, Any]:
+        """Get a bot info"""
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_BOT_INFO, {"bot_uuid": bot_uuid}
+            )
+        )["bot"]
 
     async def send_message(
         self,

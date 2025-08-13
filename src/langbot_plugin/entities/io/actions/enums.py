@@ -32,7 +32,7 @@ class PluginToRuntimeAction(ActionType):
     GET_LANGBOT_VERSION = "get_langbot_version"
 
     GET_BOTS = "get_bots"
-    # GET_BOT_INFO = "get_bot_info"
+    GET_BOT_INFO = "get_bot_info"
     SEND_MESSAGE = "send_message"
 
     GET_LLM_MODELS = "get_llm_models"
