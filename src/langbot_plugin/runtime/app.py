@@ -14,7 +14,7 @@ from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_cls
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
-
+from langbot_plugin.runtime.settings import settings
 
 class ControlConnectionMode(Enum):
     STDIO = "stdio"
@@ -31,6 +31,8 @@ class RuntimeApplication:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.context = context.RuntimeContext()
+
+        print('settings.cloud_service_url', settings.cloud_service_url)
 
         self.context.plugin_mgr = plugin_mgr_cls.PluginManager(self.context)
 
@@ -82,7 +84,7 @@ class RuntimeApplication:
         # ==== plugin debug server ====
         async def new_plugin_debug_connection_callback(connection: Connection):
             plugin_handler = plugin_handler_cls.PluginConnectionHandler(
-                connection, self.context
+                connection, self.context, debug_plugin=True
             )
 
             await self.context.plugin_mgr.add_plugin_handler(plugin_handler)

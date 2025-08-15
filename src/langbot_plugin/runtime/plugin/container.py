@@ -29,6 +29,9 @@ class RuntimeContainerStatus(enum.Enum):
 class PluginContainer(pydantic.BaseModel):
     """The container for running plugins."""
 
+    debug: bool = False
+    """是否为调试插件"""
+
     manifest: ComponentManifest
     """插件清单"""
 
@@ -59,6 +62,7 @@ class PluginContainer(pydantic.BaseModel):
 
     def model_dump(self):
         return {
+            "debug": self.debug,
             "manifest": self.manifest.model_dump(),
             "plugin_instance": None,  # not serializable
             "enabled": self.enabled,
@@ -71,6 +75,7 @@ class PluginContainer(pydantic.BaseModel):
     @classmethod
     def from_dict(cls, data: dict[str, typing.Any]) -> PluginContainer:
         return cls(
+            debug=data["debug"],
             manifest=ComponentManifest.model_validate(data["manifest"]),
             plugin_instance=NonePlugin(),
             enabled=data["enabled"],

@@ -17,8 +17,11 @@ class PluginConnectionHandler(handler.Handler):
 
     context: context_module.RuntimeContext
 
+    debug_plugin: bool = False
+    """If this plugin is a debug plugin."""
+
     def __init__(
-        self, connection: connection.Connection, context: context_module.RuntimeContext
+        self, connection: connection.Connection, context: context_module.RuntimeContext, debug_plugin: bool = False
     ):
         async def disconnect_callback(hdl: handler.Handler):
             for plugin_container in self.context.plugin_mgr.plugins:
@@ -32,6 +35,7 @@ class PluginConnectionHandler(handler.Handler):
         super().__init__(connection, disconnect_callback)
         self.context = context
         self.name = "FromPlugin"
+        self.debug_plugin = debug_plugin
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
