@@ -58,6 +58,18 @@ class ControlConnectionHandler(handler.Handler):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin installed"})
 
+        @self.action(LangBotToRuntimeAction.DELETE_PLUGIN)
+        async def remove_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+            async for resp in self.context.plugin_mgr.delete_plugin(data["plugin_author"], data["plugin_name"], data["plugin_version"]):
+                yield handler.ActionResponse.success(resp)
+            yield handler.ActionResponse.success({"current_action": "plugin removed"})
+
+        @self.action(LangBotToRuntimeAction.UPGRADE_PLUGIN)
+        async def upgrade_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+            async for resp in self.context.plugin_mgr.upgrade_plugin(data["plugin_author"], data["plugin_name"], data["plugin_version"]):
+                yield handler.ActionResponse.success(resp)
+            yield handler.ActionResponse.success({"current_action": "plugin upgraded"})
+
         @self.action(LangBotToRuntimeAction.EMIT_EVENT)
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
             event_context_data = data["event_context"]

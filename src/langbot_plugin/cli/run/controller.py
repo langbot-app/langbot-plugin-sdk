@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import typing
 
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
@@ -81,6 +82,11 @@ class PluginRuntimeController:
 
         async def new_connection_callback(connection: Connection):
             self.handler = PluginRuntimeHandler(connection, self.initialize)
+
+            async def disconnect_callback(hdl: PluginRuntimeHandler):
+                os._exit(0)
+
+            self.handler.set_disconnect_callback(disconnect_callback)
             self.handler.plugin_container = self.plugin_container
             self._connection_waiter.set_result(connection)
             await self.handler.run()

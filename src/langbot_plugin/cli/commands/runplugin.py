@@ -59,4 +59,5 @@ async def arun_plugin_process(stdio: bool = False) -> None:
 
 
 def run_plugin_process(stdio: bool = False) -> None:
+
     asyncio.run(arun_plugin_process(stdio))

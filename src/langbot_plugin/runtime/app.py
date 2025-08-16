@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from enum import Enum
+import signal
 
 import asyncio
 
@@ -100,7 +101,11 @@ class RuntimeApplication:
 
         await asyncio.gather(*tasks)
 
+    async def shutdown(self):
+        await self.context.plugin_mgr.shutdown_all_plugins()
+
 
 def main(args: argparse.Namespace):
     app = RuntimeApplication(args)
+
     asyncio.run(app.run())

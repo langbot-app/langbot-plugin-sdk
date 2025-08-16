@@ -10,6 +10,7 @@ from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
 )
 from langbot_plugin.runtime import context as context_module
+import asyncio
 
 
 class PluginConnectionHandler(handler.Handler):
@@ -20,22 +21,27 @@ class PluginConnectionHandler(handler.Handler):
     debug_plugin: bool = False
     """If this plugin is a debug plugin."""
 
+    stdio_process: asyncio.subprocess.Process | None = None
+    """The stdio process of the plugin."""
+
     def __init__(
-        self, connection: connection.Connection, context: context_module.RuntimeContext, debug_plugin: bool = False
+        self, connection: connection.Connection, context: context_module.RuntimeContext, stdio_process: asyncio.subprocess.Process | None = None, debug_plugin: bool = False
     ):
         async def disconnect_callback(hdl: handler.Handler):
+            print("disconnect_callback")
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
                     print(
                         f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect"
                     )
-                    await self.context.plugin_mgr.remove_plugin(plugin_container)
+                    await self.context.plugin_mgr.remove_plugin_container(plugin_container)
                     break
 
         super().__init__(connection, disconnect_callback)
         self.context = context
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
+        self.stdio_process = stdio_process
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
