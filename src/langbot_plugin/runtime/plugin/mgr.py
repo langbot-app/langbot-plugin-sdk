@@ -156,6 +156,7 @@ class PluginManager:
                 "plugin_author": plugin_author,
                 "plugin_name": plugin_name,
                 "install_source": source.value,
+                "install_info": install_info if source != PluginInstallSource.LOCAL else {},
             },
         )
 
@@ -201,6 +202,7 @@ class PluginManager:
             plugin_container.debug = False
 
         plugin_container.install_source = plugin_settings["install_source"]
+        plugin_container.install_info = plugin_settings["install_info"]
 
         plugin_container._runtime_plugin_handler = handler
 

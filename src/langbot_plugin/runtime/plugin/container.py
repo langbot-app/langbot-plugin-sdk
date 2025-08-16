@@ -35,6 +35,9 @@ class PluginContainer(pydantic.BaseModel):
     install_source: str = ""
     """插件安装来源"""
 
+    install_info: dict[str, typing.Any] = {}
+    """插件安装信息"""
+
     manifest: ComponentManifest
     """插件清单"""
 
@@ -67,6 +70,7 @@ class PluginContainer(pydantic.BaseModel):
         return {
             "debug": self.debug,
             "install_source": self.install_source,
+            "install_info": self.install_info,
             "manifest": self.manifest.model_dump(),
             "plugin_instance": None,  # not serializable
             "enabled": self.enabled,
