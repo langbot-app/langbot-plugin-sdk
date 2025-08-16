@@ -3,8 +3,15 @@ from __future__ import annotations
 import glob
 import os
 import typing
+from typing import AsyncGenerator
 import asyncio
+import io
+import enum
 import sys
+import zipfile
+import yaml
+import base64
+import httpx
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
@@ -21,6 +28,14 @@ from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
 )
+from langbot_plugin.runtime.settings import settings as runtime_settings
+
+
+class PluginInstallSource(enum.Enum):
+    """The source of plugin installation."""
+    LOCAL = "local"
+    GITHUB = "github"
+    MARKETPLACE = "marketplace"
 
 
 class PluginManager:
@@ -32,35 +47,40 @@ class PluginManager:
 
     plugins: list[runtime_plugin_container.PluginContainer] = []
 
+    plugin_run_tasks: list[asyncio.Task] = []
+
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
+        self.plugin_run_tasks = []
 
     async def launch_all_plugins(self):
-        python_path = sys.executable
-        tasks = []
         await asyncio.sleep(10)
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
                 continue
 
             # launch plugin process
-            ctrl = stdio_client_controller.StdioClientController(
-                command=python_path,
-                args=["-m", "langbot_plugin.cli.__init__", "run", "-s"],
-                env={},
-                working_dir=plugin_path,
+            task = self.launch_plugin(plugin_path)
+            self.plugin_run_tasks.append(task)
+
+        await asyncio.gather(*self.plugin_run_tasks)
+
+    async def launch_plugin(self, plugin_path: str):
+        python_path = sys.executable
+        ctrl = stdio_client_controller.StdioClientController(
+            command=python_path,
+            args=["-m", "langbot_plugin.cli.__init__", "run", "-s"],
+            env={},
+            working_dir=plugin_path,
+        )
+
+        async def new_plugin_connection_callback(connection: Connection):
+            handler = runtime_plugin_handler_cls.PluginConnectionHandler(
+                connection, self.context
             )
+            await self.add_plugin_handler(handler)
 
-            async def new_plugin_connection_callback(connection: Connection):
-                handler = runtime_plugin_handler_cls.PluginConnectionHandler(
-                    connection, self.context
-                )
-                await self.add_plugin_handler(handler)
-
-            task = ctrl.run(new_plugin_connection_callback)
-            tasks.append(task)
-
-        await asyncio.gather(*tasks)
+        await ctrl.run(new_plugin_connection_callback)
 
     async def add_plugin_handler(
         self,
@@ -79,11 +99,79 @@ class PluginManager:
 
         self.plugin_handlers.remove(handler)
 
+    async def install_plugin_from_file(self, plugin_file: bytes) -> tuple[str, str, str]:
+        # read manifest.yaml file
+        file_reader = io.BytesIO(plugin_file)
+        manifest_file = zipfile.ZipFile(file_reader, "r")
+        manifest_file_content = manifest_file.read("manifest.yaml")
+        manifest = yaml.safe_load(manifest_file_content)
+
+        # extract plugin name and author from manifest
+        plugin_name = manifest["metadata"]["name"]
+        plugin_author = manifest["metadata"]["author"]
+
+        # check if plugin already exists
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                raise ValueError(f"Plugin {plugin_author}/{plugin_name} already exists")
+
+        # unzip to data/plugins/{plugin_author}__{plugin_name}
+        plugin_path = f"data/plugins/{plugin_author}__{plugin_name}"
+        os.makedirs(plugin_path, exist_ok=True)
+        manifest_file.extractall(plugin_path)
+
+        return plugin_path, plugin_author, plugin_name
+
+    async def install_plugin_from_marketplace(self, plugin_author: str, plugin_name: str, plugin_version: str) -> tuple[str, str, str]:
+        # download plugin zip file from marketplace
+        cloud_service_url = runtime_settings.cloud_service_url
+        # /api/v1/marketplace/plugins/download/{plugin_id}/{plugin_version}
+        url = f"{cloud_service_url}/api/v1/marketplace/plugins/download/{plugin_author}/{plugin_name}/{plugin_version}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            plugin_zip_file = response.content
+            plugin_path, plugin_author, plugin_name = await self.install_plugin_from_file(plugin_zip_file)
+            return plugin_path, plugin_author, plugin_name
+
+    async def install_plugin(self, source: PluginInstallSource, install_info: dict[str, typing.Any]) -> AsyncGenerator[dict[str, typing.Any], None]:
+        yield {"current_action": "downloading plugin package"}
+        
+        if source == PluginInstallSource.LOCAL:
+            # decode file base64
+            plugin_file = base64.b64decode(install_info["plugin_file"])
+            plugin_path, plugin_author, plugin_name = await self.install_plugin_from_file(plugin_file)
+        elif source == PluginInstallSource.MARKETPLACE:
+            plugin_path, plugin_author, plugin_name = await self.install_plugin_from_marketplace(install_info["plugin_author"], install_info["plugin_name"], install_info["plugin_version"])
+            
+        else:
+            raise ValueError(f"Invalid source: {source}")
+
+        # install deps
+        yield {"current_action": "installing dependencies"}
+
+        # initialize plugin settings
+        plugin_settings = await self.context.control_handler.call_action(
+            RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
+            {
+                "plugin_author": plugin_author,
+                "plugin_name": plugin_name,
+                "install_source": source.value,
+            },
+        )
+
+        # launch plugin
+        task = self.launch_plugin(plugin_path)
+        yield {"current_action": "launching plugin"}
+        
+        asyncio_task = asyncio.create_task(task)
+        self.plugin_run_tasks.append(asyncio_task)
+
     async def register_plugin(
         self,
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
         container_data: dict[str, typing.Any],
     ):
+
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
         )
@@ -106,6 +194,13 @@ class PluginManager:
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             await handler.get_plugin_container()
         )
+
+        if handler.debug_plugin:  # due to python's fucking typing system, we need to explicitly set the debug flag
+            plugin_container.debug = True
+        else:
+            plugin_container.debug = False
+
+        plugin_container.install_source = plugin_settings["install_source"]
 
         plugin_container._runtime_plugin_handler = handler
 

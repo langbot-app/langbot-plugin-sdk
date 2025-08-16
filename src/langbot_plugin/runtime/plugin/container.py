@@ -32,6 +32,9 @@ class PluginContainer(pydantic.BaseModel):
     debug: bool = False
     """是否为调试插件"""
 
+    install_source: str = ""
+    """插件安装来源"""
+
     manifest: ComponentManifest
     """插件清单"""
 
@@ -63,6 +66,7 @@ class PluginContainer(pydantic.BaseModel):
     def model_dump(self):
         return {
             "debug": self.debug,
+            "install_source": self.install_source,
             "manifest": self.manifest.model_dump(),
             "plugin_instance": None,  # not serializable
             "enabled": self.enabled,

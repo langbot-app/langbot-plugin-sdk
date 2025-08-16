@@ -88,7 +88,7 @@ def build_plugin_process(output_dir: str) -> str:
     plugin_name = plugin_manifest.metadata.name
     plugin_version = plugin_manifest.metadata.version
 
-    zipfile_path = os.path.join(output_dir, f"{plugin_author}-{plugin_name}-{plugin_version}.zip")
+    zipfile_path = os.path.join(output_dir, f"{plugin_author}-{plugin_name}-{plugin_version}.lbpkg")
 
     # Parse .gitignore patterns
     gitignore_patterns = parse_gitignore(".gitignore")

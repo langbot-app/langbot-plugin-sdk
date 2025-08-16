@@ -77,6 +77,7 @@ class LangBotToRuntimeAction(ActionType):
 class RuntimeToLangBotAction(ActionType):
     """The action from runtime to langbot."""
 
+    INITIALIZE_PLUGIN_SETTINGS = "initialize_plugin_settings"
     GET_PLUGIN_SETTINGS = "get_plugin_settings"
 
     SET_BINARY_STORAGE = "set_binary_storage"

@@ -12,7 +12,7 @@ from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 import traceback
-
+from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
 
 class ControlConnectionHandler(handler.Handler):
     """The handler for control connection."""
@@ -51,8 +51,12 @@ class ControlConnectionHandler(handler.Handler):
             return handler.ActionResponse.success({"plugin": None})
 
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
-        async def install_plugin(data: dict[str, Any]) -> handler.ActionResponse:
-            return handler.ActionResponse.success({"message": "installing plugin"})
+        async def install_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+            install_source = plugin_mgr_module.PluginInstallSource(data["install_source"])
+            install_info = data["install_info"]
+            async for resp in self.context.plugin_mgr.install_plugin(install_source, install_info):
+                yield handler.ActionResponse.success(resp)
+            yield handler.ActionResponse.success({"current_action": "plugin installed"})
 
         @self.action(LangBotToRuntimeAction.EMIT_EVENT)
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
