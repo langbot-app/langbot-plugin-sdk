@@ -64,12 +64,6 @@ class PluginContainer(pydantic.BaseModel):
         default=None
     )
 
-    async def set_plugin_config(self, config: dict[str, typing.Any]) -> None:
-        self.plugin_config = config
-        if self.plugin_instance is not None:
-            self.plugin_instance.config = config
-            await self.plugin_instance.config_changed()
-
     class Config:
         arbitrary_types_allowed = True
 

@@ -234,6 +234,30 @@ class PluginManager:
         if plugin_container in self.plugins:
             self.plugins.remove(plugin_container)
 
+    async def restart_plugin(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+    ):
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                is_debugging = plugin.debug
+
+                yield {"current_action": "shutting down plugin"}
+                await self.shutdown_plugin(plugin)
+                yield {"current_action": "removing plugin container"}
+                await self.remove_plugin_container(plugin)
+                if not is_debugging:
+                    yield {"current_action": "launching plugin"}
+                    task = self.launch_plugin(self.get_plugin_path(plugin_author, plugin_name))
+                    asyncio_task = asyncio.create_task(task)
+                    self.plugin_run_tasks.append(asyncio_task)
+                
+                yield {"current_action": "plugin restarted"}
+                break
+        else:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+
     async def delete_plugin(
         self,
         plugin_author: str,
