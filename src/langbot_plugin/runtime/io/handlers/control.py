@@ -7,6 +7,7 @@ from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
     LangBotToRuntimeAction,
+    RuntimeToPluginAction,
 )
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
@@ -50,6 +51,22 @@ class ControlConnectionHandler(handler.Handler):
                     return handler.ActionResponse.success({"plugin": plugin.model_dump()})
             return handler.ActionResponse.success({"plugin": None})
 
+        @self.action(LangBotToRuntimeAction.SET_PLUGIN_CONFIG)
+        async def set_plugin_config(data: dict[str, Any]) -> handler.ActionResponse:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            plugin_config = data["plugin_config"]
+
+            for plugin in self.context.plugin_mgr.plugins:
+                if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                    await plugin._runtime_plugin_handler.call_action(
+                        RuntimeToPluginAction.SET_PLUGIN_CONFIG,
+                        {"plugin_config": plugin_config}
+                    )
+                    await plugin.set_plugin_config(plugin_config)
+                    return handler.ActionResponse.success({'plugin': plugin.model_dump()})
+            return handler.ActionResponse.success({'plugin': None})
+
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
             install_source = plugin_mgr_module.PluginInstallSource(data["install_source"])
@@ -60,13 +77,13 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.DELETE_PLUGIN)
         async def remove_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
-            async for resp in self.context.plugin_mgr.delete_plugin(data["plugin_author"], data["plugin_name"], data["plugin_version"]):
+            async for resp in self.context.plugin_mgr.delete_plugin(data["plugin_author"], data["plugin_name"]):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin removed"})
 
         @self.action(LangBotToRuntimeAction.UPGRADE_PLUGIN)
         async def upgrade_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
-            async for resp in self.context.plugin_mgr.upgrade_plugin(data["plugin_author"], data["plugin_name"], data["plugin_version"]):
+            async for resp in self.context.plugin_mgr.upgrade_plugin(data["plugin_author"], data["plugin_name"]):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin upgraded"})
 

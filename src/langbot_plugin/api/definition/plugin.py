@@ -21,6 +21,10 @@ class BasePlugin(abc.ABC, langbot_api.LangBotAPIProxy):
     async def initialize(self) -> None:
         pass
 
+    async def config_changed(self) -> None:
+        """Called when the config of the plugin has changed."""
+        pass
+
     def __del__(self) -> None:
         pass
 

@@ -44,6 +44,11 @@ class PluginRuntimeHandler(Handler):
         async def get_plugin_container(data: dict[str, typing.Any]) -> ActionResponse:
             return ActionResponse.success(self.plugin_container.model_dump())
 
+        @self.action(RuntimeToPluginAction.SET_PLUGIN_CONFIG)
+        async def set_plugin_config(data: dict[str, typing.Any]) -> ActionResponse:
+            await self.plugin_container.set_plugin_config(data["plugin_config"])
+            return ActionResponse.success({})
+
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:
             """Emit an event to the plugin.

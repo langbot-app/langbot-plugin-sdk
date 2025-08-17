@@ -47,7 +47,7 @@ class PluginInfo(BaseModel):
     description: dict[str, str]
     icon: str
     repository: str
-    tags: list[str]
+    tags: list[str] | None
     install_count: int
     latest_version: str
     status: str

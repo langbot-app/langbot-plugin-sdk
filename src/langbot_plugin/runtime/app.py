@@ -108,4 +108,11 @@ class RuntimeApplication:
 def main(args: argparse.Namespace):
     app = RuntimeApplication(args)
 
-    asyncio.run(app.run())
+    try:
+        asyncio.run(app.run())
+    except asyncio.CancelledError:
+        print("Runtime application cancelled")
+        return
+    except KeyboardInterrupt:
+        print("Keyboard interrupt, exiting...")
+        return

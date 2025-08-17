@@ -60,4 +60,11 @@ async def arun_plugin_process(stdio: bool = False) -> None:
 
 def run_plugin_process(stdio: bool = False) -> None:
 
-    asyncio.run(arun_plugin_process(stdio))
+    try:
+        asyncio.run(arun_plugin_process(stdio))
+    except asyncio.CancelledError:
+        print("Plugin process cancelled")
+        return
+    except KeyboardInterrupt:
+        print("Keyboard interrupt, exiting...")
+        return

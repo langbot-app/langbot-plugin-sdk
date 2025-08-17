@@ -56,7 +56,7 @@ class PluginManager:
         self.context = context
         self.plugin_run_tasks = []
 
-    def get_plugin_path(self, plugin_author: str, plugin_name: str, plugin_version: str) -> str:
+    def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
     async def launch_all_plugins(self):
@@ -69,6 +69,7 @@ class PluginManager:
             task = self.launch_plugin(plugin_path)
             self.plugin_run_tasks.append(task)
 
+        print("launch all plugins:", len(self.plugin_run_tasks))
         await asyncio.gather(*self.plugin_run_tasks)
 
     async def launch_plugin(self, plugin_path: str):
@@ -86,7 +87,11 @@ class PluginManager:
             )
             await self.add_plugin_handler(handler)
 
-        await ctrl.run(new_plugin_connection_callback)
+        try:
+            await ctrl.run(new_plugin_connection_callback)
+        except asyncio.CancelledError:
+            print("plugin process cancelled:", plugin_path)
+            return
 
     async def add_plugin_handler(
         self,
@@ -118,7 +123,7 @@ class PluginManager:
         plugin_version = manifest["metadata"]["version"]
 
         # unzip to data/plugins/{plugin_author}__{plugin_name}
-        plugin_path = self.get_plugin_path(plugin_author, plugin_name, plugin_version)
+        plugin_path = self.get_plugin_path(plugin_author, plugin_name)
 
         # check if plugin already exists
         for plugin in self.plugins:
@@ -226,46 +231,45 @@ class PluginManager:
         if plugin_container._runtime_plugin_handler is not None:
             await self.remove_plugin_handler(plugin_container._runtime_plugin_handler)
 
-        self.plugins.remove(plugin_container)
+        if plugin_container in self.plugins:
+            self.plugins.remove(plugin_container)
 
     async def delete_plugin(
         self,
         plugin_author: str,
         plugin_name: str,
-        plugin_version: str,
     ):
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name and plugin.manifest.metadata.version == plugin_version:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
                 if plugin.debug:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} is a debugging plugin")
+                    raise ValueError(f"Plugin {plugin_author}/{plugin_name} is a debugging plugin")
                 else:
                     yield {"current_action": "shutting down plugin"}
                     await self.shutdown_plugin(plugin)
                     yield {"current_action": "removing plugin container"}
                     await self.remove_plugin_container(plugin)
                     yield {"current_action": "deleting plugin files"}
-                    shutil.rmtree(self.get_plugin_path(plugin_author, plugin_name, plugin_version))
+                    shutil.rmtree(self.get_plugin_path(plugin_author, plugin_name))
                     yield {"current_action": "plugin deleted"}
                     break
         else:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} not found")
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
 
     async def upgrade_plugin(
         self,
         plugin_author: str,
         plugin_name: str,
-        plugin_version: str,
     ):
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name and plugin.manifest.metadata.version == plugin_version:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
                 if plugin.debug:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} is a debugging plugin")
+                    raise ValueError(f"Plugin {plugin_author}/{plugin_name} is a debugging plugin")
                 elif plugin.install_source != PluginInstallSource.MARKETPLACE.value:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} is not installed from marketplace")
+                    raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not installed from marketplace")
                 else:
                     yield {"current_action": "checking for latest version"}
                     latest_version = (await marketplace_helper.get_plugin_info(plugin_author, plugin_name)).latest_version
-                    if latest_version != plugin_version:
+                    if latest_version != plugin.manifest.metadata.version:
                         async for resp in self.install_plugin(PluginInstallSource.MARKETPLACE, {
                             "plugin_author": plugin_author,
                             "plugin_name": plugin_name,
@@ -278,7 +282,7 @@ class PluginManager:
                         yield {"current_action": "plugin is up to date"}
                         break
         else:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} not found")
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
 
     async def shutdown_all_plugins(self):
         for plugin in self.plugins:
