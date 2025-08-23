@@ -9,7 +9,9 @@ from langbot_plugin.entities.io.errors import ConnectionClosedError
 class WebSocketConnection(io_connection.Connection):
     """The connection for WebSocket connections."""
 
-    def __init__(self, websocket: websockets.ServerConnection):
+    def __init__(
+        self, websocket: websockets.ServerConnection | websockets.ClientConnection
+    ):
         self.websocket = websocket
 
     async def send(self, message: str) -> None:

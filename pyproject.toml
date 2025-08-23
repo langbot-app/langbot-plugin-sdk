@@ -1,6 +1,6 @@
 [project]
 name = "langbot-plugin"
-version = "0.1.0-alpha.1"
+version = "0.1.1-beta.2"
 description = "This package contains the SDK, CLI for building plugins for LangBot, plus the runtime for hosting LangBot plugins"
 readme = "README.md"
 authors = [
@@ -8,10 +8,19 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    "aiofiles>=24.1.0",
+    "dotenv>=0.9.9",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
     "mypy>=1.16.0",
     "pydantic>=2.11.5",
+    "pydantic-settings>=2.10.1",
+    "pytest>=8.4.0",
+    "pyyaml>=6.0.2",
     "ruff>=0.11.12",
     "textual>=3.2.0",
+    "types-aiofiles>=24.1.0.20250516",
+    "types-pyyaml>=6.0.12.20250516",
     "websockets>=15.0.1",
 ]
 
@@ -26,3 +35,6 @@ build-backend = "hatchling.build"
 Homepage = "https://langbot.app"
 Repository = "https://github.com/langbot-app/langbot-plugin-sdk"
 Issues = "https://github.com/langbot-app/langbot-plugin-sdk/issues"
+
+[tool.setuptools]
+package-data = { "langbot_plugin" = ["assets/templates/*"] }
