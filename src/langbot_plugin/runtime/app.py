@@ -62,7 +62,10 @@ class RuntimeApplication:
         self, handler: control_handler_cls.ControlConnectionHandler
     ):
         self.context.control_handler = handler
-        return asyncio.create_task(handler.run())
+        task = asyncio.create_task(handler.run())
+        print("Got control connection.")
+        self.context.plugin_mgr.wait_for_control_connection.set_result(None)
+        return task
 
     async def run(self):
         tasks = []

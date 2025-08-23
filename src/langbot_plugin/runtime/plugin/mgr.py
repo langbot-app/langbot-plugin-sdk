@@ -14,6 +14,7 @@ import yaml
 import base64
 import httpx
 import signal
+import traceback
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
@@ -52,6 +53,8 @@ class PluginManager:
 
     plugin_run_tasks: list[asyncio.Task] = []
 
+    wait_for_control_connection: asyncio.Future[None]
+
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_run_tasks = []
@@ -60,7 +63,8 @@ class PluginManager:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
     async def launch_all_plugins(self):
-        await asyncio.sleep(10)
+        self.wait_for_control_connection = asyncio.Future()
+        await self.wait_for_control_connection
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
                 continue
@@ -195,14 +199,20 @@ class PluginManager:
             container_data
         )
 
-        # get plugin settings from LangBot
-        plugin_settings = await self.context.control_handler.call_action(
-            RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
-            {
-                "plugin_author": plugin_container.manifest.metadata.author,
-                "plugin_name": plugin_container.manifest.metadata.name,
-            },
-        )
+        try:
+            if not hasattr(self.context, "control_handler"):
+                raise ValueError("Control handler not found")
+
+            # get plugin settings from LangBot
+            plugin_settings = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
+                {
+                    "plugin_author": plugin_container.manifest.metadata.author,
+                    "plugin_name": plugin_container.manifest.metadata.name,
+                },
+            )
+        except Exception as e:
+            raise ValueError("Failed to get plugin settings, is LangBot connected?") from e
 
         # initialize plugin
         await handler.initialize_plugin(plugin_settings)
