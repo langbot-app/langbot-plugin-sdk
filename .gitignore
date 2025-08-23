@@ -175,3 +175,4 @@ cython_debug/
 
 /data/plugins/
 /debug/
+uv.lock
