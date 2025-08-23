@@ -1,17 +1,9 @@
-# langbot-plugin-sdk
+<div align="center">
+<img src="https://docs.langbot.app/langbot-plugin-social.png" alt="LangBot Plugin SDK" />
+</div>
 
-## Connection
+## LangBot Plugin Infra
 
-### with LangBot
+This repository contains the Runtime / SDK / CLI for LangBot Plugins. More details about usage, principles, and tutorials can be found in the [LangBot Plugin Documentation](https://feat-new-plugin.langbot-wiki.pages.dev/zh/plugin/dev/tutor.html)
 
-- Stdio
-    - Passively
-- WebSocket
-    - Server: `:5400 /control/ws`
-
-### with Plugins
-
-- Stdio
-    - Actively
-- WebSocket (Debug)
-    - Server: `:5401 /debug/ws`
+此仓库是 LangBot 插件的运行时、SDK 和 CLI。更多关于使用、原理和教程的信息，请参阅 [LangBot 插件文档](https://feat-new-plugin.langbot-wiki.pages.dev/zh/plugin/dev/tutor.html)。

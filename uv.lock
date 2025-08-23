@@ -144,7 +144,7 @@ wheels = [
 
 [[package]]
 name = "langbot-plugin"
-version = "0.1.1a2"
+version = "0.1.1b2"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
