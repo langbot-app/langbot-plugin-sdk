@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-SERVER_URL = "http://localhost:8383"
+SERVER_URL = "https://space.langbot.app"
 
 
 def login_process() -> None:
