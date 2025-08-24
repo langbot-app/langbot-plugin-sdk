@@ -33,6 +33,7 @@ from langbot_plugin.api.entities.builtin.command.context import (
 )
 from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
+from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 
 
 class PluginInstallSource(enum.Enum):
@@ -169,6 +170,7 @@ class PluginManager:
 
         # install deps
         yield {"current_action": "installing dependencies"}
+        pkgmgr_helper.install_requirements(os.path.join(plugin_path, "requirements.txt"))
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}
