@@ -7,7 +7,9 @@ from typing import Any
 
 import httpx
 
-SERVER_URL = "https://space.langbot.app"
+from langbot_plugin.cli.utils.cloudsv import get_cloud_service_url
+
+SERVER_URL = get_cloud_service_url()
 
 
 def login_process() -> None:
@@ -60,10 +62,6 @@ def login_process() -> None:
             return
         
         # 4. Save token to config file
-        config_dir = Path.home() / ".langbot" / "cli"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        config_file = config_dir / "config.json"
-        
         config = {
             "access_token": token_data["access_token"],
             "refresh_token": token_data["refresh_token"],
@@ -72,8 +70,7 @@ def login_process() -> None:
             "login_time": int(time.time())
         }
         
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+        config_file = _save_config(config)
         
         # 5. Display login success message
         print("\n" + "="*50)
@@ -88,6 +85,15 @@ def login_process() -> None:
     except Exception as e:
         print(f"Error occurred during login: {e}")
 
+
+def _save_config(config: dict[str, Any]) -> str:
+    """Save configuration file"""
+    config_dir = Path.home() / ".langbot" / "cli"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "config.json"
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    return str(config_file)
 
 def _generate_device_code(api_base: str) -> dict[str, Any]:
     """Generate device code"""
@@ -176,11 +182,46 @@ def _is_token_valid(config: dict[str, Any]) -> bool:
     current_time = int(time.time())
     return current_time - login_time < expires_in
 
+def _refresh_token(config: dict[str, Any]) -> bool:
+    """Refresh token"""
+    API_BASE = f"{SERVER_URL}/api/v1"
+    if not config:
+        return False
+    
+    refresh_token = config.get("refresh_token", None)
+    if not refresh_token:
+        return False
+
+    try:
+
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(f"{API_BASE}/accounts/token/refresh", json={"refresh_token": refresh_token})
+            response.raise_for_status()
+            result = response.json()['data']
+            new_access_token = result.get("access_token", None)
+            expires_in = result.get("expires_in", 21600)
+            if not new_access_token:
+                return False
+            
+            config["access_token"] = new_access_token
+            config["expires_in"] = expires_in
+            config["login_time"] = int(time.time())
+            _save_config(config)
+            return True
+
+    except Exception as e:
+        print(f"Failed to refresh token: {e}")
+        return False
+
 
 def check_login_status() -> bool:
     """Check login status"""
     config = _load_config()
-    return _is_token_valid(config)
+    if not _is_token_valid(config):
+        # try refresh token
+        if not _refresh_token(config):
+            return False
+    return True
 
 
 def get_access_token() -> str | None:

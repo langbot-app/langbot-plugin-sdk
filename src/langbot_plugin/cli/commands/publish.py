@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import shutil
 import httpx
-import os
 
 from langbot_plugin.cli.commands.login import check_login_status, get_access_token
 from langbot_plugin.cli.commands.buildplugin import build_plugin_process
+from langbot_plugin.cli.utils.cloudsv import get_cloud_service_url
 
-SERVER_URL = os.getenv("CLOUD_SERVICE_URL", "https://space.langbot.app")
+SERVER_URL = get_cloud_service_url()
 
 NOT_LOGIN_TIPS = """
 Not logged in, please login first with `lbp login`
