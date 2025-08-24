@@ -3,9 +3,43 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 
 from langbot_plugin.cli.gen.renderer import render_template, init_plugin_files
 from langbot_plugin.cli.utils.form import input_form_values, NAME_REGEXP
+
+# Check if Git is installed
+def is_git_available() -> bool:
+    try:
+        # Check if Git is available by running git --version
+        subprocess.run(
+            ["git", "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+# Initialize Git repository and add basic configuration
+def init_git_repo(plugin_dir: str) -> None:
+    try:
+        # Initialize Git repository
+        subprocess.run(
+            ["git", "init"],
+            cwd=plugin_dir,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        print(f"Initialized Git repository in {plugin_dir}")
+        print(f"初始化 Git 仓库 {plugin_dir}")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to initialize Git repository: {e.stderr}")
+        print(f"警告：初始化 Git 仓库失败：{e.stderr}")
 
 
 form_fields = [
@@ -82,6 +116,13 @@ def init_plugin_process(
         content = render_template(f"{file}.example", **values)
         with open(f"{values['plugin_name']}/{file}", "w", encoding="utf-8") as f:
             f.write(content)
+
+    # If Git is available, initialize repository
+    if is_git_available():
+        init_git_repo(values["plugin_name"])
+    else:
+        print("Git not found, skipping Git repository initialization.")
+        print("请确保 Git 已安装并在 PATH 中可用，跳过 Git 仓库初始化。")
 
     print(f"Plugin {values['plugin_name']} created successfully.")
     print(f"插件 {values['plugin_name']} 创建成功。")
