@@ -55,6 +55,32 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
+    async def reply_message_chunk(
+        self,
+        message_source: platform_events.MessageEvent,
+        bot_message: dict,
+        message: platform_message.MessageChain,
+        quote_origin: bool = False,
+        is_final: bool = False,
+    ):
+        """回复消息（流式输出）
+        Args:
+            message_source (platform.types.MessageEvent): 消息源事件
+            message_id (int): 消息ID
+            message (platform.types.MessageChain): 消息链
+            quote_origin (bool, optional): 是否引用原消息. Defaults to False.
+            is_final (bool, optional): 流式是否结束. Defaults to False.
+        """
+        raise NotImplementedError
+
+    async def create_message_card(self, message_id: typing.Type[str, int], event: platform_events.MessageEvent) -> bool:
+        """创建卡片消息
+        Args:
+            message_id (str): 消息ID
+            event (platform_events.MessageEvent): 消息源事件
+        """
+        return False
+
     @abc.abstractmethod
     async def is_muted(self, group_id: int) -> bool:
         """获取账号是否在指定群被禁言"""
@@ -96,6 +122,10 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     async def run_async(self):
         """异步运行"""
         raise NotImplementedError
+
+    async def is_stream_output_supported(self) -> bool:
+        """是否支持流式输出"""
+        return False
 
     @abc.abstractmethod
     async def kill(self) -> bool:
