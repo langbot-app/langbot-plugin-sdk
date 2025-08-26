@@ -50,7 +50,7 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
                 print(f"!!! Failed to publish plugin: {result['msg']}")
                 return
             
-            print(f"✅ Plugin published successfully. You can check it on https://{SERVER_URL}/market")
+            print(f"✅ Plugin published successfully. You can check it on {SERVER_URL}/market")
             return
     except Exception as e:
         print(f"!!! Failed to publish plugin: {e}")
