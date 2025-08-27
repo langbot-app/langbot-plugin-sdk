@@ -151,10 +151,10 @@ class PluginRuntimeController:
                     )
                     assert issubclass(component_impl_cls, component_cls)
                     component_container.component_instance = component_impl_cls()
-                    await component_container.component_instance.initialize()
                     component_container.component_instance.plugin = (
                         self.plugin_container.plugin_instance
                     )
+                    await component_container.component_instance.initialize()
 
         print("Plugin initialized")
 

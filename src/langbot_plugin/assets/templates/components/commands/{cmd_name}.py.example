@@ -10,7 +10,7 @@ from langbot_plugin.api.entities.builtin.command.context import ExecuteContext, 
 
 class {{ cmd_attr }}(Command):
     
-    def __init__(self):
-        super().__init__()
+    async def initialize(self):
+        await super().initialize()
         
         "Fill with your code here"
