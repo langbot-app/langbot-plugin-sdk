@@ -51,6 +51,13 @@ class ControlConnectionHandler(handler.Handler):
                     return handler.ActionResponse.success({"plugin": plugin.model_dump()})
             return handler.ActionResponse.success({"plugin": None})
 
+        @self.action(LangBotToRuntimeAction.GET_PLUGIN_ICON)
+        async def get_plugin_icon(data: dict[str, Any]) -> handler.ActionResponse:
+            author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            plugin_icon_base64, mime_type = await self.context.plugin_mgr.get_plugin_icon(author, plugin_name)
+            return handler.ActionResponse.success({"plugin_icon_base64": plugin_icon_base64, "mime_type": mime_type})
+
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
             install_source = plugin_mgr_module.PluginInstallSource(data["install_source"])

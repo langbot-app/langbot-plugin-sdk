@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import mimetypes
 import typing
+import base64
 from copy import deepcopy
 
 from langbot_plugin.runtime.io import connection
@@ -43,6 +45,17 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER)
         async def get_plugin_container(data: dict[str, typing.Any]) -> ActionResponse:
             return ActionResponse.success(self.plugin_container.model_dump())
+
+        @self.action(RuntimeToPluginAction.GET_PLUGIN_ICON)
+        async def get_plugin_icon(data: dict[str, typing.Any]) -> ActionResponse:
+            icon_path = self.plugin_container.manifest.icon_rel_path
+            if icon_path is None:
+                return ActionResponse.success({"plugin_icon_base64": ""})
+            with open(icon_path, "rb") as f:
+                icon_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+            mime_type = mimetypes.guess_type(icon_path)[0]
+            return ActionResponse.success({"plugin_icon_base64": icon_base64, "mime_type": mime_type})
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:

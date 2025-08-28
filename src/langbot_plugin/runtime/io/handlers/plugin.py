@@ -305,6 +305,10 @@ class PluginConnectionHandler(handler.Handler):
 
         return resp
 
+    async def get_plugin_icon(self) -> dict[str, Any]:
+        resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_ICON, {})
+        return resp
+
     async def emit_event(self, event_context: dict[str, Any]) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.EMIT_EVENT, {"event_context": event_context}

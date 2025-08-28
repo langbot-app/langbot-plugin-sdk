@@ -56,6 +56,7 @@ class RuntimeToPluginAction(ActionType):
 
     INITIALIZE_PLUGIN = "initialize_plugin"
     GET_PLUGIN_CONTAINER = "get_plugin_container"
+    GET_PLUGIN_ICON = "get_plugin_icon"
     EMIT_EVENT = "emit_event"
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
@@ -66,6 +67,7 @@ class LangBotToRuntimeAction(ActionType):
 
     LIST_PLUGINS = "list_plugins"
     GET_PLUGIN_INFO = "get_plugin_info"
+    GET_PLUGIN_ICON = "get_plugin_icon"
     INSTALL_PLUGIN = "install_plugin"
     RESTART_PLUGIN = "restart_plugin"
     DELETE_PLUGIN = "delete_plugin"

@@ -379,6 +379,13 @@ class PluginManager:
 
         return emitted_plugins, event_context
 
+    async def get_plugin_icon(self, plugin_author: str, plugin_name: str) -> tuple[str, str]:
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                resp = await plugin._runtime_plugin_handler.get_plugin_icon()
+                return resp["plugin_icon_base64"], resp["mime_type"]
+        return ""
+
     async def list_tools(self) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
 
