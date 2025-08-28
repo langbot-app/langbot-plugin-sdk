@@ -44,6 +44,7 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_INFO)
         async def get_plugin_info(data: dict[str, Any]) -> handler.ActionResponse:
+            print(f'Getting plugin info for {data}')
             author = data["author"]
             plugin_name = data["plugin_name"]
             for plugin in self.context.plugin_mgr.plugins:

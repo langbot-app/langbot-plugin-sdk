@@ -46,7 +46,12 @@ def main():
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new plugin")
-    init_parser.add_argument("plugin_name", help="The name of the plugin")
+    # init_parser.add_argument("plugin_name", help="The name of the plugin")
+    init_parser.add_argument(
+                                "--plugin_name",  # 命名参数
+                                help="The name of the plugin (optional)",
+                                default=""  # 无参数时默认值为空
+                            )
 
     # comp command
     comp_parser = subparsers.add_parser("comp", help="Generate a component")
