@@ -49,13 +49,13 @@ class Query(pydantic.BaseModel):
     session: provider_session.Session | None = None
     """会话对象，由前置处理器阶段设置"""
 
-    messages: typing.Optional[list[provider_message.Message]] = []
+    messages: typing.Optional[list[typing.Union[provider_message.Message, provider_message.MessageChunk]]] = []
     """历史消息列表，由前置处理器阶段设置"""
 
     prompt: provider_prompt.Prompt | None = None
     """情景预设内容，由前置处理器阶段设置"""
 
-    user_message: typing.Optional[provider_message.Message] = None
+    user_message: typing.Optional[typing.Union[provider_message.Message, provider_message.MessageChunk]] = None
     """此次请求的用户消息对象，由前置处理器阶段设置"""
 
     variables: typing.Optional[dict[str, typing.Any]] = None
@@ -68,7 +68,7 @@ class Query(pydantic.BaseModel):
     """使用的函数，由前置处理器阶段设置"""
 
     resp_messages: (
-        typing.Optional[list[provider_message.Message]]
+        typing.Optional[list[typing.Union[provider_message.Message, provider_message.MessageChunk]]]
         | typing.Optional[list[platform_message.MessageChain]]
     ) = []
     """由Process阶段生成的回复消息对象列表"""
