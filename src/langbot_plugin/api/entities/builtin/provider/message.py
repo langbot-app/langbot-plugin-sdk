@@ -177,12 +177,12 @@ class MessageChunk(pydantic.BaseModel):
         if self.content is None:
             return None
         elif isinstance(self.content, str):
-            return platform_message.MessageChain([platform_message.Plain(prefix_text + self.content)])
+            return platform_message.MessageChain([platform_message.Plain(text=(prefix_text + self.content))])
         elif isinstance(self.content, list):
             mc = []
             for ce in self.content:
                 if ce.type == 'text':
-                    mc.append(platform_message.Plain(ce.text))
+                    mc.append(platform_message.Plain(text=ce.text))
                 elif ce.type == 'image_url':
                     if ce.image_url.url.startswith('http'):
                         mc.append(platform_message.Image(url=ce.image_url.url))
@@ -198,10 +198,10 @@ class MessageChunk(pydantic.BaseModel):
             if prefix_text:
                 for i, c in enumerate(mc):
                     if isinstance(c, platform_message.Plain):
-                        mc[i] = platform_message.Plain(prefix_text + c.text)
+                        mc[i] = platform_message.Plain(text=(prefix_text + c.text))
                         break
                 else:
-                    mc.insert(0, platform_message.Plain(prefix_text))
+                    mc.insert(0, platform_message.Plain(text=prefix_text))
 
             return platform_message.MessageChain(mc)
 
