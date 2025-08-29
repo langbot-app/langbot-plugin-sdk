@@ -46,12 +46,7 @@ def main():
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new plugin")
-    # init_parser.add_argument("plugin_name", help="The name of the plugin")
-    init_parser.add_argument(
-                                "--plugin_name",  # 命名参数
-                                help="The name of the plugin (optional)",
-                                default=""  # 无参数时默认值为空
-                            )
+    init_parser.add_argument("plugin_name", nargs='?', help="The name of the plugin")
 
     # comp command
     comp_parser = subparsers.add_parser("comp", help="Generate a component")
@@ -118,7 +113,7 @@ def main():
         case "logout":
             logout_process()
         case "init":
-            init_plugin_process(args.plugin_name)
+            init_plugin_process(args.plugin_name if args.plugin_name else "")
         case "comp":
             generate_component_process(args.component_type)
         case "run":
