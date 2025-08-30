@@ -36,8 +36,10 @@ class I18nManager:
             locale_lower = locale_str.lower()
             if 'zh' in locale_lower and ('cn' in locale_lower or 'hans' in locale_lower):
                 return 'zh_Hans'
-            elif 'zh' in locale_lower and ('tw' in locale_lower or 'hk' in locale_lower or 'mo' in locale_lower):
+            elif 'zh' in locale_lower and ('tw' in locale_lower or 'hk' in locale_lower or 'mo' in locale_lower or 'hant' in locale_lower):
                 return 'zh_Hant'
+            elif locale_lower.startswith('ja') or 'japan' in locale_lower:
+                return 'ja_JP'
             elif locale_lower.startswith('en'):
                 return 'en_US'
         

@@ -2,7 +2,7 @@
 
 messages = {
     # 通用消息
-    'version_info': 'LangBot 插件 CLI v{}',
+    'version_info': 'LangBot Plugin CLI v{}',
     'unknown_command': '未知命令：{}',
     'running_plugin': '在当前目录运行插件',
     
