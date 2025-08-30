@@ -9,6 +9,7 @@ from langbot_plugin.cli.commands.buildplugin import build_plugin_process
 from langbot_plugin.cli.commands.login import login_process
 from langbot_plugin.cli.commands.logout import logout_process
 from langbot_plugin.cli.commands.publish import publish_process
+from langbot_plugin.cli.i18n import cli_print, t
 
 """
 Usage:
@@ -107,7 +108,7 @@ def main():
         case "help":
             parser.print_help()
         case "ver":
-            print(f"LangBot Plugin CLI v{__version__}")
+            cli_print("version_info", __version__)
         case "login":
             login_process()
         case "logout":
@@ -117,7 +118,7 @@ def main():
         case "comp":
             generate_component_process(args.component_type)
         case "run":
-            print("Running plugin in current directory")
+            cli_print("running_plugin")
             run_plugin_process(args.stdio)
         case "build":
             build_plugin_process(args.output)
@@ -126,7 +127,7 @@ def main():
         case "rt":
             runtime_app.main(args)
         case _:
-            print(f"Unknown command: {args.command}")
+            cli_print("unknown_command", args.command)
             sys.exit(1)
 
 
