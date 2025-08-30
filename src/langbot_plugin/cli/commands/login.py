@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from langbot_plugin.cli.utils.cloudsv import get_cloud_service_url
+from langbot_plugin.cli.i18n import cli_print, t
 
 SERVER_URL = get_cloud_service_url()
 
@@ -29,14 +30,14 @@ def login_process() -> None:
     API_BASE = f"{SERVER_URL}/api/v1"
     
     try:
-        print("Starting LangBot CLI login process...")
+        cli_print("starting_login")
         
         # 1. Generate device code
-        print("Generating device code...")
+        cli_print("generating_device_code")
         device_code_response = _generate_device_code(API_BASE)
         
         if device_code_response["code"] != 0:
-            print(f"Failed to generate device code: {device_code_response['msg']}")
+            cli_print("device_code_failed", device_code_response['msg'])
             return
         
         device_data = device_code_response["data"]
@@ -47,18 +48,19 @@ def login_process() -> None:
         
         # 2. Display user code and verification URI
         print("\n" + "="*50)
-        print("Please copy the user code and complete verification in your browser:")
-        print(f"User Code: {user_code}")
-        print(f"Verification URL: {verification_uri}")
-        print(f"Device code expires in: {expires_in} seconds")
+        cli_print("copy_user_code")
+        cli_print("user_code_label", user_code)
+        cli_print("verification_url_label", verification_uri)
+        cli_print("code_expires_label", expires_in)
         print("="*50)
-        print("\nWaiting for verification...")
+        print("")
+        cli_print("waiting_verification")
         
         # 3. Loop check token acquisition status
         token_data = _poll_for_token(API_BASE, device_code, user_code, 3, expires_in)
         
         if not token_data:
-            print("Login timeout or failed, please try again")
+            cli_print("login_timeout")
             return
         
         # 4. Save token to config file
@@ -74,16 +76,16 @@ def login_process() -> None:
         
         # 5. Display login success message
         print("\n" + "="*50)
-        print("✅ Login successful!")
-        print(f"Access token saved to: {config_file}")
-        print(f"Token type: {token_data['token_type']}")
-        print(f"Expires in: {token_data['expires_in']} seconds")
+        cli_print("login_successful")
+        cli_print("token_saved", config_file)
+        cli_print("token_type_label", token_data['token_type'])
+        cli_print("expires_in_label", token_data['expires_in'])
         print("="*50)
         
     except KeyboardInterrupt:
-        print("\nLogin cancelled")
+        print("\n" + t("login_cancelled"))
     except Exception as e:
-        print(f"Error occurred during login: {e}")
+        cli_print("login_error", e)
 
 
 def _save_config(config: dict[str, Any]) -> str:
@@ -103,9 +105,9 @@ def _generate_device_code(api_base: str) -> dict[str, Any]:
             response.raise_for_status()
             return response.json()
     except httpx.RequestError as e:
-        return {"code": -1, "msg": f"Network request failed: {e}"}
+        return {"code": -1, "msg": t("network_request_failed", e)}
     except Exception as e:
-        return {"code": -1, "msg": f"Failed to generate device code: {e}"}
+        return {"code": -1, "msg": t("device_code_failed", e)}
 
 
 def _poll_for_token(
@@ -138,14 +140,14 @@ def _poll_for_token(
                     # print("Waiting for user authorization...")
                     pass
                 else:
-                    print(f"Failed to get token: {result['msg']}")
+                    cli_print("token_get_failed", result['msg'])
                     return None
                     
         except httpx.RequestError as e:
-            print(f"Network request failed: {e}")
+            cli_print("network_request_failed", e)
             return None
         except Exception as e:
-            print(f"Failed to check token status: {e}")
+            cli_print("token_check_failed", e)
             return None
         
         # Wait for specified interval
@@ -210,7 +212,7 @@ def _refresh_token(config: dict[str, Any]) -> bool:
             return True
 
     except Exception as e:
-        print(f"Failed to refresh token: {e}")
+        cli_print("token_refresh_failed", e)
         return False
 
 

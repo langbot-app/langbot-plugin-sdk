@@ -6,12 +6,10 @@ import httpx
 from langbot_plugin.cli.commands.login import check_login_status, get_access_token
 from langbot_plugin.cli.commands.buildplugin import build_plugin_process
 from langbot_plugin.cli.utils.cloudsv import get_cloud_service_url
+from langbot_plugin.cli.i18n import cli_print, t
 
 SERVER_URL = get_cloud_service_url()
 
-NOT_LOGIN_TIPS = """
-Not logged in, please login first with `lbp login`
-"""
 
 TMP_DIR = 'dist/tmp'
 
@@ -47,13 +45,13 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
 
             result = response.json()
             if result['code'] != 0:
-                print(f"!!! Failed to publish plugin: {result['msg']}")
+                cli_print("publish_failed", result['msg'])
                 return
             
-            print(f"✅ Plugin published successfully. You can check it on {SERVER_URL}/market")
+            cli_print("publish_successful", SERVER_URL)
             return
     except Exception as e:
-        print(f"!!! Failed to publish plugin: {e}")
+        cli_print("publish_failed", e)
         return
 
 
@@ -62,12 +60,12 @@ def publish_process() -> None:
     Implement LangBot CLI publish process
     """
     if not check_login_status():
-        print(NOT_LOGIN_TIPS)
+        cli_print("not_logged_in")
         return
     
     access_token = get_access_token()
     if not access_token:
-        print(NOT_LOGIN_TIPS)
+        cli_print("not_logged_in")
         return
     
     # build plugin

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from langbot_plugin.cli.i18n import cli_print
 
 
 def logout_process() -> None:
@@ -18,10 +19,10 @@ def logout_process() -> None:
         
         if config_file.exists():
             config_file.unlink()
-            print("✅ Logout successful!")
-            print(f"Configuration file removed: {config_file}")
+            cli_print("logout_successful")
+            cli_print("config_file_removed", config_file)
         else:
-            print("Already logged out - no configuration file found")
+            cli_print("already_logged_out")
             
     except Exception as e:
-        print(f"Error occurred during logout: {e}")
+        cli_print("logout_error", e)

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
+from langbot_plugin.cli.i18n import cli_print
 
 
 def parse_gitignore(gitignore_path: str) -> List[str]:
@@ -68,10 +69,10 @@ def should_ignore(path: str, gitignore_patterns: List[str]) -> bool:
 
 def build_plugin_process(output_dir: str) -> str:
     if not os.path.exists("manifest.yaml"):
-        print("Plugin manifest not found")
+        cli_print("manifest_not_found")
         return
 
-    print(f"Building plugin to {output_dir}...")
+    cli_print("building_plugin", output_dir)
 
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -106,7 +107,7 @@ def build_plugin_process(output_dir: str) -> str:
                 relative_dir_path = os.path.relpath(dir_path, ".")
                 if should_ignore(relative_dir_path, gitignore_patterns):
                     dirs_to_remove.append(d)
-                    print(f"  - Skipping ignored directory: {relative_dir_path}")
+                    cli_print("skipping_ignored_dir", relative_dir_path)
             
             # Remove ignored directories
             for d in dirs_to_remove:
@@ -118,20 +119,20 @@ def build_plugin_process(output_dir: str) -> str:
                 
                 # Skip if file should be ignored
                 if should_ignore(relative_path, gitignore_patterns):
-                    print(f"  - Skipping ignored file: {relative_path}")
+                    cli_print("skipping_ignored_file", relative_path)
                     continue
                 
                 # Skip if file is in always_exclude
                 if any(fnmatch.fnmatch(file, pattern) for pattern in always_exclude):
-                    print(f"  - Skipping excluded file: {relative_path}")
+                    cli_print("skipping_excluded_file", relative_path)
                     continue
                 
                 # Add file to zip
                 try:
                     zipf.write(file_path, relative_path)
-                    print(f"  - Added: {relative_path}")
+                    cli_print("file_added", relative_path)
                 except Exception as e:
-                    print(f"  - Error adding {relative_path}: {e}")
+                    cli_print("file_add_error", relative_path, e)
 
-    print(f"Plugin built successfully: {zipfile_path}")
+    cli_print("plugin_built", zipfile_path)
     return zipfile_path

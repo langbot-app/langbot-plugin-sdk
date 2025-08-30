@@ -7,24 +7,24 @@ import yaml
 from langbot_plugin.cli.gen.renderer import component_types, render_template
 from langbot_plugin.cli.utils.form import input_form_values
 from langbot_plugin.cli.gen.renderer import simple_render
+from langbot_plugin.cli.i18n import cli_print, t
 
 
 def generate_component_process(component_type: str) -> None:
     if not os.path.exists("manifest.yaml"):
-        print("!! Please run this command in the root directory of the plugin.")
-        print("!! 请在插件的根目录下运行此命令。")
+        print("!! " + t("run_in_plugin_root"))
         return
 
     component_type_obj = None
 
     for component_type_obj in component_types:
         if component_type_obj.type_name == component_type:
-            print(f"Generating component {component_type_obj.type_name}...")
+            cli_print("generating_component", component_type_obj.type_name)
             component_type_obj = component_type_obj
             break
     else:
-        print(f"!! Component type {component_type} not found.")
-        print("!! Please use one of the following component types:")
+        print("!! " + t("component_not_found", component_type))
+        print("!! " + t("available_components"))
         for component_type_obj in component_types:
             print(f"!! - {component_type_obj.type_name}")
         return
@@ -82,5 +82,4 @@ def generate_component_process(component_type: str) -> None:
     with open("manifest.yaml", "w", encoding="utf-8") as f:
         yaml.dump(manifest, f, allow_unicode=True, sort_keys=False)
 
-    print(f"Component {component_type_obj.type_name} generated successfully.")
-    print(f"组件 {component_type_obj.type_name} 生成成功。")
+    cli_print("component_generated", component_type_obj.type_name)
