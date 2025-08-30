@@ -121,13 +121,17 @@ component_types = [
                 "label": {
                     "en_US": "Tool name",
                     "zh_Hans": "工具名称",
+                    "zh_Hant": "工具名稱",
+                    "ja_JP": "ツール名",
                 },
                 "required": True,
                 "format": {
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
-                        "en_US": "Invalid tool name, please use a valid name, which only contains letters, numbers, underscores and hyphens, and start with a letter.",
-                        "zh_Hans": "无效的工具名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
+                        "en_US": "Invalid tool name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_Hans": "无效的工具名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的工具名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効なツール名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
                     },
                 },
             },
@@ -136,6 +140,8 @@ component_types = [
                 "label": {
                     "en_US": "Tool description",
                     "zh_Hans": "工具描述",
+                    "zh_Hant": "工具描述",
+                    "ja_JP": "ツールの説明",
                 },
                 "required": True,
             },
@@ -155,13 +161,17 @@ component_types = [
                 "label": {
                     "en_US": "Command name",
                     "zh_Hans": "命令名称",
+                    "zh_Hant": "命令名稱",
+                    "ja_JP": "コマンド名",
                 },
                 "required": True,
                 "format": {
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
-                        "en_US": "Invalid command name, please use a valid name, which only contains letters, numbers, underscores and hyphens, and start with a letter.",
-                        "zh_Hans": "无效的命令名称，请使用一个有效的名称，只能包含字母、数字、下划线和连字符，且以字母开头。",
+                        "en_US": "Invalid command name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_Hans": "无效的命令名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的命令名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効なコマンド名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
                     },
                 },
             },
@@ -170,6 +180,8 @@ component_types = [
                 "label": {
                     "en_US": "Command description",
                     "zh_Hans": "命令描述",
+                    "zh_Hant": "命令描述",
+                    "ja_JP": "コマンドの説明",
                 },
                 "required": True,
             },

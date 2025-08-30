@@ -86,6 +86,14 @@ def get_current_locale() -> str:
     """获取当前语言环境快捷方式 / Get current locale shortcut"""
     return _i18n_manager.get_current_locale()
 
+def extract_i18n_label(labels: dict[str, str]) -> str:
+    """提取i18n标签 / Extract i18n label"""
+
+    if get_current_locale() in labels:
+        return labels[get_current_locale()]
+    else:
+        return labels['en_US']
+
 
 def cli_print(key: str, *args) -> None:
     """CLI打印函数，只输出单一语言 / CLI print function, outputs single language only"""
