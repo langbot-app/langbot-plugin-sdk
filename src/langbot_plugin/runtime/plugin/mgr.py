@@ -61,12 +61,14 @@ class PluginManager:
         self.plugin_run_tasks = []
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
-        return f"data/plugins/{plugin_author}__{plugin_name}"
+        path_sep = os.path.sep
+        return f"data{path_sep}plugins{path_sep}{plugin_author}__{plugin_name}"
 
     async def launch_all_plugins(self):
         self.wait_for_control_connection = asyncio.Future()
         await self.wait_for_control_connection
-        for plugin_path in glob.glob("data/plugins/*"):
+        path_sep = os.path.sep
+        for plugin_path in glob.glob(f"data{path_sep}plugins{path_sep}*"):
             if not os.path.isdir(plugin_path):
                 continue
 
@@ -79,6 +81,11 @@ class PluginManager:
 
     async def launch_plugin(self, plugin_path: str):
         python_path = sys.executable
+        print("launching plugin:", plugin_path)
+        print("python path:", python_path)
+        print("args:", ["-m", "langbot_plugin.cli.__init__", "run", "-s"])
+        print("env:", {})
+        print("working dir:", plugin_path)
         ctrl = stdio_client_controller.StdioClientController(
             command=python_path,
             args=["-m", "langbot_plugin.cli.__init__", "run", "-s"],

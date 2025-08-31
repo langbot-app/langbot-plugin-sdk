@@ -45,6 +45,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
+            print("register_plugin", data)
             await self.context.plugin_mgr.register_plugin(
                 self, data["plugin_container"]
             )

@@ -52,6 +52,7 @@ class StdioConnection(connection.Connection):
                                 await self._process_exit_task
                                 raise ConnectionClosedError("标准输出流已关闭，子进程已退出。")
                             else:
+                                print("stderr", (await self.process.stderr.read()).decode('gbk'))
                                 raise ConnectionClosedError("标准输出流意外关闭。")
                     
                     s = s_bytes.decode().strip()
