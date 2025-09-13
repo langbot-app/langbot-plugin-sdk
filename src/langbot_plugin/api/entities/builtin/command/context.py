@@ -42,6 +42,9 @@ class ExecuteContext(pydantic.BaseModel):
     """本次消息所属的会话对象"""
 
     command_text: str
+    """命令完整文本（删除命令触发前缀）"""
+
+    full_command_text: str
     """命令完整文本"""
 
     command: str
