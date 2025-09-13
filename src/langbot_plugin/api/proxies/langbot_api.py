@@ -157,3 +157,11 @@ class LangBotAPIProxy:
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE, {"key": key}
         )
+
+    async def list_commands(self) -> list[str]:
+        """List all commands"""
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.LIST_COMMANDS, {}
+            )
+        )["commands"]

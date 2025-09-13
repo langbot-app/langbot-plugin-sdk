@@ -290,6 +290,13 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.LIST_COMMANDS)
+        async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
+            commands = await self.context.plugin_mgr.list_commands()
+            return handler.ActionResponse.success(
+                {"commands": [command.model_dump() for command in commands]}
+            )
+
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
     ) -> dict[str, Any]:

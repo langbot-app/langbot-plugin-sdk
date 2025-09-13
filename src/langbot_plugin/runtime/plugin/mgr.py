@@ -54,11 +54,12 @@ class PluginManager:
 
     plugin_run_tasks: list[asyncio.Task] = []
 
-    wait_for_control_connection: asyncio.Future[None]
+    wait_for_control_connection: asyncio.Future[None] | None = None
 
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_run_tasks = []
+        self.wait_for_control_connection = None
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
