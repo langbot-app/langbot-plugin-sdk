@@ -297,6 +297,19 @@ class PluginConnectionHandler(handler.Handler):
                 {"commands": [command.model_dump() for command in commands]}
             )
 
+        @self.action(PluginToRuntimeAction.LIST_TOOLS)
+        async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
+            tools = await self.context.plugin_mgr.list_tools()
+            return handler.ActionResponse.success(
+                {"tools": [tool.model_dump() for tool in tools]}
+            )
+
+        @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
+        async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:
+            return handler.ActionResponse.success(
+                {"plugins": [plugin.model_dump()['manifest'] for plugin in self.context.plugin_mgr.plugins]}
+            )
+
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
     ) -> dict[str, Any]:

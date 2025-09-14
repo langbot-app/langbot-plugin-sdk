@@ -50,7 +50,9 @@ class PluginToRuntimeAction(ActionType):
     GET_WORKSPACE_STORAGE_KEYS = "get_workspace_storage_keys"
     DELETE_WORKSPACE_STORAGE = "delete_workspace_storage"
 
+    LIST_PLUGINS_MANIFEST = "list_plugins_manifest"
     LIST_COMMANDS = "list_commands"
+    LIST_TOOLS = "list_tools"
 
 
 class RuntimeToPluginAction(ActionType):
