@@ -81,10 +81,9 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
         """
         return False
 
-    @abc.abstractmethod
     async def is_muted(self, group_id: int) -> bool:
         """获取账号是否在指定群被禁言"""
-        raise NotImplementedError
+        return False
 
     @abc.abstractmethod
     def register_listener(
