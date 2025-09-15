@@ -66,5 +66,14 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
             },
         ))["vars"]
 
+    async def create_new_conversation(self) -> dict[str, Any]:
+        """Create a new conversation"""
+        return (await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.CREATE_NEW_CONVERSATION,
+            {
+                "query_id": self.query_id,
+            },
+        ))
+
     class Config:
         arbitrary_types_allowed = True

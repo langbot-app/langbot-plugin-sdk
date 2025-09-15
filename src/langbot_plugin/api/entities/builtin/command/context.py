@@ -105,3 +105,6 @@ class ExecuteContext(pydantic.BaseModel):
 
     async def get_query_vars(self) -> dict[str, Any]:
         """Get all query variables"""
+
+    async def create_new_conversation(self) -> dict[str, Any]:
+        """Create a new conversation"""

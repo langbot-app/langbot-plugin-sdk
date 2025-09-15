@@ -27,6 +27,7 @@ class PluginToRuntimeAction(ActionType):
     SET_QUERY_VAR = "set_query_var"
     GET_QUERY_VAR = "get_query_var"
     GET_QUERY_VARS = "get_query_vars"
+    CREATE_NEW_CONVERSATION = "create_new_conversation"
 
     """LangBot APIs"""
     GET_LANGBOT_VERSION = "get_langbot_version"

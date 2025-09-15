@@ -100,6 +100,16 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
         
+        @self.action(PluginToRuntimeAction.CREATE_NEW_CONVERSATION)
+        async def create_new_conversation(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.CREATE_NEW_CONVERSATION,
+                {
+                    "query_id": data["query_id"],
+                },
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.GET_LANGBOT_VERSION)
         async def get_langbot_version(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
