@@ -23,8 +23,8 @@ def input_form_values(
                 elif field["name"] == "plugin_description":
                     label = t("plugin_description")
                 else:
-                    label = extract_i18n_label(field.get('label', {}))  # type: ignore
-                
+                    label = extract_i18n_label(field.get("label", {}))  # type: ignore
+
                 value = input(f"{label}: ")
                 if "format" in field and "regexp" in field["format"]:  # type: ignore
                     if not re.match(field["format"]["regexp"], value):  # type: ignore
@@ -44,8 +44,8 @@ def input_form_values(
             elif field["name"] == "plugin_description":
                 label = t("plugin_description")
             else:
-                label = extract_i18n_label(field.get('label', {}))  # type: ignore
-                
+                label = extract_i18n_label(field.get("label", {}))  # type: ignore
+
             value = input(f"{label}: ")
             values[field["name"]] = value  # type: ignore
 

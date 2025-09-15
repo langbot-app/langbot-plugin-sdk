@@ -9,6 +9,7 @@ from langbot_plugin.cli.gen.renderer import render_template, init_plugin_files
 from langbot_plugin.cli.utils.form import input_form_values, NAME_REGEXP
 from langbot_plugin.cli.i18n import cli_print, t
 
+
 # Check if Git is installed
 def is_git_available() -> bool:
     try:
@@ -18,11 +19,12 @@ def is_git_available() -> bool:
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
         )
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
 
 # Initialize Git repository and add basic configuration
 def init_git_repo(plugin_dir: str) -> None:
@@ -33,7 +35,7 @@ def init_git_repo(plugin_dir: str) -> None:
             cwd=plugin_dir,
             check=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
         )
         cli_print("git_repo_initialized", plugin_dir)
 
@@ -88,8 +90,8 @@ def init_plugin_process(
     # check if directory exists and is not empty
     if os.path.exists(plugin_dir):
         # list directory contents (excluding hidden files)
-        dir_contents = [f for f in os.listdir(plugin_dir) if not f.startswith('.')]
-        if dir_contents: 
+        dir_contents = [f for f in os.listdir(plugin_dir) if not f.startswith(".")]
+        if dir_contents:
             print("!! " + t("directory_not_empty", plugin_dir))
             return
     else:
@@ -112,14 +114,14 @@ def init_plugin_process(
     values["plugin_attr"] = values["plugin_name"].replace("-", "").replace("_", "")
     values["plugin_label"] = values["plugin_name"].replace("-", " ").replace("_", " ")
 
-    cli_print("creating_files", values['plugin_name'])
+    cli_print("creating_files", values["plugin_name"])
 
     assets_dir = os.path.join(plugin_dir, "assets")
     os.makedirs(assets_dir, exist_ok=True)
 
     for file in init_plugin_files:
         content = render_template(f"{file}.example", **values)
-        file_path = os.path.join(plugin_dir, file) 
+        file_path = os.path.join(plugin_dir, file)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
 

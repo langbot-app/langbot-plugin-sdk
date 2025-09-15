@@ -73,7 +73,9 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
-    async def create_message_card(self, message_id: typing.Type[str, int], event: platform_events.MessageEvent) -> bool:
+    async def create_message_card(
+        self, message_id: typing.Type[str, int], event: platform_events.MessageEvent
+    ) -> bool:
         """创建卡片消息
         Args:
             message_id (str): 消息ID

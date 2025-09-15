@@ -25,7 +25,11 @@ class PluginConnectionHandler(handler.Handler):
     """The stdio process of the plugin."""
 
     def __init__(
-        self, connection: connection.Connection, context: context_module.RuntimeContext, stdio_process: asyncio.subprocess.Process | None = None, debug_plugin: bool = False
+        self,
+        connection: connection.Connection,
+        context: context_module.RuntimeContext,
+        stdio_process: asyncio.subprocess.Process | None = None,
+        debug_plugin: bool = False,
     ):
         async def disconnect_callback(hdl: handler.Handler):
             print("disconnect_callback")
@@ -34,7 +38,9 @@ class PluginConnectionHandler(handler.Handler):
                     print(
                         f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect"
                     )
-                    await self.context.plugin_mgr.remove_plugin_container(plugin_container)
+                    await self.context.plugin_mgr.remove_plugin_container(
+                        plugin_container
+                    )
                     break
 
         super().__init__(connection, disconnect_callback)
@@ -99,9 +105,11 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.CREATE_NEW_CONVERSATION)
-        async def create_new_conversation(data: dict[str, Any]) -> handler.ActionResponse:
+        async def create_new_conversation(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.CREATE_NEW_CONVERSATION,
                 {
@@ -119,7 +127,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.GET_BOTS)
         async def get_bots(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
@@ -129,7 +137,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.GET_BOT_INFO)
         async def get_bot_info(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
@@ -139,7 +147,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.SEND_MESSAGE)
         async def send_message(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
@@ -149,7 +157,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.GET_LLM_MODELS)
         async def get_llm_models(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
@@ -159,7 +167,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         # @self.action(PluginToRuntimeAction.GET_LLM_MODEL_INFO)
         # async def get_llm_model_info(data: dict[str, Any]) -> handler.ActionResponse:
         #     result = await self.context.control_handler.call_action(
@@ -169,7 +177,7 @@ class PluginConnectionHandler(handler.Handler):
         #         },
         #     )
         #     return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.INVOKE_LLM)
         async def invoke_llm(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
@@ -179,14 +187,16 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.SET_PLUGIN_STORAGE)
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    data["owner"] = (
+                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    )
                     break
 
             result = await self.context.control_handler.call_action(
@@ -196,14 +206,16 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.GET_PLUGIN_STORAGE)
         async def get_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    data["owner"] = (
+                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    )
                     break
 
             result = await self.context.control_handler.call_action(
@@ -215,12 +227,16 @@ class PluginConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.GET_PLUGIN_STORAGE_KEYS)
-        async def get_plugin_storage_keys(data: dict[str, Any]) -> handler.ActionResponse:
+        async def get_plugin_storage_keys(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    data["owner"] = (
+                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    )
                     break
 
             result = await self.context.control_handler.call_action(
@@ -230,14 +246,16 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.DELETE_PLUGIN_STORAGE)
         async def delete_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    data["owner"] = (
+                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+                    )
                     break
 
             result = await self.context.control_handler.call_action(
@@ -247,7 +265,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.SET_WORKSPACE_STORAGE)
         async def set_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
@@ -260,7 +278,7 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE)
         async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
@@ -273,12 +291,14 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE_KEYS)
-        async def get_workspace_storage_keys(data: dict[str, Any]) -> handler.ActionResponse:
+        async def get_workspace_storage_keys(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
-            
+
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
                 {
@@ -286,9 +306,11 @@ class PluginConnectionHandler(handler.Handler):
                 },
             )
             return handler.ActionResponse.success(result)
-        
+
         @self.action(PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE)
-        async def delete_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
+        async def delete_workspace_storage(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
 
@@ -317,7 +339,12 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success(
-                {"plugins": [plugin.model_dump()['manifest'] for plugin in self.context.plugin_mgr.plugins]}
+                {
+                    "plugins": [
+                        plugin.model_dump()["manifest"]
+                        for plugin in self.context.plugin_mgr.plugins
+                    ]
+                }
             )
 
     async def initialize_plugin(

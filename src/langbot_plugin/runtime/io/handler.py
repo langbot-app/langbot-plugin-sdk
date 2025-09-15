@@ -27,6 +27,7 @@ from langbot_plugin.entities.io.actions.enums import ActionType
 
 class Handler(abc.ABC):
     """The abstract base class for all handlers."""
+
     name: str = "Handler"
 
     conn: connection.Connection
@@ -83,7 +84,6 @@ class Handler(abc.ABC):
                 seq_id = req_data["seq_id"] if "seq_id" in req_data else -1
 
                 if "action" in req_data:  # action request from peer
-
                     try:
                         if req_data["action"] not in self.actions:
                             raise ValueError(f"Action {req_data['action']} not found")

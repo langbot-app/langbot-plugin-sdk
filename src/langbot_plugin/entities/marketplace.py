@@ -36,6 +36,7 @@ from pydantic import BaseModel
 #     "msg": "ok"
 # }
 
+
 class PluginInfo(BaseModel):
     created_at: datetime
     updated_at: datetime

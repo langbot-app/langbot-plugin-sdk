@@ -9,7 +9,12 @@ class RuntimeSettings(BaseSettings):
 
     cloud_service_url: str = Field(default="https://space.langbot.app")
 
-    model_config = {"env_file": "data/.env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "ignore"}
+    model_config = {
+        "env_file": "data/.env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": False,
+        "extra": "ignore",
+    }
 
 
 # Global settings instance

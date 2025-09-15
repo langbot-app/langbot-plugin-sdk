@@ -38,7 +38,7 @@ Commands:
 def main():
     parser = argparse.ArgumentParser(description="LangBot Plugin CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
+
     # help command
     help_parser = subparsers.add_parser("help", help="Show the help of the CLI")
 
@@ -47,7 +47,7 @@ def main():
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new plugin")
-    init_parser.add_argument("plugin_name", nargs='?', help="The name of the plugin")
+    init_parser.add_argument("plugin_name", nargs="?", help="The name of the plugin")
 
     # comp command
     comp_parser = subparsers.add_parser("comp", help="Generate a component")
@@ -72,7 +72,9 @@ def main():
     )
 
     # publish command
-    publish_parser = subparsers.add_parser("publish", help="Publish the plugin to LangBot Marketplace")
+    publish_parser = subparsers.add_parser(
+        "publish", help="Publish the plugin to LangBot Marketplace"
+    )
     publish_parser.add_argument(
         "-o", "--output", help="The output directory", default="dist"
     )

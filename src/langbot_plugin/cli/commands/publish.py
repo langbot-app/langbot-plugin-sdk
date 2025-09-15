@@ -11,7 +11,8 @@ from langbot_plugin.cli.i18n import cli_print, t
 SERVER_URL = get_cloud_service_url()
 
 
-TMP_DIR = 'dist/tmp'
+TMP_DIR = "dist/tmp"
+
 
 def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
     """
@@ -23,12 +24,8 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
         - changelog: changelog
     """
     url = f"{SERVER_URL}/api/v1/marketplace/plugins/publish"
-    files = {
-        'file': open(plugin_path, 'rb')
-    }
-    data = {
-        'changelog': changelog
-    }
+    files = {"file": open(plugin_path, "rb")}
+    data = {"changelog": changelog}
 
     try:
         with httpx.Client() as client:
@@ -36,18 +33,16 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
                 url,
                 files=files,
                 data=data,
-                headers={
-                    'Authorization': f'Bearer {access_token}'
-                }
+                headers={"Authorization": f"Bearer {access_token}"},
             )
 
             response.raise_for_status()
 
             result = response.json()
-            if result['code'] != 0:
-                cli_print("publish_failed", result['msg'])
+            if result["code"] != 0:
+                cli_print("publish_failed", result["msg"])
                 return
-            
+
             cli_print("publish_successful", SERVER_URL)
             return
     except Exception as e:
@@ -62,15 +57,15 @@ def publish_process() -> None:
     if not check_login_status():
         cli_print("not_logged_in")
         return
-    
+
     access_token = get_access_token()
     if not access_token:
         cli_print("not_logged_in")
         return
-    
+
     # build plugin
     plugin_path = build_plugin_process(TMP_DIR)
-    
+
     # publish plugin
     publish_plugin(plugin_path, "", access_token)
 

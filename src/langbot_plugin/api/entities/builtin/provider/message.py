@@ -161,13 +161,17 @@ class MessageChunk(pydantic.BaseModel):
 
     def readable_str(self) -> str:
         if self.content is not None:
-            return str(self.role) + ': ' + str(self.get_content_platform_message_chain())
+            return (
+                str(self.role) + ": " + str(self.get_content_platform_message_chain())
+            )
         elif self.tool_calls is not None:
-            return f'调用工具: {self.tool_calls[0].id}'
+            return f"调用工具: {self.tool_calls[0].id}"
         else:
-            return '未知消息'
+            return "未知消息"
 
-    def get_content_platform_message_chain(self, prefix_text: str = '') -> platform_message.MessageChain | None:
+    def get_content_platform_message_chain(
+        self, prefix_text: str = ""
+    ) -> platform_message.MessageChain | None:
         """将内容转换为平台消息 MessageChain 对象
 
         Args:
@@ -177,20 +181,22 @@ class MessageChunk(pydantic.BaseModel):
         if self.content is None:
             return None
         elif isinstance(self.content, str):
-            return platform_message.MessageChain([platform_message.Plain(text=(prefix_text + self.content))])
+            return platform_message.MessageChain(
+                [platform_message.Plain(text=(prefix_text + self.content))]
+            )
         elif isinstance(self.content, list):
             mc = []
             for ce in self.content:
-                if ce.type == 'text':
+                if ce.type == "text":
                     mc.append(platform_message.Plain(text=ce.text))
-                elif ce.type == 'image_url':
-                    if ce.image_url.url.startswith('http'):
+                elif ce.type == "image_url":
+                    if ce.image_url.url.startswith("http"):
                         mc.append(platform_message.Image(url=ce.image_url.url))
                     else:  # base64
                         b64_str = ce.image_url.url
 
-                        if b64_str.startswith('data:'):
-                            b64_str = b64_str.split(',')[1]
+                        if b64_str.startswith("data:"):
+                            b64_str = b64_str.split(",")[1]
 
                         mc.append(platform_message.Image(base64=b64_str))
 

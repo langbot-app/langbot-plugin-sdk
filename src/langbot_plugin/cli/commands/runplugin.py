@@ -60,7 +60,6 @@ async def arun_plugin_process(stdio: bool = False) -> None:
 
 
 def run_plugin_process(stdio: bool = False) -> None:
-
     try:
         asyncio.run(arun_plugin_process(stdio))
     except asyncio.CancelledError:

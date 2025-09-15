@@ -10,6 +10,7 @@ import pydantic
 
 class QueryBasedAPIProxy(pydantic.BaseModel):
     """The proxy for query based API."""
+
     query_id: int
 
     plugin_runtime_handler: Handler = pydantic.Field(exclude=True)
@@ -26,16 +27,18 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
                 "quote_origin": quote_origin,
             },
         )
-    
+
     async def get_bot_uuid(self) -> str:
         """Get the bot uuid"""
-        return (await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_BOT_UUID,
-            {
-                "query_id": self.query_id,
-            }
-        ))["bot_uuid"]
-    
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_BOT_UUID,
+                {
+                    "query_id": self.query_id,
+                },
+            )
+        )["bot_uuid"]
+
     async def set_query_var(self, key: str, value: Any):
         """Set a query variable"""
         return await self.plugin_runtime_handler.call_action(
@@ -46,34 +49,38 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
                 "value": value,
             },
         )
-    
+
     async def get_query_var(self, key: str) -> Any:
         """Get a query variable"""
-        return (await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_QUERY_VAR,
-            {
-                "query_id": self.query_id,
-                "key": key,
-            },
-        ))["value"]
-    
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_QUERY_VAR,
+                {
+                    "query_id": self.query_id,
+                    "key": key,
+                },
+            )
+        )["value"]
+
     async def get_query_vars(self) -> dict[str, Any]:
         """Get all query variables"""
-        return (await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_QUERY_VARS,
-            {
-                "query_id": self.query_id,
-            },
-        ))["vars"]
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_QUERY_VARS,
+                {
+                    "query_id": self.query_id,
+                },
+            )
+        )["vars"]
 
     async def create_new_conversation(self) -> dict[str, Any]:
         """Create a new conversation"""
-        return (await self.plugin_runtime_handler.call_action(
+        return await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.CREATE_NEW_CONVERSATION,
             {
                 "query_id": self.query_id,
             },
-        ))
+        )
 
     class Config:
         arbitrary_types_allowed = True

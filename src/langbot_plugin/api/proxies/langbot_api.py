@@ -33,7 +33,7 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.GET_BOTS, {}
             )
         )["bots"]
-    
+
     async def get_bot_info(self, bot_uuid: str) -> dict[str, Any]:
         """Get a bot info"""
         return (
@@ -113,7 +113,7 @@ class LangBotAPIProxy:
         )["value_base64"]
 
         return base64.b64decode(resp)
-    
+
     async def get_plugin_storage_keys(self) -> list[str]:
         """Get all plugin storage keys"""
         return (
@@ -121,7 +121,7 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.GET_PLUGIN_STORAGE_KEYS, {}
             )
         )["keys"]
-    
+
     async def delete_plugin_storage(self, key: str) -> None:
         """Delete a plugin storage value"""
         await self.plugin_runtime_handler.call_action(
@@ -131,7 +131,8 @@ class LangBotAPIProxy:
     async def set_workspace_storage(self, key: str, value: bytes) -> None:
         """Set a workspace storage value"""
         await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.SET_WORKSPACE_STORAGE, {"key": key, "value_base64": base64.b64encode(value).decode("utf-8")}
+            PluginToRuntimeAction.SET_WORKSPACE_STORAGE,
+            {"key": key, "value_base64": base64.b64encode(value).decode("utf-8")},
         )
 
     async def get_workspace_storage(self, key: str) -> bytes:
@@ -143,7 +144,7 @@ class LangBotAPIProxy:
         )["value_base64"]
 
         return base64.b64decode(resp)
-    
+
     async def get_workspace_storage_keys(self) -> list[str]:
         """Get all workspace storage keys"""
         return (
@@ -151,7 +152,7 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.GET_WORKSPACE_STORAGE_KEYS, {}
             )
         )["keys"]
-    
+
     async def delete_workspace_storage(self, key: str) -> None:
         """Delete a workspace storage value"""
         await self.plugin_runtime_handler.call_action(
@@ -173,7 +174,7 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.LIST_COMMANDS, {}
             )
         )["commands"]
-    
+
     async def list_tools(self) -> list[str]:
         """List all tools"""
         return (

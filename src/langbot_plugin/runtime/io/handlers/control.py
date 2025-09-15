@@ -15,6 +15,7 @@ from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 import traceback
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
 
+
 class ControlConnectionHandler(handler.Handler):
     """The handler for control connection."""
 
@@ -47,40 +48,68 @@ class ControlConnectionHandler(handler.Handler):
             author = data["author"]
             plugin_name = data["plugin_name"]
             for plugin in self.context.plugin_mgr.plugins:
-                if plugin.manifest.metadata.author == author and plugin.manifest.metadata.name == plugin_name:
-                    return handler.ActionResponse.success({"plugin": plugin.model_dump()})
+                if (
+                    plugin.manifest.metadata.author == author
+                    and plugin.manifest.metadata.name == plugin_name
+                ):
+                    return handler.ActionResponse.success(
+                        {"plugin": plugin.model_dump()}
+                    )
             return handler.ActionResponse.success({"plugin": None})
 
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_ICON)
         async def get_plugin_icon(data: dict[str, Any]) -> handler.ActionResponse:
             author = data["plugin_author"]
             plugin_name = data["plugin_name"]
-            plugin_icon_base64, mime_type = await self.context.plugin_mgr.get_plugin_icon(author, plugin_name)
-            return handler.ActionResponse.success({"plugin_icon_base64": plugin_icon_base64, "mime_type": mime_type})
+            (
+                plugin_icon_base64,
+                mime_type,
+            ) = await self.context.plugin_mgr.get_plugin_icon(author, plugin_name)
+            return handler.ActionResponse.success(
+                {"plugin_icon_base64": plugin_icon_base64, "mime_type": mime_type}
+            )
 
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
-        async def install_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
-            install_source = plugin_mgr_module.PluginInstallSource(data["install_source"])
+        async def install_plugin(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            install_source = plugin_mgr_module.PluginInstallSource(
+                data["install_source"]
+            )
             install_info = data["install_info"]
-            async for resp in self.context.plugin_mgr.install_plugin(install_source, install_info):
+            async for resp in self.context.plugin_mgr.install_plugin(
+                install_source, install_info
+            ):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin installed"})
 
         @self.action(LangBotToRuntimeAction.RESTART_PLUGIN)
-        async def restart_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
-            async for resp in self.context.plugin_mgr.restart_plugin(data["plugin_author"], data["plugin_name"]):
+        async def restart_plugin(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            async for resp in self.context.plugin_mgr.restart_plugin(
+                data["plugin_author"], data["plugin_name"]
+            ):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin restarted"})
 
         @self.action(LangBotToRuntimeAction.DELETE_PLUGIN)
-        async def remove_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
-            async for resp in self.context.plugin_mgr.delete_plugin(data["plugin_author"], data["plugin_name"]):
+        async def remove_plugin(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            async for resp in self.context.plugin_mgr.delete_plugin(
+                data["plugin_author"], data["plugin_name"]
+            ):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin removed"})
 
         @self.action(LangBotToRuntimeAction.UPGRADE_PLUGIN)
-        async def upgrade_plugin(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
-            async for resp in self.context.plugin_mgr.upgrade_plugin(data["plugin_author"], data["plugin_name"]):
+        async def upgrade_plugin(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            async for resp in self.context.plugin_mgr.upgrade_plugin(
+                data["plugin_author"], data["plugin_name"]
+            ):
                 yield handler.ActionResponse.success(resp)
             yield handler.ActionResponse.success({"current_action": "plugin upgraded"})
 

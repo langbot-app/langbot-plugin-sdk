@@ -55,7 +55,9 @@ class PluginRuntimeHandler(Handler):
                 icon_base64 = base64.b64encode(f.read()).decode("utf-8")
 
             mime_type = mimetypes.guess_type(icon_path)[0]
-            return ActionResponse.success({"plugin_icon_base64": icon_base64, "mime_type": mime_type})
+            return ActionResponse.success(
+                {"plugin_icon_base64": icon_base64, "mime_type": mime_type}
+            )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:

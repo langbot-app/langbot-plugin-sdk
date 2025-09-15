@@ -26,7 +26,10 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction, RuntimeToPluginAction
+from langbot_plugin.entities.io.actions.enums import (
+    RuntimeToLangBotAction,
+    RuntimeToPluginAction,
+)
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
@@ -38,6 +41,7 @@ from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 
 class PluginInstallSource(enum.Enum):
     """The source of plugin installation."""
+
     LOCAL = "local"
     GITHUB = "github"
     MARKETPLACE = "marketplace"
@@ -116,7 +120,9 @@ class PluginManager:
 
         self.plugin_handlers.remove(handler)
 
-    async def install_plugin_from_file(self, plugin_file: bytes) -> tuple[str, str, str, str]:
+    async def install_plugin_from_file(
+        self, plugin_file: bytes
+    ) -> tuple[str, str, str, str]:
         # read manifest.yaml file
         file_reader = io.BytesIO(plugin_file)
         manifest_file = zipfile.ZipFile(file_reader, "r")
@@ -133,11 +139,18 @@ class PluginManager:
 
         # check if plugin already exists
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
                 if plugin.manifest.metadata.version == plugin_version:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists")
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists"
+                    )
                 elif plugin.debug:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists, and it is a debugging plugin")
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists, and it is a debugging plugin"
+                    )
                 else:
                     # shutdown old version
                     await self.shutdown_plugin(plugin)
@@ -151,27 +164,49 @@ class PluginManager:
 
         return plugin_path, plugin_author, plugin_name, plugin_version
 
-    async def install_plugin_from_marketplace(self, plugin_author: str, plugin_name: str, plugin_version: str) -> tuple[str, str, str]:
+    async def install_plugin_from_marketplace(
+        self, plugin_author: str, plugin_name: str, plugin_version: str
+    ) -> tuple[str, str, str]:
         # download plugin zip file from marketplace
-        plugin_zip_file = await marketplace_helper.download_plugin(plugin_author, plugin_name, plugin_version)
+        plugin_zip_file = await marketplace_helper.download_plugin(
+            plugin_author, plugin_name, plugin_version
+        )
         return await self.install_plugin_from_file(plugin_zip_file)
 
-    async def install_plugin(self, source: PluginInstallSource, install_info: dict[str, typing.Any]) -> AsyncGenerator[dict[str, typing.Any], None]:
+    async def install_plugin(
+        self, source: PluginInstallSource, install_info: dict[str, typing.Any]
+    ) -> AsyncGenerator[dict[str, typing.Any], None]:
         yield {"current_action": "downloading plugin package"}
-        
+
         if source == PluginInstallSource.LOCAL:
             # decode file base64
             plugin_file = base64.b64decode(install_info["plugin_file"])
-            plugin_path, plugin_author, plugin_name, plugin_version = await self.install_plugin_from_file(plugin_file)
+            (
+                plugin_path,
+                plugin_author,
+                plugin_name,
+                plugin_version,
+            ) = await self.install_plugin_from_file(plugin_file)
         elif source == PluginInstallSource.MARKETPLACE:
-            plugin_path, plugin_author, plugin_name, plugin_version = await self.install_plugin_from_marketplace(install_info["plugin_author"], install_info["plugin_name"], install_info["plugin_version"])
-            
+            (
+                plugin_path,
+                plugin_author,
+                plugin_name,
+                plugin_version,
+            ) = await self.install_plugin_from_marketplace(
+                install_info["plugin_author"],
+                install_info["plugin_name"],
+                install_info["plugin_version"],
+            )
+
         else:
             raise ValueError(f"Invalid source: {source}")
 
         # install deps
         yield {"current_action": "installing dependencies"}
-        pkgmgr_helper.install_requirements(os.path.join(plugin_path, "requirements.txt"))
+        pkgmgr_helper.install_requirements(
+            os.path.join(plugin_path, "requirements.txt")
+        )
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}
@@ -181,14 +216,16 @@ class PluginManager:
                 "plugin_author": plugin_author,
                 "plugin_name": plugin_name,
                 "install_source": source.value,
-                "install_info": install_info if source != PluginInstallSource.LOCAL else {},
+                "install_info": install_info
+                if source != PluginInstallSource.LOCAL
+                else {},
             },
         )
 
         # launch plugin
         yield {"current_action": "launching plugin"}
         task = self.launch_plugin(plugin_path)
-        
+
         asyncio_task = asyncio.create_task(task)
         self.plugin_run_tasks.append(asyncio_task)
 
@@ -197,7 +234,6 @@ class PluginManager:
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
         container_data: dict[str, typing.Any],
     ):
-
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
         )
@@ -215,7 +251,9 @@ class PluginManager:
                 },
             )
         except Exception as e:
-            raise ValueError("Failed to get plugin settings, is LangBot connected?") from e
+            raise ValueError(
+                "Failed to get plugin settings, is LangBot connected?"
+            ) from e
 
         # initialize plugin
         await handler.initialize_plugin(plugin_settings)
@@ -253,7 +291,10 @@ class PluginManager:
         plugin_name: str,
     ):
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
                 is_debugging = plugin.debug
 
                 yield {"current_action": "shutting down plugin"}
@@ -262,10 +303,12 @@ class PluginManager:
                 await self.remove_plugin_container(plugin)
                 if not is_debugging:
                     yield {"current_action": "launching plugin"}
-                    task = self.launch_plugin(self.get_plugin_path(plugin_author, plugin_name))
+                    task = self.launch_plugin(
+                        self.get_plugin_path(plugin_author, plugin_name)
+                    )
                     asyncio_task = asyncio.create_task(task)
                     self.plugin_run_tasks.append(asyncio_task)
-                
+
                 yield {"current_action": "plugin restarted"}
                 break
         else:
@@ -277,9 +320,14 @@ class PluginManager:
         plugin_name: str,
     ):
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
                 if plugin.debug:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name} is a debugging plugin")
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name} is a debugging plugin"
+                    )
                 else:
                     yield {"current_action": "shutting down plugin"}
                     await self.shutdown_plugin(plugin)
@@ -298,20 +346,34 @@ class PluginManager:
         plugin_name: str,
     ):
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
                 if plugin.debug:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name} is a debugging plugin")
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name} is a debugging plugin"
+                    )
                 elif plugin.install_source != PluginInstallSource.MARKETPLACE.value:
-                    raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not installed from marketplace")
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name} is not installed from marketplace"
+                    )
                 else:
                     yield {"current_action": "checking for latest version"}
-                    latest_version = (await marketplace_helper.get_plugin_info(plugin_author, plugin_name)).latest_version
+                    latest_version = (
+                        await marketplace_helper.get_plugin_info(
+                            plugin_author, plugin_name
+                        )
+                    ).latest_version
                     if latest_version != plugin.manifest.metadata.version:
-                        async for resp in self.install_plugin(PluginInstallSource.MARKETPLACE, {
-                            "plugin_author": plugin_author,
-                            "plugin_name": plugin_name,
-                            "plugin_version": latest_version,
-                        }):
+                        async for resp in self.install_plugin(
+                            PluginInstallSource.MARKETPLACE,
+                            {
+                                "plugin_author": plugin_author,
+                                "plugin_name": plugin_name,
+                                "plugin_version": latest_version,
+                            },
+                        ):
                             yield resp
                         yield {"current_action": "plugin upgraded"}
                         break
@@ -334,13 +396,27 @@ class PluginManager:
         if plugin_container._runtime_plugin_handler.stdio_process is not None:
             plugin_container._runtime_plugin_handler.stdio_process.kill()
 
-            if plugin_container._runtime_plugin_handler.stdio_process.returncode is None:
-
-                await asyncio.wait_for(plugin_container._runtime_plugin_handler.stdio_process.wait(), timeout=2)
-            print("plugin process terminated", plugin_container.manifest.metadata.author, plugin_container.manifest.metadata.name, plugin_container.manifest.metadata.version)
+            if (
+                plugin_container._runtime_plugin_handler.stdio_process.returncode
+                is None
+            ):
+                await asyncio.wait_for(
+                    plugin_container._runtime_plugin_handler.stdio_process.wait(),
+                    timeout=2,
+                )
+            print(
+                "plugin process terminated",
+                plugin_container.manifest.metadata.author,
+                plugin_container.manifest.metadata.name,
+                plugin_container.manifest.metadata.version,
+            )
         else:
-            print("plugin process is none", plugin_container.manifest.metadata.author, plugin_container.manifest.metadata.name, plugin_container.manifest.metadata.version)
-
+            print(
+                "plugin process is none",
+                plugin_container.manifest.metadata.author,
+                plugin_container.manifest.metadata.name,
+                plugin_container.manifest.metadata.version,
+            )
 
     async def emit_event(
         self, event_context: EventContext
@@ -380,9 +456,14 @@ class PluginManager:
 
         return emitted_plugins, event_context
 
-    async def get_plugin_icon(self, plugin_author: str, plugin_name: str) -> tuple[str, str]:
+    async def get_plugin_icon(
+        self, plugin_author: str, plugin_name: str
+    ) -> tuple[str, str]:
         for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
                 resp = await plugin._runtime_plugin_handler.get_plugin_icon()
                 return resp["plugin_icon_base64"], resp["mime_type"]
         return ""
