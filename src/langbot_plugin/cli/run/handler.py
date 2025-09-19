@@ -5,6 +5,7 @@ import os
 import mimetypes
 import typing
 import base64
+import aiofiles
 from copy import deepcopy
 
 from langbot_plugin.runtime.io import connection
@@ -50,13 +51,17 @@ class PluginRuntimeHandler(Handler):
         async def get_plugin_icon(data: dict[str, typing.Any]) -> ActionResponse:
             icon_path = self.plugin_container.manifest.icon_rel_path
             if icon_path is None:
-                return ActionResponse.success({"plugin_icon_base64": ""})
-            with open(icon_path, "rb") as f:
-                icon_base64 = base64.b64encode(f.read()).decode("utf-8")
+                return ActionResponse.success({"plugin_icon_file_key": "", "mime_type": ""})
+            async with aiofiles.open(icon_path, "rb") as f:
+                # icon_base64 = base64.b64encode(f.read()).decode("utf-8")
+                icon_bytes = await f.read()
 
             mime_type = mimetypes.guess_type(icon_path)[0]
+
+            plugin_icon_file_key = await self.send_file(icon_bytes, '')
+
             return ActionResponse.success(
-                {"plugin_icon_base64": icon_base64, "mime_type": mime_type}
+                {"plugin_icon_file_key": plugin_icon_file_key, "mime_type": mime_type}
             )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)

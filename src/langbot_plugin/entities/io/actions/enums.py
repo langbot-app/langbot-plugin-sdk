@@ -12,6 +12,7 @@ class CommonAction(ActionType):
 
     PING = "ping"
     HEARTBEAT = "heartbeat"
+    FILE_CHUNK = "__file_chunk"
 
 
 class PluginToRuntimeAction(ActionType):

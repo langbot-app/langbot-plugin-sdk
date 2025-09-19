@@ -203,6 +203,7 @@ class PluginManager:
             raise ValueError(f"Invalid source: {source}")
 
         # install deps
+        print("installing dependencies")
         yield {"current_action": "installing dependencies"}
         pkgmgr_helper.install_requirements(
             os.path.join(plugin_path, "requirements.txt")
@@ -458,15 +459,19 @@ class PluginManager:
 
     async def get_plugin_icon(
         self, plugin_author: str, plugin_name: str
-    ) -> tuple[str, str]:
+    ) -> tuple[bytes, str]:
         for plugin in self.plugins:
             if (
                 plugin.manifest.metadata.author == plugin_author
                 and plugin.manifest.metadata.name == plugin_name
             ):
                 resp = await plugin._runtime_plugin_handler.get_plugin_icon()
-                return resp["plugin_icon_base64"], resp["mime_type"]
-        return ""
+
+                icon_file_key = resp["plugin_icon_file_key"]
+                icon_bytes = await plugin._runtime_plugin_handler.read_local_file(icon_file_key)
+                await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
+                return icon_bytes, resp["mime_type"]
+        return b"", ""
 
     async def list_tools(self) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []

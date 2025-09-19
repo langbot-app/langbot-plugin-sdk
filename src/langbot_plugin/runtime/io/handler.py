@@ -13,6 +13,10 @@ from typing import (
 )
 import traceback
 import random
+import os
+import hashlib
+import base64
+import aiofiles
 
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
@@ -22,8 +26,11 @@ from langbot_plugin.entities.io.errors import (
     ActionCallTimeoutError,
     ActionCallError,
 )
-from langbot_plugin.entities.io.actions.enums import ActionType
+from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
 
+
+FILE_STORAGE_DIR = "data/temp/lbp"
+FILE_CHUNK_LENGTH = 1024 * 16 # 16KB
 
 class Handler(abc.ABC):
     """The abstract base class for all handlers."""
@@ -54,6 +61,24 @@ class Handler(abc.ABC):
         self.resp_queues = {}
 
         self._disconnect_callback = disconnect_callback
+
+        os.makedirs(FILE_STORAGE_DIR, exist_ok=True)
+
+        @self.action(CommonAction.FILE_CHUNK)
+        async def file_chunk(data: dict[str, Any]) -> ActionResponse:
+            file_key = data["file_key"]
+            file_length = data["file_length"]
+            chunk_base64 = data["chunk_base64"]
+            chunk_index = data["chunk_index"]
+            chunk_amount = data["chunk_amount"]
+            chunk_size = data["chunk_size"]
+            # append the chunk to the file
+            async with aiofiles.open(os.path.join(FILE_STORAGE_DIR, file_key), "ab") as f:
+                await f.write(base64.b64decode(chunk_base64))
+            if chunk_index == chunk_amount - 1:
+                return ActionResponse.success({})
+            else:
+                return ActionResponse.success({})
 
     def set_disconnect_callback(
         self,
@@ -231,3 +256,41 @@ class Handler(abc.ABC):
             return func
 
         return decorator
+
+    # ====== file transfer ======
+    async def send_file(self, file_bytes: bytes, file_extension: str) -> str:
+        """Send a file to the peer, chunk by chunk, in base64."""
+        hash_value = hashlib.sha256(file_bytes).hexdigest()
+        file_key = f"{hash_value}.{file_extension}"
+        file_length = len(file_bytes)
+        chunk_amount = file_length // FILE_CHUNK_LENGTH + 1
+        for i in range(chunk_amount):
+            chunk_bytes = file_bytes[i * FILE_CHUNK_LENGTH: (i + 1) * FILE_CHUNK_LENGTH]
+            chunk_base64 = base64.b64encode(chunk_bytes).decode("utf-8")
+            # response = await self.conn.send(json.dumps({
+            #     "action": CommonAction.FILE_CHUNK.value,
+            #     "data": {
+            #         "file_key": file_key,
+            #         "file_length": file_length,
+            #         "chunk_base64": chunk_base64,
+            #         "chunk_index": i,
+            #         "chunk_amount": chunk_amount,
+            #         "chunk_size": len(chunk_bytes),
+            #     }
+            # }))
+            await self.call_action(CommonAction.FILE_CHUNK, {
+                "file_key": file_key,
+                "file_length": file_length,
+                "chunk_base64": chunk_base64,
+                "chunk_index": i,
+                "chunk_amount": chunk_amount,
+                "chunk_size": len(chunk_bytes),
+            })
+        return file_key
+
+    async def read_local_file(self, file_key: str) -> bytes:
+        async with aiofiles.open(os.path.join(FILE_STORAGE_DIR, file_key), "rb") as f:
+            return await f.read()
+
+    async def delete_local_file(self, file_key: str) -> None:
+        os.remove(os.path.join(FILE_STORAGE_DIR, file_key))

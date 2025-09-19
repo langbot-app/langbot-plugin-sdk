@@ -1,6 +1,7 @@
 # handle connection from LangBot
 from __future__ import annotations
 
+import base64
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import handler, connection
@@ -62,11 +63,14 @@ class ControlConnectionHandler(handler.Handler):
             author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             (
-                plugin_icon_base64,
+                plugin_icon_bytes,
                 mime_type,
             ) = await self.context.plugin_mgr.get_plugin_icon(author, plugin_name)
+
+            plugin_icon_file_key = await self.send_file(plugin_icon_bytes, '')
+
             return handler.ActionResponse.success(
-                {"plugin_icon_base64": plugin_icon_base64, "mime_type": mime_type}
+                {"plugin_icon_file_key": plugin_icon_file_key, "mime_type": mime_type}
             )
 
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
