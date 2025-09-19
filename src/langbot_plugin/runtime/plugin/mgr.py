@@ -179,8 +179,8 @@ class PluginManager:
         yield {"current_action": "downloading plugin package"}
 
         if source == PluginInstallSource.LOCAL:
-            # decode file base64
-            plugin_file = base64.b64decode(install_info["plugin_file"])
+            # decode file
+            plugin_file = install_info["plugin_file"]
             (
                 plugin_path,
                 plugin_author,

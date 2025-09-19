@@ -81,6 +81,11 @@ class ControlConnectionHandler(handler.Handler):
                 data["install_source"]
             )
             install_info = data["install_info"]
+
+            if install_source == plugin_mgr_module.PluginInstallSource.LOCAL:
+                install_info["plugin_file"] = await self.read_local_file(install_info["plugin_file_key"])
+                await self.delete_local_file(install_info["plugin_file_key"])
+
             async for resp in self.context.plugin_mgr.install_plugin(
                 install_source, install_info
             ):
