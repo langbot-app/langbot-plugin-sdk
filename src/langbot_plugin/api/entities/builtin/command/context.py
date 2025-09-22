@@ -24,7 +24,7 @@ class CommandReturn(pydantic.BaseModel):
     """图片链接
     """
 
-    url: typing.Optional[str] = None
+    file_url: typing.Optional[str] = None
     """文件链接
     """
 
