@@ -1,0 +1,27 @@
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  pypi-publish:
+    name: upload release to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      # This permission is needed for private repositories.
+      contents: read
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+      - name: Publish package distributions to PyPI
+        run: |
+          uv build
+          uv publish --token ${{ secrets.PYPI_TOKEN }}
