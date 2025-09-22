@@ -37,11 +37,17 @@ class ContentElement(pydantic.BaseModel):
 
     image_base64: typing.Optional[str] = None
 
+    url: typing.Optional[str] = None
+
+    name: typing.Optional[str] = None
+
     def __str__(self):
         if self.type == "text":
             return self.text
         elif self.type == "image_url":
             return f"[Image]({self.image_url})"
+        elif sele.type == "file":
+            return f"[File]({self.url})"
         else:
             return "Unknown content"
 
@@ -57,6 +63,9 @@ class ContentElement(pydantic.BaseModel):
     def from_image_base64(cls, image_base64: str):
         return cls(type="image_base64", image_base64=image_base64)
 
+    @classmethod
+    def from_file_url(cls, file_url: str, file_name: str):
+        return cls(type="file", url=file_url, name=file_name)
 
 class Message(pydantic.BaseModel):
     """Message for AI"""
@@ -106,6 +115,9 @@ class Message(pydantic.BaseModel):
                 if ce.type == "text":
                     if ce.text is not None:
                         mc.append(platform_message.Plain(text=ce.text))
+                elif ce.type == 'file':
+                    if ce.url is not None:
+                        mc.append(platform_message.File(url=ce.url, name=ce.name))
                 elif ce.type == "image_url":
                     assert ce.image_url is not None
                     if ce.image_url.url.startswith("http"):
@@ -189,6 +201,9 @@ class MessageChunk(pydantic.BaseModel):
             for ce in self.content:
                 if ce.type == "text":
                     mc.append(platform_message.Plain(text=ce.text))
+                elif ce.type == "file":
+                    if ce.url is not None:
+                        mc.append(platform_message.File(url=ce.url, name=ce.name))
                 elif ce.type == "image_url":
                     if ce.image_url.url.startswith("http"):
                         mc.append(platform_message.Image(url=ce.image_url.url))

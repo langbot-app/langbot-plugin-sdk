@@ -24,6 +24,10 @@ class CommandReturn(pydantic.BaseModel):
     """图片链接
     """
 
+    url: typing.Optional[str] = None
+    """文件链接
+    """
+
     error: typing.Optional[errors.CommandError] = None
     """错误，保留供系统使用，插件逻辑报错请自行使用 text 传递
     """
