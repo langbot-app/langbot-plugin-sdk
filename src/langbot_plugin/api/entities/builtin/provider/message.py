@@ -46,7 +46,7 @@ class ContentElement(pydantic.BaseModel):
             return self.text
         elif self.type == "image_url":
             return f"[Image]({self.image_url})"
-        elif sele.type == "file_url":
+        elif self.type == "file_url":
             return f"[File]({self.file_url})"
         else:
             return "Unknown content"
