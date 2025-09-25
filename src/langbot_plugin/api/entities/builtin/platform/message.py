@@ -417,6 +417,8 @@ class File(MessageComponent):
     """File name."""
     size: int = pydantic.Field(default=0)
     """File size."""
+    url: str = pydantic.Field(default="")
+    """File url."""
 
     def __str__(self):
         return f"[File]{self.name}"
