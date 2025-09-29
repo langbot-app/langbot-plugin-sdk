@@ -91,10 +91,10 @@ class PluginRuntimeController:
             self._connection_waiter.set_result(connection)
             await self.handler.run()
 
-        async def make_connection_failed_callback(controller: Controller):
+        async def make_connection_failed_callback(controller: Controller, e: Exception = None):
             print("Connection failed, exit")
             self._connection_waiter.set_exception(
-                ConnectionClosedError("Connection failed")
+                ConnectionClosedError(f"Connection failed: {e}")
             )
             exit(1)
 

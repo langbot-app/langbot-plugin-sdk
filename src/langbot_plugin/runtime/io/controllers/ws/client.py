@@ -16,7 +16,7 @@ class WebSocketClientController(Controller):
         self,
         ws_url: str,
         make_connection_failed_callback: Callable[
-            [Controller], Coroutine[Any, Any, None]
+            [Controller, Exception | None], Coroutine[Any, Any, None]
         ],
     ):
         self.ws_url = ws_url
@@ -30,5 +30,5 @@ class WebSocketClientController(Controller):
             async with websockets.connect(self.ws_url, open_timeout=10) as websocket:
                 connection = ws_connection.WebSocketConnection(websocket)
                 await new_connection_callback(connection)
-        except Exception:
-            await self.make_connection_failed_callback(self)
+        except Exception as e:
+            await self.make_connection_failed_callback(self, e)
