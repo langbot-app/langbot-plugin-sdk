@@ -67,6 +67,9 @@ class RuntimeApplication:
         print("Got control connection.")
         if self.context.plugin_mgr.wait_for_control_connection is not None:
             self.context.plugin_mgr.wait_for_control_connection.set_result(None)
+            # mark as done, indicates all installed plugins are already launched
+            # so next time then langbot reconnects, all plugins will not be launched again
+            self.context.plugin_mgr.wait_for_control_connection = None
         return task
 
     async def run(self):
