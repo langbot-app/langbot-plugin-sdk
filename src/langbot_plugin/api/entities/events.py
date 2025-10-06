@@ -210,7 +210,7 @@ class PromptPreProcessing(BaseEventModel):
     default_prompt: list[
         typing.Union[provider_message.Message, provider_message.MessageChunk]
     ]
-    """此对话的情景预设，可修改"""
+    """此对话的情景预设（系统提示词），可修改"""
 
     prompt: list[typing.Union[provider_message.Message, provider_message.MessageChunk]]
     """此对话现有消息记录，可修改"""
