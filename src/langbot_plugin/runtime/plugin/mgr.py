@@ -451,10 +451,6 @@ class PluginManager:
             if event_context.is_prevented_postorder():
                 break
 
-        for key in event_context.return_value.keys():
-            if hasattr(event_context.event, key):
-                setattr(event_context.event, key, event_context.get_return_value(key))
-
         return emitted_plugins, event_context
 
     async def get_plugin_icon(

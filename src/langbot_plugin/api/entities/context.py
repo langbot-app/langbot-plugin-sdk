@@ -35,30 +35,9 @@ class EventContext(pydantic.BaseModel):
     is_prevent_postorder: bool = False
     """是否阻止后续插件的执行"""
 
-    return_value: dict[str, list[Any]] = pydantic.Field(default_factory=dict)
-    """ 返回值 
-    示例:
-    {
-        "example": [
-            'value1',
-            'value2',
-            3,
-            4,
-            {
-                'key1': 'value1',
-            },
-            ['value1', 'value2']
-        ]
-    }
-    """
+    # ========== APIs for plugins ==========
 
-    # ========== 插件可调用的 API ==========
-
-    def add_return(self, key: str, ret):
-        """添加返回值"""
-        if key not in self.return_value:
-            self.return_value[key] = []
-        self.return_value[key].append(ret)
+    ## ========= Query-based APIs =========
 
     async def reply(
         self, message_chain: platform_message.MessageChain, quote_origin: bool = False
@@ -82,6 +61,8 @@ class EventContext(pydantic.BaseModel):
     async def get_query_vars(self) -> dict[str, Any]:
         """Get all query variables"""
 
+    ## ========= Event-based APIs from plugin to use =========
+
     def prevent_default(self):
         """Prevent default behavior"""
         self.is_prevent_default = True
@@ -90,19 +71,7 @@ class EventContext(pydantic.BaseModel):
         """Prevent subsequent plugin execution"""
         self.is_prevent_postorder = True
 
-    # ========== The following methods are reserved for internal use, and plugins should not call them ==========
-
-    def get_return(self, key: str) -> list:
-        """Get all return values for key"""
-        if key in self.return_value:
-            return self.return_value[key]
-        return []
-
-    def get_return_value(self, key: str):
-        """Get the first return value for key"""
-        if key in self.return_value:
-            return self.return_value[key][0]
-        return None
+    # ========== The following methods are reserved for internal use, and plugins should not call them directly ==========
 
     def is_prevented_default(self):
         """Whether to prevent default behavior"""
@@ -121,7 +90,6 @@ class EventContext(pydantic.BaseModel):
         event_name = event.__class__.__name__
         is_prevent_default = False
         is_prevent_postorder = False
-        return_value: dict[str, list[Any]] = {}
 
         obj = cls(
             query_id=query_id,
@@ -130,7 +98,6 @@ class EventContext(pydantic.BaseModel):
             event=event,
             is_prevent_default=is_prevent_default,
             is_prevent_postorder=is_prevent_postorder,
-            return_value=return_value,
         )
 
         cached_event_contexts[eid] = obj

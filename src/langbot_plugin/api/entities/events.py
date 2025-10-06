@@ -74,7 +74,28 @@ class GroupMessageReceived(BaseEventModel):
         return platform_message.MessageChain.model_validate(v)
 
 
-class PersonNormalMessageReceived(BaseEventModel):
+class _WithReplyMessageChain(BaseEventModel):
+    """事件模型基类，包含回复消息链对象"""
+
+    reply_message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
+        serialization_alias="reply_message_chain", default=None
+    )
+    """回复消息链对象，仅在阻止默认行为时有效"""
+
+    @pydantic.field_serializer("reply_message_chain")
+    def serialize_reply_message_chain(self, v, _info):
+        if v is None:
+            return None
+        return v.model_dump()
+
+    @pydantic.field_validator("reply_message_chain", mode="before")
+    def validate_reply_message_chain(cls, v):
+        if v is None:
+            return None
+        return platform_message.MessageChain.model_validate(v)
+
+
+class PersonNormalMessageReceived(_WithReplyMessageChain):
     """判断为应该处理的私聊普通消息时触发"""
 
     event_name: str = "PersonNormalMessageReceived"
@@ -87,14 +108,13 @@ class PersonNormalMessageReceived(BaseEventModel):
 
     text_message: str
 
-    alter: typing.Optional[str] = None
-    """修改后的消息文本"""
+    user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
+        default=None
+    )
+    """修改后的 LLM 消息对象，可用于改写用户消息"""
 
-    reply: typing.Optional[list] = None
-    """回复消息组件列表"""
 
-
-class PersonCommandSent(BaseEventModel):
+class PersonCommandSent(_WithReplyMessageChain):
     """判断为应该处理的私聊命令时触发"""
 
     event_name: str = "PersonCommandSent"
@@ -113,14 +133,8 @@ class PersonCommandSent(BaseEventModel):
 
     is_admin: bool
 
-    alter: typing.Optional[str] = None
-    """修改后的完整命令文本"""
 
-    reply: typing.Optional[list] = None
-    """回复消息组件列表"""
-
-
-class GroupNormalMessageReceived(BaseEventModel):
+class GroupNormalMessageReceived(_WithReplyMessageChain):
     """判断为应该处理的群聊普通消息时触发"""
 
     event_name: str = "GroupNormalMessageReceived"
@@ -133,14 +147,13 @@ class GroupNormalMessageReceived(BaseEventModel):
 
     text_message: str
 
-    alter: typing.Optional[str] = None
-    """修改后的消息文本"""
+    user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
+        default=None
+    )
+    """修改后的 LLM 消息对象，可用于改写用户消息"""
 
-    reply: typing.Optional[list] = None
-    """回复消息组件列表"""
 
-
-class GroupCommandSent(BaseEventModel):
+class GroupCommandSent(_WithReplyMessageChain):
     """判断为应该处理的群聊命令时触发"""
 
     event_name: str = "GroupCommandSent"
@@ -159,14 +172,8 @@ class GroupCommandSent(BaseEventModel):
 
     is_admin: bool
 
-    alter: typing.Optional[str] = None
-    """修改后的完整命令文本"""
 
-    reply: typing.Optional[list] = None
-    """回复消息组件列表"""
-
-
-class NormalMessageResponded(BaseEventModel):
+class NormalMessageResponded(_WithReplyMessageChain):
     """回复普通消息时触发"""
 
     event_name: str = "NormalMessageResponded"
@@ -191,9 +198,6 @@ class NormalMessageResponded(BaseEventModel):
 
     funcs_called: list[str]
     """调用的函数列表"""
-
-    reply: typing.Optional[list] = None
-    """回复消息组件列表"""
 
 
 class PromptPreProcessing(BaseEventModel):
