@@ -19,8 +19,14 @@ class WebSocketConnection(io_connection.Connection):
 
     async def receive(self) -> str:
         try:
-            data = await self.websocket.recv(decode=True)
-            return data
+            # data = await self.websocket.recv(decode=True)
+            # return data
+            
+            # switch to use recv_streaming
+            whole_message = ""
+            async for data in self.websocket.recv_streaming(decode=True):
+                whole_message += data
+            return whole_message
         except websockets.exceptions.ConnectionClosed:
             raise ConnectionClosedError("Connection closed")
 
