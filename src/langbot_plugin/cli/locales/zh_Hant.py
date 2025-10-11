@@ -68,4 +68,5 @@ messages = {
     "not_logged_in": "未登入，請先使用 `lbp login` 登入",
     "publish_failed": "!!! 插件發布失敗：{}",
     "publish_successful": "✅ 插件發布成功。你可以在 {}/market 查看",
+    "publish_successful_new_plugin": "⚠️ 插件草稿發布成功。請在 {}/market 上傳使用截圖證明插件可用以完成提交。",
 }

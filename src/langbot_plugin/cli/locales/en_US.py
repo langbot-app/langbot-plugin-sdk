@@ -68,4 +68,5 @@ messages = {
     "not_logged_in": "Not logged in, please login first with `lbp login`",
     "publish_failed": "!!! Failed to publish plugin: {}",
     "publish_successful": "✅ Plugin published successfully. You can check it on {}/market",
+    "publish_successful_new_plugin": "⚠️ Plugin draft published successfully. You need to upload usage screenshots on {}/market to complete the submission.",
 }

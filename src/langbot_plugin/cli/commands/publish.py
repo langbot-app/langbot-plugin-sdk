@@ -43,7 +43,10 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
                 cli_print("publish_failed", result["msg"])
                 return
 
-            cli_print("publish_successful", SERVER_URL)
+            if result["data"]["submission"]["status"] == "draft":
+                cli_print("publish_successful_new_plugin", SERVER_URL)
+            else:
+                cli_print("publish_successful", SERVER_URL)
             return
     except Exception as e:
         cli_print("publish_failed", e)

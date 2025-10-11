@@ -68,4 +68,5 @@ messages = {
     "not_logged_in": "ログインしていません。先に `lbp login` でログインしてください",
     "publish_failed": "!!! プラグインの公開に失敗しました：{}",
     "publish_successful": "✅ プラグインの公開が完了しました。{}/market で確認できます",
+    "publish_successful_new_plugin": "⚠️ プラグインの公開が完了しました。使用スクリーンショットを {}/market にアップロードして提出を完了してください。",
 }
