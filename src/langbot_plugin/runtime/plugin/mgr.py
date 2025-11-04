@@ -121,7 +121,7 @@ class PluginManager:
         self.plugin_handlers.remove(handler)
 
     async def install_plugin_from_file(
-        self, plugin_file: bytes
+        self, plugin_file: bytes, source: PluginInstallSource
     ) -> tuple[str, str, str, str]:
         # read manifest.yaml file
         file_reader = io.BytesIO(plugin_file)
@@ -186,7 +186,8 @@ class PluginManager:
                 plugin_author,
                 plugin_name,
                 plugin_version,
-            ) = await self.install_plugin_from_file(plugin_file)
+            ) = await self.install_plugin_from_file(plugin_file, source=source)
+            del install_info["plugin_file"]
         elif source == PluginInstallSource.MARKETPLACE:
             (
                 plugin_path,
@@ -198,7 +199,18 @@ class PluginManager:
                 install_info["plugin_name"],
                 install_info["plugin_version"],
             )
-
+        elif source == PluginInstallSource.GITHUB:
+            plugin_file = install_info["plugin_file"]
+            (
+                plugin_path,
+                plugin_author,
+                plugin_name,
+                plugin_version,
+            ) = await self.install_plugin_from_file(
+                plugin_file,
+                source=source,
+            )
+            del install_info["plugin_file"]
         else:
             raise ValueError(f"Invalid source: {source}")
 

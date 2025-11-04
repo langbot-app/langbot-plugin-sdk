@@ -67,7 +67,7 @@ class ControlConnectionHandler(handler.Handler):
                 mime_type,
             ) = await self.context.plugin_mgr.get_plugin_icon(author, plugin_name)
 
-            plugin_icon_file_key = await self.send_file(plugin_icon_bytes, '')
+            plugin_icon_file_key = await self.send_file(plugin_icon_bytes, "")
 
             return handler.ActionResponse.success(
                 {"plugin_icon_file_key": plugin_icon_file_key, "mime_type": mime_type}
@@ -82,8 +82,13 @@ class ControlConnectionHandler(handler.Handler):
             )
             install_info = data["install_info"]
 
-            if install_source == plugin_mgr_module.PluginInstallSource.LOCAL:
-                install_info["plugin_file"] = await self.read_local_file(install_info["plugin_file_key"])
+            if (
+                install_source == plugin_mgr_module.PluginInstallSource.LOCAL
+                or install_source == plugin_mgr_module.PluginInstallSource.GITHUB
+            ):
+                install_info["plugin_file"] = await self.read_local_file(
+                    install_info["plugin_file_key"]
+                )
                 await self.delete_local_file(install_info["plugin_file_key"])
 
             async for resp in self.context.plugin_mgr.install_plugin(
