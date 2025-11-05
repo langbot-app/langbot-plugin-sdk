@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import handler, connection
@@ -35,14 +36,14 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
         async def list_plugins(data: dict[str, Any]) -> handler.ActionResponse:
-            return handler.ActionResponse.success(
-                {
-                    "plugins": [
-                        plugin.model_dump()
-                        for plugin in self.context.plugin_mgr.plugins
-                    ]
-                }
-            )
+
+            result = {
+                "plugins": [
+                    plugin.model_dump() for plugin in self.context.plugin_mgr.plugins
+                ]
+            }
+
+            return handler.ActionResponse.success(result)
 
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_INFO)
         async def get_plugin_info(data: dict[str, Any]) -> handler.ActionResponse:
@@ -53,9 +54,10 @@ class ControlConnectionHandler(handler.Handler):
                     plugin.manifest.metadata.author == author
                     and plugin.manifest.metadata.name == plugin_name
                 ):
-                    return handler.ActionResponse.success(
-                        {"plugin": plugin.model_dump()}
-                    )
+                    result = {"plugin": plugin.model_dump()}
+
+                    return handler.ActionResponse.success(result)
+
             return handler.ActionResponse.success({"plugin": None})
 
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_ICON)

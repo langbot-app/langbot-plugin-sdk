@@ -159,6 +159,23 @@ class LangBotAPIProxy:
             PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE, {"key": key}
         )
 
+    async def get_config_file(self, file_key: str) -> bytes:
+        """Get a config file by file key
+
+        Args:
+            file_key: The file key from plugin config (file or array[file] type)
+
+        Returns:
+            The file content as bytes
+        """
+        resp = (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_CONFIG_FILE, {"file_key": file_key}
+            )
+        )["file_base64"]
+
+        return base64.b64decode(resp)
+
     async def list_plugins_manifest(self) -> list[str]:
         """List all plugins"""
         return (

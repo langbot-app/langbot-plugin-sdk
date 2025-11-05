@@ -52,6 +52,8 @@ class PluginToRuntimeAction(ActionType):
     GET_WORKSPACE_STORAGE_KEYS = "get_workspace_storage_keys"
     DELETE_WORKSPACE_STORAGE = "delete_workspace_storage"
 
+    GET_CONFIG_FILE = "get_config_file"
+
     LIST_PLUGINS_MANIFEST = "list_plugins_manifest"
     LIST_COMMANDS = "list_commands"
     LIST_TOOLS = "list_tools"
@@ -95,3 +97,5 @@ class RuntimeToLangBotAction(ActionType):
     GET_BINARY_STORAGE = "get_binary_storage"
     GET_BINARY_STORAGE_KEYS = "get_binary_storage_keys"
     DELETE_BINARY_STORAGE = "delete_binary_storage"
+
+    GET_CONFIG_FILE = "get_config_file"

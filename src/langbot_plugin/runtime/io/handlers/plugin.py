@@ -322,6 +322,18 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.GET_CONFIG_FILE)
+        async def get_config_file(data: dict[str, Any]) -> handler.ActionResponse:
+            """Get a config file by file key"""
+            # Forward the request to LangBot
+            result = await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.GET_CONFIG_FILE,
+                {
+                    "file_key": data["file_key"],
+                },
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
             commands = await self.context.plugin_mgr.list_commands()
