@@ -1,7 +1,6 @@
 """Tests for the dependency manager."""
 import os
 import tempfile
-import shutil
 import json
 import hashlib
 import pytest
