@@ -89,12 +89,34 @@ def login_process() -> None:
 
 
 def _save_config(config: dict[str, Any]) -> str:
-    """Save configuration file"""
+    """Save configuration file with credentials keyed by CLOUD_SERVICE_URL"""
     config_dir = Path.home() / ".langbot" / "cli"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_file = config_dir / "config.json"
+    
+    # Load existing config or create new dict structure
+    all_configs = {}
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+                # Check if it's old format (flat dict with access_token) or new format (nested dict)
+                if "access_token" in existing_data:
+                    # Old format - migrate to new format with default URL
+                    default_url = "https://space.langbot.app"
+                    all_configs = {default_url: existing_data}
+                else:
+                    # New format - use as is
+                    all_configs = existing_data
+        except Exception:
+            # If file is corrupted, start fresh
+            all_configs = {}
+    
+    # Save config for current CLOUD_SERVICE_URL
+    all_configs[SERVER_URL] = config
+    
     with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+        json.dump(all_configs, f, indent=2, ensure_ascii=False)
     return str(config_file)
 
 
@@ -151,7 +173,7 @@ def _poll_for_token(
 
 
 def _load_config() -> dict[str, Any] | None:
-    """Load configuration file"""
+    """Load configuration file for current CLOUD_SERVICE_URL"""
     config_file = Path.home() / ".langbot" / "cli" / "config.json"
 
     if not config_file.exists():
@@ -159,7 +181,16 @@ def _load_config() -> dict[str, Any] | None:
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            
+            # Check if it's old format (flat dict with access_token) or new format (nested dict)
+            if "access_token" in data:
+                # Old format - return as is for backward compatibility
+                # This will be migrated to new format on next save
+                return data
+            
+            # New format - return config for current CLOUD_SERVICE_URL
+            return data.get(SERVER_URL, None)
     except Exception:
         return None
 
