@@ -42,7 +42,7 @@ def logout_process() -> None:
             # New format - remove credentials for current CLOUD_SERVICE_URL
             if SERVER_URL in data:
                 del data[SERVER_URL]
-                
+
                 if data:
                     # Still have other site credentials, save the updated config
                     with open(config_file, "w", encoding="utf-8") as f:
