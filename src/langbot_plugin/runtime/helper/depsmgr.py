@@ -13,7 +13,7 @@ class DependencyManager:
     
     @staticmethod
     def _compute_requirements_hash(requirements_file: str) -> Optional[str]:
-        """Compute SHA256 hash of requirements.txt file.
+        """Compute SHA256 hash of requirements.txt file using streaming approach.
         
         Args:
             requirements_file: Path to requirements.txt file
@@ -25,8 +25,12 @@ class DependencyManager:
             return None
         
         try:
+            hash_obj = hashlib.sha256()
             with open(requirements_file, 'rb') as f:
-                return hashlib.sha256(f.read()).hexdigest()
+                # Read and hash in chunks for memory efficiency
+                for chunk in iter(lambda: f.read(4096), b''):
+                    hash_obj.update(chunk)
+            return hash_obj.hexdigest()
         except Exception as e:
             print(f"Warning: Failed to compute hash for {requirements_file}: {e}")
             return None
@@ -101,17 +105,25 @@ class DependencyManager:
             # Dependencies are up-to-date
             return False
         
-        # For empty requirements file, just mark as installed without calling pip
+        # For empty or whitespace-only requirements file, just mark as installed without calling pip
+        # Check file size first for efficiency
         try:
-            with open(requirements_file, 'r') as f:
-                content = f.read().strip()
-                if not content:
-                    # Empty requirements file, just update state
-                    state['requirements_hash'] = current_hash
-                    DependencyManager._write_deps_state(plugin_path, state)
-                    return False
+            file_size = os.path.getsize(requirements_file)
+            if file_size == 0:
+                # Empty file, just update state
+                state['requirements_hash'] = current_hash
+                DependencyManager._write_deps_state(plugin_path, state)
+                return False
+            elif file_size < 100:  # Small file, check if it's only whitespace
+                with open(requirements_file, 'r') as f:
+                    content = f.read().strip()
+                    if not content:
+                        # Whitespace-only file, just update state
+                        state['requirements_hash'] = current_hash
+                        DependencyManager._write_deps_state(plugin_path, state)
+                        return False
         except Exception as e:
-            print(f"Warning: Failed to read {requirements_file}: {e}")
+            print(f"Warning: Failed to check {requirements_file}: {e}")
             return False
         
         # Install dependencies
