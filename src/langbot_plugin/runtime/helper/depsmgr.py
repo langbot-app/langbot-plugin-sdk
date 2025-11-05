@@ -87,20 +87,6 @@ class DependencyManager:
         if not os.path.exists(requirements_file):
             return False
         
-        # Check if requirements.txt is empty
-        try:
-            with open(requirements_file, 'r') as f:
-                content = f.read().strip()
-                if not content:
-                    # Empty requirements file, mark as installed
-                    state = DependencyManager._read_deps_state(plugin_path)
-                    state['requirements_hash'] = ""
-                    DependencyManager._write_deps_state(plugin_path, state)
-                    return False
-        except Exception as e:
-            print(f"Warning: Failed to read {requirements_file}: {e}")
-            return False
-        
         # Compute current requirements hash
         current_hash = DependencyManager._compute_requirements_hash(requirements_file)
         if current_hash is None:
@@ -113,6 +99,19 @@ class DependencyManager:
         # Check if dependencies need to be installed
         if stored_hash == current_hash:
             # Dependencies are up-to-date
+            return False
+        
+        # For empty requirements file, just mark as installed without calling pip
+        try:
+            with open(requirements_file, 'r') as f:
+                content = f.read().strip()
+                if not content:
+                    # Empty requirements file, just update state
+                    state['requirements_hash'] = current_hash
+                    DependencyManager._write_deps_state(plugin_path, state)
+                    return False
+        except Exception as e:
+            print(f"Warning: Failed to read {requirements_file}: {e}")
             return False
         
         # Install dependencies

@@ -79,9 +79,10 @@ class TestDependencyManager:
             result = DependencyManager.check_and_install_dependencies(temp_dir)
             assert result is False
             
-            # Verify state file was created with empty hash
+            # Verify state file was created with hash of empty file
             state = DependencyManager._read_deps_state(temp_dir)
-            assert state.get('requirements_hash') == ""
+            empty_hash = DependencyManager._compute_requirements_hash(requirements_file)
+            assert state.get('requirements_hash') == empty_hash
     
     def test_check_and_install_dependencies_up_to_date(self):
         """Test checking dependencies when they're already up to date."""
