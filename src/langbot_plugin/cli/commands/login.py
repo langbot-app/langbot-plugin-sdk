@@ -11,7 +11,6 @@ from langbot_plugin.cli.utils.cloudsv import get_cloud_service_url
 from langbot_plugin.cli.i18n import cli_print, t
 
 SERVER_URL = get_cloud_service_url()
-DEFAULT_SERVER_URL = "https://space.langbot.app"
 
 
 def login_process() -> None:
@@ -103,8 +102,9 @@ def _save_config(config: dict[str, Any]) -> str:
                 existing_data = json.load(f)
                 # Check if it's old format (flat dict with access_token) or new format (nested dict)
                 if "access_token" in existing_data:
-                    # Old format - migrate to new format with default URL
-                    all_configs = {DEFAULT_SERVER_URL: existing_data}
+                    # Old format - migrate to new format under current SERVER_URL
+                    # This preserves credentials for the site currently being used
+                    all_configs = {SERVER_URL: existing_data}
                 else:
                     # New format - use as is
                     all_configs = existing_data
