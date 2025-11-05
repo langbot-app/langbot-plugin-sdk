@@ -94,7 +94,7 @@ def _save_config(config: dict[str, Any]) -> str:
     config_dir = Path.home() / ".langbot" / "cli"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_file = config_dir / "config.json"
-    
+
     # Load existing config or create new dict structure
     all_configs = {}
     if config_file.exists():
@@ -111,10 +111,10 @@ def _save_config(config: dict[str, Any]) -> str:
         except Exception:
             # If file is corrupted, start fresh
             all_configs = {}
-    
+
     # Save config for current CLOUD_SERVICE_URL
     all_configs[SERVER_URL] = config
-    
+
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(all_configs, f, indent=2, ensure_ascii=False)
     return str(config_file)
@@ -182,13 +182,13 @@ def _load_config() -> dict[str, Any] | None:
     try:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
-            
+
             # Check if it's old format (flat dict with access_token) or new format (nested dict)
             if "access_token" in data:
                 # Old format - return as is for backward compatibility
                 # This will be migrated to new format on next save
                 return data
-            
+
             # New format - return config for current CLOUD_SERVICE_URL
             return data.get(SERVER_URL, None)
     except Exception:
