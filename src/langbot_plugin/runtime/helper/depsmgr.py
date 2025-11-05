@@ -10,6 +10,8 @@ class DependencyManager:
     """Manager for tracking and installing plugin dependencies."""
     
     DEPS_STATE_FILE = ".deps_state.json"
+    HASH_CHUNK_SIZE = 4096  # Size of chunks for streaming hash computation
+    SMALL_FILE_THRESHOLD = 100  # Files smaller than this are checked for whitespace-only content
     
     @staticmethod
     def _compute_requirements_hash(requirements_file: str) -> Optional[str]:
@@ -28,7 +30,7 @@ class DependencyManager:
             hash_obj = hashlib.sha256()
             with open(requirements_file, 'rb') as f:
                 # Read and hash in chunks for memory efficiency
-                for chunk in iter(lambda: f.read(4096), b''):
+                for chunk in iter(lambda: f.read(DependencyManager.HASH_CHUNK_SIZE), b''):
                     hash_obj.update(chunk)
             return hash_obj.hexdigest()
         except Exception as e:
@@ -114,8 +116,9 @@ class DependencyManager:
                 state['requirements_hash'] = current_hash
                 DependencyManager._write_deps_state(plugin_path, state)
                 return False
-            elif file_size < 100:  # Small file, check if it's only whitespace
-                with open(requirements_file, 'r') as f:
+            elif file_size < DependencyManager.SMALL_FILE_THRESHOLD:
+                # Small file, check if it's only whitespace
+                with open(requirements_file, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                     if not content:
                         # Whitespace-only file, just update state
