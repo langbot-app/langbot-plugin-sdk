@@ -68,6 +68,17 @@ class PluginManager:
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
+    async def ensure_all_plugins_dependencies_installed(self):
+        for plugin_path in glob.glob("data/plugins/*"):
+            if not os.path.isdir(plugin_path):
+                continue
+
+            # install dependencies
+            requirements_file = os.path.join(plugin_path, "requirements.txt")
+            if os.path.exists(requirements_file):
+                pkgmgr_helper.install_requirements(requirements_file)
+                print(f"Installed dependencies for plugin at {plugin_path}")
+
     async def launch_all_plugins(self):
         self.wait_for_control_connection = asyncio.Future()
         await self.wait_for_control_connection
@@ -214,9 +225,9 @@ class PluginManager:
         # install deps
         print("installing dependencies")
         yield {"current_action": "installing dependencies"}
-        pkgmgr_helper.install_requirements(
-            os.path.join(plugin_path, "requirements.txt")
-        )
+        requirements_file = os.path.join(plugin_path, "requirements.txt")
+        if os.path.exists(requirements_file):
+            pkgmgr_helper.install_requirements(requirements_file)
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}

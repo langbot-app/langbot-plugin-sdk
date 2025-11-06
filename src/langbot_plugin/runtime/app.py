@@ -103,6 +103,11 @@ class RuntimeApplication:
                 self.context.ws_debug_server.run(new_plugin_debug_connection_callback)
             )
 
+        # ==== check and install dependencies for all plugins ====
+        if not self.args.skip_deps_check:
+            print("Ensuring all installed plugins dependencies are installed...")
+            await self.context.plugin_mgr.ensure_all_plugins_dependencies_installed()
+
         # ==== launch plugin processes ====
         if not self.args.debug_only:
             tasks.append(self.context.plugin_mgr.launch_all_plugins())
