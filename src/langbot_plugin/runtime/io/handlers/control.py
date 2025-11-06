@@ -133,9 +133,10 @@ class ControlConnectionHandler(handler.Handler):
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
             event_context_data = data["event_context"]
             event_context = EventContext.model_validate(event_context_data)
+            include_plugins = data.get("include_plugins")
 
             emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(
-                event_context
+                event_context, include_plugins
             )
 
             event_context_dump = event_context.model_dump()
@@ -151,7 +152,8 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
-            tools = await self.context.plugin_mgr.list_tools()
+            include_plugins = data.get("include_plugins")
+            tools = await self.context.plugin_mgr.list_tools(include_plugins)
             return handler.ActionResponse.success(
                 {"tools": [tool.model_dump() for tool in tools]}
             )
@@ -160,8 +162,9 @@ class ControlConnectionHandler(handler.Handler):
         async def call_tool(data: dict[str, Any]) -> handler.ActionResponse:
             tool_name = data["tool_name"]
             tool_parameters = data["tool_parameters"]
+            include_plugins = data.get("include_plugins")
 
-            resp = await self.context.plugin_mgr.call_tool(tool_name, tool_parameters)
+            resp = await self.context.plugin_mgr.call_tool(tool_name, tool_parameters, include_plugins)
 
             return handler.ActionResponse.success(
                 {
@@ -171,7 +174,8 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
-            commands = await self.context.plugin_mgr.list_commands()
+            include_plugins = data.get("include_plugins")
+            commands = await self.context.plugin_mgr.list_commands(include_plugins)
             return handler.ActionResponse.success(
                 {"commands": [command.model_dump() for command in commands]}
             )
@@ -181,7 +185,8 @@ class ControlConnectionHandler(handler.Handler):
             data: dict[str, Any],
         ) -> AsyncGenerator[handler.ActionResponse, None]:
             command_context = ExecuteContext.model_validate(data["command_context"])
-            async for resp in self.context.plugin_mgr.execute_command(command_context):
+            include_plugins = data.get("include_plugins")
+            async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
 

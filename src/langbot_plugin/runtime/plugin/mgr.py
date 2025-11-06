@@ -429,7 +429,7 @@ class PluginManager:
             )
 
     async def emit_event(
-        self, event_context: EventContext
+        self, event_context: EventContext, include_plugins: list[str] | None = None
     ) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
 
@@ -445,6 +445,12 @@ class PluginManager:
 
             if plugin._runtime_plugin_handler is None:
                 continue
+
+            # Filter by include_plugins if specified (pipeline-specific filtering)
+            if include_plugins is not None:
+                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                if plugin_id not in include_plugins:
+                    continue
 
             resp = await plugin._runtime_plugin_handler.emit_event(
                 event_context.model_dump()
@@ -478,10 +484,16 @@ class PluginManager:
                 return icon_bytes, resp["mime_type"]
         return b"", ""
 
-    async def list_tools(self) -> list[ComponentManifest]:
+    async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
 
         for plugin in self.plugins:
+            # Filter by include_plugins if specified
+            if include_plugins is not None:
+                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                if plugin_id not in include_plugins:
+                    continue
+
             for component in plugin.components:
                 if component.manifest.kind == Tool.__kind__:
                     tools.append(component.manifest)
@@ -489,9 +501,15 @@ class PluginManager:
         return tools
 
     async def call_tool(
-        self, tool_name: str, tool_parameters: dict[str, typing.Any]
+        self, tool_name: str, tool_parameters: dict[str, typing.Any], include_plugins: list[str] | None = None
     ) -> dict[str, typing.Any]:
         for plugin in self.plugins:
+            # Filter by include_plugins if specified
+            if include_plugins is not None:
+                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                if plugin_id not in include_plugins:
+                    continue
+
             for component in plugin.components:
                 if component.manifest.kind == Tool.__kind__:
                     if component.manifest.metadata.name != tool_name:
@@ -508,10 +526,16 @@ class PluginManager:
 
         return {}
 
-    async def list_commands(self) -> list[ComponentManifest]:
+    async def list_commands(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
         commands: list[ComponentManifest] = []
 
         for plugin in self.plugins:
+            # Filter by include_plugins if specified
+            if include_plugins is not None:
+                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                if plugin_id not in include_plugins:
+                    continue
+
             for component in plugin.components:
                 if component.manifest.kind == Command.__kind__:
                     commands.append(component.manifest)
@@ -519,9 +543,15 @@ class PluginManager:
         return commands
 
     async def execute_command(
-        self, command_context: ExecuteContext
+        self, command_context: ExecuteContext, include_plugins: list[str] | None = None
     ) -> typing.AsyncGenerator[CommandReturn, None]:
         for plugin in self.plugins:
+            # Filter by include_plugins if specified
+            if include_plugins is not None:
+                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                if plugin_id not in include_plugins:
+                    continue
+
             for component in plugin.components:
                 if component.manifest.kind == Command.__kind__:
                     if component.manifest.metadata.name != command_context.command:
