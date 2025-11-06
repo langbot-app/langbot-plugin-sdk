@@ -6,57 +6,36 @@ When users update their LangBot containers (by pulling new images and rebuilding
 
 ## Solution
 
-The runtime now automatically tracks and reinstalls plugin dependencies when needed using a dependency state tracking system.
+The runtime now **automatically reinstalls all plugin dependencies on every startup**. This is a simple and straightforward approach that ensures dependencies are always available.
 
 ### How It Works
 
-1. **Dependency State Tracking**: Each plugin directory contains a `.deps_state.json` file that tracks:
-   - SHA256 hash of the `requirements.txt` file
-   - Other metadata about installed dependencies
+When the runtime starts and launches plugins (in `launch_all_plugins()`):
+1. For each plugin directory in `data/plugins/`
+2. Check if a `requirements.txt` file exists
+3. If it exists, run `pip install -r requirements.txt`
+4. Then launch the plugin
 
-2. **Automatic Dependency Check**: When the runtime starts and launches plugins:
-   - It checks each plugin's `requirements.txt` against the stored hash
-   - If the hash doesn't match (or doesn't exist), dependencies are reinstalled
-   - If the hash matches, dependencies are assumed to be installed and the plugin launches immediately
+This happens **every time** the runtime starts, ensuring that:
+- After container rebuild, all dependencies are reinstalled
+- After requirements.txt changes, new dependencies are installed
+- No state tracking or complexity needed
 
-3. **Installation Tracking**: When a new plugin is installed:
-   - Dependencies are installed as usual
-   - The dependency state is recorded in `.deps_state.json`
+### Implementation
 
-### Implementation Details
-
-- **New Module**: `src/langbot_plugin/runtime/helper/depsmgr.py`
-  - Contains the `DependencyManager` class
-  - Provides methods for checking, installing, and tracking dependencies
-
-- **Modified Module**: `src/langbot_plugin/runtime/plugin/mgr.py`
-  - `launch_all_plugins()`: Added dependency check before launching each plugin
-  - `install_plugin()`: Added dependency state tracking after installation
+Modified `src/langbot_plugin/runtime/plugin/mgr.py`:
+- `launch_all_plugins()`: Added `pip install -r requirements.txt` before launching each plugin
 
 ### Benefits
 
-1. **Automatic Recovery**: No manual intervention needed after container updates
-2. **Efficient**: Only reinstalls dependencies when `requirements.txt` changes
-3. **Backward Compatible**: Works with existing plugins without modification
-4. **Robust**: Handles edge cases like missing or empty requirements files
+1. **Simple**: No complex state tracking or hash computation
+2. **Reliable**: Dependencies always installed, regardless of container state
+3. **Automatic**: Works automatically after container rebuild
+4. **Backward Compatible**: Works with existing plugins without modification
+5. **Robust**: Handles all edge cases (pip handles already-installed packages efficiently)
 
-### State File Format
+### Performance Considerations
 
-The `.deps_state.json` file in each plugin directory contains:
-
-```json
-{
-  "requirements_hash": "764ab607b6484a34..."
-}
-```
-
-This file is automatically managed by the runtime and should not be manually edited.
-
-### Testing
-
-Comprehensive unit tests are provided in `tests/runtime/test_depsmgr.py` covering:
-- Hash computation
-- State file reading/writing
-- Dependency checking logic
-- Change detection
-- Edge cases (missing files, empty requirements, etc.)
+- `pip` is smart enough to skip reinstalling packages that are already installed at the correct version
+- The startup time will increase slightly due to pip checking installed packages
+- For most plugins with few dependencies, this overhead is minimal

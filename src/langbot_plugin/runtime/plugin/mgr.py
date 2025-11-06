@@ -37,7 +37,6 @@ from langbot_plugin.api.entities.builtin.command.context import (
 from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
-from langbot_plugin.runtime.helper import depsmgr as depsmgr_helper
 
 
 class PluginInstallSource(enum.Enum):
@@ -76,9 +75,14 @@ class PluginManager:
             if not os.path.isdir(plugin_path):
                 continue
 
-            # Check and install dependencies if needed
-            print(f"Checking dependencies for plugin at {plugin_path}")
-            depsmgr_helper.DependencyManager.check_and_install_dependencies(plugin_path)
+            # Install dependencies for this plugin
+            requirements_file = os.path.join(plugin_path, "requirements.txt")
+            if os.path.exists(requirements_file):
+                print(f"Installing dependencies for plugin at {plugin_path}")
+                try:
+                    pkgmgr_helper.install_requirements(requirements_file)
+                except Exception as e:
+                    print(f"Warning: Failed to install dependencies for {plugin_path}: {e}")
 
             # launch plugin process
             task = self.launch_plugin(plugin_path)
@@ -222,8 +226,6 @@ class PluginManager:
         requirements_file = os.path.join(plugin_path, "requirements.txt")
         if os.path.exists(requirements_file):
             pkgmgr_helper.install_requirements(requirements_file)
-            # Mark dependencies as installed
-            depsmgr_helper.DependencyManager.mark_dependencies_installed(plugin_path)
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}
