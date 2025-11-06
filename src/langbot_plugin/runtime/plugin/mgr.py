@@ -68,21 +68,23 @@ class PluginManager:
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
+    async def ensure_all_plugins_dependencies_installed(self):
+        for plugin_path in glob.glob("data/plugins/*"):
+            if not os.path.isdir(plugin_path):
+                continue
+
+            # install dependencies
+            requirements_file = os.path.join(plugin_path, "requirements.txt")
+            if os.path.exists(requirements_file):
+                pkgmgr_helper.install_requirements(requirements_file)
+                print(f"Installed dependencies for plugin at {plugin_path}")
+
     async def launch_all_plugins(self):
         self.wait_for_control_connection = asyncio.Future()
         await self.wait_for_control_connection
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
                 continue
-
-            # Install dependencies for this plugin
-            requirements_file = os.path.join(plugin_path, "requirements.txt")
-            if os.path.exists(requirements_file):
-                print(f"Installing dependencies for plugin at {plugin_path}")
-                try:
-                    pkgmgr_helper.install_requirements(requirements_file)
-                except Exception as e:
-                    print(f"Warning: Failed to install dependencies for {plugin_path}: {e}")
 
             # launch plugin process
             task = self.launch_plugin(plugin_path)

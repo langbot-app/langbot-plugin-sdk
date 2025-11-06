@@ -99,6 +99,9 @@ def main():
     rt_parser.add_argument(
         "--debug-only", action="store_true", help="Only run the debug server"
     )
+    rt_parser.add_argument(
+        "--skip-deps-check", action="store_true", help="Skip checking and installing dependencies for all installed plugins"
+    )
 
     args = parser.parse_args()
 
