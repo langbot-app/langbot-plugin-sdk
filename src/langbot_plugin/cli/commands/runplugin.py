@@ -9,7 +9,7 @@ from langbot_plugin.cli.run.controller import PluginRuntimeController
 from langbot_plugin.cli.i18n import cli_print
 
 
-async def arun_plugin_process(stdio: bool = False) -> None:
+async def arun_plugin_process(stdio: bool = False, prod_mode: bool = False) -> None:
     # read .env file
     dotenv.load_dotenv(".env")
 
@@ -32,7 +32,7 @@ async def arun_plugin_process(stdio: bool = False) -> None:
     ws_debug_url = ""
 
     if not stdio:
-        ws_debug_url = os.getenv("DEBUG_RUNTIME_WS_URL", "")
+        ws_debug_url = os.getenv("DEBUG_RUNTIME_WS_URL", os.getenv("RUNTIME_WS_URL", ""))
         if ws_debug_url == "":
             cli_print("debug_url_not_set")
             return
@@ -51,6 +51,7 @@ async def arun_plugin_process(stdio: bool = False) -> None:
         component_manifests,
         stdio,
         ws_debug_url,
+        prod_mode,
     )
 
     controller_run_task = asyncio.create_task(controller.run())
@@ -59,9 +60,9 @@ async def arun_plugin_process(stdio: bool = False) -> None:
     await controller_run_task
 
 
-def run_plugin_process(stdio: bool = False) -> None:
+def run_plugin_process(stdio: bool = False, prod_mode: bool = False) -> None:
     try:
-        asyncio.run(arun_plugin_process(stdio))
+        asyncio.run(arun_plugin_process(stdio, prod_mode))
     except asyncio.CancelledError:
         cli_print("plugin_process_cancelled")
         return

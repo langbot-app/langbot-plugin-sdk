@@ -176,11 +176,12 @@ class PluginRuntimeHandler(Handler):
                     f"Command {command_context.command} not found"
                 )
 
-    async def register_plugin(self) -> dict[str, typing.Any]:
+    async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
         resp = await self.call_action(
             PluginToRuntimeAction.REGISTER_PLUGIN,
             {
                 "plugin_container": self.plugin_container.model_dump(),
+                "prod_mode": prod_mode,
             },
         )
         return resp

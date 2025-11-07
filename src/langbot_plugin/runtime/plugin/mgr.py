@@ -15,6 +15,7 @@ import base64
 import httpx
 import signal
 import traceback
+from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
@@ -94,25 +95,48 @@ class PluginManager:
         await asyncio.gather(*self.plugin_run_tasks)
 
     async def launch_plugin(self, plugin_path: str):
-        python_path = sys.executable
-        ctrl = stdio_client_controller.StdioClientController(
-            command=python_path,
-            args=["-m", "langbot_plugin.cli.__init__", "run", "-s"],
-            env={},
-            working_dir=plugin_path,
-        )
-
-        async def new_plugin_connection_callback(connection: Connection):
-            handler = runtime_plugin_handler_cls.PluginConnectionHandler(
-                connection, self.context, stdio_process=ctrl.process
+        if get_platform() == 'win32':
+            # Due to Windows's lack of supports for both stdio and subprocess:
+            # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
+            # We have to launch plugin via cmd but communicate via ws.
+            python_path = sys.executable
+            process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
+                python_path,
+                '-m', 'langbot_plugin.cli.__init__', 'run',
+                '--prod',
+                env={
+                    "RUNTIME_WS_URL": "ws://localhost:5401/plugin/ws",
+                    **os.environ.copy()
+                },
+                cwd=plugin_path,
             )
-            await self.add_plugin_handler(handler)
+            
+            # hold the process
+            task = asyncio.create_task(process.wait())
 
-        try:
-            await ctrl.run(new_plugin_connection_callback)
-        except asyncio.CancelledError:
-            print("plugin process cancelled:", plugin_path)
-            return
+            # the plugin will connect to the runtime via ws automatically
+
+            await task
+        else:
+            python_path = sys.executable
+            ctrl = stdio_client_controller.StdioClientController(
+                command=python_path,
+                args=["-m", "langbot_plugin.cli.__init__", "run", "-s"],
+                env={},
+                working_dir=plugin_path,
+            )
+
+            async def new_plugin_connection_callback(connection: Connection):
+                handler = runtime_plugin_handler_cls.PluginConnectionHandler(
+                    connection, self.context, stdio_process=ctrl.process
+                )
+                await self.add_plugin_handler(handler)
+
+            try:
+                await ctrl.run(new_plugin_connection_callback)
+            except asyncio.CancelledError:
+                print("plugin process cancelled:", plugin_path)
+                return
 
     async def add_plugin_handler(
         self,
