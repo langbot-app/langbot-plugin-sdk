@@ -23,6 +23,9 @@ class PluginConnectionHandler(handler.Handler):
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
+    
+    subprocess_on_windows_task: asyncio.Task | None = None
+    """The task for the subprocess on Windows."""
 
     def __init__(
         self,
@@ -51,6 +54,10 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
+            
+            if data["prod_mode"]:
+                self.debug_plugin = False
+                
             await self.context.plugin_mgr.register_plugin(
                 self, data["plugin_container"]
             )

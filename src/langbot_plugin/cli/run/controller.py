@@ -41,16 +41,20 @@ class PluginRuntimeController:
 
     _connection_waiter: asyncio.Future[Connection]
 
+    prod_mode: bool
+    """Mark this process as production plugin process, only used on Windows"""
+
     def __init__(
         self,
         plugin_manifest: ComponentManifest,
         component_manifests: list[ComponentManifest],
         stdio: bool,
         ws_debug_url: str,
+        prod_mode: bool = False,
     ) -> None:
         self._stdio = stdio
         self.ws_debug_url = ws_debug_url
-
+        self.prod_mode = prod_mode
         # discover components
         components_containers = [
             ComponentContainer(
@@ -118,7 +122,7 @@ class PluginRuntimeController:
         print("Plugin mounted")
 
         # register plugin
-        await self.handler.register_plugin()
+        await self.handler.register_plugin(prod_mode=self.prod_mode)
 
     async def initialize(self, plugin_settings: dict[str, typing.Any]) -> None:
         print("Initializing plugin...")

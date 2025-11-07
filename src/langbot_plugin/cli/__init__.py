@@ -1,5 +1,6 @@
 import argparse
 import sys
+import asyncio
 from langbot_plugin.version import __version__
 from langbot_plugin.runtime import app as runtime_app
 from langbot_plugin.cli.commands.initplugin import init_plugin_process
@@ -57,6 +58,9 @@ def main():
     run_parser = subparsers.add_parser("run", help="Run/remote debug the plugin")
     run_parser.add_argument(
         "-s", "--stdio", action="store_true", help="Use stdio for control connection"
+    )
+    run_parser.add_argument(
+        "--prod", action="store_true", help="Mark this process as production plugin process, only used on Windows"
     )
 
     # login command
@@ -124,7 +128,7 @@ def main():
             generate_component_process(args.component_type)
         case "run":
             cli_print("running_plugin")
-            run_plugin_process(args.stdio)
+            run_plugin_process(args.stdio, args.prod)
         case "build":
             build_plugin_process(args.output)
         case "publish":
