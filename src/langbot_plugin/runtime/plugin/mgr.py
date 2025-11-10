@@ -47,6 +47,8 @@ class PluginInstallSource(enum.Enum):
     GITHUB = "github"
     MARKETPLACE = "marketplace"
 
+    DEBUG = "debug"
+
 
 class PluginManager:
     """The manager for plugins."""
@@ -278,6 +280,7 @@ class PluginManager:
         self,
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
         container_data: dict[str, typing.Any],
+        debug_plugin: bool = False,
     ):
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
@@ -286,6 +289,18 @@ class PluginManager:
         try:
             if not hasattr(self.context, "control_handler"):
                 raise ValueError("Control handler not found")
+
+            # if it's a debug plugin, we need to initialize the plugin settings first
+            if debug_plugin:
+                await self.context.control_handler.call_action(
+                    RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
+                    {
+                        "plugin_author": plugin_container.manifest.metadata.author,
+                        "plugin_name": plugin_container.manifest.metadata.name,
+                        "install_source": PluginInstallSource.DEBUG.value,
+                        "install_info": {},
+                    },
+                )
 
             # get plugin settings from LangBot
             plugin_settings = await self.context.control_handler.call_action(

@@ -59,7 +59,8 @@ class PluginConnectionHandler(handler.Handler):
                 self.debug_plugin = False
                 
             await self.context.plugin_mgr.register_plugin(
-                self, data["plugin_container"]
+                self, data["plugin_container"],
+                self.debug_plugin
             )
             return handler.ActionResponse.success({})
 
