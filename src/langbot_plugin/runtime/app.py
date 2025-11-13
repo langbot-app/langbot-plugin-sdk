@@ -36,6 +36,9 @@ class RuntimeApplication:
 
         print("settings.cloud_service_url", settings.cloud_service_url)
 
+        # Set the debug port in context so PluginManager can use it
+        self.context.ws_debug_port = self.args.ws_debug_port
+
         self.context.plugin_mgr = plugin_mgr_cls.PluginManager(self.context)
 
         if args.stdio_control:

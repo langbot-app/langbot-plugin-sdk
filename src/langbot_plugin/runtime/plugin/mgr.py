@@ -107,7 +107,7 @@ class PluginManager:
                 '-m', 'langbot_plugin.cli.__init__', 'run',
                 '--prod',
                 env={
-                    "RUNTIME_WS_URL": "ws://localhost:5401/plugin/ws",
+                    "RUNTIME_WS_URL": f"ws://localhost:{self.context.ws_debug_port}/plugin/ws",
                     **os.environ.copy()
                 },
                 cwd=plugin_path,
