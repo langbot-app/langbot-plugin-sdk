@@ -27,3 +27,5 @@ class RuntimeContext:
     control_handler: control_handler_cls.ControlConnectionHandler
 
     plugin_mgr: plugin_mgr_cls.PluginManager
+
+    ws_debug_port: int = 5401  # Default debug port
