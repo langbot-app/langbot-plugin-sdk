@@ -15,6 +15,7 @@ import base64
 import httpx
 import signal
 import traceback
+import logging
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -38,6 +39,8 @@ from langbot_plugin.api.entities.builtin.command.context import (
 from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
+
+logger = logging.getLogger(__name__)
 
 
 class PluginInstallSource(enum.Enum):
@@ -80,7 +83,7 @@ class PluginManager:
             requirements_file = os.path.join(plugin_path, "requirements.txt")
             if os.path.exists(requirements_file):
                 pkgmgr_helper.install_requirements(requirements_file)
-                print(f"Installed dependencies for plugin at {plugin_path}")
+                logger.info(f"Installed dependencies for plugin at {plugin_path}")
 
     async def launch_all_plugins(self):
         self.wait_for_control_connection = asyncio.Future()
@@ -93,7 +96,7 @@ class PluginManager:
             task = self.launch_plugin(plugin_path)
             self.plugin_run_tasks.append(task)
 
-        print("launch all plugins:", len(self.plugin_run_tasks))
+        logger.info(f"launch all plugins: {len(self.plugin_run_tasks)}")
         await asyncio.gather(*self.plugin_run_tasks)
 
     async def launch_plugin(self, plugin_path: str):
@@ -137,7 +140,7 @@ class PluginManager:
             try:
                 await ctrl.run(new_plugin_connection_callback)
             except asyncio.CancelledError:
-                print("plugin process cancelled:", plugin_path)
+                logger.info(f"plugin process cancelled: {plugin_path}")
                 return
 
     async def add_plugin_handler(
@@ -249,7 +252,7 @@ class PluginManager:
             raise ValueError(f"Invalid source: {source}")
 
         # install deps
-        print("installing dependencies")
+        logger.info("installing dependencies")
         yield {"current_action": "installing dependencies"}
         requirements_file = os.path.join(plugin_path, "requirements.txt")
         if os.path.exists(requirements_file):
@@ -464,18 +467,12 @@ class PluginManager:
                     plugin_container._runtime_plugin_handler.stdio_process.wait(),
                     timeout=2,
                 )
-            print(
-                "plugin process terminated",
-                plugin_container.manifest.metadata.author,
-                plugin_container.manifest.metadata.name,
-                plugin_container.manifest.metadata.version,
+            logger.info(
+                f"plugin process terminated: {plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}:{plugin_container.manifest.metadata.version}"
             )
         else:
-            print(
-                "plugin process is none",
-                plugin_container.manifest.metadata.author,
-                plugin_container.manifest.metadata.name,
-                plugin_container.manifest.metadata.version,
+            logger.debug(
+                f"plugin process is none: {plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}:{plugin_container.manifest.metadata.version}"
             )
 
     async def emit_event(

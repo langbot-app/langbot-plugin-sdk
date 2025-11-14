@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.errors import ConnectionClosedError
+
+logger = logging.getLogger(__name__)
 
 
 class StdioConnection(connection.Connection):
@@ -158,7 +161,7 @@ class StdioConnection(connection.Connection):
                         return line
 
         except Exception as e:
-            print(f"Error receiving message: {e}")
+            logger.error(f"Error receiving message: {e}")
             raise ConnectionClosedError("Connection closed")
 
     async def close(self) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from enum import Enum
 import signal
+import logging
 
 import asyncio
 
@@ -16,6 +17,8 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
 from langbot_plugin.runtime.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class ControlConnectionMode(Enum):
@@ -34,7 +37,7 @@ class RuntimeApplication:
         self.args = args
         self.context = context.RuntimeContext()
 
-        print("settings.cloud_service_url", settings.cloud_service_url)
+        logger.info(f"settings.cloud_service_url: {settings.cloud_service_url}")
 
         # Set the debug port in context so PluginManager can use it
         self.context.ws_debug_port = self.args.ws_debug_port
@@ -67,7 +70,7 @@ class RuntimeApplication:
     ):
         self.context.control_handler = handler
         task = asyncio.create_task(handler.run())
-        print("Got control connection.")
+        logger.info("Got control connection.")
         if self.context.plugin_mgr.wait_for_control_connection is not None:
             self.context.plugin_mgr.wait_for_control_connection.set_result(None)
             # mark as done, indicates all installed plugins are already launched
@@ -108,7 +111,7 @@ class RuntimeApplication:
 
         # ==== check and install dependencies for all plugins ====
         if not self.args.skip_deps_check:
-            print("Ensuring all installed plugins dependencies are installed...")
+            logger.info("Ensuring all installed plugins dependencies are installed...")
             await self.context.plugin_mgr.ensure_all_plugins_dependencies_installed()
 
         # ==== launch plugin processes ====
@@ -122,13 +125,20 @@ class RuntimeApplication:
 
 
 def main(args: argparse.Namespace):
+    # Configure logging for runtime
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s.%(msecs)03d] %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
     app = RuntimeApplication(args)
 
     try:
         asyncio.run(app.run())
     except asyncio.CancelledError:
-        print("Runtime application cancelled")
+        logger.info("Runtime application cancelled")
         return
     except KeyboardInterrupt:
-        print("Keyboard interrupt, exiting...")
+        logger.info("Keyboard interrupt, exiting...")
         return

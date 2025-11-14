@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import typing
+import logging
 
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.runtime.plugin.container import (
@@ -25,6 +26,8 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.entities.io.errors import ConnectionClosedError
+
+logger = logging.getLogger(__name__)
 
 
 class PluginRuntimeController:
@@ -79,7 +82,7 @@ class PluginRuntimeController:
         await self._controller_task
 
     async def mount(self) -> None:
-        print("Mounting plugin...")
+        logger.info(f"Mounting plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
         controller: Controller
 
         self._connection_waiter = asyncio.Future()
@@ -96,7 +99,7 @@ class PluginRuntimeController:
             await self.handler.run()
 
         async def make_connection_failed_callback(controller: Controller, e: Exception = None):
-            print("Connection failed, exit")
+            logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}, exit")
             self._connection_waiter.set_exception(
                 ConnectionClosedError(f"Connection failed: {e}")
             )
@@ -119,14 +122,14 @@ class PluginRuntimeController:
         # send manifest info to runtime
         self.plugin_container.status = RuntimeContainerStatus.MOUNTED
 
-        print("Plugin mounted")
+        logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} mounted")
 
         # register plugin
         await self.handler.register_plugin(prod_mode=self.prod_mode)
 
     async def initialize(self, plugin_settings: dict[str, typing.Any]) -> None:
-        print("Initializing plugin...")
-        print("plugin_settings", plugin_settings)
+        logger.info(f"Initializing plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
+        logger.debug(f"plugin_settings: {plugin_settings}")
 
         self.plugin_container.enabled = plugin_settings["enabled"]
         self.plugin_container.priority = plugin_settings["priority"]
@@ -160,7 +163,7 @@ class PluginRuntimeController:
                     )
                     await component_container.component_instance.initialize()
 
-        print("Plugin initialized")
+        logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized")
 
         self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
 

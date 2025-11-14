@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import asyncio
 import dotenv
+import logging
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 from langbot_plugin.cli.run.controller import PluginRuntimeController
@@ -61,6 +62,13 @@ async def arun_plugin_process(stdio: bool = False, prod_mode: bool = False) -> N
 
 
 def run_plugin_process(stdio: bool = False, prod_mode: bool = False) -> None:
+    # Configure logging for plugin process
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[%(asctime)s.%(msecs)03d] (PluginProcess) %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
     try:
         asyncio.run(arun_plugin_process(stdio, prod_mode))
     except asyncio.CancelledError:
