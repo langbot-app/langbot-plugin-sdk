@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import websockets
 from typing import Callable, Coroutine, Any
+import logging
 
 from langbot_plugin.runtime.io.connections import ws as ws_connection
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controller import Controller
+
+logger = logging.getLogger(__name__)
 
 
 class WebSocketServerController(Controller):
@@ -23,10 +26,10 @@ class WebSocketServerController(Controller):
         self._new_connection_callback = new_connection_callback
 
         server = await websockets.serve(self.handle_connection, "0.0.0.0", self.port)
-        print(f"WebSocket server started on port {self.port}")
+        logger.info(f"WebSocket server started on port {self.port}")
         await server.wait_closed()
 
     async def handle_connection(self, websocket: websockets.ServerConnection):
-        print(f"New connection from {websocket.remote_address}")
+        logger.info(f"New connection from {websocket.remote_address}")
         connection = ws_connection.WebSocketConnection(websocket)
         await self._new_connection_callback(connection)

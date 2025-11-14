@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator
+import logging
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
@@ -11,6 +12,8 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 
 class PluginConnectionHandler(handler.Handler):
@@ -35,10 +38,10 @@ class PluginConnectionHandler(handler.Handler):
         debug_plugin: bool = False,
     ):
         async def disconnect_callback(hdl: handler.Handler):
-            print("disconnect_callback")
+            logger.debug("disconnect_callback")
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    print(
+                    logger.info(
                         f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect"
                     )
                     await self.context.plugin_mgr.remove_plugin_container(
