@@ -82,7 +82,7 @@ class PluginRuntimeController:
         await self._controller_task
 
     async def mount(self) -> None:
-        logger.info("Mounting plugin...")
+        logger.info(f"Mounting plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
         controller: Controller
 
         self._connection_waiter = asyncio.Future()
@@ -99,7 +99,7 @@ class PluginRuntimeController:
             await self.handler.run()
 
         async def make_connection_failed_callback(controller: Controller, e: Exception = None):
-            logger.error("Connection failed, exit")
+            logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}, exit")
             self._connection_waiter.set_exception(
                 ConnectionClosedError(f"Connection failed: {e}")
             )
@@ -122,13 +122,13 @@ class PluginRuntimeController:
         # send manifest info to runtime
         self.plugin_container.status = RuntimeContainerStatus.MOUNTED
 
-        logger.info("Plugin mounted")
+        logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} mounted")
 
         # register plugin
         await self.handler.register_plugin(prod_mode=self.prod_mode)
 
     async def initialize(self, plugin_settings: dict[str, typing.Any]) -> None:
-        logger.info("Initializing plugin...")
+        logger.info(f"Initializing plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
         logger.debug(f"plugin_settings: {plugin_settings}")
 
         self.plugin_container.enabled = plugin_settings["enabled"]
@@ -163,7 +163,7 @@ class PluginRuntimeController:
                     )
                     await component_container.component_instance.initialize()
 
-        logger.info("Plugin initialized")
+        logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized")
 
         self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
 
