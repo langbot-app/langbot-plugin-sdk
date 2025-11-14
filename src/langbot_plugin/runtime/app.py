@@ -125,6 +125,13 @@ class RuntimeApplication:
 
 
 def main(args: argparse.Namespace):
+    # Configure logging for runtime
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
     app = RuntimeApplication(args)
 
     try:
