@@ -8,6 +8,7 @@ import base64
 import aiofiles
 from copy import deepcopy
 
+from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.runtime.plugin.container import PluginContainer
@@ -120,6 +121,8 @@ class PluginRuntimeHandler(Handler):
             """Call a tool."""
             tool_name = data["tool_name"]
             tool_parameters = data["tool_parameters"]
+            session = data["session"]
+            query_id = data["query_id"]
 
             for component in self.plugin_container.components:
                 if component.manifest.kind == Tool.__kind__:
@@ -132,7 +135,18 @@ class PluginRuntimeHandler(Handler):
                     assert isinstance(component.component_instance, Tool)
 
                     tool_instance = component.component_instance
-                    resp = await tool_instance.call(tool_parameters)
+
+                    # 检查 call 方法是否接受 session 和 query_id 参数，如果接受则传入，否则只传 tool_parameters
+                    import inspect
+
+                    call_sig = inspect.signature(tool_instance.call)
+                    params = call_sig.parameters
+
+                    if "session" in params and "query_id" in params:
+                        session = provider_session.Session.model_validate(session)
+                        resp = await tool_instance.call(tool_parameters, session=session, query_id=query_id)
+                    else:
+                        resp = await tool_instance.call(tool_parameters)
 
                     return ActionResponse.success(
                         data={

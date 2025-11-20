@@ -397,11 +397,11 @@ class PluginConnectionHandler(handler.Handler):
         return resp
 
     async def call_tool(
-        self, tool_name: str, tool_parameters: dict[str, Any]
+        self, tool_name: str, tool_parameters: dict[str, Any], session: dict[str, Any], query_id: int
     ) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.CALL_TOOL,
-            {"tool_name": tool_name, "tool_parameters": tool_parameters},
+            {"tool_name": tool_name, "tool_parameters": tool_parameters, "session": session, "query_id": query_id},
         )
 
         return resp

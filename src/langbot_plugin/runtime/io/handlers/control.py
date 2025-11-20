@@ -162,9 +162,11 @@ class ControlConnectionHandler(handler.Handler):
         async def call_tool(data: dict[str, Any]) -> handler.ActionResponse:
             tool_name = data["tool_name"]
             tool_parameters = data["tool_parameters"]
+            session = data["session"]
+            query_id = data["query_id"]
             include_plugins = data.get("include_plugins")
 
-            resp = await self.context.plugin_mgr.call_tool(tool_name, tool_parameters, include_plugins)
+            resp = await self.context.plugin_mgr.call_tool(tool_name, tool_parameters, session, query_id, include_plugins)
 
             return handler.ActionResponse.success(
                 {

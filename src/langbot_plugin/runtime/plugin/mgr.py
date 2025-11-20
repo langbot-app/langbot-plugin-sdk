@@ -548,7 +548,7 @@ class PluginManager:
         return tools
 
     async def call_tool(
-        self, tool_name: str, tool_parameters: dict[str, typing.Any], include_plugins: list[str] | None = None
+        self, tool_name: str, tool_parameters: dict[str, typing.Any], session: dict[str, typing.Any], query_id: int, include_plugins: list[str] | None = None
     ) -> dict[str, typing.Any]:
         for plugin in self.plugins:
             # Filter by include_plugins if specified
@@ -566,7 +566,7 @@ class PluginManager:
                         continue
 
                     resp = await plugin._runtime_plugin_handler.call_tool(
-                        tool_name, tool_parameters
+                        tool_name, tool_parameters, session, query_id
                     )
 
                     return resp["tool_response"]
