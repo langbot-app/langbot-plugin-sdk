@@ -79,9 +79,18 @@ class Command(BaseComponent):
         self, context: context.ExecuteContext
     ) -> AsyncGenerator[context.CommandReturn, None]:
         """Execute the command."""
+        next_crt_command = context.crt_params[0] if len(context.crt_params) > 0 else ""
+        if next_crt_command not in self.registered_subcommands:
+            # find if there is a subcommand with '*' name
+            for subcommand in self.registered_subcommands:
+                if subcommand == '*':
+                    async for return_value in self.registered_subcommands[subcommand].subcommand(self, context):
+                        yield return_value
+                        return
+
+            raise CommandNotFoundError(next_crt_command)
+
         context.shift()
-        if context.crt_command not in self.registered_subcommands:
-            raise CommandNotFoundError(context.crt_command)
 
         subcommand = self.registered_subcommands[context.crt_command]
         async for return_value in subcommand.subcommand(self, context):
