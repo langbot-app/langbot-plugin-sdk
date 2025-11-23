@@ -531,6 +531,21 @@ class PluginManager:
                 return icon_bytes, resp["mime_type"]
         return b"", ""
 
+    async def get_plugin_readme(
+        self, plugin_author: str, plugin_name: str
+    ) -> bytes:
+        plugin_path = self.get_plugin_path(plugin_author, plugin_name)
+        readme_path = os.path.join(plugin_path, "README.md")
+        
+        if os.path.exists(readme_path):
+            try:
+                with open(readme_path, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.error(f"Failed to read README for plugin {plugin_author}/{plugin_name}: {e}")
+                return b""
+        return b""
+
     async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
 

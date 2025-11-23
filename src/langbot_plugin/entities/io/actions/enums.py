@@ -76,6 +76,7 @@ class LangBotToRuntimeAction(ActionType):
     LIST_PLUGINS = "list_plugins"
     GET_PLUGIN_INFO = "get_plugin_info"
     GET_PLUGIN_ICON = "get_plugin_icon"
+    GET_PLUGIN_README = "get_plugin_readme"
     INSTALL_PLUGIN = "install_plugin"
     RESTART_PLUGIN = "restart_plugin"
     DELETE_PLUGIN = "delete_plugin"
