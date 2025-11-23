@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 import typing
 
 import pydantic
@@ -13,28 +13,44 @@ import langbot_plugin.api.entities.builtin.platform.message as platform_message
 class CommandReturn(pydantic.BaseModel):
     """命令返回值"""
 
-    text: typing.Optional[str] = None
+    text: Optional[str] = None
     """文本
     """
 
-    image_base64: typing.Optional[str] = None
+    image_base64: Optional[str] = None
     """图片Base64"""
 
-    image_url: typing.Optional[str] = None
+    image_url: Optional[str] = None
     """图片链接
     """
 
-    file_url: typing.Optional[str] = None
+    file_url: Optional[str] = None
     """文件链接
     """
 
-    file_name: typing.Optional[str] = None
+    file_name: Optional[str] = None
     """文件名称
     """
 
-    error: typing.Optional[errors.CommandError] = None
+    error: Optional[errors.CommandError] = pydantic.Field(
+        serialization_alias="error", default=None
+    )
     """错误，保留供系统使用，插件逻辑报错请自行使用 text 传递
     """
+
+    @classmethod
+    @pydantic.field_validator('error', mode='before')
+    def _validate_error(cls, v: Optional[errors.CommandError]) -> Optional[errors.CommandError]:
+        if v is not None:
+            return errors.CommandError(message=v.message)
+        return v
+
+    @classmethod
+    @pydantic.field_serializer('error')
+    def _serialize_error(cls, v: Optional[errors.CommandError]) -> Optional[str]:
+        if v is not None:
+            return v.message
+        return v
 
     class Config:
         arbitrary_types_allowed = True
@@ -60,7 +76,7 @@ class ExecuteContext(pydantic.BaseModel):
 
     crt_command: str
     """当前命令
-    
+
     多级命令中crt_command为当前命令，command为根命令。
     例如：!plugin on Webwlkr
     处理到plugin时，command为plugin，crt_command为plugin
@@ -69,7 +85,7 @@ class ExecuteContext(pydantic.BaseModel):
 
     params: list[str]
     """命令参数
-    
+
     整个命令以空格分割后的参数列表
     """
 

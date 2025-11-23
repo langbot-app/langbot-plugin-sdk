@@ -1,6 +1,12 @@
-class CommandError(Exception):
-    def __init__(self, message: str = None):
-        self.message = message
+import pydantic
+
+class CommandError(pydantic.BaseModel):
+
+    message: str
+
+    def __init__(self, message: str):
+        
+        super().__init__(message=message)
 
     def __str__(self):
         return self.message
