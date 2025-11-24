@@ -532,18 +532,17 @@ class PluginManager:
         return b"", ""
 
     async def get_plugin_readme(
-        self, plugin_author: str, plugin_name: str
+        self, plugin_author: str, plugin_name: str, language: str = "en"
     ) -> bytes:
-        plugin_path = self.get_plugin_path(plugin_author, plugin_name)
-        readme_path = os.path.join(plugin_path, "README.md")
-        
-        if os.path.exists(readme_path):
-            try:
-                with open(readme_path, "rb") as f:
-                    return f.read()
-            except Exception as e:
-                logger.error(f"Failed to read README for plugin {plugin_author}/{plugin_name}: {e}")
-                return b""
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
+
+                readme_file_key = resp["plugin_readme_file_key"]
+                readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
+                await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
+                return readme_bytes
+
         return b""
 
     async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:

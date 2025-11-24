@@ -65,6 +65,7 @@ class RuntimeToPluginAction(ActionType):
     INITIALIZE_PLUGIN = "initialize_plugin"
     GET_PLUGIN_CONTAINER = "get_plugin_container"
     GET_PLUGIN_ICON = "get_plugin_icon"
+    GET_PLUGIN_README = "get_plugin_readme"
     EMIT_EVENT = "emit_event"
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"

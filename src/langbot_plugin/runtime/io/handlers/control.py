@@ -79,7 +79,8 @@ class ControlConnectionHandler(handler.Handler):
         async def get_plugin_readme(data: dict[str, Any]) -> handler.ActionResponse:
             author = data["plugin_author"]
             plugin_name = data["plugin_name"]
-            readme_bytes = await self.context.plugin_mgr.get_plugin_readme(author, plugin_name)
+            language = data.get("language", "en")
+            readme_bytes = await self.context.plugin_mgr.get_plugin_readme(author, plugin_name, language)
 
             if readme_bytes:
                 readme_file_key = await self.send_file(readme_bytes, "md")
