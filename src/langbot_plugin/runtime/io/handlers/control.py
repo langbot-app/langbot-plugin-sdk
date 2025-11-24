@@ -75,6 +75,43 @@ class ControlConnectionHandler(handler.Handler):
                 {"plugin_icon_file_key": plugin_icon_file_key, "mime_type": mime_type}
             )
 
+        @self.action(LangBotToRuntimeAction.GET_PLUGIN_README)
+        async def get_plugin_readme(data: dict[str, Any]) -> handler.ActionResponse:
+            author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            language = data.get("language", "en")
+            readme_bytes = await self.context.plugin_mgr.get_plugin_readme(author, plugin_name, language)
+
+            if readme_bytes:
+                readme_file_key = await self.send_file(readme_bytes, "md")
+                return handler.ActionResponse.success(
+                    {"readme_file_key": readme_file_key}
+                )
+            else:
+                return handler.ActionResponse.success(
+                    {"readme_file_key": None}
+                )
+
+        @self.action(LangBotToRuntimeAction.GET_PLUGIN_ASSETS_FILE)
+        async def get_plugin_assets_file(data: dict[str, Any]) -> handler.ActionResponse:
+            author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            file_key = data["file_path"]
+            (
+                file_bytes,
+                mime_type,
+            ) = await self.context.plugin_mgr.get_plugin_assets_file(author, plugin_name, file_key)
+
+            if file_bytes:
+                file_file_key = await self.send_file(file_bytes, "")
+                return handler.ActionResponse.success(
+                    {"file_file_key": file_file_key, "mime_type": mime_type}
+                )
+            else:
+                return handler.ActionResponse.success(
+                    {"file_file_key": None, "mime_type": None}
+                )
+
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(
             data: dict[str, Any],

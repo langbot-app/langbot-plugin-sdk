@@ -64,6 +64,32 @@ class PluginRuntimeHandler(Handler):
             return ActionResponse.success(
                 {"plugin_icon_file_key": plugin_icon_file_key, "mime_type": mime_type}
             )
+        
+        @self.action(RuntimeToPluginAction.GET_PLUGIN_README)
+        async def get_plugin_readme(data: dict[str, typing.Any]) -> ActionResponse:
+            language = data["language"]
+            readme_path = os.path.join("readme", f"README_{language}.md") if language != "en" else "README.md"
+            if not os.path.exists(readme_path):
+                readme_path = "README.md"
+
+            async with aiofiles.open(readme_path, "rb") as f:
+                readme_bytes = await f.read()
+            readme_file_key = await self.send_file(readme_bytes, "md")
+            return ActionResponse.success({"plugin_readme_file_key": readme_file_key, "mime_type": "text/markdown"})
+
+        @self.action(RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE)
+        async def get_plugin_assets_file(data: dict[str, typing.Any]) -> ActionResponse:
+            file_key = data["file_key"]
+            file_path = os.path.join("assets", file_key)
+            if not os.path.exists(file_path):
+                return ActionResponse.success({"file_file_key": "", "mime_type": ""})
+
+            async with aiofiles.open(file_path, "rb") as f:
+                file_bytes = await f.read()
+
+            mime_type = mimetypes.guess_type(file_path)[0]
+            file_file_key = await self.send_file(file_bytes, "")
+            return ActionResponse.success({"file_file_key": file_file_key, "mime_type": mime_type})
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:

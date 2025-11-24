@@ -531,6 +531,32 @@ class PluginManager:
                 return icon_bytes, resp["mime_type"]
         return b"", ""
 
+    async def get_plugin_readme(
+        self, plugin_author: str, plugin_name: str, language: str = "en"
+    ) -> bytes:
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
+
+                readme_file_key = resp["plugin_readme_file_key"]
+                readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
+                await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
+                return readme_bytes
+
+        return b""
+    
+    async def get_plugin_assets_file(
+        self, plugin_author: str, plugin_name: str, file_key: str
+    ) -> tuple[bytes, str]:
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(file_key=file_key)
+                file_file_key = resp["file_file_key"]
+                file_bytes = await plugin._runtime_plugin_handler.read_local_file(file_file_key)
+                await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
+                return file_bytes, resp["mime_type"]
+        return b"", ""
+
     async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
 
