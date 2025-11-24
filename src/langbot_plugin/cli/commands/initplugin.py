@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+import json
 import shutil
 import subprocess
 
@@ -124,6 +126,27 @@ def init_plugin_process(
         file_path = os.path.join(plugin_dir, file)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
+            
+    # Create launch.json for vscode
+    os.makedirs(f"{values['plugin_name']}/.vscode", exist_ok=True)
+    python_dir = os.path.dirname(sys.executable)
+    lbp_dir = os.path.join(python_dir, 'Scripts\\lbp.exe')
+    json_data = {
+        "version": "0.2.0",
+        "configurations": [
+
+            {
+                "name": "Python Debugger: Current File",
+                "type": "debugpy",
+                "request": "launch",
+                "program": lbp_dir,
+                "console": "integratedTerminal",
+                "args": ["run"]
+            }
+        ]
+    }
+    with open(f"{values['plugin_name']}/.vscode/launch.json", "w", encoding="utf-8") as f:
+        f.write(json.dumps(json_data))
 
     # If Git is available, initialize repository
     if is_git_available():
