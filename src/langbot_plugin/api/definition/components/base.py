@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import typing
 
 from langbot_plugin.api.definition.plugin import BasePlugin
 
@@ -15,6 +16,16 @@ class BaseComponent(abc.ABC):
 
     async def initialize(self) -> None:
         pass
+
+
+class PolymorphicComponent(BaseComponent):
+    """Multi-instance component."""
+
+    instance_id: str
+    """The id of running component instance"""
+
+    config: dict[str, typing.Any]
+    """Component instance specified configuration"""
 
 
 class NoneComponent(BaseComponent):
