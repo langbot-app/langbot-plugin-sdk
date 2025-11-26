@@ -71,6 +71,11 @@ class RuntimeToPluginAction(ActionType):
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
 
+    # Knowledge Retriever actions
+    CREATE_KNOWLEDGE_RETRIEVER_INSTANCE = "create_knowledge_retriever_instance"
+    DELETE_KNOWLEDGE_RETRIEVER_INSTANCE = "delete_knowledge_retriever_instance"
+    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+
 
 class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
@@ -89,6 +94,12 @@ class LangBotToRuntimeAction(ActionType):
     CALL_TOOL = "call_tool"
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
+
+    # Knowledge Retriever actions
+    LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
+    CREATE_KNOWLEDGE_RETRIEVER_INSTANCE = "create_knowledge_retriever_instance"
+    DELETE_KNOWLEDGE_RETRIEVER_INSTANCE = "delete_knowledge_retriever_instance"
+    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
 
 class RuntimeToLangBotAction(ActionType):

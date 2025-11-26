@@ -20,6 +20,9 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
+from langbot_plugin.api.definition.components.knowledge_retriever.retriever import KnowledgeRetriever
+from langbot_plugin.api.definition.components.base import PolymorphicComponent
+from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
 
@@ -215,6 +218,93 @@ class PluginRuntimeHandler(Handler):
                 yield ActionResponse.error(
                     f"Command {command_context.command} not found"
                 )
+
+        # KnowledgeRetriever actions
+        @self.action(RuntimeToPluginAction.CREATE_KNOWLEDGE_RETRIEVER_INSTANCE)
+        async def create_knowledge_retriever_instance(data: dict[str, typing.Any]) -> ActionResponse:
+            """Create a KnowledgeRetriever instance."""
+            instance_id = data["instance_id"]
+            retriever_name = data["retriever_name"]
+            config = data["config"]
+
+            # Find the retriever component
+            retriever_component = None
+            for component in self.plugin_container.components:
+                if component.manifest.kind == KnowledgeRetriever.__kind__:
+                    if component.manifest.metadata.name == retriever_name:
+                        retriever_component = component
+                        break
+
+            if retriever_component is None:
+                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} not found")
+
+            # Get the retriever class
+            retriever_class = retriever_component.manifest.get_python_component_class()
+            assert issubclass(retriever_class, KnowledgeRetriever)
+            # Create a new instance
+            new_instance = retriever_class()
+            new_instance.instance_id = instance_id
+            new_instance.config = config
+            new_instance.plugin = self.plugin_container.plugin_instance
+            await new_instance.initialize()
+
+            # Store the instance
+            # self.plugin_container.polymorphic_component_instances[instance_id] = new_instance
+            retriever_component.polymorphic_component_instances[instance_id] = new_instance
+
+            return ActionResponse.success({"instance_id": instance_id})
+
+        @self.action(RuntimeToPluginAction.DELETE_KNOWLEDGE_RETRIEVER_INSTANCE)
+        async def delete_knowledge_retriever_instance(data: dict[str, typing.Any]) -> ActionResponse:
+            """Delete a KnowledgeRetriever instance."""
+            retriever_name = data["retriever_name"]
+            instance_id = data["instance_id"]
+
+            retriever_component = None
+            for component in self.plugin_container.components:
+                if component.manifest.kind == KnowledgeRetriever.__kind__:
+                    if component.manifest.metadata.name == retriever_name:
+                        retriever_component = component
+                        break
+
+            if retriever_component is None:
+                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} not found")
+
+            if instance_id not in retriever_component.polymorphic_component_instances:
+                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} instance {instance_id} not found")
+
+            # Remove the instance
+            del retriever_component.polymorphic_component_instances[instance_id]
+
+            return ActionResponse.success({"success": True})
+
+        @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)
+        async def retrieve_knowledge(data: dict[str, typing.Any]) -> ActionResponse:
+            """Retrieve knowledge using a KnowledgeRetriever instance."""
+            retriever_name = data["retriever_name"]
+            instance_id = data["instance_id"]
+            retrieval_context = RetrievalContext.model_validate(data["retrieval_context"])
+
+            retriever_component = None
+            for component in self.plugin_container.components:
+                if component.manifest.kind == KnowledgeRetriever.__kind__:
+                    if component.manifest.metadata.name == retriever_name:
+                        retriever_component = component
+                        break
+
+            if retriever_component is None:
+                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} not found")
+
+            if instance_id not in retriever_component.polymorphic_component_instances:
+                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} instance {instance_id} not found")
+
+            retriever_instance = retriever_component.polymorphic_component_instances[instance_id]
+            assert isinstance(retriever_instance, KnowledgeRetriever)
+
+            # Call retrieve method
+            results = await retriever_instance.retrieve(retrieval_context)
+
+            return ActionResponse.success({"retrieval_results": [result.model_dump(mode="json") for result in results]})
 
     async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
         resp = await self.call_action(

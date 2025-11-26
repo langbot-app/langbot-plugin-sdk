@@ -228,6 +228,46 @@ class ControlConnectionHandler(handler.Handler):
             async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
+        # KnowledgeRetriever actions
+        @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_RETRIEVERS)
+        async def list_knowledge_retrievers(data: dict[str, Any]) -> handler.ActionResponse:
+            retrievers = await self.context.plugin_mgr.list_knowledge_retrievers()
+            return handler.ActionResponse.success({"retrievers": retrievers})
+
+        @self.action(LangBotToRuntimeAction.CREATE_KNOWLEDGE_RETRIEVER_INSTANCE)
+        async def create_knowledge_retriever_instance(data: dict[str, Any]) -> handler.ActionResponse:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            retriever_name = data["retriever_name"]
+            instance_id = data["instance_id"]
+            config = data["config"]
+
+            resp = await self.context.plugin_mgr.create_knowledge_retriever_instance(
+                instance_id, plugin_author, plugin_name, retriever_name, config
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.DELETE_KNOWLEDGE_RETRIEVER_INSTANCE)
+        async def delete_knowledge_retriever_instance(data: dict[str, Any]) -> handler.ActionResponse:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            retriever_name = data["retriever_name"]
+            instance_id = data["instance_id"]
+
+            resp = await self.context.plugin_mgr.delete_knowledge_retriever_instance(plugin_author, plugin_name, retriever_name, instance_id)
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
+        async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            retriever_name = data["retriever_name"]
+            instance_id = data["instance_id"]
+            retrieval_context = data["retrieval_context"]
+
+            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, instance_id, retrieval_context)
+            return handler.ActionResponse.success(resp)
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}
