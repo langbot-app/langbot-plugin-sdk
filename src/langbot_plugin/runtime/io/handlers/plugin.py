@@ -424,23 +424,6 @@ class PluginConnectionHandler(handler.Handler):
         async for resp in gen:
             yield resp
 
-    # KnowledgeRetriever methods
-    async def create_knowledge_retriever_instance(
-        self, instance_id: str, retriever_name: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        resp = await self.call_action(
-            RuntimeToPluginAction.CREATE_KNOWLEDGE_RETRIEVER_INSTANCE,
-            {"instance_id": instance_id, "retriever_name": retriever_name, "config": config},
-        )
-        return resp
-
-    async def delete_knowledge_retriever_instance(self, retriever_name: str, instance_id: str) -> dict[str, Any]:
-        resp = await self.call_action(
-            RuntimeToPluginAction.DELETE_KNOWLEDGE_RETRIEVER_INSTANCE,
-            {"retriever_name": retriever_name, "instance_id": instance_id},
-        )
-        return resp
-
     async def retrieve_knowledge(
         self, retriever_name: str, instance_id: str, retrieval_context: dict[str, Any]
     ) -> dict[str, Any]:

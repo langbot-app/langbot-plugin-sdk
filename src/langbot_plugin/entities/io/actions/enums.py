@@ -76,9 +76,6 @@ class RuntimeToPluginAction(ActionType):
     DELETE_POLYMORPHIC_COMPONENT_INSTANCE = "delete_polymorphic_component_instance"
     SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
 
-    # Knowledge Retriever actions (legacy, kept for backward compatibility)
-    CREATE_KNOWLEDGE_RETRIEVER_INSTANCE = "create_knowledge_retriever_instance"
-    DELETE_KNOWLEDGE_RETRIEVER_INSTANCE = "delete_knowledge_retriever_instance"
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
 
@@ -102,8 +99,6 @@ class LangBotToRuntimeAction(ActionType):
 
     # Knowledge Retriever actions
     LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
-    CREATE_KNOWLEDGE_RETRIEVER_INSTANCE = "create_knowledge_retriever_instance"
-    DELETE_KNOWLEDGE_RETRIEVER_INSTANCE = "delete_knowledge_retriever_instance"
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
     # Polymorphic component instance integrity
