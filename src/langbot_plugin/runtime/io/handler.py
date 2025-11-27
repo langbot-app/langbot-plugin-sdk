@@ -142,7 +142,8 @@ class Handler(abc.ABC):
                         error_response.seq_id = seq_id
                         await self.conn.send(json.dumps(error_response.model_dump()))
                     finally:
-                        logger.info(f"[Action] {req_data['action']}")
+                        if not req_data["action"].startswith("__"):
+                            logger.info(f"[Action] {req_data['action']}")
 
                 elif "code" in req_data:  # action response from peer
                     response = ActionResponse.model_validate(req_data)

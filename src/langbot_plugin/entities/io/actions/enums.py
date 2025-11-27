@@ -10,8 +10,8 @@ class ActionType(Enum):
 class CommonAction(ActionType):
     """The common action."""
 
-    PING = "ping"
-    HEARTBEAT = "heartbeat"
+    PING = "__ping"
+    HEARTBEAT = "__heartbeat"
     FILE_CHUNK = "__file_chunk"
 
 
