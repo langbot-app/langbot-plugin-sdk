@@ -64,6 +64,7 @@ class PluginRuntimeController:
                 manifest=component_manifest,
                 component_instance=NoneComponent(),
                 component_config={},
+                polymorphic_component_instances={},
             )
             for component_manifest in component_manifests
         ]
@@ -99,7 +100,7 @@ class PluginRuntimeController:
             await self.handler.run()
 
         async def make_connection_failed_callback(controller: Controller, e: Exception = None):
-            logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}, exit")
+            logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} {e}, exit")
             self._connection_waiter.set_exception(
                 ConnectionClosedError(f"Connection failed: {e}")
             )

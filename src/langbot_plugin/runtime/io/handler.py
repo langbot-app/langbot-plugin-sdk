@@ -17,7 +17,7 @@ import os
 import hashlib
 import base64
 import aiofiles
-
+import logging
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
@@ -28,6 +28,7 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
 
+logger = logging.getLogger(__name__)
 
 FILE_STORAGE_DIR = "data/temp/lbp"
 FILE_CHUNK_LENGTH = 1024 * 16 # 16KB
@@ -140,6 +141,9 @@ class Handler(abc.ABC):
                         )
                         error_response.seq_id = seq_id
                         await self.conn.send(json.dumps(error_response.model_dump()))
+                    finally:
+                        if not req_data["action"].startswith("__"):
+                            logger.info(f"[Action] {req_data['action']}")
 
                 elif "code" in req_data:  # action response from peer
                     response = ActionResponse.model_validate(req_data)

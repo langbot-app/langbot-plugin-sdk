@@ -228,6 +228,39 @@ class ControlConnectionHandler(handler.Handler):
             async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
+        # KnowledgeRetriever actions
+        @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_RETRIEVERS)
+        async def list_knowledge_retrievers(data: dict[str, Any]) -> handler.ActionResponse:
+            retrievers = await self.context.plugin_mgr.list_knowledge_retrievers()
+            return handler.ActionResponse.success({"retrievers": retrievers})
+
+        @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
+        async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            retriever_name = data["retriever_name"]
+            instance_id = data["instance_id"]
+            retrieval_context = data["retrieval_context"]
+
+            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, instance_id, retrieval_context)
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.SYNC_POLYMORPHIC_COMPONENT_INSTANCES)
+        async def sync_polymorphic_component_instances(data: dict[str, Any]) -> handler.ActionResponse:
+            """Sync polymorphic component instances from LangBot.
+
+            This ensures instance integrity across LangBot restarts and plugin reconnections.
+            """
+            required_instances = data["required_instances"]
+
+            # Store the required instances list in context
+            self.context.required_polymorphic_instances = required_instances
+
+            # Sync instances with plugin manager
+            sync_result = await self.context.plugin_mgr.sync_polymorphic_component_instances(required_instances)
+
+            return handler.ActionResponse.success(sync_result)
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}

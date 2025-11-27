@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: KnowledgeRetriever
+metadata:
+  name: {{ retriever_name }}
+  label:
+    en_US: {{ retriever_label }}
+    zh_Hans: {{ retriever_label }}
+  description:
+    en_US: '{{ retriever_description }}'
+    zh_Hans: '{{ retriever_description }}'
+  icon: assets/icon.svg
+spec:
+  config: []
+execution:
+  python:
+    path: {{ retriever_name }}.py
+    attr: {{ retriever_attr }}

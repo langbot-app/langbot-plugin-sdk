@@ -10,8 +10,8 @@ class ActionType(Enum):
 class CommonAction(ActionType):
     """The common action."""
 
-    PING = "ping"
-    HEARTBEAT = "heartbeat"
+    PING = "__ping"
+    HEARTBEAT = "__heartbeat"
     FILE_CHUNK = "__file_chunk"
 
 
@@ -71,6 +71,13 @@ class RuntimeToPluginAction(ActionType):
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
 
+    # Polymorphic component actions (generic)
+    CREATE_POLYMORPHIC_COMPONENT_INSTANCE = "create_polymorphic_component_instance"
+    DELETE_POLYMORPHIC_COMPONENT_INSTANCE = "delete_polymorphic_component_instance"
+    SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
+
+    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+
 
 class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
@@ -89,6 +96,13 @@ class LangBotToRuntimeAction(ActionType):
     CALL_TOOL = "call_tool"
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
+
+    # Knowledge Retriever actions
+    LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
+    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+
+    # Polymorphic component instance integrity
+    SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
 
 
 class RuntimeToLangBotAction(ActionType):
