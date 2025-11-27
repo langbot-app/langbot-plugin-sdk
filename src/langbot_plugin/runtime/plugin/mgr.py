@@ -339,6 +339,12 @@ class PluginManager:
         plugin_container._runtime_plugin_handler = handler
 
         self.plugins.append(plugin_container)
+        
+        # Initialize required polymorphic component instances for this plugin
+        await self.initialize_required_instances_for_plugin(
+            plugin_container.manifest.metadata.author,
+            plugin_container.manifest.metadata.name
+        )
 
     async def remove_plugin_container(
         self,
@@ -721,3 +727,146 @@ class PluginManager:
 
         resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, instance_id, retrieval_context)
         return resp
+
+    async def sync_polymorphic_component_instances(self, required_instances: list[dict[str, typing.Any]]) -> dict[str, typing.Any]:
+        """Sync polymorphic component instances with required list from LangBot.
+        
+        This method groups instances by plugin and sends them to respective plugin processes.
+        """
+        # Group required instances by plugin
+        instances_by_plugin = {}  # {(plugin_author, plugin_name): [instances]}
+        for inst_info in required_instances:
+            plugin_key = (inst_info["plugin_author"], inst_info["plugin_name"])
+            if plugin_key not in instances_by_plugin:
+                instances_by_plugin[plugin_key] = []
+            instances_by_plugin[plugin_key].append(inst_info)
+        
+        all_success_instances = []
+        all_failed_instances = []
+        
+        # Send sync request to each plugin
+        for (plugin_author, plugin_name), plugin_instances in instances_by_plugin.items():
+            # Find the plugin
+            target_plugin = None
+            for plugin in self.plugins:
+                if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                    target_plugin = plugin
+                    break
+            
+            if target_plugin is None:
+                # Plugin not loaded, mark all instances as failed
+                for inst in plugin_instances:
+                    all_failed_instances.append({
+                        "instance_id": inst["instance_id"],
+                        "reason": f"Plugin {plugin_author}/{plugin_name} not found"
+                    })
+                continue
+            
+            if target_plugin._runtime_plugin_handler is None:
+                # Plugin not connected, mark all instances as failed
+                for inst in plugin_instances:
+                    all_failed_instances.append({
+                        "instance_id": inst["instance_id"],
+                        "reason": f"Plugin {plugin_author}/{plugin_name} not connected"
+                    })
+                continue
+            
+            # Send sync request to plugin process
+            try:
+                result = await target_plugin._runtime_plugin_handler.sync_polymorphic_component_instances(plugin_instances)
+                
+                # Collect results
+                created_count = result.get("created_count", 0)
+                already_exists_count = result.get("already_exists_count", 0)
+                deleted_count = result.get("deleted_count", 0)
+                failed = result.get("failed_instances", [])
+                
+                # Build success instances
+                for inst in plugin_instances:
+                    if inst["instance_id"] not in [f["instance_id"] for f in failed]:
+                        all_success_instances.append({
+                            "instance_id": inst["instance_id"],
+                            "status": "synced"
+                        })
+                
+                all_failed_instances.extend(failed)
+                
+                logger.info(
+                    f"Synced plugin {plugin_author}/{plugin_name}: "
+                    f"created={created_count}, exists={already_exists_count}, "
+                    f"deleted={deleted_count}, failed={len(failed)}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to sync plugin {plugin_author}/{plugin_name}: {e}")
+                for inst in plugin_instances:
+                    all_failed_instances.append({
+                        "instance_id": inst["instance_id"],
+                        "reason": str(e)
+                    })
+        
+        # Also handle plugins with no required instances (should delete all their instances)
+        for plugin in self.plugins:
+            plugin_key = (plugin.manifest.metadata.author, plugin.manifest.metadata.name)
+            if plugin_key not in instances_by_plugin:
+                # This plugin has no required instances, send empty list to delete all
+                if plugin._runtime_plugin_handler is not None:
+                    try:
+                        await plugin._runtime_plugin_handler.sync_polymorphic_component_instances([])
+                        logger.info(f"Cleared all instances for plugin {plugin_key[0]}/{plugin_key[1]}")
+                    except Exception as e:
+                        logger.error(f"Failed to clear instances for plugin {plugin_key[0]}/{plugin_key[1]}: {e}")
+        
+        return {
+            "success_instances": all_success_instances,
+            "failed_instances": all_failed_instances
+        }
+
+    async def initialize_required_instances_for_plugin(self, plugin_author: str, plugin_name: str) -> None:
+        """Initialize required polymorphic component instances for a newly connected plugin.
+        
+        This is called when a plugin connects to runtime.
+        Filters instances for this plugin and sends them to the plugin process for sync.
+        """
+        if not self.context.required_external_knowledge_bases:
+            return
+
+        required_instances = self.context.required_polymorphic_instances
+        
+        # Filter instances that belong to this plugin
+        plugin_instances = [
+            inst for inst in required_instances
+            if inst["plugin_author"] == plugin_author and inst["plugin_name"] == plugin_name
+        ]
+
+        if not plugin_instances:
+            logger.info(f"No required instances for plugin {plugin_author}/{plugin_name}")
+            return
+
+        logger.info(f"Initializing {len(plugin_instances)} required instances for plugin {plugin_author}/{plugin_name}")
+
+        # Find the plugin
+        target_plugin = None
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                target_plugin = plugin
+                break
+
+        if target_plugin is None or target_plugin._runtime_plugin_handler is None:
+            logger.error(f"Plugin {plugin_author}/{plugin_name} not found or not connected")
+            return
+
+        # Send sync request to plugin process
+        try:
+            result = await target_plugin._runtime_plugin_handler.sync_polymorphic_component_instances(plugin_instances)
+            created_count = result.get("created_count", 0)
+            already_exists_count = result.get("already_exists_count", 0)
+            deleted_count = result.get("deleted_count", 0)
+            failed = result.get("failed_instances", [])
+            
+            logger.info(
+                f"Initialized instances for {plugin_author}/{plugin_name}: "
+                f"created={created_count}, exists={already_exists_count}, "
+                f"deleted={deleted_count}, failed={len(failed)}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize instances for {plugin_author}/{plugin_name}: {e}")

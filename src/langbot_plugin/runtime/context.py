@@ -29,3 +29,11 @@ class RuntimeContext:
     plugin_mgr: plugin_mgr_cls.PluginManager
 
     ws_debug_port: int = 5401  # Default debug port
+
+    required_external_knowledge_bases: list[dict] | None = None
+    """List of required external knowledge bases from LangBot.
+    Each item contains: instance_id, plugin_author, plugin_name, component_kind, component_name, config"""
+
+    def __init__(self):
+        # Polymorphic component instance integrity
+        self.required_polymorphic_instances: list[dict] = []
