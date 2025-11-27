@@ -827,7 +827,7 @@ class PluginManager:
         This is called when a plugin connects to runtime.
         Filters instances for this plugin and sends them to the plugin process for sync.
         """
-        if not self.context.required_external_knowledge_bases:
+        if not self.context.required_polymorphic_instances:
             return
 
         required_instances = self.context.required_polymorphic_instances
