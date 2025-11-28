@@ -257,6 +257,7 @@ class PluginRuntimeHandler(Handler):
 
             # Create/verify required instances
             created_count = 0
+            updated_count = 0
             already_exists_count = 0
             failed_instances = []
 
@@ -270,8 +271,19 @@ class PluginRuntimeHandler(Handler):
                 if instance_id in existing_instances:
                     existing_component, existing_kind, existing_name = existing_instances[instance_id]
                     if existing_kind == component_kind and existing_name == component_name:
-                        already_exists_count += 1
-                        continue
+                        # Instance exists in correct component, check if config changed
+                        existing_instance = existing_component.polymorphic_component_instances.get(instance_id)
+                        if existing_instance and existing_instance.config != config:
+                            # Config changed, need to recreate instance
+                            try:
+                                del existing_component.polymorphic_component_instances[instance_id]
+                                # Will be recreated below with new config
+                            except:
+                                pass
+                        else:
+                            # Config unchanged, skip
+                            already_exists_count += 1
+                            continue
                     else:
                         # Instance exists in wrong component, delete it first
                         try:
@@ -294,7 +306,8 @@ class PluginRuntimeHandler(Handler):
                     })
                     continue
 
-                # Create the instance
+                # Create the instance (either new or recreated with updated config)
+                is_update = instance_id in existing_instances
                 try:
                     component_class = target_component.manifest.get_python_component_class()
                     if not issubclass(component_class, PolymorphicComponent):
@@ -311,7 +324,10 @@ class PluginRuntimeHandler(Handler):
                     await new_instance.initialize()
 
                     target_component.polymorphic_component_instances[instance_id] = new_instance
-                    created_count += 1
+                    if is_update:
+                        updated_count += 1
+                    else:
+                        created_count += 1
                 except Exception as e:
                     failed_instances.append({
                         "instance_id": instance_id,
@@ -321,6 +337,7 @@ class PluginRuntimeHandler(Handler):
             return ActionResponse.success({
                 "deleted_count": deleted_count,
                 "created_count": created_count,
+                "updated_count": updated_count,
                 "already_exists_count": already_exists_count,
                 "failed_instances": failed_instances
             })

@@ -777,6 +777,7 @@ class PluginManager:
                 
                 # Collect results
                 created_count = result.get("created_count", 0)
+                updated_count = result.get("updated_count", 0)
                 already_exists_count = result.get("already_exists_count", 0)
                 deleted_count = result.get("deleted_count", 0)
                 failed = result.get("failed_instances", [])
@@ -793,7 +794,7 @@ class PluginManager:
                 
                 logger.info(
                     f"Synced plugin {plugin_author}/{plugin_name}: "
-                    f"created={created_count}, exists={already_exists_count}, "
+                    f"created={created_count}, updated={updated_count}, exists={already_exists_count}, "
                     f"deleted={deleted_count}, failed={len(failed)}"
                 )
             except Exception as e:
