@@ -15,8 +15,8 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-# Timeout for long-running operations like command execution and tool calls (10 minutes)
-LONG_RUNNING_OPERATION_TIMEOUT = 600.0
+# Timeout for long-running operations like command execution and tool calls (3 minutes)
+LONG_RUNNING_OPERATION_TIMEOUT = 180.0
 
 
 class PluginConnectionHandler(handler.Handler):
