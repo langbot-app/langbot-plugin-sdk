@@ -15,6 +15,9 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+# Timeout for long-running operations like command execution and tool calls (3 minutes)
+LONG_RUNNING_OPERATION_TIMEOUT = 180.0
+
 
 class PluginConnectionHandler(handler.Handler):
     """The handler for plugin connection."""
@@ -410,6 +413,7 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.CALL_TOOL,
             {"tool_name": tool_name, "tool_parameters": tool_parameters, "session": session, "query_id": query_id},
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT
         )
 
         return resp
@@ -418,7 +422,8 @@ class PluginConnectionHandler(handler.Handler):
         self, command_context: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:
         gen = self.call_action_generator(
-            RuntimeToPluginAction.EXECUTE_COMMAND, {"command_context": command_context}
+            RuntimeToPluginAction.EXECUTE_COMMAND, {"command_context": command_context},
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT
         )
 
         async for resp in gen:
