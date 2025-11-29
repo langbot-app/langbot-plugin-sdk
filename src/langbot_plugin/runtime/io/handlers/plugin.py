@@ -410,6 +410,7 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.CALL_TOOL,
             {"tool_name": tool_name, "tool_parameters": tool_parameters, "session": session, "query_id": query_id},
+            timeout=600.0  # 10 minutes timeout for long-running tools
         )
 
         return resp
@@ -418,7 +419,8 @@ class PluginConnectionHandler(handler.Handler):
         self, command_context: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:
         gen = self.call_action_generator(
-            RuntimeToPluginAction.EXECUTE_COMMAND, {"command_context": command_context}
+            RuntimeToPluginAction.EXECUTE_COMMAND, {"command_context": command_context},
+            timeout=600.0  # 10 minutes timeout for long-running commands
         )
 
         async for resp in gen:
