@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 import re
 import sys
-import json
-import shutil
 import subprocess
+import platform
 
 from langbot_plugin.cli.gen.renderer import render_template, init_plugin_files
 from langbot_plugin.cli.utils.form import input_form_values, NAME_REGEXP
@@ -26,6 +25,27 @@ def is_git_available() -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+# Get lbp executable path based on platform
+def get_lbp_path() -> str:
+    """
+    Get the path to lbp executable based on the current platform.
+
+    Returns:
+        str: Path to lbp executable
+    """
+    python_dir = os.path.dirname(sys.executable)
+    system = platform.system()
+
+    if system == "Windows":
+        # Windows: Scripts\lbp.exe
+        lbp_path = os.path.join(python_dir, "Scripts", "lbp.exe")
+    else:
+        # macOS and Linux: bin/lbp
+        lbp_path = os.path.join(python_dir, "lbp")
+
+    return lbp_path
 
 
 # Initialize Git repository and add basic configuration
@@ -118,30 +138,16 @@ def init_plugin_process(
 
     cli_print("creating_files", values["plugin_name"])
 
+    # Add lbp path to template values
+    values["lbp_path"] = get_lbp_path()
+
+    # Create necessary directories
     assets_dir = os.path.join(plugin_dir, "assets")
     os.makedirs(assets_dir, exist_ok=True)
-            
-    # Create launch.json for vscode
-    os.makedirs(f"{values['plugin_name']}/.vscode", exist_ok=True)
-    python_dir = os.path.dirname(sys.executable)
-    lbp_dir = os.path.join(python_dir, 'Scripts\\lbp.exe')
-    json_data = {
-        "version": "0.2.0",
-        "configurations": [
+    vscode_dir = os.path.join(plugin_dir, ".vscode")
+    os.makedirs(vscode_dir, exist_ok=True)
 
-            {
-                "name": "Python Debugger: Current File",
-                "type": "debugpy",
-                "request": "launch",
-                "program": lbp_dir,
-                "console": "integratedTerminal",
-                "args": ["run"]
-            }
-        ]
-    }
-    with open(f"{values['plugin_name']}/.vscode/launch.json", "w", encoding="utf-8") as f:
-        f.write(json.dumps(json_data))
-
+    # Create all files from templates
     for file in init_plugin_files:
         content = render_template(f"{file}.example", **values)
         file_path = os.path.join(plugin_dir, file)
