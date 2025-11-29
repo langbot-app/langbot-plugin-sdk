@@ -37,16 +37,20 @@ class PersonMessageReceived(BaseEventModel):
     sender_id: typing.Union[int, str]
     """发送者ID(QQ号)"""
 
-    message_chain: platform_message.MessageChain = pydantic.Field(
-        serialization_alias="message_chain"
+    message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
+        serialization_alias="message_chain", default=None
     )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
+        if v is None:
+            return None
         return v.model_dump()
 
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
+        if v is None:
+            return None
         return platform_message.MessageChain.model_validate(v)
 
 
@@ -61,16 +65,20 @@ class GroupMessageReceived(BaseEventModel):
 
     sender_id: typing.Union[int, str]
 
-    message_chain: platform_message.MessageChain = pydantic.Field(
-        serialization_alias="message_chain"
+    message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
+        serialization_alias="message_chain", default=None
     )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
+        if v is None:
+            return None
         return v.model_dump()
 
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
+        if v is None:
+            return None
         return platform_message.MessageChain.model_validate(v)
 
 
@@ -108,16 +116,20 @@ class PersonNormalMessageReceived(_WithReplyMessageChain):
 
     text_message: str
 
-    message_chain: platform_message.MessageChain = pydantic.Field(
-        serialization_alias="message_chain"
+    message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
+        serialization_alias="message_chain", default=None
     )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
+        if v is None:
+            return None
         return v.model_dump()
 
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
+        if v is None:
+            return None
         return platform_message.MessageChain.model_validate(v)
 
     user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
@@ -159,16 +171,20 @@ class GroupNormalMessageReceived(_WithReplyMessageChain):
 
     text_message: str
 
-    message_chain: platform_message.MessageChain = pydantic.Field(
-        serialization_alias="message_chain"
+    message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
+        serialization_alias="message_chain", default=None
     )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
+        if v is None:
+            return None
         return v.model_dump()
 
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
+        if v is None:
+            return None
         return platform_message.MessageChain.model_validate(v)
 
     user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
