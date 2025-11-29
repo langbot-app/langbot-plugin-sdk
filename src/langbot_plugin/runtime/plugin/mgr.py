@@ -128,7 +128,7 @@ class PluginManager:
             python_path = sys.executable
             ctrl = stdio_client_controller.StdioClientController(
                 command=python_path,
-                args=["-m", "langbot_plugin.cli.__init__", "run", "-s"],
+                args=["-m", "langbot_plugin.cli.__init__", "run", "-s", "--prod"],
                 env={},
                 working_dir=plugin_path,
             )
