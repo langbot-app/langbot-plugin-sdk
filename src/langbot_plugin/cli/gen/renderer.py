@@ -46,6 +46,7 @@ init_plugin_files = [
     ".env.example",
     ".gitignore",
     "assets/icon.svg",
+    ".vscode/launch.json",
 ]
 
 
