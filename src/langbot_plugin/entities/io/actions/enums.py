@@ -70,6 +70,7 @@ class RuntimeToPluginAction(ActionType):
     EMIT_EVENT = "emit_event"
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
+    SHUTDOWN = "shutdown"
 
     # Polymorphic component actions (generic)
     CREATE_POLYMORPHIC_COMPONENT_INSTANCE = "create_polymorphic_component_instance"

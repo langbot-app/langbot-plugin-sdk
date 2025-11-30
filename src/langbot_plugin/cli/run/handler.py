@@ -32,6 +32,9 @@ class PluginRuntimeHandler(Handler):
 
     plugin_container: PluginContainer
 
+    shutdown_callback: typing.Callable[[], typing.Coroutine[typing.Any, typing.Any, None]] | None = None
+    """Callback to trigger shutdown and reconnect."""
+
     def __init__(
         self,
         connection: connection.Connection,
@@ -432,6 +435,19 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success({"retrieval_results": [result.model_dump(mode="json") for result in results]})
 
+        @self.action(RuntimeToPluginAction.SHUTDOWN)
+        async def shutdown(data: dict[str, typing.Any]) -> ActionResponse:
+            """Handle shutdown request from runtime.
+
+            In debug mode (when shutdown_callback is set), this will trigger reconnection.
+            In production mode, this will just acknowledge the shutdown.
+            """
+            if self.shutdown_callback is not None:
+                # In debug mode, trigger reconnection
+                asyncio.create_task(self.shutdown_callback())
+
+            return ActionResponse.success({})
+
     async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
         resp = await self.call_action(
             PluginToRuntimeAction.REGISTER_PLUGIN,
@@ -441,6 +457,10 @@ class PluginRuntimeHandler(Handler):
             },
         )
         return resp
+
+    async def get_plugin_container(self) -> dict[str, typing.Any]:
+        """Get the current plugin container data."""
+        return self.plugin_container.model_dump()
 
 
 # {"action": "get_plugin_container", "data": {}, "seq_id": 1}

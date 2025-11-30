@@ -462,6 +462,13 @@ class PluginManager:
         self,
         plugin_container: runtime_plugin_container.PluginContainer,
     ):
+        # Send shutdown notification to plugin before closing connection
+        # For debug plugins, this will trigger reconnection; for production plugins, it's just a notification
+        try:
+            await plugin_container._runtime_plugin_handler.shutdown_plugin()
+        except Exception as e:
+            logger.warning(f"Failed to send shutdown notification: {e}")
+
         await plugin_container._runtime_plugin_handler.conn.close()
         await self.remove_plugin_container(plugin_container)
         if plugin_container._runtime_plugin_handler.stdio_process is not None:

@@ -26,6 +26,7 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.entities.io.errors import ConnectionClosedError
+from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,12 @@ class PluginRuntimeController:
     prod_mode: bool
     """Mark this process as production plugin process, only used on Windows"""
 
+    hot_reloader: HotReloader | None = None
+    """Hot reloader for watching file changes in debug mode"""
+
+    _reload_event: asyncio.Event | None = None
+    """Event to signal hot reload"""
+
     def __init__(
         self,
         plugin_manifest: ComponentManifest,
@@ -58,6 +65,7 @@ class PluginRuntimeController:
         self._stdio = stdio
         self.ws_debug_url = ws_debug_url
         self.prod_mode = prod_mode
+        self._reload_event = None
         # discover components
         components_containers = [
             ComponentContainer(
@@ -84,49 +92,141 @@ class PluginRuntimeController:
 
     async def mount(self) -> None:
         logger.info(f"Mounting plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
-        controller: Controller
 
-        self._connection_waiter = asyncio.Future()
+        # Setup hot reloader in debug mode
+        if not self.prod_mode:
+            self._reload_event = asyncio.Event()
 
-        async def new_connection_callback(connection: Connection):
-            self.handler = PluginRuntimeHandler(connection, self.initialize)
+            async def on_file_change():
+                logger.info("File change detected, triggering hot reload...")
+                try:
+                    # Clean up current instances
+                    await self.cleanup_instances()
 
-            async def disconnect_callback(hdl: PluginRuntimeHandler):
-                os._exit(0)
+                    # Reload all Python modules
+                    reload_plugin_modules(os.getcwd())
 
-            self.handler.set_disconnect_callback(disconnect_callback)
-            self.handler.plugin_container = self.plugin_container
-            self._connection_waiter.set_result(connection)
-            await self.handler.run()
+                    # Re-initialize using the current plugin settings
+                    # This will create new instances with the reloaded code
+                    if hasattr(self, 'handler') and self.handler is not None:
+                        # Get current plugin container to retrieve settings
+                        container_data = await self.handler.get_plugin_container()
+                        plugin_settings = {
+                            "enabled": container_data["enabled"],
+                            "priority": container_data["priority"],
+                            "plugin_config": container_data["plugin_config"],
+                        }
+                        await self.initialize(plugin_settings)
+                        logger.info("Hot reload completed successfully")
+                except Exception as e:
+                    logger.error(f"Failed to hot reload: {e}", exc_info=True)
 
-        async def make_connection_failed_callback(controller: Controller, e: Exception = None):
-            logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} {e}, exit")
-            self._connection_waiter.set_exception(
-                ConnectionClosedError(f"Connection failed: {e}")
-            )
-            exit(1)
+            self.hot_reloader = HotReloader(os.getcwd(), on_file_change)
+            self.hot_reloader.start()
 
-        if self._stdio:
-            controller = stdio_controller_server.StdioServerController()
-        else:
-            controller = ws_controller_client.WebSocketClientController(
-                self.ws_debug_url, make_connection_failed_callback
-            )
+        try:
+            while True:
+                controller: Controller
+                self._connection_waiter = asyncio.Future()
+                should_reconnect = asyncio.Event()
 
-        self._controller_task = asyncio.create_task(
-            controller.run(new_connection_callback)
-        )
+                async def new_connection_callback(connection: Connection):
+                    self.handler = PluginRuntimeHandler(connection, self.initialize)
 
-        # wait for the connection to be established
-        _ = await self._connection_waiter
+                    async def disconnect_callback(hdl: PluginRuntimeHandler):
+                        if self.prod_mode:
+                            # In production mode, exit when disconnected
+                            os._exit(0)
+                        else:
+                            # In debug mode, trigger reconnection
+                            logger.info("Connection lost, triggering reconnection...")
+                            should_reconnect.set()
 
-        # send manifest info to runtime
-        self.plugin_container.status = RuntimeContainerStatus.MOUNTED
+                    self.handler.set_disconnect_callback(disconnect_callback)
 
-        logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} mounted")
+                    # Set shutdown callback for debug mode
+                    if not self.prod_mode:
+                        async def shutdown_callback():
+                            logger.info("Received shutdown request, triggering reconnection...")
+                            should_reconnect.set()
+                            await connection.close()
 
-        # register plugin
-        await self.handler.register_plugin(prod_mode=self.prod_mode)
+                        self.handler.shutdown_callback = shutdown_callback
+
+                    self.handler.plugin_container = self.plugin_container
+                    self._connection_waiter.set_result(connection)
+                    await self.handler.run()
+
+                async def make_connection_failed_callback(controller: Controller, e: Exception = None):
+                    if self.prod_mode:
+                        # In production mode, exit on connection failure
+                        logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} {e}, exit")
+                        self._connection_waiter.set_exception(
+                            ConnectionClosedError(f"Connection failed: {e}")
+                        )
+                        exit(1)
+                    else:
+                        # In debug mode, log error and trigger retry
+                        logger.warning(f"Connection failed: {e}, will retry...")
+                        if not self._connection_waiter.done():
+                            self._connection_waiter.set_exception(
+                                ConnectionClosedError(f"Connection failed: {e}")
+                            )
+
+                if self._stdio:
+                    controller = stdio_controller_server.StdioServerController()
+                else:
+                    controller = ws_controller_client.WebSocketClientController(
+                        self.ws_debug_url, make_connection_failed_callback
+                    )
+
+                self._controller_task = asyncio.create_task(
+                    controller.run(new_connection_callback)
+                )
+
+                # wait for the connection to be established
+                try:
+                    _ = await self._connection_waiter
+                except ConnectionClosedError as e:
+                    if self.prod_mode:
+                        # In production mode, propagate the error
+                        raise
+                    else:
+                        # In debug mode, retry after delay
+                        logger.info("Retrying connection in 3 seconds...")
+                        await asyncio.sleep(3)
+                        continue
+
+                # send manifest info to runtime
+                self.plugin_container.status = RuntimeContainerStatus.MOUNTED
+
+                logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} mounted")
+
+                # register plugin
+                await self.handler.register_plugin(prod_mode=self.prod_mode)
+
+                # If in production mode, break the loop after first connection
+                if self.prod_mode:
+                    break
+
+                # In debug mode, wait for shutdown signal
+                await should_reconnect.wait()
+
+                # Cancel the current controller task
+                self._controller_task.cancel()
+                try:
+                    await self._controller_task
+                except asyncio.CancelledError:
+                    pass
+
+                # Reset plugin status for next connection
+                self.plugin_container.status = RuntimeContainerStatus.UNMOUNTED
+
+                logger.info("Reconnecting to runtime...")
+        finally:
+            # Stop hot reloader when exiting
+            if self.hot_reloader is not None:
+                self.hot_reloader.stop()
 
     async def initialize(self, plugin_settings: dict[str, typing.Any]) -> None:
         logger.info(f"Initializing plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
@@ -167,6 +267,36 @@ class PluginRuntimeController:
         logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized")
 
         self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
+
+    async def cleanup_instances(self) -> None:
+        """Clean up all plugin and component instances."""
+        logger.info("Cleaning up plugin instances...")
+
+        # Clear component instances
+        for component_container in self.plugin_container.components:
+            # Clear polymorphic instances
+            component_container.polymorphic_component_instances.clear()
+            # Reset component instance
+            component_container.component_instance = NoneComponent()
+
+        # Reset plugin instance
+        self.plugin_container.plugin_instance = NonePlugin()
+        self.plugin_container.status = RuntimeContainerStatus.UNMOUNTED
+
+        logger.info("Plugin instances cleaned up")
+
+    async def reload_and_reinitialize(self) -> None:
+        """Reload plugin code and reinitialize all instances."""
+        logger.info("Reloading plugin code...")
+
+        # Clean up current instances
+        await self.cleanup_instances()
+
+        # Reload all Python modules
+        reload_plugin_modules(os.getcwd())
+
+        # Reinitialize plugin (this will be called by runtime via INITIALIZE_PLUGIN action)
+        logger.info("Waiting for reinitialization from runtime...")
 
 
 # {"seq_id": 1, "code": 0, "data": {"enabled": true, "priority": 0, "plugin_config": {}}}
