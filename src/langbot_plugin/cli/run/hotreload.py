@@ -24,7 +24,7 @@ class PythonFileChangeHandler(FileSystemEventHandler):
         super().__init__()
         self.on_change_callback = on_change_callback
         self.debounce_delay = debounce_delay
-        self._pending_reload: asyncio.Task | None = None
+        self._pending_reload: asyncio.Task | asyncio.Future | None = None
         self._loop = asyncio.get_event_loop()
 
     def on_modified(self, event):

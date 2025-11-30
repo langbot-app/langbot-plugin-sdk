@@ -13,7 +13,7 @@ from langbot_plugin.api.entities.builtin.pipeline import query as pipeline_query
 class BaseEventModel(pydantic.BaseModel):
     """事件模型基类"""
 
-    query: pipeline_query.Query = pydantic.Field(
+    query: pipeline_query.Query | None = pydantic.Field(
         exclude=True,
         default=None,
     )

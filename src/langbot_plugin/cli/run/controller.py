@@ -157,7 +157,7 @@ class PluginRuntimeController:
                     self._connection_waiter.set_result(connection)
                     await self.handler.run()
 
-                async def make_connection_failed_callback(controller: Controller, e: Exception = None):
+                async def make_connection_failed_callback(controller: Controller, e: Exception | None = None):
                     if self.prod_mode:
                         # In production mode, exit on connection failure
                         logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} {e}, exit")
