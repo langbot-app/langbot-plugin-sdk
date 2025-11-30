@@ -481,3 +481,15 @@ class PluginConnectionHandler(handler.Handler):
             {"required_instances": required_instances},
         )
         return resp
+
+    async def shutdown_plugin(self) -> dict[str, Any]:
+        """Send shutdown notification to the plugin.
+
+        For debug plugins, this will trigger reconnection.
+        For production plugins, this is just a notification before shutdown.
+        """
+        resp = await self.call_action(
+            RuntimeToPluginAction.SHUTDOWN,
+            {},
+        )
+        return resp

@@ -20,6 +20,7 @@ dependencies = [
     "textual>=3.2.0",
     "types-aiofiles>=24.1.0.20250516",
     "types-pyyaml>=6.0.12.20250516",
+    "watchdog>=6.0.0",
     "websockets>=15.0.1",
 ]
 
