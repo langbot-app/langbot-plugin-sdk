@@ -10,9 +10,13 @@ from langbot_plugin.cli.run.controller import PluginRuntimeController
 from langbot_plugin.cli.i18n import cli_print
 
 
-async def arun_plugin_process(stdio: bool = False, prod_mode: bool = False) -> None:
+async def arun_plugin_process(stdio: bool = False, prod_mode: bool = False, plugin_debug_key: str = "") -> None:
     # read .env file
     dotenv.load_dotenv(".env")
+
+    # Set plugin debug key from command line argument if provided
+    if plugin_debug_key:
+        os.environ["PLUGIN_DEBUG_KEY"] = plugin_debug_key
 
     discovery_engine = ComponentDiscoveryEngine()
 
@@ -61,7 +65,7 @@ async def arun_plugin_process(stdio: bool = False, prod_mode: bool = False) -> N
     await controller_run_task
 
 
-def run_plugin_process(stdio: bool = False, prod_mode: bool = False) -> None:
+def run_plugin_process(stdio: bool = False, prod_mode: bool = False, plugin_debug_key: str = "") -> None:
     # Configure logging for plugin process
     logging.basicConfig(
         level=logging.INFO,
@@ -70,7 +74,7 @@ def run_plugin_process(stdio: bool = False, prod_mode: bool = False) -> None:
     )
 
     try:
-        asyncio.run(arun_plugin_process(stdio, prod_mode))
+        asyncio.run(arun_plugin_process(stdio, prod_mode, plugin_debug_key))
     except asyncio.CancelledError:
         cli_print("plugin_process_cancelled")
         return

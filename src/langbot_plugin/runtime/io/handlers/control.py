@@ -261,6 +261,16 @@ class ControlConnectionHandler(handler.Handler):
 
             return handler.ActionResponse.success(sync_result)
 
+        @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
+        async def get_debug_info(data: dict[str, Any]) -> handler.ActionResponse:
+            """Get debug information including debug key and WS URL."""
+            from langbot_plugin.runtime.settings import settings as runtime_settings
+
+            return handler.ActionResponse.success({
+                "plugin_debug_key": runtime_settings.plugin_debug_key,
+                "ws_debug_port": self.context.ws_debug_port,
+            })
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}

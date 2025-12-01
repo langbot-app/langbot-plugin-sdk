@@ -449,11 +449,15 @@ class PluginRuntimeHandler(Handler):
             return ActionResponse.success({})
 
     async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
+        # Read PLUGIN_DEBUG_KEY from environment variable
+        plugin_debug_key = os.environ.get("PLUGIN_DEBUG_KEY", "")
+
         resp = await self.call_action(
             PluginToRuntimeAction.REGISTER_PLUGIN,
             {
                 "plugin_container": self.plugin_container.model_dump(),
                 "prod_mode": prod_mode,
+                "plugin_debug_key": plugin_debug_key,
             },
         )
         return resp
