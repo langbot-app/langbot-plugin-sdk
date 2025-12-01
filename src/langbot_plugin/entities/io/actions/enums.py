@@ -105,6 +105,9 @@ class LangBotToRuntimeAction(ActionType):
     # Polymorphic component instance integrity
     SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
 
+    # Debug info
+    GET_DEBUG_INFO = "get_debug_info"
+
 
 class RuntimeToLangBotAction(ActionType):
     """The action from runtime to langbot."""

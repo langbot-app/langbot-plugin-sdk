@@ -12,6 +12,7 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 import asyncio
+from langbot_plugin.runtime.settings import settings as runtime_settings
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +61,19 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
-            
+
             if "prod_mode" in data and data["prod_mode"]:
                 self.debug_plugin = False
-                
+
+            # Verify PLUGIN_DEBUG_KEY if it's set in runtime settings
+            if runtime_settings.plugin_debug_key:
+                # Get the debug key from plugin data
+                plugin_debug_key = data.get("plugin_debug_key", "")
+
+                if plugin_debug_key != runtime_settings.plugin_debug_key:
+                    logger.warning(f"Plugin debug key verification failed. Expected key does not match.")
+                    return handler.ActionResponse.error("Plugin debug key verification failed")
+
             await self.context.plugin_mgr.register_plugin(
                 self, data["plugin_container"],
                 self.debug_plugin

@@ -62,6 +62,9 @@ def main():
     run_parser.add_argument(
         "--prod", action="store_true", help="Mark this process as production plugin process, only used on Windows"
     )
+    run_parser.add_argument(
+        "--plugin-debug-key", type=str, help="Debug key for plugin authentication", default=""
+    )
 
     # login command
     login_parser = subparsers.add_parser("login", help="Login to LangBot account")
@@ -128,7 +131,7 @@ def main():
             generate_component_process(args.component_type)
         case "run":
             cli_print("running_plugin")
-            run_plugin_process(args.stdio, args.prod)
+            run_plugin_process(args.stdio, args.prod, args.plugin_debug_key)
         case "build":
             build_plugin_process(args.output)
         case "publish":

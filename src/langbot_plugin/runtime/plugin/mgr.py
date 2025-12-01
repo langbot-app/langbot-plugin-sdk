@@ -102,22 +102,32 @@ class PluginManager:
         await asyncio.gather(*self.plugin_run_tasks)
 
     async def launch_plugin(self, plugin_path: str):
+        from langbot_plugin.runtime.settings import settings as runtime_settings
+
         if get_platform() == 'win32':
             # Due to Windows's lack of supports for both stdio and subprocess:
             # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
             # We have to launch plugin via cmd but communicate via ws.
             python_path = sys.executable
-            process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
+
+            # Build command with debug key if set
+            cmd_args = [
                 python_path,
                 '-m', 'langbot_plugin.cli.__init__', 'run',
                 '--prod',
+            ]
+            if runtime_settings.plugin_debug_key:
+                cmd_args.extend(['--plugin-debug-key', runtime_settings.plugin_debug_key])
+
+            process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
+                *cmd_args,
                 env={
                     "RUNTIME_WS_URL": f"ws://localhost:{self.context.ws_debug_port}/plugin/ws",
                     **os.environ.copy()
                 },
                 cwd=plugin_path,
             )
-            
+
             # hold the process
             task = asyncio.create_task(process.wait())
 
@@ -126,9 +136,15 @@ class PluginManager:
             await task
         else:
             python_path = sys.executable
+
+            # Build args with debug key if set
+            args = ["-m", "langbot_plugin.cli.__init__", "run", "-s", "--prod"]
+            if runtime_settings.plugin_debug_key:
+                args.extend(['--plugin-debug-key', runtime_settings.plugin_debug_key])
+
             ctrl = stdio_client_controller.StdioClientController(
                 command=python_path,
-                args=["-m", "langbot_plugin.cli.__init__", "run", "-s", "--prod"],
+                args=args,
                 env={},
                 working_dir=plugin_path,
             )
