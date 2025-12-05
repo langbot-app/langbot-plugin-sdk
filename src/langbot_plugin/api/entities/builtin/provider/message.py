@@ -26,7 +26,6 @@ class ImageURLContentObject(pydantic.BaseModel):
     def __str__(self):
         return self.url[:128] + ("..." if len(self.url) > 128 else "")
 
-
 class ContentElement(pydantic.BaseModel):
     type: str
     """Type of the content"""
@@ -39,6 +38,8 @@ class ContentElement(pydantic.BaseModel):
 
     file_url: typing.Optional[str] = None
 
+    file_base64: typing.Optional[str] = None
+
     file_name: typing.Optional[str] = None
 
     def __str__(self):
@@ -46,8 +47,12 @@ class ContentElement(pydantic.BaseModel):
             return self.text
         elif self.type == "image_url":
             return f"[Image]({self.image_url})"
+        elif self.type == "image_base64":
+            return f"[Image](base64)"
         elif self.type == "file_url":
             return f"[File]({self.file_url})"
+        elif self.type == "file_base64":
+            return f"[File]({self.file_name})"
         else:
             return "Unknown content"
 
@@ -66,6 +71,11 @@ class ContentElement(pydantic.BaseModel):
     @classmethod
     def from_file_url(cls, file_url: str, file_name: str):
         return cls(type="file_url", file_url=file_url, file_name=file_name)
+
+    @classmethod
+    def from_file_base64(cls, file_base64: str, file_name: str):
+        return cls(type="file_base64", file_base64=file_base64, file_name=file_name)
+
 
 class Message(pydantic.BaseModel):
     """Message for AI"""
