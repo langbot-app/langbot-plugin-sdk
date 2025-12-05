@@ -412,7 +412,8 @@ class PluginConnectionHandler(handler.Handler):
 
     async def emit_event(self, event_context: dict[str, Any]) -> dict[str, Any]:
         resp = await self.call_action(
-            RuntimeToPluginAction.EMIT_EVENT, {"event_context": event_context}
+            RuntimeToPluginAction.EMIT_EVENT, {"event_context": event_context},
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT
         )
 
         return resp
