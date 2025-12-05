@@ -72,12 +72,6 @@ class GroupMember(Entity):
     """群。"""
     special_title: str = ""
     """群头衔。"""
-    join_timestamp: datetime = datetime.utcfromtimestamp(0)
-    """加入群的时间。"""
-    last_speak_timestamp: datetime = datetime.utcfromtimestamp(0)
-    """最后一次发言的时间。"""
-    mute_time_remaining: int = 0
-    """禁言剩余时间。"""
 
     def get_name(self) -> str:
         return self.member_name
