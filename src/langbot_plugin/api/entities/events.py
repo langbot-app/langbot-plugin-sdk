@@ -5,6 +5,7 @@ import typing
 import pydantic
 
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
+from langbot_plugin.api.entities.builtin.platform import events as platform_events
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
 from langbot_plugin.api.entities.builtin.pipeline import query as pipeline_query
@@ -37,9 +38,13 @@ class PersonMessageReceived(BaseEventModel):
     sender_id: typing.Union[int, str]
     """发送者ID(QQ号)"""
 
+    message_event: platform_events.FriendMessage
+    """原始消息事件"""
+
     message_chain: platform_message.MessageChain = pydantic.Field(
         serialization_alias="message_chain"
     )
+    """原始消息链"""
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
@@ -48,6 +53,14 @@ class PersonMessageReceived(BaseEventModel):
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
         return platform_message.MessageChain.model_validate(v)
+
+    @pydantic.field_serializer("message_event")
+    def serialize_message_event(self, v, _info):
+        return v.model_dump()
+
+    @pydantic.field_validator("message_event", mode="before")
+    def validate_message_event(cls, v):
+        return platform_events.FriendMessage.model_validate(v)
 
 
 class GroupMessageReceived(BaseEventModel):
@@ -61,9 +74,13 @@ class GroupMessageReceived(BaseEventModel):
 
     sender_id: typing.Union[int, str]
 
+    message_event: platform_events.GroupMessage
+    """原始消息事件"""
+
     message_chain: platform_message.MessageChain = pydantic.Field(
         serialization_alias="message_chain"
     )
+    """原始消息链"""
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
@@ -72,6 +89,14 @@ class GroupMessageReceived(BaseEventModel):
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
         return platform_message.MessageChain.model_validate(v)
+
+    @pydantic.field_serializer("message_event")
+    def serialize_message_event(self, v, _info):
+        return v.model_dump()
+
+    @pydantic.field_validator("message_event", mode="before")
+    def validate_message_event(cls, v):
+        return platform_events.GroupMessage.model_validate(v)
 
 
 class _WithReplyMessageChain(BaseEventModel):
@@ -108,6 +133,52 @@ class PersonNormalMessageReceived(_WithReplyMessageChain):
 
     text_message: str
 
+    message_event: platform_events.FriendMessage
+    """原始消息事件"""
+
+    message_chain: platform_message.MessageChain = pydantic.Field(
+        serialization_alias="message_chain"
+    )
+    """原始消息链"""
+
+    @pydantic.field_serializer("message_chain")
+    def serialize_message_chain(self, v, _info):
+        return v.model_dump()
+
+    @pydantic.field_validator("message_chain", mode="before")
+    def validate_message_chain(cls, v):
+        return platform_message.MessageChain.model_validate(v)
+
+    @pydantic.field_serializer("message_event")
+    def serialize_message_event(self, v, _info):
+        return v.model_dump()
+
+    @pydantic.field_validator("message_event", mode="before")
+    def validate_message_event(cls, v):
+        return platform_events.FriendMessage.model_validate(v)
+
+    user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
+        default=None
+    )
+    """修改后的 LLM 消息对象，可用于改写用户消息"""
+
+
+class GroupNormalMessageReceived(_WithReplyMessageChain):
+    """判断为应该处理的群聊普通消息时触发"""
+
+    event_name: str = "GroupNormalMessageReceived"
+
+    launcher_type: str
+
+    launcher_id: typing.Union[int, str]
+
+    sender_id: typing.Union[int, str]
+
+    text_message: str
+
+    message_event: platform_events.GroupMessage
+    """原始消息事件"""
+
     message_chain: platform_message.MessageChain = pydantic.Field(
         serialization_alias="message_chain"
     )
@@ -119,6 +190,14 @@ class PersonNormalMessageReceived(_WithReplyMessageChain):
     @pydantic.field_validator("message_chain", mode="before")
     def validate_message_chain(cls, v):
         return platform_message.MessageChain.model_validate(v)
+
+    @pydantic.field_serializer("message_event")
+    def serialize_message_event(self, v, _info):
+        return v.model_dump()
+
+    @pydantic.field_validator("message_event", mode="before")
+    def validate_message_event(cls, v):
+        return platform_events.GroupMessage.model_validate(v)
 
     user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
         default=None
@@ -144,37 +223,6 @@ class PersonCommandSent(_WithReplyMessageChain):
     text_message: str
 
     is_admin: bool
-
-
-class GroupNormalMessageReceived(_WithReplyMessageChain):
-    """判断为应该处理的群聊普通消息时触发"""
-
-    event_name: str = "GroupNormalMessageReceived"
-
-    launcher_type: str
-
-    launcher_id: typing.Union[int, str]
-
-    sender_id: typing.Union[int, str]
-
-    text_message: str
-
-    message_chain: platform_message.MessageChain = pydantic.Field(
-        serialization_alias="message_chain"
-    )
-
-    @pydantic.field_serializer("message_chain")
-    def serialize_message_chain(self, v, _info):
-        return v.model_dump()
-
-    @pydantic.field_validator("message_chain", mode="before")
-    def validate_message_chain(cls, v):
-        return platform_message.MessageChain.model_validate(v)
-
-    user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
-        default=None
-    )
-    """修改后的 LLM 消息对象，可用于改写用户消息"""
 
 
 class GroupCommandSent(_WithReplyMessageChain):
