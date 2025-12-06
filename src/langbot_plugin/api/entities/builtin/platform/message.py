@@ -419,6 +419,10 @@ class File(MessageComponent):
     """File size."""
     url: str = pydantic.Field(default="")
     """File url."""
+    path: typing.Optional[str] = pydantic.Field(default="")
+    """The path of the file, send local file."""
+    base64: typing.Optional[str] = pydantic.Field(default="")
+    """The Base64 encoding of the file."""
 
     def __str__(self):
         return f"[File]{self.name}"
