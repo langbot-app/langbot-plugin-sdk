@@ -249,7 +249,7 @@ class Quote(MessageComponent):
 
     type: str = "Quote"
     """Message component type."""
-    id: typing.Optional[int] = None
+    id: typing.Optional[typing.Union[int, str]] = None
     """The message_id of the original message to be quoted."""
     group_id: typing.Optional[typing.Union[int, str]] = None
     """The group number of the original message to be quoted, 0 when it is a friend message."""

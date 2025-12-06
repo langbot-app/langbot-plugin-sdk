@@ -26,6 +26,7 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
                 "message_chain": message_chain.model_dump(mode="json"),
                 "quote_origin": quote_origin,
             },
+            timeout=180,
         )
 
     async def get_bot_uuid(self) -> str:

@@ -87,6 +87,7 @@ class PluginConnectionHandler(handler.Handler):
                 {
                     **data,
                 },
+                timeout=180,
             )
             return handler.ActionResponse.success(result)
 
