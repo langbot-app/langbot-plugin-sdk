@@ -34,6 +34,7 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
                 files=files,
                 data=data,
                 headers={"Authorization": f"Bearer {access_token}"},
+                timeout=300,
             )
 
             response.raise_for_status()
