@@ -99,12 +99,16 @@ class StdioConnection(connection.Connection):
         if read_task in done:
             s_bytes = read_task.result()
             if not s_bytes:
+                # EOF received - connection is closed
                 if self._process_exit_task is not None:
                     if self._process_exit_task.done():
                         await self._process_exit_task
                         raise ConnectionClosedError("标准输出流已关闭，子进程已退出。")
                     else:
                         raise ConnectionClosedError("标准输出流意外关闭。")
+                else:
+                    # process is None but still received EOF - connection is closed
+                    raise ConnectionClosedError("标准输出流已关闭。")
             return s_bytes.decode().strip()
 
         raise ConnectionClosedError("Unexpected error in reading")
