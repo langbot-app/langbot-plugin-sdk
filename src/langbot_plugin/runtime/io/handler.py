@@ -17,6 +17,7 @@ import os
 import hashlib
 import base64
 import aiofiles
+import aiofiles.os
 import logging
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
@@ -267,7 +268,7 @@ class Handler(abc.ABC):
         hash_value = hashlib.sha256(file_bytes).hexdigest()
         file_key = f"{hash_value}.{file_extension}"
         file_length = len(file_bytes)
-        chunk_amount = file_length // FILE_CHUNK_LENGTH + 1
+        chunk_amount = max(1, (file_length + FILE_CHUNK_LENGTH - 1) // FILE_CHUNK_LENGTH)
         for i in range(chunk_amount):
             chunk_bytes = file_bytes[i * FILE_CHUNK_LENGTH: (i + 1) * FILE_CHUNK_LENGTH]
             chunk_base64 = base64.b64encode(chunk_bytes).decode("utf-8")
@@ -297,4 +298,4 @@ class Handler(abc.ABC):
             return await f.read()
 
     async def delete_local_file(self, file_key: str) -> None:
-        os.remove(os.path.join(FILE_STORAGE_DIR, file_key))
+        await aiofiles.os.remove(os.path.join(FILE_STORAGE_DIR, file_key))
