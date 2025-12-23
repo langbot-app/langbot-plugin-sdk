@@ -157,7 +157,7 @@ class PersonNormalMessageReceived(_WithReplyMessageChain):
     def validate_message_event(cls, v):
         return platform_events.FriendMessage.model_validate(v)
 
-    user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
+    user_message_alter: typing.Optional[typing.Union[provider_message.ContentElement, list[provider_message.ContentElement], str]] = pydantic.Field(
         default=None
     )
     """修改后的 LLM 消息对象，可用于改写用户消息"""
@@ -199,7 +199,7 @@ class GroupNormalMessageReceived(_WithReplyMessageChain):
     def validate_message_event(cls, v):
         return platform_events.GroupMessage.model_validate(v)
 
-    user_message_alter: typing.Optional[provider_message.ContentElement] = pydantic.Field(
+    user_message_alter: typing.Optional[typing.Union[provider_message.ContentElement, list[provider_message.ContentElement], str]] = pydantic.Field(
         default=None
     )
     """修改后的 LLM 消息对象，可用于改写用户消息"""
