@@ -58,6 +58,14 @@ class PluginToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     LIST_TOOLS = "list_tools"
 
+    """RAG APIs"""
+    RAG_EMBED_DOCUMENTS = "rag_embed_documents"
+    RAG_EMBED_QUERY = "rag_embed_query"
+    RAG_VECTOR_UPSERT = "rag_vector_upsert"
+    RAG_VECTOR_SEARCH = "rag_vector_search"
+    RAG_VECTOR_DELETE = "rag_vector_delete"
+    RAG_GET_FILE_STREAM = "rag_get_file_stream"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
@@ -78,6 +86,10 @@ class RuntimeToPluginAction(ActionType):
     SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
 
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+    INGEST_DOCUMENT = "ingest_document"
+    DELETE_DOCUMENT = "delete_document"
+    GET_RAG_CREATION_SETTINGS_SCHEMA = "get_rag_creation_settings_schema"
+    GET_RAG_RETRIEVAL_SETTINGS_SCHEMA = "get_rag_retrieval_settings_schema"
 
 
 class LangBotToRuntimeAction(ActionType):

@@ -199,3 +199,147 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.LIST_TOOLS, {}
             )
         )["tools"]
+
+    # ================= RAG Capability APIs =================
+
+    async def rag_embed_documents(self, kb_id: str, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for documents using Host's embedding model.
+        
+        Args:
+            kb_id: The Knowledge Base ID (context) to determine which embedding model to use.
+            texts: List of texts to embed.
+            
+        Returns:
+            List of embedding vectors.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_EMBED_DOCUMENTS,
+                {
+                    "kb_id": kb_id,
+                    "texts": texts
+                }
+            )
+        )["vectors"]
+
+    async def rag_embed_query(self, kb_id: str, text: str) -> list[float]:
+        """Generate embedding for a query using Host's embedding model.
+        
+        Args:
+            kb_id: The Knowledge Base ID (context) to determine which embedding model to use.
+            text: Query text to embed.
+            
+        Returns:
+            Embedding vector.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_EMBED_QUERY,
+                {
+                    "kb_id": kb_id,
+                    "text": text
+                }
+            )
+        )["vector"]
+
+    async def rag_vector_upsert(
+        self, 
+        collection_id: str, 
+        vectors: list[list[float]], 
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None
+    ) -> None:
+        """Upsert vectors to Host's vector store.
+        
+        Args:
+            collection_id: Target collection ID.
+            vectors: List of vectors.
+            ids: List of unique IDs for vectors.
+            metadata: Optional list of metadata dicts corresponding to vectors.
+        """
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RAG_VECTOR_UPSERT,
+            {
+                "collection_id": collection_id,
+                "vectors": vectors,
+                "ids": ids,
+                "metadata": metadata
+            }
+        )
+
+    async def rag_vector_search(
+        self,
+        collection_id: str,
+        query_vector: list[float],
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Search similar vectors in Host's vector store.
+        
+        Args:
+            collection_id: Target collection ID.
+            query_vector: Query vector.
+            top_k: Number of results to return.
+            filters: Optional metadata filters.
+            
+        Returns:
+            List of search results (dict with id, score, metadata).
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_VECTOR_SEARCH,
+                {
+                    "collection_id": collection_id,
+                    "query_vector": query_vector,
+                    "top_k": top_k,
+                    "filters": filters
+                }
+            )
+        )["results"]
+
+    async def rag_vector_delete(
+        self,
+        collection_id: str,
+        ids: list[str] | None = None,
+        filters: dict[str, Any] | None = None
+    ) -> int:
+        """Delete vectors from Host's vector store.
+        
+        Args:
+            collection_id: Target collection ID.
+            ids: Optional list of IDs to delete.
+            filters: Optional metadata filters for deletion.
+            
+        Returns:
+            Number of deleted items.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_VECTOR_DELETE,
+                {
+                    "collection_id": collection_id,
+                    "ids": ids,
+                    "filters": filters
+                }
+            )
+        )["count"]
+
+    async def rag_get_file_content(self, storage_path: str) -> bytes:
+        """Get file content from Host's storage.
+        
+        This mimics reading a file stream but returns full bytes for now
+        as simple RPC implementation.
+        
+        Args:
+            storage_path: Logic path in FileObject.
+            
+        Returns:
+            File content bytes.
+        """
+        resp = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RAG_GET_FILE_STREAM, # Reuse this action name
+            {"storage_path": storage_path}
+        )
+        # Assuming the response contains base64 encoded content for RPC safety
+        import base64
+        return base64.b64decode(resp["content_base64"])
