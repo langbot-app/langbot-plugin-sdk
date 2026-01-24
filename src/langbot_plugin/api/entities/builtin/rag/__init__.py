@@ -33,12 +33,6 @@ from .errors import (
     ChunkingError,
 )
 
-# Host services protocols
-from .host_services import (
-    EmbedderProtocol,
-    VectorStoreProtocol,
-    HostServices,
-)
 
 # Context and retrieval types
 from .context import (
