@@ -114,6 +114,14 @@ class LangBotToRuntimeAction(ActionType):
     LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
+    # RAG Engine actions (LangBot -> Runtime -> Plugin)
+    RAG_INGEST_DOCUMENT = "rag_ingest_document"
+    RAG_DELETE_DOCUMENT = "rag_delete_document"
+    RAG_ON_KB_CREATE = "rag_on_kb_create"
+    RAG_ON_KB_DELETE = "rag_on_kb_delete"
+    GET_RAG_CREATION_SETTINGS_SCHEMA = "get_rag_creation_settings_schema"
+    GET_RAG_RETRIEVAL_SETTINGS_SCHEMA = "get_rag_retrieval_settings_schema"
+
     # Polymorphic component instance integrity
     SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
 

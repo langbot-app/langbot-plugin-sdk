@@ -271,6 +271,80 @@ class ControlConnectionHandler(handler.Handler):
                 "ws_debug_port": self.context.ws_debug_port,
             })
 
+        # ================= RAG Engine Actions =================
+
+        @self.action(LangBotToRuntimeAction.RAG_INGEST_DOCUMENT)
+        async def rag_ingest_document(data: dict[str, Any]) -> handler.ActionResponse:
+            """Ingest document via RAG plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            context_data = data["context"]
+
+            resp = await self.context.plugin_mgr.rag_ingest_document(
+                plugin_author, plugin_name, context_data
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RAG_DELETE_DOCUMENT)
+        async def rag_delete_document(data: dict[str, Any]) -> handler.ActionResponse:
+            """Delete document via RAG plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            document_id = data["document_id"]
+            kb_id = data["kb_id"]
+
+            resp = await self.context.plugin_mgr.rag_delete_document(
+                plugin_author, plugin_name, kb_id, document_id
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RAG_ON_KB_CREATE)
+        async def rag_on_kb_create(data: dict[str, Any]) -> handler.ActionResponse:
+            """Notify plugin about KB creation."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            kb_id = data["kb_id"]
+            config = data.get("config", {})
+
+            resp = await self.context.plugin_mgr.rag_on_kb_create(
+                plugin_author, plugin_name, kb_id, config
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RAG_ON_KB_DELETE)
+        async def rag_on_kb_delete(data: dict[str, Any]) -> handler.ActionResponse:
+            """Notify plugin about KB deletion."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            kb_id = data["kb_id"]
+
+            resp = await self.context.plugin_mgr.rag_on_kb_delete(
+                plugin_author, plugin_name, kb_id
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
+        async def get_rag_creation_settings_schema(data: dict[str, Any]) -> handler.ActionResponse:
+            """Get RAG creation settings schema from plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+
+            resp = await self.context.plugin_mgr.get_rag_creation_schema(
+                plugin_author, plugin_name
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
+        async def get_rag_retrieval_settings_schema(data: dict[str, Any]) -> handler.ActionResponse:
+            """Get RAG retrieval settings schema from plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+
+            resp = await self.context.plugin_mgr.get_rag_retrieval_schema(
+                plugin_author, plugin_name
+            )
+            return handler.ActionResponse.success(resp)
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}

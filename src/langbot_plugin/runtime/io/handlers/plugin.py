@@ -505,3 +505,65 @@ class PluginConnectionHandler(handler.Handler):
             {},
         )
         return resp
+
+    # ================= RAG Engine Methods =================
+
+    async def rag_ingest_document(
+        self, context_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Call plugin to ingest a document."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.INGEST_DOCUMENT,
+            {"context": context_data},
+            timeout=300  # Ingestion can be slow
+        )
+        return resp
+
+    async def rag_delete_document(
+        self, kb_id: str, document_id: str
+    ) -> dict[str, Any]:
+        """Call plugin to delete a document."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.DELETE_DOCUMENT,
+            {"kb_id": kb_id, "document_id": document_id},
+            timeout=30
+        )
+        return resp
+
+    async def rag_on_kb_create(
+        self, kb_id: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Notify plugin about KB creation."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.INGEST_DOCUMENT,  # Reuse or add new action
+            {"action_type": "on_kb_create", "kb_id": kb_id, "config": config},
+            timeout=30
+        )
+        return resp
+
+    async def rag_on_kb_delete(self, kb_id: str) -> dict[str, Any]:
+        """Notify plugin about KB deletion."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.DELETE_DOCUMENT,  # Reuse or add new action
+            {"action_type": "on_kb_delete", "kb_id": kb_id},
+            timeout=30
+        )
+        return resp
+
+    async def get_rag_creation_schema(self) -> dict[str, Any]:
+        """Get RAG creation settings schema from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA,
+            {},
+            timeout=10
+        )
+        return resp
+
+    async def get_rag_retrieval_schema(self) -> dict[str, Any]:
+        """Get RAG retrieval settings schema from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA,
+            {},
+            timeout=10
+        )
+        return resp

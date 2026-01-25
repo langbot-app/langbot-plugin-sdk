@@ -324,22 +324,18 @@ class LangBotAPIProxy:
             )
         )["count"]
 
-    async def rag_get_file_content(self, storage_path: str) -> bytes:
+    async def rag_get_file_stream(self, storage_path: str) -> bytes:
         """Get file content from Host's storage.
-        
-        This mimics reading a file stream but returns full bytes for now
-        as simple RPC implementation.
-        
+
         Args:
             storage_path: Logic path in FileObject.
-            
+
         Returns:
             File content bytes.
         """
         resp = await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.RAG_GET_FILE_STREAM, # Reuse this action name
+            PluginToRuntimeAction.RAG_GET_FILE_STREAM,
             {"storage_path": storage_path}
         )
-        # Assuming the response contains base64 encoded content for RPC safety
         import base64
         return base64.b64decode(resp["content_base64"])
