@@ -65,10 +65,6 @@ __all__ = [
     "RetrievalError",
     "ParsingError",
     "ChunkingError",
-    # Host services
-    "EmbedderProtocol",
-    "VectorStoreProtocol",
-    "HostServices",
     # Context
     "RetrievalResultEntry",
     "RetrievalConfig",
