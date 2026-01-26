@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, ClassVar
 
 from langbot_plugin.api.definition.components.base import PolymorphicComponent
 from langbot_plugin.api.entities.builtin.rag.context import (
@@ -15,9 +15,25 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 )
 
 
+class RAGEngineCapability:
+    """Standard RAG engine capabilities."""
+
+    DOC_INGESTION = "doc_ingestion"
+    """Supports document upload and processing."""
+
+    CHUNKING_CONFIG = "chunking_config"
+    """Supports custom chunking parameters."""
+
+    RERANK = "rerank"
+    """Supports reranking of results."""
+
+    HYBRID_SEARCH = "hybrid_search"
+    """Supports hybrid (vector + keyword) search."""
+
+
 class KnowledgeRetriever(PolymorphicComponent):
     """The knowledge retriever component.
-    
+
     This is the legacy interface for knowledge retrieval.
     For new implementations, use RAGEngine instead.
     """
@@ -27,10 +43,10 @@ class KnowledgeRetriever(PolymorphicComponent):
     @abc.abstractmethod
     async def retrieve(self, context: RetrievalContext) -> list[RetrievalResultEntry]:
         """Retrieve the data from the knowledge retriever.
-        
+
         Args:
             context: The retrieval context.
-            
+
         Returns:
             The retrieval result.
             The retrieval result is a list of RetrievalResultEntry.
@@ -41,16 +57,36 @@ class KnowledgeRetriever(PolymorphicComponent):
 
 class RAGEngine(PolymorphicComponent):
     """Complete RAG engine component with full lifecycle management.
-    
+
     This component provides comprehensive RAG operations including document ingestion,
     deletion, and retrieval. It replaces the legacy KnowledgeRetriever with a more
     complete interface.
-    
+
     Plugins implementing this component should use `self.plugin.rag_*` methods
     to access Host capabilities.
     """
 
     __kind__ = "RAGEngine"
+
+    # ========== Capabilities ==========
+
+    @classmethod
+    def get_capabilities(cls) -> list[str]:
+        """Declare engine capabilities.
+
+        Override this method to declare what capabilities your RAG engine supports.
+        The frontend will use these to determine which UI elements to show.
+
+        Available capabilities (see RAGEngineCapability):
+        - 'doc_ingestion': Supports document upload and processing
+        - 'chunking_config': Supports custom chunking parameters
+        - 'rerank': Supports reranking of results
+        - 'hybrid_search': Supports hybrid search
+
+        Returns:
+            List of capability strings.
+        """
+        return [RAGEngineCapability.DOC_INGESTION]
 
     # ========== Lifecycle Hooks ==========
 

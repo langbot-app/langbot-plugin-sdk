@@ -115,6 +115,7 @@ class LangBotToRuntimeAction(ActionType):
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
     # RAG Engine actions (LangBot -> Runtime -> Plugin)
+    LIST_RAG_ENGINES = "list_rag_engines"
     RAG_INGEST_DOCUMENT = "rag_ingest_document"
     RAG_DELETE_DOCUMENT = "rag_delete_document"
     RAG_ON_KB_CREATE = "rag_on_kb_create"

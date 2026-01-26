@@ -273,6 +273,12 @@ class ControlConnectionHandler(handler.Handler):
 
         # ================= RAG Engine Actions =================
 
+        @self.action(LangBotToRuntimeAction.LIST_RAG_ENGINES)
+        async def list_rag_engines(data: dict[str, Any]) -> handler.ActionResponse:
+            """List all available RAG engines from plugins."""
+            engines = await self.context.plugin_mgr.list_rag_engines()
+            return handler.ActionResponse.success({"engines": engines})
+
         @self.action(LangBotToRuntimeAction.RAG_INGEST_DOCUMENT)
         async def rag_ingest_document(data: dict[str, Any]) -> handler.ActionResponse:
             """Ingest document via RAG plugin."""

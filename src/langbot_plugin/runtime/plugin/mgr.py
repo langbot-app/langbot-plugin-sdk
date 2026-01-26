@@ -917,6 +917,39 @@ class PluginManager:
                 return plugin, None
         return None, None
 
+    async def list_rag_engines(self) -> list[dict[str, typing.Any]]:
+        """List all available RAG engines from plugins.
+
+        Returns a list of RAG engines with their capabilities and configuration schemas.
+        """
+        engines: list[dict[str, typing.Any]] = []
+
+        for plugin in self.plugins:
+            if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
+                continue
+
+            for component in plugin.components:
+                if component.manifest.kind == RAGEngine.__kind__:
+                    # Get capabilities and schemas from the plugin
+                    try:
+                        creation_schema = await plugin._runtime_plugin_handler.get_rag_creation_schema()
+                        retrieval_schema = await plugin._runtime_plugin_handler.get_rag_retrieval_schema()
+                    except Exception as e:
+                        logger.warning(f"Failed to get schemas from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}")
+                        creation_schema = {}
+                        retrieval_schema = {}
+
+                    engines.append({
+                        "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
+                        "name": component.manifest.metadata.label or component.manifest.metadata.name,
+                        "description": component.manifest.metadata.description or {},
+                        "capabilities": ["doc_ingestion"],  # Default capability, TODO: get from component
+                        "creation_schema": creation_schema,
+                        "retrieval_schema": retrieval_schema,
+                    })
+
+        return engines
+
     async def rag_ingest_document(
         self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
