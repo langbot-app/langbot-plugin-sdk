@@ -20,7 +20,7 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_retriever.retriever import KnowledgeRetriever
+from langbot_plugin.api.definition.components.knowledge_retriever.retriever import RAGEngine
 from langbot_plugin.api.definition.components.base import PolymorphicComponent
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.proxies.event_context import EventContextProxy
@@ -409,31 +409,31 @@ class PluginRuntimeHandler(Handler):
 
         @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, typing.Any]) -> ActionResponse:
-            """Retrieve knowledge using a KnowledgeRetriever instance."""
+            """Retrieve knowledge using a RAGEngine instance."""
             retriever_name = data["retriever_name"]
             instance_id = data["instance_id"]
             retrieval_context = RetrievalContext.model_validate(data["retrieval_context"])
 
-            retriever_component = None
+            rag_component = None
             for component in self.plugin_container.components:
-                if component.manifest.kind == KnowledgeRetriever.__kind__:
+                if component.manifest.kind == RAGEngine.__kind__:
                     if component.manifest.metadata.name == retriever_name:
-                        retriever_component = component
+                        rag_component = component
                         break
 
-            if retriever_component is None:
-                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} not found")
+            if rag_component is None:
+                return ActionResponse.error(f"RAGEngine {retriever_name} not found")
 
-            if instance_id not in retriever_component.polymorphic_component_instances:
-                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} instance {instance_id} not found")
+            if instance_id not in rag_component.polymorphic_component_instances:
+                return ActionResponse.error(f"RAGEngine {retriever_name} instance {instance_id} not found")
 
-            retriever_instance = retriever_component.polymorphic_component_instances[instance_id]
-            assert isinstance(retriever_instance, KnowledgeRetriever)
+            rag_instance = rag_component.polymorphic_component_instances[instance_id]
+            assert isinstance(rag_instance, RAGEngine)
 
-            # Call retrieve method
-            results = await retriever_instance.retrieve(retrieval_context)
+            # Call retrieve method - RAGEngine returns RetrievalResponse
+            response = await rag_instance.retrieve(retrieval_context)
 
-            return ActionResponse.success({"retrieval_results": [result.model_dump(mode="json") for result in results]})
+            return ActionResponse.success(response.model_dump(mode="json"))
 
         @self.action(RuntimeToPluginAction.SHUTDOWN)
         async def shutdown(data: dict[str, typing.Any]) -> ActionResponse:

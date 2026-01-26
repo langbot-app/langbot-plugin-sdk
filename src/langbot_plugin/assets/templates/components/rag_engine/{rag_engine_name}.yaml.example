@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: RAGEngine
+metadata:
+  name: {{ rag_engine_name }}
+  label:
+    en_US: {{ rag_engine_label }}
+    zh_Hans: {{ rag_engine_label }}
+  description:
+    en_US: '{{ rag_engine_description }}'
+    zh_Hans: '{{ rag_engine_description }}'
+execution:
+  python:
+    path: {{ rag_engine_name }}.py
+    attr: {{ rag_engine_attr }}
