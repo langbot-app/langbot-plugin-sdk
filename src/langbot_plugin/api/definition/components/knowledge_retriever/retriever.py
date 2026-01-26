@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, ClassVar
 
 from langbot_plugin.api.definition.components.base import PolymorphicComponent
 from langbot_plugin.api.entities.builtin.rag.context import (
     RetrievalContext,
-    RetrievalResultEntry,
     RetrievalResponse,
 )
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -31,36 +29,11 @@ class RAGEngineCapability:
     """Supports hybrid (vector + keyword) search."""
 
 
-class KnowledgeRetriever(PolymorphicComponent):
-    """The knowledge retriever component.
-
-    This is the legacy interface for knowledge retrieval.
-    For new implementations, use RAGEngine instead.
-    """
-
-    __kind__ = "KnowledgeRetriever"
-
-    @abc.abstractmethod
-    async def retrieve(self, context: RetrievalContext) -> list[RetrievalResultEntry]:
-        """Retrieve the data from the knowledge retriever.
-
-        Args:
-            context: The retrieval context.
-
-        Returns:
-            The retrieval result.
-            The retrieval result is a list of RetrievalResultEntry.
-            The RetrievalResultEntry contains the id, metadata, and distance of the retrieved data.
-        """
-        pass
-
-
 class RAGEngine(PolymorphicComponent):
     """Complete RAG engine component with full lifecycle management.
 
     This component provides comprehensive RAG operations including document ingestion,
-    deletion, and retrieval. It replaces the legacy KnowledgeRetriever with a more
-    complete interface.
+    deletion, and retrieval.
 
     Plugins implementing this component should use `self.plugin.rag_*` methods
     to access Host capabilities.

@@ -228,12 +228,6 @@ class ControlConnectionHandler(handler.Handler):
             async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
-        # KnowledgeRetriever actions
-        @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_RETRIEVERS)
-        async def list_knowledge_retrievers(data: dict[str, Any]) -> handler.ActionResponse:
-            retrievers = await self.context.plugin_mgr.list_knowledge_retrievers()
-            return handler.ActionResponse.success({"retrievers": retrievers})
-
         @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
             plugin_author = data["plugin_author"]

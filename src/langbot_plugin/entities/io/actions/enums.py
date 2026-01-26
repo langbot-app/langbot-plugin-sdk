@@ -110,8 +110,7 @@ class LangBotToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
 
-    # Knowledge Retriever actions
-    LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
+    # RAG actions
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
     # RAG Engine actions (LangBot -> Runtime -> Plugin)

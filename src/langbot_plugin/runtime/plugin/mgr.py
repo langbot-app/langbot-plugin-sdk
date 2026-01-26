@@ -28,7 +28,7 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_retriever.retriever import KnowledgeRetriever, RAGEngine
+from langbot_plugin.api.definition.components.knowledge_retriever.retriever import RAGEngine
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalResultEntry, RetrievalContext
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
@@ -671,70 +671,10 @@ class PluginManager:
 
                     break
 
-    # KnowledgeRetriever methods
-    async def list_knowledge_retrievers(self) -> list[dict[str, typing.Any]]:
-        """List all available KnowledgeRetriever components from plugins."""
-        retrievers: list[dict[str, typing.Any]] = []
-
-        for plugin in self.plugins:
-            for component in plugin.components:
-                if component.manifest.kind == KnowledgeRetriever.__kind__:
-                    retrievers.append({
-                        "plugin_author": plugin.manifest.metadata.author,
-                        "plugin_name": plugin.manifest.metadata.name,
-                        "retriever_name": component.manifest.metadata.name,
-                        "retriever_description": component.manifest.metadata.description,
-                        "manifest": component.manifest.model_dump(),
-                    })
-
-        return retrievers
-
-    async def create_knowledge_retriever_instance(
-        self, instance_id: str, plugin_author: str, plugin_name: str, retriever_name: str, config: dict[str, typing.Any]
-    ) -> dict[str, typing.Any]:
-        """Create a new KnowledgeRetriever instance."""
-        # Find the plugin
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
-
-        if target_plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-
-        if target_plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
-        # Call plugin to create instance
-        resp = await target_plugin._runtime_plugin_handler.create_knowledge_retriever_instance(
-            instance_id, retriever_name, config
-        )
-
-        return resp
-
-    async def delete_knowledge_retriever_instance(self, plugin_author: str, plugin_name: str, retriever_name: str, instance_id: str) -> dict[str, typing.Any]:
-        """Delete a KnowledgeRetriever instance."""
-        
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
-
-        if target_plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-
-        if target_plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
-        resp = await target_plugin._runtime_plugin_handler.delete_knowledge_retriever_instance(retriever_name, instance_id)
-        return resp
-
     async def retrieve_knowledge(
         self, plugin_author: str, plugin_name: str, retriever_name: str, instance_id: str, retrieval_context: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
-        """Retrieve knowledge using a KnowledgeRetriever instance."""
+        """Retrieve knowledge using a RAGEngine instance."""
 
         target_plugin = None
         for plugin in self.plugins:
@@ -909,9 +849,6 @@ class PluginManager:
                 # Find RAGEngine component
                 for component in plugin.components:
                     if component.manifest.kind == RAGEngine.__kind__:
-                        return plugin, component.manifest.metadata.name
-                    # Also check KnowledgeRetriever for backward compatibility
-                    if component.manifest.kind == KnowledgeRetriever.__kind__:
                         return plugin, component.manifest.metadata.name
                 # No RAG component found, but plugin exists
                 return plugin, None

@@ -1,5 +1,5 @@
-"""Knowledge retriever components."""
+"""RAG engine components."""
 
-from .retriever import KnowledgeRetriever, RAGEngine, RAGEngineCapability
+from .retriever import RAGEngine, RAGEngineCapability
 
-__all__ = ["KnowledgeRetriever", "RAGEngine", "RAGEngineCapability"]
+__all__ = ["RAGEngine", "RAGEngineCapability"]
