@@ -28,7 +28,7 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_retriever.retriever import RAGEngine
+from langbot_plugin.api.definition.components.rag_engine.retriever import RAGEngine
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalResultEntry, RetrievalContext
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
@@ -75,6 +75,24 @@ class PluginManager:
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
+
+    def find_plugin(self, plugin_author: str, plugin_name: str) -> runtime_plugin_container.PluginContainer | None:
+        """Find a plugin by author and name.
+
+        Args:
+            plugin_author: The plugin author.
+            plugin_name: The plugin name.
+
+        Returns:
+            The plugin container if found, otherwise None.
+        """
+        for plugin in self.plugins:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
+                return plugin
+        return None
 
     async def ensure_all_plugins_dependencies_installed(self):
         for plugin_path in glob.glob("data/plugins/*"):
@@ -549,43 +567,40 @@ class PluginManager:
     async def get_plugin_icon(
         self, plugin_author: str, plugin_name: str
     ) -> tuple[bytes, str]:
-        for plugin in self.plugins:
-            if (
-                plugin.manifest.metadata.author == plugin_author
-                and plugin.manifest.metadata.name == plugin_name
-            ):
-                resp = await plugin._runtime_plugin_handler.get_plugin_icon()
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.get_plugin_icon()
 
-                icon_file_key = resp["plugin_icon_file_key"]
-                icon_bytes = await plugin._runtime_plugin_handler.read_local_file(icon_file_key)
-                await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
-                return icon_bytes, resp["mime_type"]
+            icon_file_key = resp["plugin_icon_file_key"]
+            icon_bytes = await plugin._runtime_plugin_handler.read_local_file(icon_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
+            return icon_bytes, resp["mime_type"]
         return b"", ""
 
     async def get_plugin_readme(
         self, plugin_author: str, plugin_name: str, language: str = "en"
     ) -> bytes:
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
 
-                readme_file_key = resp["plugin_readme_file_key"]
-                readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
-                await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
-                return readme_bytes
+            readme_file_key = resp["plugin_readme_file_key"]
+            readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
+            return readme_bytes
 
         return b""
-    
+
     async def get_plugin_assets_file(
         self, plugin_author: str, plugin_name: str, file_key: str
     ) -> tuple[bytes, str]:
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(file_key=file_key)
-                file_file_key = resp["file_file_key"]
-                file_bytes = await plugin._runtime_plugin_handler.read_local_file(file_file_key)
-                await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
-                return file_bytes, resp["mime_type"]
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(file_key=file_key)
+            file_file_key = resp["file_file_key"]
+            file_bytes = await plugin._runtime_plugin_handler.read_local_file(file_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
+            return file_bytes, resp["mime_type"]
         return b"", ""
 
     async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
@@ -675,12 +690,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str, retriever_name: str, instance_id: str, retrieval_context: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
         """Retrieve knowledge using a RAGEngine instance."""
-
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
+        target_plugin = self.find_plugin(plugin_author, plugin_name)
 
         if target_plugin is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
@@ -841,18 +851,16 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str
     ) -> tuple[runtime_plugin_container.PluginContainer | None, str | None]:
         """Find plugin with RAGEngine component and return (plugin, component_name)."""
-        for plugin in self.plugins:
-            if (
-                plugin.manifest.metadata.author == plugin_author
-                and plugin.manifest.metadata.name == plugin_name
-            ):
-                # Find RAGEngine component
-                for component in plugin.components:
-                    if component.manifest.kind == RAGEngine.__kind__:
-                        return plugin, component.manifest.metadata.name
-                # No RAG component found, but plugin exists
-                return plugin, None
-        return None, None
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return None, None
+
+        # Find RAGEngine component
+        for component in plugin.components:
+            if component.manifest.kind == RAGEngine.__kind__:
+                return plugin, component.manifest.metadata.name
+        # No RAG component found, but plugin exists
+        return plugin, None
 
     async def list_rag_engines(self) -> list[dict[str, typing.Any]]:
         """List all available RAG engines from plugins.
@@ -869,6 +877,13 @@ class PluginManager:
                 if component.manifest.kind == RAGEngine.__kind__:
                     # Get capabilities and schemas from the plugin
                     try:
+                        capabilities_resp = await plugin._runtime_plugin_handler.get_rag_capabilities()
+                        capabilities = capabilities_resp.get("capabilities", [])
+                    except Exception as e:
+                        logger.warning(f"Failed to get capabilities from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}")
+                        capabilities = []
+
+                    try:
                         creation_schema = await plugin._runtime_plugin_handler.get_rag_creation_schema()
                         retrieval_schema = await plugin._runtime_plugin_handler.get_rag_retrieval_schema()
                     except Exception as e:
@@ -880,7 +895,7 @@ class PluginManager:
                         "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
                         "name": component.manifest.metadata.label or component.manifest.metadata.name,
                         "description": component.manifest.metadata.description or {},
-                        "capabilities": ["doc_ingestion"],  # Default capability, TODO: get from component
+                        "capabilities": capabilities,
                         "creation_schema": creation_schema,
                         "retrieval_schema": retrieval_schema,
                     })

@@ -337,5 +337,4 @@ class LangBotAPIProxy:
             PluginToRuntimeAction.RAG_GET_FILE_STREAM,
             {"storage_path": storage_path}
         )
-        import base64
         return base64.b64decode(resp["content_base64"])

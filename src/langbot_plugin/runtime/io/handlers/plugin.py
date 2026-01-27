@@ -535,8 +535,8 @@ class PluginConnectionHandler(handler.Handler):
     ) -> dict[str, Any]:
         """Notify plugin about KB creation."""
         resp = await self.call_action(
-            RuntimeToPluginAction.INGEST_DOCUMENT,  # Reuse or add new action
-            {"action_type": "on_kb_create", "kb_id": kb_id, "config": config},
+            RuntimeToPluginAction.ON_KB_CREATE,
+            {"kb_id": kb_id, "config": config},
             timeout=30
         )
         return resp
@@ -544,8 +544,8 @@ class PluginConnectionHandler(handler.Handler):
     async def rag_on_kb_delete(self, kb_id: str) -> dict[str, Any]:
         """Notify plugin about KB deletion."""
         resp = await self.call_action(
-            RuntimeToPluginAction.DELETE_DOCUMENT,  # Reuse or add new action
-            {"action_type": "on_kb_delete", "kb_id": kb_id},
+            RuntimeToPluginAction.ON_KB_DELETE,
+            {"kb_id": kb_id},
             timeout=30
         )
         return resp
@@ -563,6 +563,15 @@ class PluginConnectionHandler(handler.Handler):
         """Get RAG retrieval settings schema from plugin."""
         resp = await self.call_action(
             RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA,
+            {},
+            timeout=10
+        )
+        return resp
+
+    async def get_rag_capabilities(self) -> dict[str, Any]:
+        """Get RAG capabilities from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_CAPABILITIES,
             {},
             timeout=10
         )

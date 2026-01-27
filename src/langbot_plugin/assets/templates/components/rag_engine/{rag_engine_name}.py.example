@@ -2,7 +2,7 @@
 # Please refer to https://docs.langbot.app/en/plugin/dev/tutor.html for more details.
 from __future__ import annotations
 
-from langbot_plugin.api.definition.components.knowledge_retriever.retriever import (
+from langbot_plugin.api.definition.components.rag_engine.retriever import (
     RAGEngine,
     RAGEngineCapability,
 )

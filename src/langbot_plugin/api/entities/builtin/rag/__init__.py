@@ -16,7 +16,6 @@ from .models import (
     TextChunk,
     IngestionContext,
     IngestionResult,
-    FileStreamHandle,
 )
 
 # Error types
@@ -53,7 +52,6 @@ __all__ = [
     "TextChunk",
     "IngestionContext",
     "IngestionResult",
-    "FileStreamHandle",
     # Errors
     "RAGError",
     "HostServiceError",

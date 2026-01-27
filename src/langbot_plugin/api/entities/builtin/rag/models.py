@@ -103,15 +103,3 @@ class IngestionResult(pydantic.BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     """Additional result metadata."""
 
-
-class FileStreamHandle(pydantic.BaseModel):
-    """Handle for managing file streams."""
-
-    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
-
-    stream_id: str
-    """Unique stream identifier."""
-
-    file_path: str
-    """Path to the file."""
-
