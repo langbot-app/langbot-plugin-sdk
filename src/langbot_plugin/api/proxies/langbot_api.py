@@ -270,18 +270,22 @@ class LangBotAPIProxy:
     async def rag_vector_search(
         self,
         collection_id: str,
-        query_vector: list[float],
+        query_vector: list[float] | None = None,
         top_k: int = 5,
-        filters: dict[str, Any] | None = None
+        filters: dict[str, Any] | None = None,
+        query_text: str | None = None,
+        search_type: str = "similarity",
     ) -> list[dict[str, Any]]:
         """Search similar vectors in Host's vector store.
-        
+
         Args:
             collection_id: Target collection ID.
-            query_vector: Query vector.
+            query_vector: Query vector for similarity search.
             top_k: Number of results to return.
             filters: Optional metadata filters.
-            
+            query_text: Query text for keyword/hybrid search.
+            search_type: Search type - "similarity", "keyword", or "hybrid".
+
         Returns:
             List of search results (dict with id, score, metadata).
         """
@@ -292,7 +296,9 @@ class LangBotAPIProxy:
                     "collection_id": collection_id,
                     "query_vector": query_vector,
                     "top_k": top_k,
-                    "filters": filters
+                    "filters": filters,
+                    "query_text": query_text,
+                    "search_type": search_type,
                 }
             )
         )["results"]
