@@ -101,6 +101,7 @@ def build_plugin_process(output_dir: str) -> str:
 
     # Additional files/directories to always exclude
     always_exclude = {
+        "*.lbpkg",
         ".env",
         "__pycache__",
         ".pytest_cache",
@@ -142,8 +143,8 @@ def build_plugin_process(output_dir: str) -> str:
 
                 # Add file to zip
                 try:
+                    cli_print("file_adding", relative_path)
                     zipf.write(file_path, relative_path)
-                    cli_print("file_added", relative_path)
                 except Exception as e:
                     cli_print("file_add_error", relative_path, e)
 

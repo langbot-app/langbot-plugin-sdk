@@ -28,6 +28,7 @@ messages = {
     "skipping_ignored_dir": "  - 無視されたディレクトリをスキップ：{}",
     "skipping_ignored_file": "  - 無視されたファイルをスキップ：{}",
     "skipping_excluded_file": "  - 除外されたファイルをスキップ：{}",
+    "file_adding": "  - 追加中：{}",
     "file_added": "  - 追加済み：{}",
     "file_add_error": "  - ファイル {} の追加エラー：{}",
     "plugin_built": "プラグインビルドが完了しました：{}",
