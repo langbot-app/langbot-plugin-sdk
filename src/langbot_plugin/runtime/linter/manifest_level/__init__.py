@@ -1,0 +1,1 @@
+"""Provides manifest-level linting capabilities."""
