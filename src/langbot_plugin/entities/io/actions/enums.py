@@ -40,7 +40,7 @@ class PluginToRuntimeAction(ActionType):
     GET_LLM_MODELS = "get_llm_models"
     # GET_LLM_MODEL_INFO = "get_llm_model_info"
     INVOKE_LLM = "invoke_llm"
-    # INVOKE_LLM_STREAMING = "invoke_llm_streaming"
+    INVOKE_LLM_STREAM = "invoke_llm_stream"
 
     SET_PLUGIN_STORAGE = "set_plugin_storage"
     GET_PLUGIN_STORAGE = "get_plugin_storage"
@@ -122,7 +122,12 @@ class LangBotToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
 
-    # RAG actions
+    # AgentRunner actions
+    LIST_AGENT_RUNNERS = "list_agent_runners"
+    RUN_AGENT = "run_agent"
+
+    # Knowledge Retriever actions
+    LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
     # Knowledge Engine actions (LangBot -> Runtime -> Plugin)
