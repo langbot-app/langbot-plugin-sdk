@@ -228,6 +228,25 @@ class ControlConnectionHandler(handler.Handler):
             async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
+        # AgentRunner actions
+        @self.action(LangBotToRuntimeAction.LIST_AGENT_RUNNERS)
+        async def list_agent_runners(data: dict[str, Any]) -> handler.ActionResponse:
+            include_plugins = data.get("include_plugins")
+            runners = await self.context.plugin_mgr.list_agent_runners(include_plugins)
+            return handler.ActionResponse.success({"runners": runners})
+
+        @self.action(LangBotToRuntimeAction.RUN_AGENT)
+        async def run_agent(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            runner_name = data["runner_name"]
+            context = data["context"]
+
+            async for result in self.context.plugin_mgr.run_agent(
+                plugin_author, plugin_name, runner_name, context
+            ):
+                yield handler.ActionResponse.success(result)
+
         # KnowledgeRetriever actions
         @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_RETRIEVERS)
         async def list_knowledge_retrievers(data: dict[str, Any]) -> handler.ActionResponse:

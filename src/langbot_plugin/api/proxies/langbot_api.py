@@ -97,6 +97,35 @@ class LangBotAPIProxy:
 
         return provider_message.Message.model_validate(resp)
 
+    async def invoke_llm_stream(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] = [],
+        extra_args: dict[str, Any] = {},
+    ):
+        """Invoke an LLM model with streaming response
+
+        Args:
+            llm_model_uuid: The UUID of the LLM model to use
+            messages: List of conversation messages
+            funcs: List of tools available to the LLM
+            extra_args: Extra arguments for the LLM provider
+
+        Yields:
+            MessageChunk: Streamed message chunks from the LLM
+        """
+        async for chunk_data in self.plugin_runtime_handler.call_action_generator(
+            PluginToRuntimeAction.INVOKE_LLM_STREAM,
+            {
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+            },
+        ):
+            yield provider_message.MessageChunk.model_validate(chunk_data["chunk"])
+
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
         await self.plugin_runtime_handler.call_action(
@@ -199,3 +228,87 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.LIST_TOOLS, {}
             )
         )["tools"]
+
+    async def call_tool(
+        self,
+        tool_name: str,
+        parameters: dict[str, Any],
+        session_data: dict[str, Any],
+        query_id: int,
+    ) -> dict[str, Any]:
+        """Call a tool by name
+
+        Args:
+            tool_name: Name of the tool to call
+            parameters: Parameters for the tool
+            session_data: Session information
+            query_id: Query ID
+
+        Returns:
+            Tool execution result as dict
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.CALL_TOOL,
+                {
+                    "tool_name": tool_name,
+                    "parameters": parameters,
+                    "session": session_data,
+                    "query_id": query_id,
+                },
+            )
+        )["result"]
+
+    async def retrieve_knowledge(
+        self,
+        kb_uuid: str,
+        query: str,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Retrieve knowledge from a knowledge base
+
+        Args:
+            kb_uuid: UUID of the knowledge base
+            query: Query text for retrieval
+            top_k: Number of top results to return
+
+        Returns:
+            List of retrieval results, each containing:
+                - id: Result ID
+                - content: List of ContentElement
+                - metadata: Additional metadata
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
+                {
+                    "kb_uuid": kb_uuid,
+                    "query": query,
+                    "top_k": top_k,
+                },
+            )
+        )["results"]
+
+    async def invoke_embedding(
+        self,
+        embedding_model_uuid: str,
+        texts: list[str],
+    ) -> list[list[float]]:
+        """Invoke an embedding model to generate embeddings
+
+        Args:
+            embedding_model_uuid: UUID of the embedding model
+            texts: List of texts to embed
+
+        Returns:
+            List of embedding vectors
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.INVOKE_EMBEDDING,
+                {
+                    "embedding_model_uuid": embedding_model_uuid,
+                    "texts": texts,
+                },
+            )
+        )["embeddings"]

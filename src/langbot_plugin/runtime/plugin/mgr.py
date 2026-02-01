@@ -672,6 +672,83 @@ class PluginManager:
                     break
 
     # KnowledgeRetriever methods
+    async def list_agent_runners(self, include_plugins: list[str] | None = None) -> list[dict[str, typing.Any]]:
+        """List all available AgentRunner components from plugins."""
+        from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+
+        runners: list[dict[str, typing.Any]] = []
+
+        for plugin in self.plugins:
+            # Filter by include_plugins if specified
+            if include_plugins is not None:
+                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                if plugin_id not in include_plugins:
+                    continue
+
+            for component in plugin.components:
+                if component.manifest.kind == AgentRunner.__kind__:
+                    runners.append({
+                        "plugin_author": plugin.manifest.metadata.author,
+                        "plugin_name": plugin.manifest.metadata.name,
+                        "runner_name": component.manifest.metadata.name,
+                        "runner_description": component.manifest.metadata.description,
+                        "manifest": component.manifest.model_dump(),
+                    })
+
+        return runners
+
+    async def run_agent(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        runner_name: str,
+        context: dict[str, typing.Any],
+    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
+        """Run an AgentRunner component."""
+        from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+        from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
+
+        # Find the plugin
+        target_plugin = None
+        for plugin in self.plugins:
+            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
+                target_plugin = plugin
+                break
+
+        if target_plugin is None:
+            yield {"type": "finish", "finish_reason": "error", "content": f"Plugin {plugin_author}/{plugin_name} not found"}
+            return
+
+        # Find the component
+        target_component = None
+        for component in target_plugin.components:
+            if component.manifest.kind == AgentRunner.__kind__ and component.manifest.metadata.name == runner_name:
+                target_component = component
+                break
+
+        if target_component is None:
+            yield {"type": "finish", "finish_reason": "error", "content": f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}"}
+            return
+
+        # Get the runner instance
+        runner_instance = target_component.python_component_inst
+
+        if runner_instance is None:
+            yield {"type": "finish", "finish_reason": "error", "content": f"AgentRunner {runner_name} not initialized"}
+            return
+
+        # Parse context
+        run_context = AgentRunContext.model_validate(context)
+
+        # Run the agent
+        try:
+            async for result in runner_instance.run(run_context):
+                yield result.model_dump()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield {"type": "finish", "finish_reason": "error", "content": f"Error running agent: {e}"}
+
     async def list_knowledge_retrievers(self) -> list[dict[str, typing.Any]]:
         """List all available KnowledgeRetriever components from plugins."""
         retrievers: list[dict[str, typing.Any]] = []
