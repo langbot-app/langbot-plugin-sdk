@@ -135,19 +135,47 @@ class RAGEngine(PolymorphicComponent):
     # ========== Schema Definitions ==========
 
     @abc.abstractmethod
-    def get_creation_settings_schema(self) -> dict:
-        """Get JSON Schema for knowledge base creation settings.
-        
-        Returns:
-            JSON Schema dict for creation settings.
+    def get_creation_settings_schema(self) -> list[dict]:
+        """Get schema for knowledge base creation settings.
+
+        Returns a list of form field definitions. Each field should have:
+        - name: Field name (string)
+        - label: Display label (dict with en_US, zh_Hans keys)
+        - type: Field type (string), one of:
+            - 'string', 'text', 'integer', 'float', 'boolean'
+            - 'select' (requires 'options')
+            - 'embedding-model-selector' (renders embedding model dropdown)
+            - 'llm-model-selector' (renders LLM model dropdown)
+            - 'knowledge-base-selector', 'bot-selector'
+        - required: Whether field is required (bool)
+        - default: Default value
+        - description: Optional description (dict with en_US, zh_Hans keys)
+        - options: For 'select' type, list of {name, label} dicts
+
+        Example:
+            return [
+                {
+                    "name": "embedding_model_uuid",
+                    "label": {"en_US": "Embedding Model", "zh_Hans": "嵌入模型"},
+                    "type": "embedding-model-selector",
+                    "required": True,
+                    "default": "",
+                },
+                {
+                    "name": "chunk_size",
+                    "label": {"en_US": "Chunk Size", "zh_Hans": "分块大小"},
+                    "type": "integer",
+                    "required": False,
+                    "default": 512,
+                }
+            ]
         """
         pass
 
     @abc.abstractmethod
-    def get_retrieval_settings_schema(self) -> dict:
-        """Get JSON Schema for retrieval runtime settings.
-        
-        Returns:
-            JSON Schema dict for retrieval settings.
+    def get_retrieval_settings_schema(self) -> list[dict]:
+        """Get schema for retrieval runtime settings.
+
+        Returns a list of form field definitions (same format as get_creation_settings_schema).
         """
         pass

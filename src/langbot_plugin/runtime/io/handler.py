@@ -113,6 +113,11 @@ class Handler(abc.ABC):
                 if "action" in req_data:  # action request from peer
                     try:
                         if req_data["action"] not in self.actions:
+                            import sys
+                            sys.stderr.write(f"DEBUG_HANDLER_MSG: {message}\n")
+                            sys.stderr.write(f"DEBUG_HANDLER_ERR: Actions available: {list(self.actions.keys())}\n")
+                            sys.stderr.write(f"DEBUG_HANDLER_ERR: Action {req_data['action']} not found\n")
+                            sys.stderr.flush()
                             raise ValueError(f"Action {req_data['action']} not found")
 
                         response = self.actions[req_data["action"]](req_data["data"])

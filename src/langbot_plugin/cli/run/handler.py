@@ -418,17 +418,26 @@ class PluginRuntimeHandler(Handler):
             rag_component = None
             for component in self.plugin_container.components:
                 if component.manifest.kind == RAGEngine.__kind__:
-                    if component.manifest.metadata.name == retriever_name:
+                    # If retriever_name is empty, use the first found RAGEngine.
+                    # Otherwise, find the specific named component.
+                    if not retriever_name or component.manifest.metadata.name == retriever_name:
                         rag_component = component
                         break
 
             if rag_component is None:
                 return ActionResponse.error(f"RAGEngine {retriever_name} not found")
 
-            if instance_id not in rag_component.polymorphic_component_instances:
-                return ActionResponse.error(f"RAGEngine {retriever_name} instance {instance_id} not found")
+            rag_instance = None
+            if instance_id in rag_component.polymorphic_component_instances:
+                rag_instance = rag_component.polymorphic_component_instances[instance_id]
+            else:
+                # Fallback to component singleton if instance not found
+                # This supports stateless RAG engines or when sync hasn't happened
+                if not isinstance(rag_component.component_instance, NoneComponent):
+                    rag_instance = rag_component.component_instance
+                else:
+                    return ActionResponse.error(f"RAGEngine {retriever_name} instance {instance_id} not found and component is not initialized")
 
-            rag_instance = rag_component.polymorphic_component_instances[instance_id]
             assert isinstance(rag_instance, RAGEngine)
 
             # Call retrieve method - RAGEngine returns RetrievalResponse

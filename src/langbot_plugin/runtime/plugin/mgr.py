@@ -868,7 +868,7 @@ class PluginManager:
         Returns a list of RAG engines with their capabilities and configuration schemas.
         """
         engines: list[dict[str, typing.Any]] = []
-
+        
         for plugin in self.plugins:
             if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
                 continue
@@ -891,15 +891,25 @@ class PluginManager:
                         creation_schema = {}
                         retrieval_schema = {}
 
+                    # Helper to get string from I18nString
+                    def get_i18n_str(i18n_obj) -> str:
+                        if not i18n_obj:
+                            return ""
+                        if hasattr(i18n_obj, "zh_Hans") and i18n_obj.zh_Hans:
+                            return i18n_obj.zh_Hans
+                        if hasattr(i18n_obj, "en_US") and i18n_obj.en_US:
+                            return i18n_obj.en_US
+                        return ""
+
+                    meta = component.manifest.metadata
                     engines.append({
                         "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
-                        "name": component.manifest.metadata.label or component.manifest.metadata.name,
-                        "description": component.manifest.metadata.description or {},
+                        "name": get_i18n_str(meta.label) or meta.name,
+                        "description": get_i18n_str(meta.description),
                         "capabilities": capabilities,
                         "creation_schema": creation_schema,
                         "retrieval_schema": retrieval_schema,
                     })
-
         return engines
 
     async def rag_ingest_document(
