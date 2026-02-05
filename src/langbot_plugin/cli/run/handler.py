@@ -467,22 +467,32 @@ class PluginRuntimeHandler(Handler):
                     return component
             return None
 
+        def _get_rag_engine_or_error(self) -> tuple[RAGEngine | None, ActionResponse | None]:
+            """Get RAGEngine instance or error response.
+
+            Returns:
+                (rag_engine, None) if successful
+                (None, error_response) if failed
+            """
+            rag_component = _find_rag_engine_component(self)
+            if rag_component is None:
+                return None, ActionResponse.error("RAGEngine component not found in this plugin")
+            if isinstance(rag_component.component_instance, NoneComponent):
+                return None, ActionResponse.error("RAGEngine component is not initialized")
+            assert isinstance(rag_component.component_instance, RAGEngine)
+            return rag_component.component_instance, None
+
         @self.action(RuntimeToPluginAction.INGEST_DOCUMENT)
         async def ingest_document(data: dict[str, typing.Any]) -> ActionResponse:
             """Ingest a document using the RAGEngine component."""
             context_data = data["context"]
 
-            rag_component = _find_rag_engine_component(self)
-            if rag_component is None:
-                return ActionResponse.error("RAGEngine component not found in this plugin")
-
-            if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error("RAGEngine component is not initialized")
-
-            assert isinstance(rag_component.component_instance, RAGEngine)
+            rag_engine, error = _get_rag_engine_or_error(self)
+            if error:
+                return error
 
             ingestion_context = IngestionContext.model_validate(context_data)
-            result = await rag_component.component_instance.ingest(ingestion_context)
+            result = await rag_engine.ingest(ingestion_context)
 
             return ActionResponse.success(result.model_dump(mode="json"))
 
@@ -492,16 +502,11 @@ class PluginRuntimeHandler(Handler):
             kb_id = data["kb_id"]
             document_id = data["document_id"]
 
-            rag_component = _find_rag_engine_component(self)
-            if rag_component is None:
-                return ActionResponse.error("RAGEngine component not found in this plugin")
+            rag_engine, error = _get_rag_engine_or_error(self)
+            if error:
+                return error
 
-            if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error("RAGEngine component is not initialized")
-
-            assert isinstance(rag_component.component_instance, RAGEngine)
-
-            success = await rag_component.component_instance.delete_document(kb_id, document_id)
+            success = await rag_engine.delete_document(kb_id, document_id)
 
             return ActionResponse.success({"success": success})
 
@@ -511,16 +516,11 @@ class PluginRuntimeHandler(Handler):
             kb_id = data["kb_id"]
             config = data.get("config", {})
 
-            rag_component = _find_rag_engine_component(self)
-            if rag_component is None:
-                return ActionResponse.error("RAGEngine component not found in this plugin")
+            rag_engine, error = _get_rag_engine_or_error(self)
+            if error:
+                return error
 
-            if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error("RAGEngine component is not initialized")
-
-            assert isinstance(rag_component.component_instance, RAGEngine)
-
-            await rag_component.component_instance.on_knowledge_base_create(kb_id, config)
+            await rag_engine.on_knowledge_base_create(kb_id, config)
 
             return ActionResponse.success({"success": True})
 
@@ -529,48 +529,33 @@ class PluginRuntimeHandler(Handler):
             """Notify RAGEngine about KB deletion."""
             kb_id = data["kb_id"]
 
-            rag_component = _find_rag_engine_component(self)
-            if rag_component is None:
-                return ActionResponse.error("RAGEngine component not found in this plugin")
+            rag_engine, error = _get_rag_engine_or_error(self)
+            if error:
+                return error
 
-            if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error("RAGEngine component is not initialized")
-
-            assert isinstance(rag_component.component_instance, RAGEngine)
-
-            await rag_component.component_instance.on_knowledge_base_delete(kb_id)
+            await rag_engine.on_knowledge_base_delete(kb_id)
 
             return ActionResponse.success({"success": True})
 
         @self.action(RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
         async def get_rag_creation_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG creation settings schema from the RAGEngine component."""
-            rag_component = _find_rag_engine_component(self)
-            if rag_component is None:
-                return ActionResponse.error("RAGEngine component not found in this plugin")
+            rag_engine, error = _get_rag_engine_or_error(self)
+            if error:
+                return error
 
-            if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error("RAGEngine component is not initialized")
-
-            assert isinstance(rag_component.component_instance, RAGEngine)
-
-            schema = rag_component.component_instance.get_creation_settings_schema()
+            schema = rag_engine.get_creation_settings_schema()
 
             return ActionResponse.success({"schema": schema})
 
         @self.action(RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
         async def get_rag_retrieval_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG retrieval settings schema from the RAGEngine component."""
-            rag_component = _find_rag_engine_component(self)
-            if rag_component is None:
-                return ActionResponse.error("RAGEngine component not found in this plugin")
+            rag_engine, error = _get_rag_engine_or_error(self)
+            if error:
+                return error
 
-            if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error("RAGEngine component is not initialized")
-
-            assert isinstance(rag_component.component_instance, RAGEngine)
-
-            schema = rag_component.component_instance.get_retrieval_settings_schema()
+            schema = rag_engine.get_retrieval_settings_schema()
 
             return ActionResponse.success({"schema": schema})
 
