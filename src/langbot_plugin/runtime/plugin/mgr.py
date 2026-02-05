@@ -28,7 +28,7 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.rag_engine.retriever import RAGEngine
+from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalResultEntry, RetrievalContext
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,

@@ -1,5 +1,5 @@
 """RAG engine components."""
 
-from .retriever import RAGEngine, RAGEngineCapability
+from .engine import RAGEngine, RAGEngineCapability
 
 __all__ = ["RAGEngine", "RAGEngineCapability"]

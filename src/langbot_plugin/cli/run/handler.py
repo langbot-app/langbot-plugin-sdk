@@ -20,7 +20,7 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.rag_engine.retriever import RAGEngine
+from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
 from langbot_plugin.api.definition.components.base import PolymorphicComponent
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import IngestionContext
