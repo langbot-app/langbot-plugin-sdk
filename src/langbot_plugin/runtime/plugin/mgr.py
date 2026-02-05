@@ -862,6 +862,30 @@ class PluginManager:
         # No RAG component found, but plugin exists
         return plugin, None
 
+    def _get_connected_rag_plugin(self, plugin_author: str, plugin_name: str) -> tuple[runtime_plugin_container.PluginContainer, str]:
+        """Helper to find a RAG plugin and ensure it's connected.
+        
+        Args:
+            plugin_author: Author of the plugin
+            plugin_name: Name of the plugin
+            
+        Returns:
+            Tuple of (plugin_container, component_name)
+            
+        Raises:
+            ValueError: If plugin not found, has no RAG component, or is not connected.
+        """
+        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
+
+        if plugin is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+        if component_name is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
+        if plugin._runtime_plugin_handler is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+            
+        return plugin, component_name
+
     async def list_rag_engines(self) -> list[dict[str, typing.Any]]:
         """List all available RAG engines from plugins.
 
@@ -891,21 +915,11 @@ class PluginManager:
                         creation_schema = {}
                         retrieval_schema = {}
 
-                    # Helper to get string from I18nString
-                    def get_i18n_str(i18n_obj) -> str:
-                        if not i18n_obj:
-                            return ""
-                        if hasattr(i18n_obj, "zh_Hans") and i18n_obj.zh_Hans:
-                            return i18n_obj.zh_Hans
-                        if hasattr(i18n_obj, "en_US") and i18n_obj.en_US:
-                            return i18n_obj.en_US
-                        return ""
-
                     meta = component.manifest.metadata
                     engines.append({
                         "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
-                        "name": get_i18n_str(meta.label) or meta.name,
-                        "description": get_i18n_str(meta.description),
+                        "name": meta.label or meta.name,  # Pass I18n object or string directly
+                        "description": meta.description,   # Pass I18n object directly
                         "capabilities": capabilities,
                         "creation_schema": creation_schema,
                         "retrieval_schema": retrieval_schema,
@@ -916,15 +930,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
         """Call plugin to ingest a document."""
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
-
-        if plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-        if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
-        if plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
         resp = await plugin._runtime_plugin_handler.rag_ingest_document(context_data)
         return resp
 
@@ -932,15 +938,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str, kb_id: str, document_id: str
     ) -> dict[str, typing.Any]:
         """Call plugin to delete a document."""
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
-
-        if plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-        if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
-        if plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
         resp = await plugin._runtime_plugin_handler.rag_delete_document(kb_id, document_id)
         return resp
 
@@ -948,15 +946,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str, kb_id: str, config: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
         """Notify plugin about KB creation."""
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
-
-        if plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-        if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
-        if plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
         resp = await plugin._runtime_plugin_handler.rag_on_kb_create(kb_id, config)
         return resp
 
@@ -964,15 +954,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str, kb_id: str
     ) -> dict[str, typing.Any]:
         """Notify plugin about KB deletion."""
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
-
-        if plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-        if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
-        if plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
         resp = await plugin._runtime_plugin_handler.rag_on_kb_delete(kb_id)
         return resp
 
@@ -980,14 +962,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str
     ) -> dict[str, typing.Any]:
         """Get RAG creation settings schema from plugin."""
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
-
-        if plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-        if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
-        if plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
 
         resp = await plugin._runtime_plugin_handler.get_rag_creation_schema()
         return resp
@@ -996,14 +971,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str
     ) -> dict[str, typing.Any]:
         """Get RAG retrieval settings schema from plugin."""
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
-
-        if plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-        if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
-        if plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
 
         resp = await plugin._runtime_plugin_handler.get_rag_retrieval_schema()
         return resp
