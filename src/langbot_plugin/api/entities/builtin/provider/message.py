@@ -140,6 +140,7 @@ class Message(pydantic.BaseModel):
 
                         mc.append(platform_message.Image(base64=b64_str))
                 elif ce.type == "image_base64":  # base64
+                    if ce.image_base64 is not None:
                     mc.append(platform_message.Image(base64=ce.image_base64))
 
             # find the first text component
@@ -226,6 +227,10 @@ class MessageChunk(pydantic.BaseModel):
                             b64_str = b64_str.split(",")[1]
 
                         mc.append(platform_message.Image(base64=b64_str))
+                elif ce.type == "image_base64":  # base64
+                    if ce.image_base64 is not None:
+                    mc.append(platform_message.Image(base64=ce.image_base64))
+
 
             # 找第一个文字组件
             if prefix_text:
