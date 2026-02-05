@@ -61,6 +61,9 @@ class RetrievalContext(pydantic.BaseModel):
     config: Optional[RetrievalConfig] = None
     """New-style retrieval configuration."""
 
+    creation_settings: dict[str, Any] = Field(default_factory=dict)
+    """Creation settings of the knowledge base (e.g. API keys)."""
+
     filters: dict[str, Any] = Field(default_factory=dict)
     """Metadata filters for retrieval."""
 
