@@ -58,6 +58,9 @@ class RetrievalContext(pydantic.BaseModel):
     knowledge_base_id: Optional[str] = None
     """Knowledge base to search in."""
 
+    collection_id: Optional[str] = None
+    """Target vector collection ID. Defaults to knowledge_base_id if not set."""
+
     config: Optional[RetrievalConfig] = None
     """New-style retrieval configuration."""
 
@@ -74,6 +77,14 @@ class RetrievalContext(pydantic.BaseModel):
             The top_k value from config if available, otherwise from legacy field.
         """
         return self.config.top_k if self.config else self.top_k
+
+    def get_collection_id(self) -> str:
+        """Get the collection ID, falling back to knowledge_base_id.
+
+        Returns:
+            The collection_id if set, otherwise knowledge_base_id.
+        """
+        return self.collection_id or self.knowledge_base_id or ""
 
 
 class RetrievalResponse(pydantic.BaseModel):
