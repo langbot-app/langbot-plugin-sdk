@@ -17,16 +17,20 @@ class ComponentDiscoveryEngine:
         self, path: str, owner: str = "builtin", no_save: bool = False
     ) -> ComponentManifest | None:
         """加载组件清单"""
-        with open(path, "r", encoding="utf-8") as f:
-            manifest = yaml.safe_load(f)
-            if not ComponentManifest.is_component_manifest(manifest):
-                return None
-            comp = ComponentManifest(owner=owner, manifest=manifest, rel_path=path)
-            if not no_save:
-                if comp.kind not in self.components:
-                    self.components[comp.kind] = []
-                self.components[comp.kind].append(comp)
-            return comp
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                manifest = yaml.safe_load(f)
+                if not ComponentManifest.is_component_manifest(manifest):
+                    return None
+                
+                comp = ComponentManifest(owner=owner, manifest=manifest, rel_path=path)
+                if not no_save:
+                    if comp.kind not in self.components:
+                        self.components[comp.kind] = []
+                    self.components[comp.kind].append(comp)
+                return comp
+        except Exception as e:
+            return None
 
     def load_component_manifests_in_dir(
         self,

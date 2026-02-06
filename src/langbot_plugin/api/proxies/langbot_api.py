@@ -199,3 +199,158 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.LIST_TOOLS, {}
             )
         )["tools"]
+
+    # ================= RAG Capability APIs =================
+
+    async def rag_embed_documents(self, kb_id: str, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for documents using Host's embedding model.
+        
+        Args:
+            kb_id: The Knowledge Base ID (context) to determine which embedding model to use.
+            texts: List of texts to embed.
+            
+        Returns:
+            List of embedding vectors.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_EMBED_DOCUMENTS,
+                {
+                    "kb_id": kb_id,
+                    "texts": texts
+                }
+            )
+        )["vectors"]
+
+    async def rag_embed_query(self, kb_id: str, text: str) -> list[float]:
+        """Generate embedding for a query using Host's embedding model.
+        
+        Args:
+            kb_id: The Knowledge Base ID (context) to determine which embedding model to use.
+            text: Query text to embed.
+            
+        Returns:
+            Embedding vector.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_EMBED_QUERY,
+                {
+                    "kb_id": kb_id,
+                    "text": text
+                }
+            )
+        )["vector"]
+
+    async def rag_vector_upsert(
+        self, 
+        collection_id: str, 
+        vectors: list[list[float]], 
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None
+    ) -> None:
+        """Upsert vectors to Host's vector store.
+        
+        Args:
+            collection_id: Target collection ID.
+            vectors: List of vectors.
+            ids: List of unique IDs for vectors.
+            metadata: Optional list of metadata dicts corresponding to vectors.
+        """
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RAG_VECTOR_UPSERT,
+            {
+                "collection_id": collection_id,
+                "vectors": vectors,
+                "ids": ids,
+                "metadata": metadata
+            }
+        )
+
+    async def rag_vector_search(
+        self,
+        collection_id: str,
+        query_vector: list[float] | None = None,
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None,
+        query_text: str | None = None,
+        search_type: str = "similarity",
+    ) -> list[dict[str, Any]]:
+        """Search similar vectors in Host's vector store.
+
+        Args:
+            collection_id: Target collection ID.
+            query_vector: Query vector for similarity search.
+            top_k: Number of results to return.
+            filters: Optional metadata filters.
+            query_text: Query text for keyword/hybrid search.
+            search_type: Search type - "similarity", "keyword", or "hybrid".
+
+        Returns:
+            List of search results (dict with id, score, metadata).
+
+        .. todo::
+            SDK 的参数签名比 Core 端丰富（query_text, search_type, filters）。
+            Core 端的 vector_search 目前只支持 collection_id + query_vector + top_k。
+            后续 Core 端会对齐这些高级搜索参数。在此之前多余参数会被 Core 忽略。
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_VECTOR_SEARCH,
+                {
+                    "collection_id": collection_id,
+                    "query_vector": query_vector,
+                    "top_k": top_k,
+                    "filters": filters,
+                    "query_text": query_text,
+                    "search_type": search_type,
+                }
+            )
+        )["results"]
+
+    async def rag_vector_delete(
+        self,
+        collection_id: str,
+        ids: list[str] | None = None,
+        filters: dict[str, Any] | None = None
+    ) -> int:
+        """Delete vectors from Host's vector store.
+        
+        Args:
+            collection_id: Target collection ID.
+            ids: Optional list of vector IDs to delete. Note: Core currently
+                implements deletion by file_id (via metadata filter), so each
+                id here is treated as a file_id whose associated vectors will
+                be removed.
+            filters: Optional metadata filters for deletion.
+                Note: Core currently does NOT support filter-based deletion;
+                passing filters will raise NotImplementedError on the Core side.
+            
+        Returns:
+            Number of deleted items.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RAG_VECTOR_DELETE,
+                {
+                    "collection_id": collection_id,
+                    "ids": ids,
+                    "filters": filters
+                }
+            )
+        )["count"]
+
+    async def rag_get_file_stream(self, storage_path: str) -> bytes:
+        """Get file content from Host's storage.
+
+        Args:
+            storage_path: Logic path in FileObject.
+
+        Returns:
+            File content bytes.
+        """
+        resp = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RAG_GET_FILE_STREAM,
+            {"storage_path": storage_path}
+        )
+        return base64.b64decode(resp["content_base64"])

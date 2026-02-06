@@ -20,9 +20,10 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_retriever.retriever import KnowledgeRetriever
+from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
 from langbot_plugin.api.definition.components.base import PolymorphicComponent
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
+from langbot_plugin.api.entities.builtin.rag.models import IngestionContext
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
 
@@ -409,31 +410,40 @@ class PluginRuntimeHandler(Handler):
 
         @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, typing.Any]) -> ActionResponse:
-            """Retrieve knowledge using a KnowledgeRetriever instance."""
+            """Retrieve knowledge using a RAGEngine instance."""
             retriever_name = data["retriever_name"]
             instance_id = data["instance_id"]
             retrieval_context = RetrievalContext.model_validate(data["retrieval_context"])
 
-            retriever_component = None
+            rag_component = None
             for component in self.plugin_container.components:
-                if component.manifest.kind == KnowledgeRetriever.__kind__:
-                    if component.manifest.metadata.name == retriever_name:
-                        retriever_component = component
+                if component.manifest.kind == RAGEngine.__kind__:
+                    # If retriever_name is empty, use the first found RAGEngine.
+                    # Otherwise, find the specific named component.
+                    if not retriever_name or component.manifest.metadata.name == retriever_name:
+                        rag_component = component
                         break
 
-            if retriever_component is None:
-                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} not found")
+            if rag_component is None:
+                return ActionResponse.error(f"RAGEngine {retriever_name} not found")
 
-            if instance_id not in retriever_component.polymorphic_component_instances:
-                return ActionResponse.error(f"KnowledgeRetriever {retriever_name} instance {instance_id} not found")
+            rag_instance = None
+            if instance_id in rag_component.polymorphic_component_instances:
+                rag_instance = rag_component.polymorphic_component_instances[instance_id]
+            else:
+                # Fallback to component singleton if instance not found
+                # This supports stateless RAG engines or when sync hasn't happened
+                if not isinstance(rag_component.component_instance, NoneComponent):
+                    rag_instance = rag_component.component_instance
+                else:
+                    return ActionResponse.error(f"RAGEngine {retriever_name} instance {instance_id} not found and component is not initialized")
 
-            retriever_instance = retriever_component.polymorphic_component_instances[instance_id]
-            assert isinstance(retriever_instance, KnowledgeRetriever)
+            assert isinstance(rag_instance, RAGEngine)
 
-            # Call retrieve method
-            results = await retriever_instance.retrieve(retrieval_context)
+            # Call retrieve method - RAGEngine returns RetrievalResponse
+            response = await rag_instance.retrieve(retrieval_context)
 
-            return ActionResponse.success({"retrieval_results": [result.model_dump(mode="json") for result in results]})
+            return ActionResponse.success(response.model_dump(mode="json"))
 
         @self.action(RuntimeToPluginAction.SHUTDOWN)
         async def shutdown(data: dict[str, typing.Any]) -> ActionResponse:
@@ -447,6 +457,123 @@ class PluginRuntimeHandler(Handler):
                 asyncio.create_task(self.shutdown_callback())
 
             return ActionResponse.success({})
+
+        # ================= RAG Engine Actions =================
+
+        def _find_rag_engine_component() -> ComponentContainer | None:
+            """Find the RAGEngine component in the plugin."""
+            for component in self.plugin_container.components:
+                if component.manifest.kind == RAGEngine.__kind__:
+                    return component
+            return None
+
+        def _get_rag_engine_or_error() -> tuple[RAGEngine | None, ActionResponse | None]:
+            """Get RAGEngine instance or error response.
+
+            Returns:
+                (rag_engine, None) if successful
+                (None, error_response) if failed
+            """
+            rag_component = _find_rag_engine_component()
+            if rag_component is None:
+                return None, ActionResponse.error("RAGEngine component not found in this plugin")
+            if isinstance(rag_component.component_instance, NoneComponent):
+                return None, ActionResponse.error("RAGEngine component is not initialized")
+            assert isinstance(rag_component.component_instance, RAGEngine)
+            return rag_component.component_instance, None
+
+        @self.action(RuntimeToPluginAction.INGEST_DOCUMENT)
+        async def ingest_document(data: dict[str, typing.Any]) -> ActionResponse:
+            """Ingest a document using the RAGEngine component."""
+            context_data = data["context"]
+
+            rag_engine, error = _get_rag_engine_or_error()
+            if error:
+                return error
+
+            ingestion_context = IngestionContext.model_validate(context_data)
+            result = await rag_engine.ingest(ingestion_context)
+
+            return ActionResponse.success(result.model_dump(mode="json"))
+
+        @self.action(RuntimeToPluginAction.DELETE_DOCUMENT)
+        async def delete_document(data: dict[str, typing.Any]) -> ActionResponse:
+            """Delete a document using the RAGEngine component."""
+            kb_id = data["kb_id"]
+            document_id = data["document_id"]
+
+            rag_engine, error = _get_rag_engine_or_error()
+            if error:
+                return error
+
+            success = await rag_engine.delete_document(kb_id, document_id)
+
+            return ActionResponse.success({"success": success})
+
+        @self.action(RuntimeToPluginAction.ON_KB_CREATE)
+        async def on_kb_create(data: dict[str, typing.Any]) -> ActionResponse:
+            """Notify RAGEngine about KB creation."""
+            kb_id = data["kb_id"]
+            config = data.get("config", {})
+
+            rag_engine, error = _get_rag_engine_or_error()
+            if error:
+                return error
+
+            await rag_engine.on_knowledge_base_create(kb_id, config)
+
+            return ActionResponse.success({"success": True})
+
+        @self.action(RuntimeToPluginAction.ON_KB_DELETE)
+        async def on_kb_delete(data: dict[str, typing.Any]) -> ActionResponse:
+            """Notify RAGEngine about KB deletion."""
+            kb_id = data["kb_id"]
+
+            rag_engine, error = _get_rag_engine_or_error()
+            if error:
+                return error
+
+            await rag_engine.on_knowledge_base_delete(kb_id)
+
+            return ActionResponse.success({"success": True})
+
+        @self.action(RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
+        async def get_rag_creation_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
+            """Get RAG creation settings schema from the RAGEngine component."""
+            rag_engine, error = _get_rag_engine_or_error()
+            if error:
+                return error
+
+            schema = rag_engine.get_creation_settings_schema()
+
+            return ActionResponse.success({"schema": schema})
+
+        @self.action(RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
+        async def get_rag_retrieval_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
+            """Get RAG retrieval settings schema from the RAGEngine component."""
+            rag_engine, error = _get_rag_engine_or_error()
+            if error:
+                return error
+
+            schema = rag_engine.get_retrieval_settings_schema()
+
+            return ActionResponse.success({"schema": schema})
+
+        @self.action(RuntimeToPluginAction.GET_RAG_CAPABILITIES)
+        async def get_rag_capabilities(data: dict[str, typing.Any]) -> ActionResponse:
+            """Get RAG capabilities from the RAGEngine component."""
+            rag_component = _find_rag_engine_component()
+            if rag_component is None:
+                return ActionResponse.error("RAGEngine component not found in this plugin")
+
+            # Get capabilities from the class method (doesn't need instance)
+            component_class = rag_component.manifest.get_python_component_class()
+            if issubclass(component_class, RAGEngine):
+                capabilities = component_class.get_capabilities()
+            else:
+                capabilities = []
+
+            return ActionResponse.success({"capabilities": capabilities})
 
     async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
         # Read PLUGIN_DEBUG_KEY from environment variable

@@ -213,6 +213,68 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        # ================= RAG Capability Handlers (Plugin -> Runtime -> Host) =================
+
+        async def _proxy_rag_action(
+            action: PluginToRuntimeAction,
+            data: dict[str, Any],
+            timeout: float = 30,
+        ) -> dict[str, Any]:
+            """Proxy a RAG action to the control handler with error handling.
+
+            Raises:
+                Exception: Re-raises with context if the upstream call fails.
+            """
+            try:
+                return await self.context.control_handler.call_action(
+                    action, data, timeout=timeout,
+                )
+            except Exception as e:
+                logger.error(f"RAG proxy error [{action.value}]: {e}")
+                raise
+
+        @self.action(PluginToRuntimeAction.RAG_EMBED_DOCUMENTS)
+        async def rag_embed_documents(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_EMBED_DOCUMENTS, data, timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_EMBED_QUERY)
+        async def rag_embed_query(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_EMBED_QUERY, data, timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_VECTOR_UPSERT)
+        async def rag_vector_upsert(data: dict[str, Any]) -> handler.ActionResponse:
+            await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_VECTOR_UPSERT, data, timeout=60,
+            )
+            return handler.ActionResponse.success({})
+
+        @self.action(PluginToRuntimeAction.RAG_VECTOR_SEARCH)
+        async def rag_vector_search(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_VECTOR_SEARCH, data, timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_VECTOR_DELETE)
+        async def rag_vector_delete(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_VECTOR_DELETE, data, timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_GET_FILE_STREAM)
+        async def rag_get_file_stream(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_GET_FILE_STREAM, data, timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.SET_PLUGIN_STORAGE)
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
@@ -503,5 +565,76 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.SHUTDOWN,
             {},
+        )
+        return resp
+
+    # ================= RAG Engine Methods =================
+
+    async def rag_ingest_document(
+        self, context_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Call plugin to ingest a document."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.INGEST_DOCUMENT,
+            {"context": context_data},
+            timeout=300  # Ingestion can be slow
+        )
+        return resp
+
+    async def rag_delete_document(
+        self, kb_id: str, document_id: str
+    ) -> dict[str, Any]:
+        """Call plugin to delete a document."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.DELETE_DOCUMENT,
+            {"kb_id": kb_id, "document_id": document_id},
+            timeout=30
+        )
+        return resp
+
+    async def rag_on_kb_create(
+        self, kb_id: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Notify plugin about KB creation."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.ON_KB_CREATE,
+            {"kb_id": kb_id, "config": config},
+            timeout=30
+        )
+        return resp
+
+    async def rag_on_kb_delete(self, kb_id: str) -> dict[str, Any]:
+        """Notify plugin about KB deletion."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.ON_KB_DELETE,
+            {"kb_id": kb_id},
+            timeout=30
+        )
+        return resp
+
+    async def get_rag_creation_schema(self) -> dict[str, Any]:
+        """Get RAG creation settings schema from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA,
+            {},
+            timeout=10
+        )
+        return resp
+
+    async def get_rag_retrieval_schema(self) -> dict[str, Any]:
+        """Get RAG retrieval settings schema from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA,
+            {},
+            timeout=10
+        )
+        return resp
+
+    async def get_rag_capabilities(self) -> dict[str, Any]:
+        """Get RAG capabilities from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_CAPABILITIES,
+            {},
+            timeout=10
         )
         return resp

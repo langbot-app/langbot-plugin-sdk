@@ -98,19 +98,22 @@ def command_component_input_post_process(values: dict[str, Any]) -> dict[str, An
     result["cmd_attr"] = python_attr_valid_name
     return result
 
-def knowledge_retriever_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+
+def rag_engine_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
     result = {
-        "retriever_name": values["retriever_name"],
-        "retriever_label": values["retriever_name"],
-        "retriever_description": values["retriever_description"],
-        "retriever_attr": values["retriever_name"],
+        "rag_engine_name": values["rag_engine_name"],
+        "rag_engine_label": values["rag_engine_name"],
+        "rag_engine_description": values["rag_engine_description"],
+        "rag_engine_attr": values["rag_engine_name"],
     }
+
     python_attr_valid_name = "".join(
-        word.capitalize() for word in values["retriever_name"].split("_")
+        word.capitalize() for word in values["rag_engine_name"].split("_")
     )
-    result["retriever_label"] = python_attr_valid_name
-    result["retriever_attr"] = python_attr_valid_name
+    result["rag_engine_label"] = python_attr_valid_name
+    result["rag_engine_attr"] = python_attr_valid_name
     return result
+
 
 component_types = [
     ComponentType(
@@ -203,43 +206,43 @@ component_types = [
         input_post_process=command_component_input_post_process,
     ),
     ComponentType(
-        type_name="KnowledgeRetriever",
-        target_dir="components/knowledge_retriever",
+        type_name="RAGEngine",
+        target_dir="components/rag_engine",
         template_files=[
-            "{retriever_name}.yaml",
-            "{retriever_name}.py",
+            "{rag_engine_name}.yaml",
+            "{rag_engine_name}.py",
         ],
         form_fields=[
             {
-                "name": "retriever_name",
+                "name": "rag_engine_name",
                 "label": {
-                    "en_US": "Knowledge retriever name",
-                    "zh_Hans": "知识检索器名称",
-                    "zh_Hant": "知識檢索器名稱",
-                    "ja_JP": "知識検索器名",
+                    "en_US": "RAG Engine name",
+                    "zh_Hans": "RAG 引擎名称",
+                    "zh_Hant": "RAG 引擎名稱",
+                    "ja_JP": "RAG エンジン名",
                 },
                 "required": True,
                 "format": {
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
-                        "en_US": "Invalid knowledge retriever name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
-                        "zh_Hans": "无效的知识检索器名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
-                        "zh_Hant": "無效的知識檢索器名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
-                        "ja_JP": "無効な知識検索器名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
+                        "en_US": "Invalid RAG Engine name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_Hans": "无效的 RAG 引擎名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的 RAG 引擎名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効な RAG エンジン名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
                     },
                 },
             },
             {
-                "name": "retriever_description",
+                "name": "rag_engine_description",
                 "label": {
-                    "en_US": "Knowledge retriever description",
-                    "zh_Hans": "知识检索器描述",
-                    "zh_Hant": "知識檢索器描述",
-                    "ja_JP": "知識検索器の説明",
+                    "en_US": "RAG Engine description",
+                    "zh_Hans": "RAG 引擎描述",
+                    "zh_Hant": "RAG 引擎描述",
+                    "ja_JP": "RAG エンジンの説明",
                 },
                 "required": True,
             },
         ],
-        input_post_process=knowledge_retriever_component_input_post_process,
+        input_post_process=rag_engine_component_input_post_process,
     ),
 ]
