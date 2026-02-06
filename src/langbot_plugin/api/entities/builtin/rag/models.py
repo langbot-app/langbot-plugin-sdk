@@ -72,17 +72,24 @@ class IngestionContext(pydantic.BaseModel):
     knowledge_base_id: str
     """Target knowledge base ID."""
 
-    chunking_strategy: ChunkingStrategy = ChunkingStrategy.FIXED_SIZE
-    """Chunking strategy to use."""
+    collection_id: str | None = None
+    """Target vector collection ID. Defaults to knowledge_base_id if not set."""
 
-    chunk_size: int = 512
-    """Target chunk size (characters or tokens, strategy-dependent)."""
+    chunking_strategy: ChunkingStrategy | None = None
+    """Chunking strategy to use. Determined by plugin if not provided."""
 
-    chunk_overlap: int = 50
-    """Overlap between chunks."""
+    chunk_size: int | None = None
+    """Target chunk size (characters or tokens, strategy-dependent). Determined by plugin if not provided."""
+
+    chunk_overlap: int | None = None
+    """Overlap between chunks. Determined by plugin if not provided."""
 
     custom_settings: dict[str, Any] = Field(default_factory=dict)
-    """Plugin-specific ingestion settings."""
+    """Plugin-specific ingestion settings (from knowledge base creation_settings)."""
+
+    def get_collection_id(self) -> str:
+        """Get the collection ID, falling back to knowledge_base_id."""
+        return self.collection_id or self.knowledge_base_id
 
 
 class IngestionResult(pydantic.BaseModel):

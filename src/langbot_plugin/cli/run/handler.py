@@ -460,21 +460,21 @@ class PluginRuntimeHandler(Handler):
 
         # ================= RAG Engine Actions =================
 
-        def _find_rag_engine_component(self) -> ComponentContainer | None:
+        def _find_rag_engine_component() -> ComponentContainer | None:
             """Find the RAGEngine component in the plugin."""
             for component in self.plugin_container.components:
                 if component.manifest.kind == RAGEngine.__kind__:
                     return component
             return None
 
-        def _get_rag_engine_or_error(self) -> tuple[RAGEngine | None, ActionResponse | None]:
+        def _get_rag_engine_or_error() -> tuple[RAGEngine | None, ActionResponse | None]:
             """Get RAGEngine instance or error response.
 
             Returns:
                 (rag_engine, None) if successful
                 (None, error_response) if failed
             """
-            rag_component = _find_rag_engine_component(self)
+            rag_component = _find_rag_engine_component()
             if rag_component is None:
                 return None, ActionResponse.error("RAGEngine component not found in this plugin")
             if isinstance(rag_component.component_instance, NoneComponent):
@@ -487,7 +487,7 @@ class PluginRuntimeHandler(Handler):
             """Ingest a document using the RAGEngine component."""
             context_data = data["context"]
 
-            rag_engine, error = _get_rag_engine_or_error(self)
+            rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
@@ -502,7 +502,7 @@ class PluginRuntimeHandler(Handler):
             kb_id = data["kb_id"]
             document_id = data["document_id"]
 
-            rag_engine, error = _get_rag_engine_or_error(self)
+            rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
@@ -516,7 +516,7 @@ class PluginRuntimeHandler(Handler):
             kb_id = data["kb_id"]
             config = data.get("config", {})
 
-            rag_engine, error = _get_rag_engine_or_error(self)
+            rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
@@ -529,7 +529,7 @@ class PluginRuntimeHandler(Handler):
             """Notify RAGEngine about KB deletion."""
             kb_id = data["kb_id"]
 
-            rag_engine, error = _get_rag_engine_or_error(self)
+            rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
@@ -540,7 +540,7 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
         async def get_rag_creation_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG creation settings schema from the RAGEngine component."""
-            rag_engine, error = _get_rag_engine_or_error(self)
+            rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
@@ -551,7 +551,7 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
         async def get_rag_retrieval_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG retrieval settings schema from the RAGEngine component."""
-            rag_engine, error = _get_rag_engine_or_error(self)
+            rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
@@ -562,7 +562,7 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_RAG_CAPABILITIES)
         async def get_rag_capabilities(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG capabilities from the RAGEngine component."""
-            rag_component = _find_rag_engine_component(self)
+            rag_component = _find_rag_engine_component()
             if rag_component is None:
                 return ActionResponse.error("RAGEngine component not found in this plugin")
 
