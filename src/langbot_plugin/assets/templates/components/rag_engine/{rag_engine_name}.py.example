@@ -2,7 +2,7 @@
 # Please refer to https://docs.langbot.app/en/plugin/dev/tutor.html for more details.
 from __future__ import annotations
 
-from langbot_plugin.api.definition.components.rag_engine.retriever import (
+from langbot_plugin.api.definition.components.rag_engine.engine import (
     RAGEngine,
     RAGEngineCapability,
 )
@@ -10,12 +10,12 @@ from langbot_plugin.api.entities.builtin.rag.context import (
     RetrievalContext,
     RetrievalResponse,
     RetrievalResultEntry,
-    RetrievalResultContent,
 )
 from langbot_plugin.api.entities.builtin.rag.models import (
     IngestionContext,
     IngestionResult,
 )
+from langbot_plugin.api.entities.builtin.rag.enums import DocumentStatus
 
 
 class {{ rag_engine_attr }}(RAGEngine):
@@ -75,9 +75,9 @@ class {{ rag_engine_attr }}(RAGEngine):
         # )
 
         return IngestionResult(
-            success=True,
             document_id=context.file_object.metadata.get("document_id", ""),
-            chunk_count=len(chunks),
+            status=DocumentStatus.COMPLETED,
+            chunks_created=len(chunks),
         )
 
     async def delete_document(self, kb_id: str, document_id: str) -> bool:

@@ -30,6 +30,7 @@ class ComponentDiscoveryEngine:
                     self.components[comp.kind].append(comp)
                 return comp
         except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to load component manifest {path}: {e}")
             return None
 
     def load_component_manifests_in_dir(
