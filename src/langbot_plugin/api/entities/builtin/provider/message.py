@@ -132,15 +132,16 @@ class Message(pydantic.BaseModel):
                     assert ce.image_url is not None
                     if ce.image_url.url.startswith("http"):
                         mc.append(platform_message.Image(url=ce.image_url.url))
-                    else:  # base64, for backward compatibility
-                        b64_str = ce.image_url.url
+                    # else:  # base64, for backward compatibility
+                    #     b64_str = ce.image_url.url
 
-                        if b64_str.startswith("data:"):  # this should not be removed, but i dont know why
-                            b64_str = b64_str.split(",")[1]
+                    #     if b64_str.startswith("data:"):  # this should not be removed, but i dont know why
+                    #         b64_str = b64_str.split(",")[1]
 
-                        mc.append(platform_message.Image(base64=b64_str))
+                    #     mc.append(platform_message.Image(base64=b64_str))
                 elif ce.type == "image_base64":  # base64
-                    mc.append(platform_message.Image(base64=ce.image_base64))
+                    if ce.image_base64 is not None:
+                        mc.append(platform_message.Image(base64=ce.image_base64))
 
             # find the first text component
             if prefix_text:
@@ -219,13 +220,17 @@ class MessageChunk(pydantic.BaseModel):
                 elif ce.type == "image_url":
                     if ce.image_url.url.startswith("http"):
                         mc.append(platform_message.Image(url=ce.image_url.url))
-                    else:  # base64
-                        b64_str = ce.image_url.url
+                    # else:  # base64
+                    #     b64_str = ce.image_url.url
 
-                        if b64_str.startswith("data:"):
-                            b64_str = b64_str.split(",")[1]
+                    #     if b64_str.startswith("data:"):
+                    #         b64_str = b64_str.split(",")[1]
 
-                        mc.append(platform_message.Image(base64=b64_str))
+                    #     mc.append(platform_message.Image(base64=b64_str))
+                elif ce.type == "image_base64":  # base64
+                    if ce.image_base64 is not None:
+                        mc.append(platform_message.Image(base64=ce.image_base64))
+
 
             # 找第一个文字组件
             if prefix_text:
