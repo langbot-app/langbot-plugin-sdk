@@ -87,10 +87,10 @@ class RAGEngine(PolymorphicComponent):
         """Ingest a document into the knowledge base.
         
         This method should:
-        1. Read the file using `await self.plugin.rag_get_file_content(context.file_object.storage_path)`
+        1. Read the file using `await self.plugin.rag_get_file_stream(context.file_object.storage_path)`
         2. Parse and chunk the content
-        3. Embed using `await self.plugin.rag_embed_documents(context.knowledge_base_id, chunks)`
-        4. Store using `await self.plugin.rag_vector_upsert(kb_id, ...)`
+        3. Embed using `await self.plugin.rag_embed_documents(context.knowledge_base_id, [chunk.text for chunk in chunks])`
+        4. Store using `await self.plugin.rag_vector_upsert(collection_id=context.get_collection_id(), ...)`
         
         Args:
             context: Ingestion context containing file info and settings.
