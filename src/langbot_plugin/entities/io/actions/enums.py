@@ -90,8 +90,6 @@ class RuntimeToPluginAction(ActionType):
     DELETE_DOCUMENT = "delete_document"
     ON_KB_CREATE = "on_kb_create"
     ON_KB_DELETE = "on_kb_delete"
-    GET_RAG_CREATION_SETTINGS_SCHEMA = "get_rag_creation_settings_schema"
-    GET_RAG_RETRIEVAL_SETTINGS_SCHEMA = "get_rag_retrieval_settings_schema"
     GET_RAG_CAPABILITIES = "get_rag_capabilities"
 
 

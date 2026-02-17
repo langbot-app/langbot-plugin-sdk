@@ -612,24 +612,6 @@ class PluginConnectionHandler(handler.Handler):
         )
         return resp
 
-    async def get_rag_creation_schema(self) -> dict[str, Any]:
-        """Get RAG creation settings schema from plugin."""
-        resp = await self.call_action(
-            RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA,
-            {},
-            timeout=10
-        )
-        return resp
-
-    async def get_rag_retrieval_schema(self) -> dict[str, Any]:
-        """Get RAG retrieval settings schema from plugin."""
-        resp = await self.call_action(
-            RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA,
-            {},
-            timeout=10
-        )
-        return resp
-
     async def get_rag_capabilities(self) -> dict[str, Any]:
         """Get RAG capabilities from plugin."""
         resp = await self.call_action(

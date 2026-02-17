@@ -128,37 +128,3 @@ class {{ rag_engine_attr }}(RAGEngine):
             results=entries,
             total_found=len(entries),
         )
-
-    def get_creation_settings_schema(self) -> dict:
-        """JSON Schema for knowledge base creation settings."""
-        return {
-            "type": "object",
-            "properties": {
-                "chunk_size": {
-                    "type": "integer",
-                    "title": "Chunk Size",
-                    "description": "Maximum size of text chunks",
-                    "default": 500,
-                },
-                "chunk_overlap": {
-                    "type": "integer",
-                    "title": "Chunk Overlap",
-                    "description": "Overlap between chunks",
-                    "default": 50,
-                },
-            },
-        }
-
-    def get_retrieval_settings_schema(self) -> dict:
-        """JSON Schema for retrieval runtime settings."""
-        return {
-            "type": "object",
-            "properties": {
-                "score_threshold": {
-                    "type": "number",
-                    "title": "Score Threshold",
-                    "description": "Minimum similarity score for results",
-                    "default": 0.5,
-                },
-            },
-        }

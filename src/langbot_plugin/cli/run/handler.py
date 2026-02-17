@@ -537,28 +537,6 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success({"success": True})
 
-        @self.action(RuntimeToPluginAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
-        async def get_rag_creation_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
-            """Get RAG creation settings schema from the RAGEngine component."""
-            rag_engine, error = _get_rag_engine_or_error()
-            if error:
-                return error
-
-            schema = rag_engine.get_creation_settings_schema()
-
-            return ActionResponse.success({"schema": schema})
-
-        @self.action(RuntimeToPluginAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
-        async def get_rag_retrieval_settings_schema(data: dict[str, typing.Any]) -> ActionResponse:
-            """Get RAG retrieval settings schema from the RAGEngine component."""
-            rag_engine, error = _get_rag_engine_or_error()
-            if error:
-                return error
-
-            schema = rag_engine.get_retrieval_settings_schema()
-
-            return ActionResponse.success({"schema": schema})
-
         @self.action(RuntimeToPluginAction.GET_RAG_CAPABILITIES)
         async def get_rag_capabilities(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG capabilities from the RAGEngine component."""

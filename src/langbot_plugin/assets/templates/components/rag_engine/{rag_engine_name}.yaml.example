@@ -8,6 +8,23 @@ metadata:
   description:
     en_US: '{{ rag_engine_description }}'
     zh_Hans: '{{ rag_engine_description }}'
+spec:
+  creation_schema:
+    - name: chunk_size
+      label:
+        en_US: Chunk Size
+        zh_Hans: 分块大小
+      type: integer
+      required: false
+      default: 500
+  retrieval_schema:
+    - name: score_threshold
+      label:
+        en_US: Score Threshold
+        zh_Hans: 分数阈值
+      type: float
+      required: false
+      default: 0.5
 execution:
   python:
     path: {{ rag_engine_name }}.py

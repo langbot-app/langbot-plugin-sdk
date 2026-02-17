@@ -892,14 +892,14 @@ class PluginManager:
         Returns a list of RAG engines with their capabilities and configuration schemas.
         """
         engines: list[dict[str, typing.Any]] = []
-        
+
         for plugin in self.plugins:
             if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
                 continue
 
             for component in plugin.components:
                 if component.manifest.kind == RAGEngine.__kind__:
-                    # Get capabilities and schemas from the plugin
+                    # Get capabilities from the plugin
                     try:
                         capabilities_resp = await plugin._runtime_plugin_handler.get_rag_capabilities()
                         capabilities = capabilities_resp.get("capabilities", [])
@@ -907,13 +907,9 @@ class PluginManager:
                         logger.warning(f"Failed to get capabilities from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}")
                         capabilities = []
 
-                    try:
-                        creation_schema = await plugin._runtime_plugin_handler.get_rag_creation_schema()
-                        retrieval_schema = await plugin._runtime_plugin_handler.get_rag_retrieval_schema()
-                    except Exception as e:
-                        logger.warning(f"Failed to get schemas from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}")
-                        creation_schema = {}
-                        retrieval_schema = {}
+                    # Read schemas from manifest YAML
+                    creation_schema = {"schema": component.manifest.spec.get('creation_schema', [])}
+                    retrieval_schema = {"schema": component.manifest.spec.get('retrieval_schema', [])}
 
                     meta = component.manifest.metadata
                     engines.append({
@@ -961,17 +957,23 @@ class PluginManager:
     async def get_rag_creation_schema(
         self, plugin_author: str, plugin_name: str
     ) -> dict[str, typing.Any]:
-        """Get RAG creation settings schema from plugin."""
-        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
-
-        resp = await plugin._runtime_plugin_handler.get_rag_creation_schema()
-        return resp
+        """Get RAG creation settings schema from plugin manifest."""
+        plugin, _ = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return {"schema": []}
+        for component in plugin.components:
+            if component.manifest.kind == RAGEngine.__kind__:
+                return {"schema": component.manifest.spec.get('creation_schema', [])}
+        return {"schema": []}
 
     async def get_rag_retrieval_schema(
         self, plugin_author: str, plugin_name: str
     ) -> dict[str, typing.Any]:
-        """Get RAG retrieval settings schema from plugin."""
-        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
-
-        resp = await plugin._runtime_plugin_handler.get_rag_retrieval_schema()
-        return resp
+        """Get RAG retrieval settings schema from plugin manifest."""
+        plugin, _ = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return {"schema": []}
+        for component in plugin.components:
+            if component.manifest.kind == RAGEngine.__kind__:
+                return {"schema": component.manifest.spec.get('retrieval_schema', [])}
+        return {"schema": []}
