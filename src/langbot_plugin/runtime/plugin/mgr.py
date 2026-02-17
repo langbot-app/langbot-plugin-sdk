@@ -11,10 +11,6 @@ import enum
 import sys
 import zipfile
 import yaml
-import base64
-import httpx
-import signal
-import traceback
 import logging
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
@@ -31,13 +27,11 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
-    RuntimeToPluginAction,
 )
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
 )
-from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 
