@@ -233,10 +233,9 @@ class ControlConnectionHandler(handler.Handler):
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             retriever_name = data["retriever_name"]
-            instance_id = data["instance_id"]
             retrieval_context = data["retrieval_context"]
 
-            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, instance_id, retrieval_context)
+            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, retrieval_context)
             return handler.ActionResponse.success(resp)
 
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)

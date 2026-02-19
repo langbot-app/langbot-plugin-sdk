@@ -504,11 +504,11 @@ class PluginConnectionHandler(handler.Handler):
             yield resp
 
     async def retrieve_knowledge(
-        self, retriever_name: str, instance_id: str, retrieval_context: dict[str, Any]
+        self, retriever_name: str, retrieval_context: dict[str, Any]
     ) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.RETRIEVE_KNOWLEDGE,
-            {"retriever_name": retriever_name, "instance_id": instance_id, "retrieval_context": retrieval_context},
+            {"retriever_name": retriever_name, "retrieval_context": retrieval_context},
         )
         return resp
 

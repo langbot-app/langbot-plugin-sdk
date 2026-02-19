@@ -674,7 +674,7 @@ class PluginManager:
                     break
 
     async def retrieve_knowledge(
-        self, plugin_author: str, plugin_name: str, retriever_name: str, instance_id: str, retrieval_context: dict[str, typing.Any]
+        self, plugin_author: str, plugin_name: str, retriever_name: str, retrieval_context: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
         """Retrieve knowledge using a RAGEngine instance."""
         target_plugin = self.find_plugin(plugin_author, plugin_name)
@@ -685,7 +685,7 @@ class PluginManager:
         if target_plugin._runtime_plugin_handler is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
 
-        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, instance_id, retrieval_context)
+        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, retrieval_context)
         return resp
 
     # ================= RAG Engine Methods =================
