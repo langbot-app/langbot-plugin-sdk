@@ -512,50 +512,6 @@ class PluginConnectionHandler(handler.Handler):
         )
         return resp
 
-    # Polymorphic component methods (generic)
-    async def create_polymorphic_component_instance(
-        self, instance_id: str, component_kind: str, component_name: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Create a polymorphic component instance (generic method for any polymorphic component)."""
-        resp = await self.call_action(
-            RuntimeToPluginAction.CREATE_POLYMORPHIC_COMPONENT_INSTANCE,
-            {
-                "instance_id": instance_id,
-                "component_kind": component_kind,
-                "component_name": component_name,
-                "config": config
-            },
-        )
-        return resp
-
-    async def delete_polymorphic_component_instance(
-        self, instance_id: str, component_kind: str, component_name: str
-    ) -> dict[str, Any]:
-        """Delete a polymorphic component instance (generic method for any polymorphic component)."""
-        resp = await self.call_action(
-            RuntimeToPluginAction.DELETE_POLYMORPHIC_COMPONENT_INSTANCE,
-            {
-                "instance_id": instance_id,
-                "component_kind": component_kind,
-                "component_name": component_name
-            },
-        )
-        return resp
-
-    async def sync_polymorphic_component_instances(
-        self, required_instances: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Sync polymorphic component instances for this plugin.
-
-        Sends the complete list of required instances to the plugin process,
-        which will handle creation and deletion internally.
-        """
-        resp = await self.call_action(
-            RuntimeToPluginAction.SYNC_POLYMORPHIC_COMPONENT_INSTANCES,
-            {"required_instances": required_instances},
-        )
-        return resp
-
     async def shutdown_plugin(self) -> dict[str, Any]:
         """Send shutdown notification to the plugin.
 

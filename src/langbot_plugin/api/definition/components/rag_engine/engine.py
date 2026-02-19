@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 
-from langbot_plugin.api.definition.components.base import PolymorphicComponent
+from langbot_plugin.api.definition.components.base import BaseComponent
 from langbot_plugin.api.entities.builtin.rag.context import (
     RetrievalContext,
     RetrievalResponse,
@@ -29,7 +29,7 @@ class RAGEngineCapability:
     """Supports hybrid (vector + keyword) search."""
 
 
-class RAGEngine(PolymorphicComponent):
+class RAGEngine(BaseComponent):
     """Complete RAG engine component with full lifecycle management.
 
     This component provides comprehensive RAG operations including document ingestion,

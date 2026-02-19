@@ -73,7 +73,6 @@ class PluginRuntimeController:
                 manifest=component_manifest,
                 component_instance=NoneComponent(),
                 component_config={},
-                polymorphic_component_instances={},
             )
             for component_manifest in component_manifests
         ]
@@ -276,8 +275,6 @@ class PluginRuntimeController:
 
         # Clear component instances
         for component_container in self.plugin_container.components:
-            # Clear polymorphic instances
-            component_container.polymorphic_component_instances.clear()
             # Reset component instance
             component_container.component_instance = NoneComponent()
 

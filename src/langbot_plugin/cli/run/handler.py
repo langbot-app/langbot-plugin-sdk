@@ -21,7 +21,6 @@ from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
-from langbot_plugin.api.definition.components.base import PolymorphicComponent
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import IngestionContext
 from langbot_plugin.api.proxies.event_context import EventContextProxy
@@ -223,196 +222,10 @@ class PluginRuntimeHandler(Handler):
                     f"Command {command_context.command} not found"
                 )
 
-        # Polymorphic component actions (generic)
-        @self.action(RuntimeToPluginAction.SYNC_POLYMORPHIC_COMPONENT_INSTANCES)
-        async def sync_polymorphic_component_instances(data: dict[str, typing.Any]) -> ActionResponse:
-            """Sync polymorphic component instances for this plugin.
-
-            This handler receives the complete list of required instances for this plugin,
-            and ensures that:
-            1. All required instances are created
-            2. All unrequired instances are deleted
-            """
-            required_instances = data["required_instances"]
-
-            # Collect all existing instances across all polymorphic components
-            existing_instances: dict[str, tuple[ComponentContainer, str, str]] = {}  # {instance_id: (component_container, component_kind, component_name)}
-            for component in self.plugin_container.components:
-                if hasattr(component, 'polymorphic_component_instances'):
-                    for instance_id in list(component.polymorphic_component_instances.keys()):
-                        existing_instances[instance_id] = (
-                            component,
-                            component.manifest.kind,
-                            component.manifest.metadata.name
-                        )
-
-            # Build set of required instance IDs
-            required_instance_ids = {inst["instance_id"] for inst in required_instances}
-
-            # Delete unrequired instances
-            deleted_count = 0
-            for instance_id, (component, kind, name) in existing_instances.items():
-                if instance_id not in required_instance_ids:
-                    try:
-                        del component.polymorphic_component_instances[instance_id]
-                        deleted_count += 1
-                    except Exception as e:
-                        pass  # Already deleted or error
-
-            # Create/verify required instances
-            created_count = 0
-            updated_count = 0
-            already_exists_count = 0
-            failed_instances = []
-
-            for inst_info in required_instances:
-                instance_id = inst_info["instance_id"]
-                component_kind = inst_info["component_kind"]
-                component_name = inst_info["component_name"]
-                config = inst_info["config"]
-
-                # Check if instance already exists in the correct component
-                if instance_id in existing_instances:
-                    existing_component, existing_kind, existing_name = existing_instances[instance_id]
-                    if existing_kind == component_kind and existing_name == component_name:
-                        # Instance exists in correct component, check if config changed
-                        existing_instance = existing_component.polymorphic_component_instances.get(instance_id)
-                        if existing_instance and existing_instance.config != config:
-                            # Config changed, need to recreate instance
-                            try:
-                                del existing_component.polymorphic_component_instances[instance_id]
-                                # Will be recreated below with new config
-                            except:
-                                pass
-                        else:
-                            # Config unchanged, skip
-                            already_exists_count += 1
-                            continue
-                    else:
-                        # Instance exists in wrong component, delete it first
-                        try:
-                            del existing_component.polymorphic_component_instances[instance_id]
-                        except:
-                            pass
-
-                # Find the target component
-                target_component = None
-                for component in self.plugin_container.components:
-                    if component.manifest.kind == component_kind:
-                        if component.manifest.metadata.name == component_name:
-                            target_component = component
-                            break
-
-                if target_component is None:
-                    failed_instances.append({
-                        "instance_id": instance_id,
-                        "reason": f"Component {component_kind}/{component_name} not found"
-                    })
-                    continue
-
-                # Create the instance (either new or recreated with updated config)
-                is_update = instance_id in existing_instances
-                try:
-                    component_class = target_component.manifest.get_python_component_class()
-                    if not issubclass(component_class, PolymorphicComponent):
-                        failed_instances.append({
-                            "instance_id": instance_id,
-                            "reason": f"Component {component_name} is not polymorphic"
-                        })
-                        continue
-
-                    new_instance = component_class()
-                    new_instance.instance_id = instance_id
-                    new_instance.config = config
-                    new_instance.plugin = self.plugin_container.plugin_instance
-                    await new_instance.initialize()
-
-                    target_component.polymorphic_component_instances[instance_id] = new_instance
-                    if is_update:
-                        updated_count += 1
-                    else:
-                        created_count += 1
-                except Exception as e:
-                    failed_instances.append({
-                        "instance_id": instance_id,
-                        "reason": str(e)
-                    })
-
-            return ActionResponse.success({
-                "deleted_count": deleted_count,
-                "created_count": created_count,
-                "updated_count": updated_count,
-                "already_exists_count": already_exists_count,
-                "failed_instances": failed_instances
-            })
-
-        @self.action(RuntimeToPluginAction.CREATE_POLYMORPHIC_COMPONENT_INSTANCE)
-        async def create_polymorphic_component_instance(data: dict[str, typing.Any]) -> ActionResponse:
-            """Create a polymorphic component instance (generic handler for any polymorphic component)."""
-            instance_id = data["instance_id"]
-            component_kind = data["component_kind"]
-            component_name = data["component_name"]
-            config = data["config"]
-
-            # Find the component by kind and name
-            target_component = None
-            for component in self.plugin_container.components:
-                if component.manifest.kind == component_kind:
-                    if component.manifest.metadata.name == component_name:
-                        target_component = component
-                        break
-
-            if target_component is None:
-                return ActionResponse.error(f"Component {component_kind}/{component_name} not found")
-
-            # Get the component class
-            component_class = target_component.manifest.get_python_component_class()
-            if not issubclass(component_class, PolymorphicComponent):
-                return ActionResponse.error(f"Component {component_name} is not a polymorphic component")
-
-            # Create a new instance
-            new_instance = component_class()
-            new_instance.instance_id = instance_id
-            new_instance.config = config
-            new_instance.plugin = self.plugin_container.plugin_instance
-            await new_instance.initialize()
-
-            # Store the instance
-            target_component.polymorphic_component_instances[instance_id] = new_instance
-
-            return ActionResponse.success({"instance_id": instance_id})
-
-        @self.action(RuntimeToPluginAction.DELETE_POLYMORPHIC_COMPONENT_INSTANCE)
-        async def delete_polymorphic_component_instance(data: dict[str, typing.Any]) -> ActionResponse:
-            """Delete a polymorphic component instance (generic handler for any polymorphic component)."""
-            instance_id = data["instance_id"]
-            component_kind = data["component_kind"]
-            component_name = data["component_name"]
-
-            # Find the component by kind and name
-            target_component = None
-            for component in self.plugin_container.components:
-                if component.manifest.kind == component_kind:
-                    if component.manifest.metadata.name == component_name:
-                        target_component = component
-                        break
-
-            if target_component is None:
-                return ActionResponse.error(f"Component {component_kind}/{component_name} not found")
-
-            if instance_id not in target_component.polymorphic_component_instances:
-                return ActionResponse.error(f"Component {component_name} instance {instance_id} not found")
-
-            # Remove the instance
-            del target_component.polymorphic_component_instances[instance_id]
-
-            return ActionResponse.success({"success": True})
-
         @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, typing.Any]) -> ActionResponse:
             """Retrieve knowledge using a RAGEngine instance."""
             retriever_name = data["retriever_name"]
-            instance_id = data["instance_id"]
             retrieval_context = RetrievalContext.model_validate(data["retrieval_context"])
 
             rag_component = None
@@ -427,21 +240,13 @@ class PluginRuntimeHandler(Handler):
             if rag_component is None:
                 return ActionResponse.error(f"RAGEngine {retriever_name} not found")
 
-            rag_instance = None
-            if instance_id in rag_component.polymorphic_component_instances:
-                rag_instance = rag_component.polymorphic_component_instances[instance_id]
-            else:
-                # Fallback to component singleton if instance not found
-                # This supports stateless RAG engines or when sync hasn't happened
-                if not isinstance(rag_component.component_instance, NoneComponent):
-                    rag_instance = rag_component.component_instance
-                else:
-                    return ActionResponse.error(f"RAGEngine {retriever_name} instance {instance_id} not found and component is not initialized")
+            if isinstance(rag_component.component_instance, NoneComponent):
+                return ActionResponse.error(f"RAGEngine {retriever_name} is not initialized")
 
-            assert isinstance(rag_instance, RAGEngine)
+            assert isinstance(rag_component.component_instance, RAGEngine)
 
             # Call retrieve method - RAGEngine returns RetrievalResponse
-            response = await rag_instance.retrieve(retrieval_context)
+            response = await rag_component.component_instance.retrieve(retrieval_context)
 
             return ActionResponse.success(response.model_dump(mode="json"))
 
@@ -468,7 +273,7 @@ class PluginRuntimeHandler(Handler):
             return None
 
         def _get_rag_engine_or_error() -> tuple[RAGEngine | None, ActionResponse | None]:
-            """Get RAGEngine instance or error response.
+            """Get RAGEngine singleton instance or error response.
 
             Returns:
                 (rag_engine, None) if successful
@@ -477,6 +282,7 @@ class PluginRuntimeHandler(Handler):
             rag_component = _find_rag_engine_component()
             if rag_component is None:
                 return None, ActionResponse.error("RAGEngine component not found in this plugin")
+
             if isinstance(rag_component.component_instance, NoneComponent):
                 return None, ActionResponse.error("RAGEngine component is not initialized")
             assert isinstance(rag_component.component_instance, RAGEngine)
@@ -487,11 +293,11 @@ class PluginRuntimeHandler(Handler):
             """Ingest a document using the RAGEngine component."""
             context_data = data["context"]
 
+            ingestion_context = IngestionContext.model_validate(context_data)
             rag_engine, error = _get_rag_engine_or_error()
             if error:
                 return error
 
-            ingestion_context = IngestionContext.model_validate(context_data)
             result = await rag_engine.ingest(ingestion_context)
 
             return ActionResponse.success(result.model_dump(mode="json"))

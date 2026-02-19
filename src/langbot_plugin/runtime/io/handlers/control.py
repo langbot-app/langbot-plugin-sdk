@@ -239,22 +239,6 @@ class ControlConnectionHandler(handler.Handler):
             resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, instance_id, retrieval_context)
             return handler.ActionResponse.success(resp)
 
-        @self.action(LangBotToRuntimeAction.SYNC_POLYMORPHIC_COMPONENT_INSTANCES)
-        async def sync_polymorphic_component_instances(data: dict[str, Any]) -> handler.ActionResponse:
-            """Sync polymorphic component instances from LangBot.
-
-            This ensures instance integrity across LangBot restarts and plugin reconnections.
-            """
-            required_instances = data["required_instances"]
-
-            # Store the required instances list in context
-            self.context.required_polymorphic_instances = required_instances
-
-            # Sync instances with plugin manager
-            sync_result = await self.context.plugin_mgr.sync_polymorphic_component_instances(required_instances)
-
-            return handler.ActionResponse.success(sync_result)
-
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
         async def get_debug_info(data: dict[str, Any]) -> handler.ActionResponse:
             """Get debug information including debug key and WS URL."""

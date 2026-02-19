@@ -80,11 +80,6 @@ class RuntimeToPluginAction(ActionType):
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
 
-    # Polymorphic component actions (generic)
-    CREATE_POLYMORPHIC_COMPONENT_INSTANCE = "create_polymorphic_component_instance"
-    DELETE_POLYMORPHIC_COMPONENT_INSTANCE = "delete_polymorphic_component_instance"
-    SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
-
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
     INGEST_DOCUMENT = "ingest_document"
     DELETE_DOCUMENT = "delete_document"
@@ -122,9 +117,6 @@ class LangBotToRuntimeAction(ActionType):
     RAG_ON_KB_DELETE = "rag_on_kb_delete"
     GET_RAG_CREATION_SETTINGS_SCHEMA = "get_rag_creation_settings_schema"
     GET_RAG_RETRIEVAL_SETTINGS_SCHEMA = "get_rag_retrieval_settings_schema"
-
-    # Polymorphic component instance integrity
-    SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
 
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"
