@@ -2,9 +2,23 @@ from __future__ import annotations
 
 import locale
 import os
-from typing import Dict, Any
+import pydantic
+import typing
 
 from .locales import get_locale_messages, SUPPORTED_LOCALES
+
+
+class I18nMessage(pydantic.BaseModel):
+    """Internationalization message"""
+    
+    en_US: str
+    """English"""
+    zh_Hans: typing.Optional[str] = None
+    """Simplified Chinese"""
+    zh_Hant: typing.Optional[str] = None
+    """Traditional Chinese"""
+    ja_JP: typing.Optional[str] = None
+    """Japanese"""
 
 
 class I18nManager:

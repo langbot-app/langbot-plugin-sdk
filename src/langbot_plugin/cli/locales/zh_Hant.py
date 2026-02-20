@@ -28,6 +28,7 @@ messages = {
     "skipping_ignored_dir": "  - 跳過忽略的目錄：{}",
     "skipping_ignored_file": "  - 跳過忽略的檔案：{}",
     "skipping_excluded_file": "  - 跳過排除的檔案：{}",
+    "file_adding": "  - 新增中：{}",
     "file_added": "  - 已新增：{}",
     "file_add_error": "  - 新增檔案 {} 時出錯：{}",
     "plugin_built": "插件建置成功：{}",
