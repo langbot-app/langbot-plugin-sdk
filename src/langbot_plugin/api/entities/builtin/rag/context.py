@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pydantic
-from typing import Any, Optional
+from typing import Any
 from pydantic import Field
 
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
@@ -55,13 +55,13 @@ class RetrievalContext(pydantic.BaseModel):
     """The top k (legacy field, kept for backward compatibility)."""
 
     # ========== New fields for enhanced retrieval ==========
-    knowledge_base_id: Optional[str] = None
+    knowledge_base_id: str | None = None
     """Knowledge base to search in."""
 
-    collection_id: Optional[str] = None
+    collection_id: str | None = None
     """Target vector collection ID. Defaults to knowledge_base_id if not set."""
 
-    config: Optional[RetrievalConfig] = None
+    config: RetrievalConfig | None = None
     """New-style retrieval configuration."""
 
     creation_settings: dict[str, Any] = Field(default_factory=dict)
