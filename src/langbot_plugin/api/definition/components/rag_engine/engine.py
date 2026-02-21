@@ -89,7 +89,7 @@ class RAGEngine(BaseComponent):
         This method should:
         1. Read the file using `await self.plugin.rag_get_file_stream(context.file_object.storage_path)`
         2. Parse and chunk the content
-        3. Embed using `await self.plugin.rag_embed_documents(context.knowledge_base_id, [chunk.text for chunk in chunks])`
+        3. Embed using `await self.plugin.invoke_embedding(embedding_model_uuid, [chunk.text for chunk in chunks])`
         4. Store using `await self.plugin.rag_vector_upsert(collection_id=context.get_collection_id(), ...)`
         
         Args:
@@ -120,7 +120,7 @@ class RAGEngine(BaseComponent):
         """Retrieve relevant content from the knowledge base.
         
         This method should:
-        1. Embed query using `await self.plugin.rag_embed_query(context.knowledge_base_id, query)`
+        1. Embed query using `await self.plugin.invoke_embedding(embedding_model_uuid, [query])`
         2. Search using `await self.plugin.rag_vector_search(kb_id, ...)`
         3. Return structured response
         
