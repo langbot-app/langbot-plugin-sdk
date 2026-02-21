@@ -58,9 +58,7 @@ class PluginToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     LIST_TOOLS = "list_tools"
 
-    """RAG APIs"""
-    RAG_EMBED_DOCUMENTS = "rag_embed_documents"
-    RAG_EMBED_QUERY = "rag_embed_query"
+    INVOKE_EMBEDDING = "invoke_embedding"
     RAG_VECTOR_UPSERT = "rag_vector_upsert"
     RAG_VECTOR_SEARCH = "rag_vector_search"
     RAG_VECTOR_DELETE = "rag_vector_delete"

@@ -202,45 +202,25 @@ class LangBotAPIProxy:
 
     # ================= RAG Capability APIs =================
 
-    async def rag_embed_documents(self, kb_id: str, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for documents using Host's embedding model.
-        
+    async def invoke_embedding(self, embedding_model_uuid: str, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings using Host's embedding model.
+
         Args:
-            kb_id: The Knowledge Base ID (context) to determine which embedding model to use.
+            embedding_model_uuid: The UUID of the embedding model to use.
             texts: List of texts to embed.
-            
+
         Returns:
-            List of embedding vectors.
+            List of embedding vectors, one per input text.
         """
         return (
             await self.plugin_runtime_handler.call_action(
-                PluginToRuntimeAction.RAG_EMBED_DOCUMENTS,
+                PluginToRuntimeAction.INVOKE_EMBEDDING,
                 {
-                    "kb_id": kb_id,
+                    "embedding_model_uuid": embedding_model_uuid,
                     "texts": texts
                 }
             )
         )["vectors"]
-
-    async def rag_embed_query(self, kb_id: str, text: str) -> list[float]:
-        """Generate embedding for a query using Host's embedding model.
-        
-        Args:
-            kb_id: The Knowledge Base ID (context) to determine which embedding model to use.
-            text: Query text to embed.
-            
-        Returns:
-            Embedding vector.
-        """
-        return (
-            await self.plugin_runtime_handler.call_action(
-                PluginToRuntimeAction.RAG_EMBED_QUERY,
-                {
-                    "kb_id": kb_id,
-                    "text": text
-                }
-            )
-        )["vector"]
 
     async def rag_vector_upsert(
         self, 
