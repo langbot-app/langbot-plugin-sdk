@@ -246,10 +246,10 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.RAG_VECTOR_UPSERT)
         async def rag_vector_upsert(data: dict[str, Any]) -> handler.ActionResponse:
-            await _proxy_rag_action(
+            result = await _proxy_rag_action(
                 PluginToRuntimeAction.RAG_VECTOR_UPSERT, data, timeout=60,
             )
-            return handler.ActionResponse.success({})
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.RAG_VECTOR_SEARCH)
         async def rag_vector_search(data: dict[str, Any]) -> handler.ActionResponse:
