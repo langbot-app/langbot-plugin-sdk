@@ -5,8 +5,6 @@ from __future__ import annotations
 # Enumerations
 from .enums import (
     DocumentStatus,
-    ChunkingStrategy,
-    IndexingMode,
 )
 
 # Data models
@@ -44,8 +42,6 @@ from .context import (
 __all__ = [
     # Enums
     "DocumentStatus",
-    "ChunkingStrategy",
-    "IndexingMode",
     # Models
     "FileMetadata",
     "FileObject",

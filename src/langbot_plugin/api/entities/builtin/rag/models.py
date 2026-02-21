@@ -6,7 +6,7 @@ from typing import Any
 import pydantic
 from pydantic import Field
 
-from .enums import ChunkingStrategy, DocumentStatus
+from .enums import DocumentStatus
 
 
 class FileMetadata(pydantic.BaseModel):
@@ -75,8 +75,8 @@ class IngestionContext(pydantic.BaseModel):
     collection_id: str | None = None
     """Target vector collection ID. Defaults to knowledge_base_id if not set."""
 
-    chunking_strategy: ChunkingStrategy | None = None
-    """Chunking strategy to use. Determined by plugin if not provided."""
+    chunking_strategy: str | None = None
+    """Chunking strategy to use. Determined by plugin if not provided. Plugin authors should define their own strategies via config schema."""
 
     chunk_size: int | None = None
     """Target chunk size (characters or tokens, strategy-dependent). Determined by plugin if not provided."""
