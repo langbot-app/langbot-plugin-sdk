@@ -228,38 +228,15 @@ class ControlConnectionHandler(handler.Handler):
             async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
-        # KnowledgeRetriever actions
-        @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_RETRIEVERS)
-        async def list_knowledge_retrievers(data: dict[str, Any]) -> handler.ActionResponse:
-            retrievers = await self.context.plugin_mgr.list_knowledge_retrievers()
-            return handler.ActionResponse.success({"retrievers": retrievers})
-
         @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             retriever_name = data["retriever_name"]
-            instance_id = data["instance_id"]
             retrieval_context = data["retrieval_context"]
 
-            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, instance_id, retrieval_context)
+            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, retrieval_context)
             return handler.ActionResponse.success(resp)
-
-        @self.action(LangBotToRuntimeAction.SYNC_POLYMORPHIC_COMPONENT_INSTANCES)
-        async def sync_polymorphic_component_instances(data: dict[str, Any]) -> handler.ActionResponse:
-            """Sync polymorphic component instances from LangBot.
-
-            This ensures instance integrity across LangBot restarts and plugin reconnections.
-            """
-            required_instances = data["required_instances"]
-
-            # Store the required instances list in context
-            self.context.required_polymorphic_instances = required_instances
-
-            # Sync instances with plugin manager
-            sync_result = await self.context.plugin_mgr.sync_polymorphic_component_instances(required_instances)
-
-            return handler.ActionResponse.success(sync_result)
 
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
         async def get_debug_info(data: dict[str, Any]) -> handler.ActionResponse:
@@ -270,6 +247,86 @@ class ControlConnectionHandler(handler.Handler):
                 "plugin_debug_key": runtime_settings.plugin_debug_key,
                 "ws_debug_port": self.context.ws_debug_port,
             })
+
+        # ================= RAG Engine Actions =================
+
+        @self.action(LangBotToRuntimeAction.LIST_RAG_ENGINES)
+        async def list_rag_engines(data: dict[str, Any]) -> handler.ActionResponse:
+            """List all available RAG engines from plugins."""
+            engines = await self.context.plugin_mgr.list_rag_engines()
+            return handler.ActionResponse.success({"engines": engines})
+
+        @self.action(LangBotToRuntimeAction.RAG_INGEST_DOCUMENT)
+        async def rag_ingest_document(data: dict[str, Any]) -> handler.ActionResponse:
+            """Ingest document via RAG plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            context_data = data["context"]
+
+            resp = await self.context.plugin_mgr.rag_ingest_document(
+                plugin_author, plugin_name, context_data
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RAG_DELETE_DOCUMENT)
+        async def rag_delete_document(data: dict[str, Any]) -> handler.ActionResponse:
+            """Delete document via RAG plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            document_id = data["document_id"]
+            kb_id = data["kb_id"]
+
+            resp = await self.context.plugin_mgr.rag_delete_document(
+                plugin_author, plugin_name, kb_id, document_id
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RAG_ON_KB_CREATE)
+        async def rag_on_kb_create(data: dict[str, Any]) -> handler.ActionResponse:
+            """Notify plugin about KB creation."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            kb_id = data["kb_id"]
+            config = data.get("config", {})
+
+            resp = await self.context.plugin_mgr.rag_on_kb_create(
+                plugin_author, plugin_name, kb_id, config
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.RAG_ON_KB_DELETE)
+        async def rag_on_kb_delete(data: dict[str, Any]) -> handler.ActionResponse:
+            """Notify plugin about KB deletion."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            kb_id = data["kb_id"]
+
+            resp = await self.context.plugin_mgr.rag_on_kb_delete(
+                plugin_author, plugin_name, kb_id
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
+        async def get_rag_creation_settings_schema(data: dict[str, Any]) -> handler.ActionResponse:
+            """Get RAG creation settings schema from plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+
+            resp = await self.context.plugin_mgr.get_rag_creation_schema(
+                plugin_author, plugin_name
+            )
+            return handler.ActionResponse.success(resp)
+
+        @self.action(LangBotToRuntimeAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
+        async def get_rag_retrieval_settings_schema(data: dict[str, Any]) -> handler.ActionResponse:
+            """Get RAG retrieval settings schema from plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+
+            resp = await self.context.plugin_mgr.get_rag_retrieval_schema(
+                plugin_author, plugin_name
+            )
+            return handler.ActionResponse.success(resp)
 
 
 # {"action": "ping", "data": {}, "seq_id": 1}
