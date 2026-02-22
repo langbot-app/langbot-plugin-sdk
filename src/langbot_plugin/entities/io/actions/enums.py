@@ -59,10 +59,10 @@ class PluginToRuntimeAction(ActionType):
     LIST_TOOLS = "list_tools"
 
     INVOKE_EMBEDDING = "invoke_embedding"
-    RAG_VECTOR_UPSERT = "rag_vector_upsert"
-    RAG_VECTOR_SEARCH = "rag_vector_search"
-    RAG_VECTOR_DELETE = "rag_vector_delete"
-    RAG_GET_FILE_STREAM = "rag_get_file_stream"
+    VECTOR_UPSERT = "vector_upsert"
+    VECTOR_SEARCH = "vector_search"
+    VECTOR_DELETE = "vector_delete"
+    GET_RAG_FILE_STREAM = "get_rag_file_stream"
 
 
 class RuntimeToPluginAction(ActionType):

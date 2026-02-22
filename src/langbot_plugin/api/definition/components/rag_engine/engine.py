@@ -87,10 +87,10 @@ class RAGEngine(BaseComponent):
         """Ingest a document into the knowledge base.
         
         This method should:
-        1. Read the file using `await self.plugin.rag_get_file_stream(context.file_object.storage_path)`
+        1. Read the file using `await self.plugin.get_rag_file_stream(context.file_object.storage_path)`
         2. Parse and chunk the content
         3. Embed using `await self.plugin.invoke_embedding(embedding_model_uuid, [chunk.text for chunk in chunks])`
-        4. Store using `await self.plugin.rag_vector_upsert(collection_id=context.get_collection_id(), ...)`
+        4. Store using `await self.plugin.vector_upsert(collection_id=context.get_collection_id(), ...)`
         
         Args:
             context: Ingestion context containing file info and settings.
@@ -104,7 +104,7 @@ class RAGEngine(BaseComponent):
     async def delete_document(self, kb_id: str, document_id: str) -> bool:
         """Delete a document and its associated data from the knowledge base.
         
-        Use `await self.plugin.rag_vector_delete(...)` to clean up vectors.
+        Use `await self.plugin.vector_delete(...)` to clean up vectors.
         
         Args:
             kb_id: Knowledge base identifier.
@@ -121,7 +121,7 @@ class RAGEngine(BaseComponent):
         
         This method should:
         1. Embed query using `await self.plugin.invoke_embedding(embedding_model_uuid, [query])`
-        2. Search using `await self.plugin.rag_vector_search(kb_id, ...)`
+        2. Search using `await self.plugin.vector_search(kb_id, ...)`
         3. Return structured response
         
         Args:

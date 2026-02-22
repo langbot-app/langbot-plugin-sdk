@@ -249,37 +249,37 @@ class PluginConnectionHandler(handler.Handler):
                 logger.error(f"RAG proxy error [{action.value}]: {e}")
                 raise
 
-        @self.action(PluginToRuntimeAction.RAG_VECTOR_UPSERT)
-        async def rag_vector_upsert(data: dict[str, Any]) -> handler.ActionResponse:
+        @self.action(PluginToRuntimeAction.VECTOR_UPSERT)
+        async def vector_upsert(data: dict[str, Any]) -> handler.ActionResponse:
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.RAG_VECTOR_UPSERT,
+                PluginToRuntimeAction.VECTOR_UPSERT,
                 data,
                 timeout=60,
             )
             return handler.ActionResponse.success(result)
 
-        @self.action(PluginToRuntimeAction.RAG_VECTOR_SEARCH)
-        async def rag_vector_search(data: dict[str, Any]) -> handler.ActionResponse:
+        @self.action(PluginToRuntimeAction.VECTOR_SEARCH)
+        async def vector_search(data: dict[str, Any]) -> handler.ActionResponse:
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.RAG_VECTOR_SEARCH,
+                PluginToRuntimeAction.VECTOR_SEARCH,
                 data,
                 timeout=30,
             )
             return handler.ActionResponse.success(result)
 
-        @self.action(PluginToRuntimeAction.RAG_VECTOR_DELETE)
-        async def rag_vector_delete(data: dict[str, Any]) -> handler.ActionResponse:
+        @self.action(PluginToRuntimeAction.VECTOR_DELETE)
+        async def vector_delete(data: dict[str, Any]) -> handler.ActionResponse:
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.RAG_VECTOR_DELETE,
+                PluginToRuntimeAction.VECTOR_DELETE,
                 data,
                 timeout=30,
             )
             return handler.ActionResponse.success(result)
 
-        @self.action(PluginToRuntimeAction.RAG_GET_FILE_STREAM)
-        async def rag_get_file_stream(data: dict[str, Any]) -> handler.ActionResponse:
+        @self.action(PluginToRuntimeAction.GET_RAG_FILE_STREAM)
+        async def get_rag_file_stream(data: dict[str, Any]) -> handler.ActionResponse:
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.RAG_GET_FILE_STREAM,
+                PluginToRuntimeAction.GET_RAG_FILE_STREAM,
                 data,
                 timeout=60,
             )

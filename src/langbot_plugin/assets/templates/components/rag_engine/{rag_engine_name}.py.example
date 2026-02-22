@@ -56,7 +56,7 @@ class {{ rag_engine_attr }}(RAGEngine):
             IngestionResult with status and metadata.
         """
         # 1. Get file content
-        file_content = await self.plugin.rag_get_file_stream(
+        file_content = await self.plugin.get_rag_file_stream(
             context.file_object.storage_path
         )
 
@@ -69,7 +69,7 @@ class {{ rag_engine_attr }}(RAGEngine):
         # )
 
         # 4. Store in vector database
-        # await self.plugin.rag_vector_upsert(
+        # await self.plugin.vector_upsert(
         #     collection_id=context.get_collection_id(),
         #     vectors=embeddings,
         #     ids=[chunk.chunk_id for chunk in chunks],
@@ -93,7 +93,7 @@ class {{ rag_engine_attr }}(RAGEngine):
             True if deletion was successful.
         """
         # TODO: Delete vectors associated with the document
-        # await self.plugin.rag_vector_delete(
+        # await self.plugin.vector_delete(
         #     collection_id=kb_id,
         #     filters={"document_id": document_id},
         # )
@@ -114,7 +114,7 @@ class {{ rag_engine_attr }}(RAGEngine):
         # )
 
         # 2. Search vectors
-        # results = await self.plugin.rag_vector_search(
+        # results = await self.plugin.vector_search(
         #     collection_id=context.get_collection_id(),
         #     query_vector=query_embedding,
         #     top_k=context.get_top_k(),

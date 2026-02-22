@@ -222,7 +222,7 @@ class LangBotAPIProxy:
             )
         )["vectors"]
 
-    async def rag_vector_upsert(
+    async def vector_upsert(
         self, 
         collection_id: str, 
         vectors: list[list[float]], 
@@ -238,7 +238,7 @@ class LangBotAPIProxy:
             metadata: Optional list of metadata dicts corresponding to vectors.
         """
         await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.RAG_VECTOR_UPSERT,
+            PluginToRuntimeAction.VECTOR_UPSERT,
             {
                 "collection_id": collection_id,
                 "vectors": vectors,
@@ -247,7 +247,7 @@ class LangBotAPIProxy:
             }
         )
 
-    async def rag_vector_search(
+    async def vector_search(
         self,
         collection_id: str,
         query_vector: list[float],
@@ -267,7 +267,7 @@ class LangBotAPIProxy:
         """
         return (
             await self.plugin_runtime_handler.call_action(
-                PluginToRuntimeAction.RAG_VECTOR_SEARCH,
+                PluginToRuntimeAction.VECTOR_SEARCH,
                 {
                     "collection_id": collection_id,
                     "query_vector": query_vector,
@@ -277,7 +277,7 @@ class LangBotAPIProxy:
             )
         )["results"]
 
-    async def rag_vector_delete(
+    async def vector_delete(
         self,
         collection_id: str,
         file_ids: list[str] | None = None,
@@ -295,7 +295,7 @@ class LangBotAPIProxy:
         """
         return (
             await self.plugin_runtime_handler.call_action(
-                PluginToRuntimeAction.RAG_VECTOR_DELETE,
+                PluginToRuntimeAction.VECTOR_DELETE,
                 {
                     "collection_id": collection_id,
                     "file_ids": file_ids,
@@ -304,7 +304,7 @@ class LangBotAPIProxy:
             )
         )["count"]
 
-    async def rag_get_file_stream(self, storage_path: str) -> bytes:
+    async def get_rag_file_stream(self, storage_path: str) -> bytes:
         """Get file content from Host's storage.
 
         Args:
@@ -314,7 +314,7 @@ class LangBotAPIProxy:
             File content bytes.
         """
         resp = await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.RAG_GET_FILE_STREAM,
+            PluginToRuntimeAction.GET_RAG_FILE_STREAM,
             {"storage_path": storage_path}
         )
         return base64.b64decode(resp["content_base64"])
