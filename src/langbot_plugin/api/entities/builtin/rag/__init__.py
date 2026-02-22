@@ -34,7 +34,6 @@ from .errors import (
 # Context and retrieval types
 from .context import (
     RetrievalResultEntry,
-    RetrievalConfig,
     RetrievalContext,
     RetrievalResponse,
 )
@@ -61,7 +60,6 @@ __all__ = [
     "ChunkingError",
     # Context
     "RetrievalResultEntry",
-    "RetrievalConfig",
     "RetrievalContext",
     "RetrievalResponse",
 ]

@@ -75,16 +75,7 @@ class IngestionContext(pydantic.BaseModel):
     collection_id: str | None = None
     """Target vector collection ID. Defaults to knowledge_base_id if not set."""
 
-    chunking_strategy: str | None = None
-    """Chunking strategy to use. Determined by plugin if not provided. Plugin authors should define their own strategies via config schema."""
-
-    chunk_size: int | None = None
-    """Target chunk size (characters or tokens, strategy-dependent). Determined by plugin if not provided."""
-
-    chunk_overlap: int | None = None
-    """Overlap between chunks. Determined by plugin if not provided."""
-
-    custom_settings: dict[str, Any] = Field(default_factory=dict)
+    creation_settings: dict[str, Any] = Field(default_factory=dict)
     """Plugin-specific ingestion settings (from knowledge base creation_settings)."""
 
     def get_collection_id(self) -> str:

@@ -117,7 +117,7 @@ class {{ rag_engine_attr }}(RAGEngine):
         # results = await self.plugin.vector_search(
         #     collection_id=context.get_collection_id(),
         #     query_vector=query_embedding,
-        #     top_k=context.get_top_k(),
+        #     top_k=context.top_k,
         # )
 
         # 3. Build response
