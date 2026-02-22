@@ -11,10 +11,6 @@ import enum
 import sys
 import zipfile
 import yaml
-import base64
-import httpx
-import signal
-import traceback
 import logging
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
@@ -28,17 +24,14 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_retriever.retriever import KnowledgeRetriever
-from langbot_plugin.api.entities.builtin.rag.context import RetrievalResultEntry, RetrievalContext
+from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
-    RuntimeToPluginAction,
 )
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
 )
-from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 
@@ -75,6 +68,24 @@ class PluginManager:
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
+
+    def find_plugin(self, plugin_author: str, plugin_name: str) -> runtime_plugin_container.PluginContainer | None:
+        """Find a plugin by author and name.
+
+        Args:
+            plugin_author: The plugin author.
+            plugin_name: The plugin name.
+
+        Returns:
+            The plugin container if found, otherwise None.
+        """
+        for plugin in self.plugins:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
+                return plugin
+        return None
 
     async def ensure_all_plugins_dependencies_installed(self):
         for plugin_path in glob.glob("data/plugins/*"):
@@ -355,12 +366,6 @@ class PluginManager:
         plugin_container._runtime_plugin_handler = handler
 
         self.plugins.append(plugin_container)
-        
-        # Initialize required polymorphic component instances for this plugin
-        await self.initialize_required_instances_for_plugin(
-            plugin_container.manifest.metadata.author,
-            plugin_container.manifest.metadata.name
-        )
 
     async def remove_plugin_container(
         self,
@@ -549,43 +554,40 @@ class PluginManager:
     async def get_plugin_icon(
         self, plugin_author: str, plugin_name: str
     ) -> tuple[bytes, str]:
-        for plugin in self.plugins:
-            if (
-                plugin.manifest.metadata.author == plugin_author
-                and plugin.manifest.metadata.name == plugin_name
-            ):
-                resp = await plugin._runtime_plugin_handler.get_plugin_icon()
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.get_plugin_icon()
 
-                icon_file_key = resp["plugin_icon_file_key"]
-                icon_bytes = await plugin._runtime_plugin_handler.read_local_file(icon_file_key)
-                await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
-                return icon_bytes, resp["mime_type"]
+            icon_file_key = resp["plugin_icon_file_key"]
+            icon_bytes = await plugin._runtime_plugin_handler.read_local_file(icon_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
+            return icon_bytes, resp["mime_type"]
         return b"", ""
 
     async def get_plugin_readme(
         self, plugin_author: str, plugin_name: str, language: str = "en"
     ) -> bytes:
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
 
-                readme_file_key = resp["plugin_readme_file_key"]
-                readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
-                await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
-                return readme_bytes
+            readme_file_key = resp["plugin_readme_file_key"]
+            readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
+            return readme_bytes
 
         return b""
-    
+
     async def get_plugin_assets_file(
         self, plugin_author: str, plugin_name: str, file_key: str
     ) -> tuple[bytes, str]:
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(file_key=file_key)
-                file_file_key = resp["file_file_key"]
-                file_bytes = await plugin._runtime_plugin_handler.read_local_file(file_file_key)
-                await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
-                return file_bytes, resp["mime_type"]
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(file_key=file_key)
+            file_file_key = resp["file_file_key"]
+            file_bytes = await plugin._runtime_plugin_handler.read_local_file(file_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
+            return file_bytes, resp["mime_type"]
         return b"", ""
 
     async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
@@ -671,76 +673,11 @@ class PluginManager:
 
                     break
 
-    # KnowledgeRetriever methods
-    async def list_knowledge_retrievers(self) -> list[dict[str, typing.Any]]:
-        """List all available KnowledgeRetriever components from plugins."""
-        retrievers: list[dict[str, typing.Any]] = []
-
-        for plugin in self.plugins:
-            for component in plugin.components:
-                if component.manifest.kind == KnowledgeRetriever.__kind__:
-                    retrievers.append({
-                        "plugin_author": plugin.manifest.metadata.author,
-                        "plugin_name": plugin.manifest.metadata.name,
-                        "retriever_name": component.manifest.metadata.name,
-                        "retriever_description": component.manifest.metadata.description,
-                        "manifest": component.manifest.model_dump(),
-                    })
-
-        return retrievers
-
-    async def create_knowledge_retriever_instance(
-        self, instance_id: str, plugin_author: str, plugin_name: str, retriever_name: str, config: dict[str, typing.Any]
-    ) -> dict[str, typing.Any]:
-        """Create a new KnowledgeRetriever instance."""
-        # Find the plugin
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
-
-        if target_plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-
-        if target_plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
-        # Call plugin to create instance
-        resp = await target_plugin._runtime_plugin_handler.create_knowledge_retriever_instance(
-            instance_id, retriever_name, config
-        )
-
-        return resp
-
-    async def delete_knowledge_retriever_instance(self, plugin_author: str, plugin_name: str, retriever_name: str, instance_id: str) -> dict[str, typing.Any]:
-        """Delete a KnowledgeRetriever instance."""
-        
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
-
-        if target_plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-
-        if target_plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
-        resp = await target_plugin._runtime_plugin_handler.delete_knowledge_retriever_instance(retriever_name, instance_id)
-        return resp
-
     async def retrieve_knowledge(
-        self, plugin_author: str, plugin_name: str, retriever_name: str, instance_id: str, retrieval_context: dict[str, typing.Any]
+        self, plugin_author: str, plugin_name: str, retriever_name: str, retrieval_context: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
-        """Retrieve knowledge using a KnowledgeRetriever instance."""
-
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
+        """Retrieve knowledge using a RAGEngine instance."""
+        target_plugin = self.find_plugin(plugin_author, plugin_name)
 
         if target_plugin is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
@@ -748,149 +685,138 @@ class PluginManager:
         if target_plugin._runtime_plugin_handler is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
 
-        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, instance_id, retrieval_context)
+        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, retrieval_context)
         return resp
 
-    async def sync_polymorphic_component_instances(self, required_instances: list[dict[str, typing.Any]]) -> dict[str, typing.Any]:
-        """Sync polymorphic component instances with required list from LangBot.
+    # ================= RAG Engine Methods =================
+
+    def _find_rag_engine_plugin(
+        self, plugin_author: str, plugin_name: str
+    ) -> tuple[runtime_plugin_container.PluginContainer | None, str | None]:
+        """Find plugin with RAGEngine component and return (plugin, component_name)."""
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return None, None
+
+        # Find RAGEngine component
+        for component in plugin.components:
+            if component.manifest.kind == RAGEngine.__kind__:
+                return plugin, component.manifest.metadata.name
+        # No RAG component found, but plugin exists
+        return plugin, None
+
+    def _get_connected_rag_plugin(self, plugin_author: str, plugin_name: str) -> tuple[runtime_plugin_container.PluginContainer, str]:
+        """Helper to find a RAG plugin and ensure it's connected.
         
-        This method groups instances by plugin and sends them to respective plugin processes.
+        Args:
+            plugin_author: Author of the plugin
+            plugin_name: Name of the plugin
+            
+        Returns:
+            Tuple of (plugin_container, component_name)
+            
+        Raises:
+            ValueError: If plugin not found, has no RAG component, or is not connected.
         """
-        # Group required instances by plugin
-        instances_by_plugin = {}  # {(plugin_author, plugin_name): [instances]}
-        for inst_info in required_instances:
-            plugin_key = (inst_info["plugin_author"], inst_info["plugin_name"])
-            if plugin_key not in instances_by_plugin:
-                instances_by_plugin[plugin_key] = []
-            instances_by_plugin[plugin_key].append(inst_info)
-        
-        all_success_instances = []
-        all_failed_instances = []
-        
-        # Send sync request to each plugin
-        for (plugin_author, plugin_name), plugin_instances in instances_by_plugin.items():
-            # Find the plugin
-            target_plugin = None
-            for plugin in self.plugins:
-                if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                    target_plugin = plugin
-                    break
+        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
+
+        if plugin is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+        if component_name is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no RAGEngine component")
+        if plugin._runtime_plugin_handler is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
             
-            if target_plugin is None:
-                # Plugin not loaded, mark all instances as failed
-                for inst in plugin_instances:
-                    all_failed_instances.append({
-                        "instance_id": inst["instance_id"],
-                        "reason": f"Plugin {plugin_author}/{plugin_name} not found"
-                    })
-                continue
-            
-            if target_plugin._runtime_plugin_handler is None:
-                # Plugin not connected, mark all instances as failed
-                for inst in plugin_instances:
-                    all_failed_instances.append({
-                        "instance_id": inst["instance_id"],
-                        "reason": f"Plugin {plugin_author}/{plugin_name} not connected"
-                    })
-                continue
-            
-            # Send sync request to plugin process
-            try:
-                result = await target_plugin._runtime_plugin_handler.sync_polymorphic_component_instances(plugin_instances)
-                
-                # Collect results
-                created_count = result.get("created_count", 0)
-                updated_count = result.get("updated_count", 0)
-                already_exists_count = result.get("already_exists_count", 0)
-                deleted_count = result.get("deleted_count", 0)
-                failed = result.get("failed_instances", [])
-                
-                # Build success instances
-                for inst in plugin_instances:
-                    if inst["instance_id"] not in [f["instance_id"] for f in failed]:
-                        all_success_instances.append({
-                            "instance_id": inst["instance_id"],
-                            "status": "synced"
-                        })
-                
-                all_failed_instances.extend(failed)
-                
-                logger.info(
-                    f"Synced plugin {plugin_author}/{plugin_name}: "
-                    f"created={created_count}, updated={updated_count}, exists={already_exists_count}, "
-                    f"deleted={deleted_count}, failed={len(failed)}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to sync plugin {plugin_author}/{plugin_name}: {e}")
-                for inst in plugin_instances:
-                    all_failed_instances.append({
-                        "instance_id": inst["instance_id"],
-                        "reason": str(e)
-                    })
-        
-        # Also handle plugins with no required instances (should delete all their instances)
+        return plugin, component_name
+
+    async def list_rag_engines(self) -> list[dict[str, typing.Any]]:
+        """List all available RAG engines from plugins.
+
+        Returns a list of RAG engines with their capabilities and configuration schemas.
+        """
+        engines: list[dict[str, typing.Any]] = []
+
         for plugin in self.plugins:
-            plugin_key = (plugin.manifest.metadata.author, plugin.manifest.metadata.name)
-            if plugin_key not in instances_by_plugin:
-                # This plugin has no required instances, send empty list to delete all
-                if plugin._runtime_plugin_handler is not None:
+            if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
+                continue
+
+            for component in plugin.components:
+                if component.manifest.kind == RAGEngine.__kind__:
+                    # Get capabilities from the plugin
                     try:
-                        await plugin._runtime_plugin_handler.sync_polymorphic_component_instances([])
-                        logger.info(f"Cleared all instances for plugin {plugin_key[0]}/{plugin_key[1]}")
+                        capabilities_resp = await plugin._runtime_plugin_handler.get_rag_capabilities()
+                        capabilities = capabilities_resp.get("capabilities", [])
                     except Exception as e:
-                        logger.error(f"Failed to clear instances for plugin {plugin_key[0]}/{plugin_key[1]}: {e}")
-        
-        return {
-            "success_instances": all_success_instances,
-            "failed_instances": all_failed_instances
-        }
+                        logger.warning(f"Failed to get capabilities from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}")
+                        capabilities = []
 
-    async def initialize_required_instances_for_plugin(self, plugin_author: str, plugin_name: str) -> None:
-        """Initialize required polymorphic component instances for a newly connected plugin.
-        
-        This is called when a plugin connects to runtime.
-        Filters instances for this plugin and sends them to the plugin process for sync.
-        """
-        if not self.context.required_polymorphic_instances:
-            return
+                    # Read schemas from manifest YAML
+                    creation_schema = {"schema": component.manifest.spec.get('creation_schema', [])}
+                    retrieval_schema = {"schema": component.manifest.spec.get('retrieval_schema', [])}
 
-        required_instances = self.context.required_polymorphic_instances
-        
-        # Filter instances that belong to this plugin
-        plugin_instances = [
-            inst for inst in required_instances
-            if inst["plugin_author"] == plugin_author and inst["plugin_name"] == plugin_name
-        ]
+                    meta = component.manifest.metadata
+                    engines.append({
+                        "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
+                        "name": meta.label or meta.name,  # Pass I18n object or string directly
+                        "description": meta.description,   # Pass I18n object directly
+                        "capabilities": capabilities,
+                        "creation_schema": creation_schema,
+                        "retrieval_schema": retrieval_schema,
+                    })
+        return engines
 
-        if not plugin_instances:
-            logger.info(f"No required instances for plugin {plugin_author}/{plugin_name}")
-            return
+    async def rag_ingest_document(
+        self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any]
+    ) -> dict[str, typing.Any]:
+        """Call plugin to ingest a document."""
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
+        resp = await plugin._runtime_plugin_handler.rag_ingest_document(context_data)
+        return resp
 
-        logger.info(f"Initializing {len(plugin_instances)} required instances for plugin {plugin_author}/{plugin_name}")
+    async def rag_delete_document(
+        self, plugin_author: str, plugin_name: str, kb_id: str, document_id: str
+    ) -> dict[str, typing.Any]:
+        """Call plugin to delete a document."""
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
+        resp = await plugin._runtime_plugin_handler.rag_delete_document(kb_id, document_id)
+        return resp
 
-        # Find the plugin
-        target_plugin = None
-        for plugin in self.plugins:
-            if plugin.manifest.metadata.author == plugin_author and plugin.manifest.metadata.name == plugin_name:
-                target_plugin = plugin
-                break
+    async def rag_on_kb_create(
+        self, plugin_author: str, plugin_name: str, kb_id: str, config: dict[str, typing.Any]
+    ) -> dict[str, typing.Any]:
+        """Notify plugin about KB creation."""
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
+        resp = await plugin._runtime_plugin_handler.rag_on_kb_create(kb_id, config)
+        return resp
 
-        if target_plugin is None or target_plugin._runtime_plugin_handler is None:
-            logger.error(f"Plugin {plugin_author}/{plugin_name} not found or not connected")
-            return
+    async def rag_on_kb_delete(
+        self, plugin_author: str, plugin_name: str, kb_id: str
+    ) -> dict[str, typing.Any]:
+        """Notify plugin about KB deletion."""
+        plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
+        resp = await plugin._runtime_plugin_handler.rag_on_kb_delete(kb_id)
+        return resp
 
-        # Send sync request to plugin process
-        try:
-            result = await target_plugin._runtime_plugin_handler.sync_polymorphic_component_instances(plugin_instances)
-            created_count = result.get("created_count", 0)
-            already_exists_count = result.get("already_exists_count", 0)
-            deleted_count = result.get("deleted_count", 0)
-            failed = result.get("failed_instances", [])
-            
-            logger.info(
-                f"Initialized instances for {plugin_author}/{plugin_name}: "
-                f"created={created_count}, exists={already_exists_count}, "
-                f"deleted={deleted_count}, failed={len(failed)}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize instances for {plugin_author}/{plugin_name}: {e}")
+    async def get_rag_creation_schema(
+        self, plugin_author: str, plugin_name: str
+    ) -> dict[str, typing.Any]:
+        """Get RAG creation settings schema from plugin manifest."""
+        plugin, _ = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return {"schema": []}
+        for component in plugin.components:
+            if component.manifest.kind == RAGEngine.__kind__:
+                return {"schema": component.manifest.spec.get('creation_schema', [])}
+        return {"schema": []}
+
+    async def get_rag_retrieval_schema(
+        self, plugin_author: str, plugin_name: str
+    ) -> dict[str, typing.Any]:
+        """Get RAG retrieval settings schema from plugin manifest."""
+        plugin, _ = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return {"schema": []}
+        for component in plugin.components:
+            if component.manifest.kind == RAGEngine.__kind__:
+                return {"schema": component.manifest.spec.get('retrieval_schema', [])}
+        return {"schema": []}

@@ -30,7 +30,7 @@ class PluginConnectionHandler(handler.Handler):
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
-    
+
     subprocess_on_windows_task: asyncio.Task | None = None
     """The task for the subprocess on Windows."""
 
@@ -71,12 +71,15 @@ class PluginConnectionHandler(handler.Handler):
                 plugin_debug_key = data.get("plugin_debug_key", "")
 
                 if plugin_debug_key != runtime_settings.plugin_debug_key:
-                    logger.warning(f"Plugin debug key verification failed. Expected key does not match.")
-                    return handler.ActionResponse.error("Plugin debug key verification failed")
+                    logger.warning(
+                        f"Plugin debug key verification failed. Expected key does not match."
+                    )
+                    return handler.ActionResponse.error(
+                        "Plugin debug key verification failed"
+                    )
 
             await self.context.plugin_mgr.register_plugin(
-                self, data["plugin_container"],
-                self.debug_plugin
+                self, data["plugin_container"], self.debug_plugin
             )
             return handler.ActionResponse.success({})
 
@@ -210,6 +213,75 @@ class PluginConnectionHandler(handler.Handler):
                 {
                     **data,
                 },
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.INVOKE_EMBEDDING)
+        async def invoke_embedding(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.INVOKE_EMBEDDING,
+                {
+                    **data,
+                },
+                timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
+        # ================= RAG Capability Handlers (Plugin -> Runtime -> Host) =================
+
+        async def _proxy_rag_action(
+            action: PluginToRuntimeAction,
+            data: dict[str, Any],
+            timeout: float = 30,
+        ) -> dict[str, Any]:
+            """Proxy a RAG action to the control handler with error handling.
+
+            Raises:
+                Exception: Re-raises with context if the upstream call fails.
+            """
+            try:
+                return await self.context.control_handler.call_action(
+                    action,
+                    data,
+                    timeout=timeout,
+                )
+            except Exception as e:
+                logger.error(f"RAG proxy error [{action.value}]: {e}")
+                raise
+
+        @self.action(PluginToRuntimeAction.RAG_VECTOR_UPSERT)
+        async def rag_vector_upsert(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_VECTOR_UPSERT,
+                data,
+                timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_VECTOR_SEARCH)
+        async def rag_vector_search(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_VECTOR_SEARCH,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_VECTOR_DELETE)
+        async def rag_vector_delete(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_VECTOR_DELETE,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RAG_GET_FILE_STREAM)
+        async def rag_get_file_stream(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.RAG_GET_FILE_STREAM,
+                data,
+                timeout=60,
             )
             return handler.ActionResponse.success(result)
 
@@ -402,30 +474,44 @@ class PluginConnectionHandler(handler.Handler):
     async def get_plugin_icon(self) -> dict[str, Any]:
         resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_ICON, {})
         return resp
-    
+
     async def get_plugin_readme(self, language: str) -> dict[str, Any]:
-        resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_README, {"language": language})
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_PLUGIN_README, {"language": language}
+        )
         return resp
 
     async def get_plugin_assets_file(self, file_key: str) -> dict[str, Any]:
-        resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE, {"file_key": file_key})
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE, {"file_key": file_key}
+        )
         return resp
 
     async def emit_event(self, event_context: dict[str, Any]) -> dict[str, Any]:
         resp = await self.call_action(
-            RuntimeToPluginAction.EMIT_EVENT, {"event_context": event_context},
-            timeout=LONG_RUNNING_OPERATION_TIMEOUT
+            RuntimeToPluginAction.EMIT_EVENT,
+            {"event_context": event_context},
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT,
         )
 
         return resp
 
     async def call_tool(
-        self, tool_name: str, tool_parameters: dict[str, Any], session: dict[str, Any], query_id: int
+        self,
+        tool_name: str,
+        tool_parameters: dict[str, Any],
+        session: dict[str, Any],
+        query_id: int,
     ) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.CALL_TOOL,
-            {"tool_name": tool_name, "tool_parameters": tool_parameters, "session": session, "query_id": query_id},
-            timeout=LONG_RUNNING_OPERATION_TIMEOUT
+            {
+                "tool_name": tool_name,
+                "tool_parameters": tool_parameters,
+                "session": session,
+                "query_id": query_id,
+            },
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT,
         )
 
         return resp
@@ -434,63 +520,20 @@ class PluginConnectionHandler(handler.Handler):
         self, command_context: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:
         gen = self.call_action_generator(
-            RuntimeToPluginAction.EXECUTE_COMMAND, {"command_context": command_context},
-            timeout=LONG_RUNNING_OPERATION_TIMEOUT
+            RuntimeToPluginAction.EXECUTE_COMMAND,
+            {"command_context": command_context},
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT,
         )
 
         async for resp in gen:
             yield resp
 
     async def retrieve_knowledge(
-        self, retriever_name: str, instance_id: str, retrieval_context: dict[str, Any]
+        self, retriever_name: str, retrieval_context: dict[str, Any]
     ) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.RETRIEVE_KNOWLEDGE,
-            {"retriever_name": retriever_name, "instance_id": instance_id, "retrieval_context": retrieval_context},
-        )
-        return resp
-
-    # Polymorphic component methods (generic)
-    async def create_polymorphic_component_instance(
-        self, instance_id: str, component_kind: str, component_name: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Create a polymorphic component instance (generic method for any polymorphic component)."""
-        resp = await self.call_action(
-            RuntimeToPluginAction.CREATE_POLYMORPHIC_COMPONENT_INSTANCE,
-            {
-                "instance_id": instance_id,
-                "component_kind": component_kind,
-                "component_name": component_name,
-                "config": config
-            },
-        )
-        return resp
-
-    async def delete_polymorphic_component_instance(
-        self, instance_id: str, component_kind: str, component_name: str
-    ) -> dict[str, Any]:
-        """Delete a polymorphic component instance (generic method for any polymorphic component)."""
-        resp = await self.call_action(
-            RuntimeToPluginAction.DELETE_POLYMORPHIC_COMPONENT_INSTANCE,
-            {
-                "instance_id": instance_id,
-                "component_kind": component_kind,
-                "component_name": component_name
-            },
-        )
-        return resp
-
-    async def sync_polymorphic_component_instances(
-        self, required_instances: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Sync polymorphic component instances for this plugin.
-
-        Sends the complete list of required instances to the plugin process,
-        which will handle creation and deletion internally.
-        """
-        resp = await self.call_action(
-            RuntimeToPluginAction.SYNC_POLYMORPHIC_COMPONENT_INSTANCES,
-            {"required_instances": required_instances},
+            {"retriever_name": retriever_name, "retrieval_context": retrieval_context},
         )
         return resp
 
@@ -503,5 +546,50 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.SHUTDOWN,
             {},
+        )
+        return resp
+
+    # ================= RAG Engine Methods =================
+
+    async def rag_ingest_document(self, context_data: dict[str, Any]) -> dict[str, Any]:
+        """Call plugin to ingest a document."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.INGEST_DOCUMENT,
+            {"context": context_data},
+            timeout=300,  # Ingestion can be slow
+        )
+        return resp
+
+    async def rag_delete_document(self, kb_id: str, document_id: str) -> dict[str, Any]:
+        """Call plugin to delete a document."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.DELETE_DOCUMENT,
+            {"kb_id": kb_id, "document_id": document_id},
+            timeout=30,
+        )
+        return resp
+
+    async def rag_on_kb_create(
+        self, kb_id: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Notify plugin about KB creation."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.ON_KB_CREATE,
+            {"kb_id": kb_id, "config": config},
+            timeout=30,
+        )
+        return resp
+
+    async def rag_on_kb_delete(self, kb_id: str) -> dict[str, Any]:
+        """Notify plugin about KB deletion."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.ON_KB_DELETE, {"kb_id": kb_id}, timeout=30
+        )
+        return resp
+
+    async def get_rag_capabilities(self) -> dict[str, Any]:
+        """Get RAG capabilities from plugin."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GET_RAG_CAPABILITIES, {}, timeout=10
         )
         return resp

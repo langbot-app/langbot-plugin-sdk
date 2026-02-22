@@ -9,7 +9,7 @@ import asyncio
 
 from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.definition.plugin import BasePlugin
-from langbot_plugin.api.definition.components.base import BaseComponent, NoneComponent, PolymorphicComponent
+from langbot_plugin.api.definition.components.base import BaseComponent, NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
 
@@ -105,13 +105,10 @@ class ComponentContainer(pydantic.BaseModel):
     """组件清单"""
 
     component_instance: BaseComponent
-    """Only used for non-polymorphic components"""
+    """组件实例"""
 
     component_config: dict[str, typing.Any]
     """组件配置"""
-
-    polymorphic_component_instances: dict[str, PolymorphicComponent]
-    """Only used for polymorphic components"""
 
     class Config:
         arbitrary_types_allowed = True
@@ -121,7 +118,6 @@ class ComponentContainer(pydantic.BaseModel):
             "manifest": self.manifest.model_dump(),
             "component_instance": None,  # not serializable
             "component_config": self.component_config,
-            "polymorphic_component_instances": {},
         }
 
     @classmethod
@@ -130,7 +126,6 @@ class ComponentContainer(pydantic.BaseModel):
             manifest=ComponentManifest.model_validate(data["manifest"]),
             component_instance=NoneComponent(),
             component_config=data["component_config"],
-            polymorphic_component_instances={},
         )
 
 
