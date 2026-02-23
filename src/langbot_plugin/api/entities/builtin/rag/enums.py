@@ -24,3 +24,14 @@ class DocumentStatus(str, enum.Enum):
     """Document has been deleted."""
 
 
+class SearchType(str, enum.Enum):
+    """Supported search types for vector databases."""
+
+    VECTOR = "vector"
+    """Semantic similarity search using embedding vectors."""
+
+    FULL_TEXT = "full_text"
+    """Keyword-based full-text search."""
+
+    HYBRID = "hybrid"
+    """Combined vector and full-text search."""

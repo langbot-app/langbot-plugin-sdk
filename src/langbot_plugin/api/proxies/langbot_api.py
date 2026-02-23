@@ -223,28 +223,34 @@ class LangBotAPIProxy:
         )["vectors"]
 
     async def vector_upsert(
-        self, 
-        collection_id: str, 
-        vectors: list[list[float]], 
+        self,
+        collection_id: str,
+        vectors: list[list[float]],
         ids: list[str],
-        metadata: list[dict[str, Any]] | None = None
+        metadata: list[dict[str, Any]] | None = None,
+        documents: list[str] | None = None,
     ) -> None:
         """Upsert vectors to Host's vector store.
-        
+
         Args:
             collection_id: Target collection ID.
             vectors: List of vectors.
             ids: List of unique IDs for vectors.
             metadata: Optional list of metadata dicts corresponding to vectors.
+            documents: Optional raw text documents. Required for full-text
+                and hybrid search in backends that support them.
         """
+        data: dict[str, Any] = {
+            "collection_id": collection_id,
+            "vectors": vectors,
+            "ids": ids,
+            "metadata": metadata,
+        }
+        if documents is not None:
+            data["documents"] = documents
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.VECTOR_UPSERT,
-            {
-                "collection_id": collection_id,
-                "vectors": vectors,
-                "ids": ids,
-                "metadata": metadata
-            }
+            data,
         )
 
     async def vector_search(
@@ -253,6 +259,8 @@ class LangBotAPIProxy:
         query_vector: list[float],
         top_k: int = 5,
         filters: dict[str, Any] | None = None,
+        search_type: str = "vector",
+        query_text: str = "",
     ) -> list[dict[str, Any]]:
         """Search similar vectors in Host's vector store.
 
@@ -261,6 +269,8 @@ class LangBotAPIProxy:
             query_vector: Query vector for similarity search.
             top_k: Number of results to return.
             filters: Optional metadata filters.
+            search_type: One of 'vector', 'full_text', 'hybrid'.
+            query_text: Raw query text, used for full_text and hybrid search.
 
         Returns:
             List of search results (dict with id, score, metadata).
@@ -273,6 +283,8 @@ class LangBotAPIProxy:
                     "query_vector": query_vector,
                     "top_k": top_k,
                     "filters": filters,
+                    "search_type": search_type,
+                    "query_text": query_text,
                 }
             )
         )["results"]

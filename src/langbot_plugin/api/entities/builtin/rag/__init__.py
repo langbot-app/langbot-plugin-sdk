@@ -5,6 +5,7 @@ from __future__ import annotations
 # Enumerations
 from .enums import (
     DocumentStatus,
+    SearchType,
 )
 
 # Data models
@@ -41,6 +42,7 @@ from .context import (
 __all__ = [
     # Enums
     "DocumentStatus",
+    "SearchType",
     # Models
     "FileMetadata",
     "FileObject",
