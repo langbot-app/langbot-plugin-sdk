@@ -103,7 +103,7 @@ class {{ rag_engine_attr }}(RAGEngine):
         """Retrieve relevant content from the knowledge base.
 
         Args:
-            context: Contains query, kb_id, top_k, and settings.
+            context: Contains query, kb_id, and retrieval_settings.
 
         Returns:
             RetrievalResponse with results.
@@ -114,10 +114,11 @@ class {{ rag_engine_attr }}(RAGEngine):
         # )
 
         # 2. Search vectors
+        # top_k = context.retrieval_settings.get('top_k', 5)
         # results = await self.plugin.vector_search(
         #     collection_id=context.get_collection_id(),
         #     query_vector=query_embedding,
-        #     top_k=context.top_k,
+        #     top_k=top_k,
         # )
 
         # 3. Build response

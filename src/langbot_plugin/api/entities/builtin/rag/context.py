@@ -32,9 +32,6 @@ class RetrievalContext(pydantic.BaseModel):
     query: str
     """The query."""
 
-    top_k: int = pydantic.Field(default=5)
-    """The top k."""
-
     knowledge_base_id: str | None = None
     """Knowledge base to search in."""
 
