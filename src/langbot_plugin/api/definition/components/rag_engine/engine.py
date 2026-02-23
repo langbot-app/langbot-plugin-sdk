@@ -14,19 +14,17 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 
 
 class RAGEngineCapability:
-    """Standard RAG engine capabilities."""
+    """Standard RAG engine capabilities.
+
+    These capabilities inform the frontend which UI elements to render.
+    For example, declaring DOC_INGESTION enables the document upload interface.
+
+    Retrieval behavior (reranking, hybrid search, etc.) is controlled by the
+    plugin's retrieval_schema and does not need a capability flag.
+    """
 
     DOC_INGESTION = "doc_ingestion"
     """Supports document upload and processing."""
-
-    CHUNKING_CONFIG = "chunking_config"
-    """Supports custom chunking parameters."""
-
-    RERANK = "rerank"
-    """Supports reranking of results."""
-
-    HYBRID_SEARCH = "hybrid_search"
-    """Supports hybrid (vector + keyword) search."""
 
 
 class RAGEngine(BaseComponent):
@@ -52,9 +50,6 @@ class RAGEngine(BaseComponent):
 
         Available capabilities (see RAGEngineCapability):
         - 'doc_ingestion': Supports document upload and processing
-        - 'chunking_config': Supports custom chunking parameters
-        - 'rerank': Supports reranking of results
-        - 'hybrid_search': Supports hybrid search
 
         Returns:
             List of capability strings.

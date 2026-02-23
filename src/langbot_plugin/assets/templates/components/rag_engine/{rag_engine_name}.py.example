@@ -32,9 +32,6 @@ class {{ rag_engine_attr }}(RAGEngine):
 
         Available capabilities:
         - RAGEngineCapability.DOC_INGESTION: Supports document upload
-        - RAGEngineCapability.CHUNKING_CONFIG: Supports custom chunking
-        - RAGEngineCapability.RERANK: Supports result reranking
-        - RAGEngineCapability.HYBRID_SEARCH: Supports hybrid search
         """
         return [RAGEngineCapability.DOC_INGESTION]
 
