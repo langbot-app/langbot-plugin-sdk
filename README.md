@@ -1,5 +1,5 @@
 <div align="center">
-<img src="https://docs.langbot.app/langbot-plugin-social.png" alt="LangBot Plugin SDK" />
+<img src="docs/langbot-plugin-social.png" alt="LangBot Plugin SDK" />
 </div>
 
 ## LangBot Plugin Infra
