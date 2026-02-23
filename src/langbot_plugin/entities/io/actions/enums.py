@@ -58,6 +58,12 @@ class PluginToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     LIST_TOOLS = "list_tools"
 
+    INVOKE_EMBEDDING = "invoke_embedding"
+    VECTOR_UPSERT = "vector_upsert"
+    VECTOR_SEARCH = "vector_search"
+    VECTOR_DELETE = "vector_delete"
+    GET_RAG_FILE_STREAM = "get_rag_file_stream"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
@@ -72,12 +78,12 @@ class RuntimeToPluginAction(ActionType):
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
 
-    # Polymorphic component actions (generic)
-    CREATE_POLYMORPHIC_COMPONENT_INSTANCE = "create_polymorphic_component_instance"
-    DELETE_POLYMORPHIC_COMPONENT_INSTANCE = "delete_polymorphic_component_instance"
-    SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
-
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+    INGEST_DOCUMENT = "ingest_document"
+    DELETE_DOCUMENT = "delete_document"
+    ON_KB_CREATE = "on_kb_create"
+    ON_KB_DELETE = "on_kb_delete"
+    GET_RAG_CAPABILITIES = "get_rag_capabilities"
 
 
 class LangBotToRuntimeAction(ActionType):
@@ -98,12 +104,17 @@ class LangBotToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
 
-    # Knowledge Retriever actions
-    LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
+    # RAG actions
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
-    # Polymorphic component instance integrity
-    SYNC_POLYMORPHIC_COMPONENT_INSTANCES = "sync_polymorphic_component_instances"
+    # RAG Engine actions (LangBot -> Runtime -> Plugin)
+    LIST_RAG_ENGINES = "list_rag_engines"
+    RAG_INGEST_DOCUMENT = "rag_ingest_document"
+    RAG_DELETE_DOCUMENT = "rag_delete_document"
+    RAG_ON_KB_CREATE = "rag_on_kb_create"
+    RAG_ON_KB_DELETE = "rag_on_kb_delete"
+    GET_RAG_CREATION_SETTINGS_SCHEMA = "get_rag_creation_settings_schema"
+    GET_RAG_RETRIEVAL_SETTINGS_SCHEMA = "get_rag_retrieval_settings_schema"
 
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"

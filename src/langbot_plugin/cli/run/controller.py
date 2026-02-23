@@ -25,6 +25,7 @@ from langbot_plugin.api.definition.components.base import NoneComponent, BaseCom
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.tool.tool import Tool
+from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 
@@ -72,7 +73,6 @@ class PluginRuntimeController:
                 manifest=component_manifest,
                 component_instance=NoneComponent(),
                 component_config={},
-                polymorphic_component_instances={},
             )
             for component_manifest in component_manifests
         ]
@@ -249,6 +249,7 @@ class PluginRuntimeController:
             EventListener,
             Tool,
             Command,
+            RAGEngine,
         ]
 
         for component_cls in preinitialize_component_classes:
@@ -274,8 +275,6 @@ class PluginRuntimeController:
 
         # Clear component instances
         for component_container in self.plugin_container.components:
-            # Clear polymorphic instances
-            component_container.polymorphic_component_instances.clear()
             # Reset component instance
             component_container.component_instance = NoneComponent()
 

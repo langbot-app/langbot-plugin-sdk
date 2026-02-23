@@ -199,3 +199,134 @@ class LangBotAPIProxy:
                 PluginToRuntimeAction.LIST_TOOLS, {}
             )
         )["tools"]
+
+    # ================= RAG Capability APIs =================
+
+    async def invoke_embedding(self, embedding_model_uuid: str, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings using Host's embedding model.
+
+        Args:
+            embedding_model_uuid: The UUID of the embedding model to use.
+            texts: List of texts to embed.
+
+        Returns:
+            List of embedding vectors, one per input text.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.INVOKE_EMBEDDING,
+                {
+                    "embedding_model_uuid": embedding_model_uuid,
+                    "texts": texts
+                }
+            )
+        )["vectors"]
+
+    async def vector_upsert(
+        self,
+        collection_id: str,
+        vectors: list[list[float]],
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None,
+        documents: list[str] | None = None,
+    ) -> None:
+        """Upsert vectors to Host's vector store.
+
+        Args:
+            collection_id: Target collection ID.
+            vectors: List of vectors.
+            ids: List of unique IDs for vectors.
+            metadata: Optional list of metadata dicts corresponding to vectors.
+            documents: Optional raw text documents. Required for full-text
+                and hybrid search in backends that support them.
+        """
+        data: dict[str, Any] = {
+            "collection_id": collection_id,
+            "vectors": vectors,
+            "ids": ids,
+            "metadata": metadata,
+        }
+        if documents is not None:
+            data["documents"] = documents
+        await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.VECTOR_UPSERT,
+            data,
+        )
+
+    async def vector_search(
+        self,
+        collection_id: str,
+        query_vector: list[float],
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None,
+        search_type: str = "vector",
+        query_text: str = "",
+    ) -> list[dict[str, Any]]:
+        """Search similar vectors in Host's vector store.
+
+        Args:
+            collection_id: Target collection ID.
+            query_vector: Query vector for similarity search.
+            top_k: Number of results to return.
+            filters: Optional metadata filters.
+            search_type: One of 'vector', 'full_text', 'hybrid'.
+            query_text: Raw query text, used for full_text and hybrid search.
+
+        Returns:
+            List of search results (dict with id, score, metadata).
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.VECTOR_SEARCH,
+                {
+                    "collection_id": collection_id,
+                    "query_vector": query_vector,
+                    "top_k": top_k,
+                    "filters": filters,
+                    "search_type": search_type,
+                    "query_text": query_text,
+                }
+            )
+        )["results"]
+
+    async def vector_delete(
+        self,
+        collection_id: str,
+        file_ids: list[str] | None = None,
+        filters: dict[str, Any] | None = None
+    ) -> int:
+        """Delete vectors from Host's vector store.
+
+        Args:
+            collection_id: Target collection ID.
+            file_ids: File IDs whose associated vectors should be deleted.
+            filters: Optional metadata filters for deletion.
+
+        Returns:
+            Number of deleted items.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.VECTOR_DELETE,
+                {
+                    "collection_id": collection_id,
+                    "file_ids": file_ids,
+                    "filters": filters
+                }
+            )
+        )["count"]
+
+    async def get_rag_file_stream(self, storage_path: str) -> bytes:
+        """Get file content from Host's storage.
+
+        Args:
+            storage_path: Logic path in FileObject.
+
+        Returns:
+            File content bytes.
+        """
+        resp = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.GET_RAG_FILE_STREAM,
+            {"storage_path": storage_path}
+        )
+        return base64.b64decode(resp["content_base64"])
