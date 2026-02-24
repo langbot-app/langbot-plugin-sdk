@@ -25,6 +25,7 @@ from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
+from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
 )
@@ -820,3 +821,74 @@ class PluginManager:
             if component.manifest.kind == RAGEngine.__kind__:
                 return {"schema": component.manifest.spec.get('retrieval_schema', [])}
         return {"schema": []}
+
+    # ================= Parser Methods =================
+
+    def _find_parser_plugin(
+        self, plugin_author: str, plugin_name: str
+    ) -> tuple[runtime_plugin_container.PluginContainer | None, str | None]:
+        """Find plugin with Parser component and return (plugin, component_name)."""
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return None, None
+
+        for component in plugin.components:
+            if component.manifest.kind == Parser.__kind__:
+                return plugin, component.manifest.metadata.name
+        return plugin, None
+
+    def _get_connected_parser_plugin(self, plugin_author: str, plugin_name: str) -> tuple[runtime_plugin_container.PluginContainer, str]:
+        """Helper to find a Parser plugin and ensure it's connected.
+
+        Args:
+            plugin_author: Author of the plugin.
+            plugin_name: Name of the plugin.
+
+        Returns:
+            Tuple of (plugin_container, component_name).
+
+        Raises:
+            ValueError: If plugin not found, has no Parser component, or is not connected.
+        """
+        plugin, component_name = self._find_parser_plugin(plugin_author, plugin_name)
+
+        if plugin is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+        if component_name is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no Parser component")
+        if plugin._runtime_plugin_handler is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+
+        return plugin, component_name
+
+    async def list_parsers(self) -> list[dict[str, typing.Any]]:
+        """List all available parsers from plugins.
+
+        Returns a list of parsers with their supported MIME types.
+        """
+        parsers: list[dict[str, typing.Any]] = []
+
+        for plugin in self.plugins:
+            if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
+                continue
+
+            for component in plugin.components:
+                if component.manifest.kind == Parser.__kind__:
+                    meta = component.manifest.metadata
+                    supported_mime_types = component.manifest.spec.get('supported_mime_types', [])
+
+                    parsers.append({
+                        "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
+                        "name": meta.label or meta.name,
+                        "description": meta.description,
+                        "supported_mime_types": supported_mime_types,
+                    })
+        return parsers
+
+    async def parse_document(
+        self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any]
+    ) -> dict[str, typing.Any]:
+        """Call plugin to parse a document."""
+        plugin, _ = self._get_connected_parser_plugin(plugin_author, plugin_name)
+        resp = await plugin._runtime_plugin_handler.parse_document(context_data)
+        return resp

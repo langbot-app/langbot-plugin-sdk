@@ -63,6 +63,54 @@ class TextChunk(pydantic.BaseModel):
     """Embedding vector (populated by host)."""
 
 
+class TextSection(pydantic.BaseModel):
+    """A section of text extracted from a document by a parser."""
+
+    content: str
+    """Section text content."""
+
+    heading: str | None = None
+    """Section heading."""
+
+    level: int = 0
+    """Nesting level."""
+
+    page: int | None = None
+    """Source page number (for PDF, etc.)."""
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Additional section metadata."""
+
+
+class ParseContext(pydantic.BaseModel):
+    """Context passed to Parser.parse()."""
+
+    file_content: bytes
+    """Raw file bytes (read by LangBot from storage)."""
+
+    mime_type: str
+    """Detected MIME type of the file."""
+
+    filename: str
+    """Original filename."""
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Extra metadata from FileObject."""
+
+
+class ParseResult(pydantic.BaseModel):
+    """Result returned by a parser after extracting text from a file."""
+
+    text: str
+    """Full extracted plain text."""
+
+    sections: list[TextSection] = Field(default_factory=list)
+    """Structured sections (optional)."""
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Parsing metadata (page_count, language, etc.)."""
+
+
 class IngestionContext(pydantic.BaseModel):
     """Context for document ingestion operations."""
 
@@ -77,6 +125,9 @@ class IngestionContext(pydantic.BaseModel):
 
     creation_settings: dict[str, Any] = Field(default_factory=dict)
     """Plugin-specific ingestion settings (from knowledge base creation_settings)."""
+
+    parsed_content: ParseResult | None = None
+    """Pre-parsed content from an external Parser plugin. If present, RAGEngine can skip its own parsing."""
 
     def get_collection_id(self) -> str:
         """Get the collection ID, falling back to knowledge_base_id."""

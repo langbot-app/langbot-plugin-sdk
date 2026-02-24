@@ -26,6 +26,7 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
+from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 
@@ -250,6 +251,7 @@ class PluginRuntimeController:
             Tool,
             Command,
             RAGEngine,
+            Parser,
         ]
 
         for component_cls in preinitialize_component_classes:

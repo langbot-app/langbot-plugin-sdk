@@ -115,6 +115,22 @@ def rag_engine_component_input_post_process(values: dict[str, Any]) -> dict[str,
     return result
 
 
+def parser_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "parser_name": values["parser_name"],
+        "parser_label": values["parser_name"],
+        "parser_description": values["parser_description"],
+        "parser_attr": values["parser_name"],
+    }
+
+    python_attr_valid_name = "".join(
+        word.capitalize() for word in values["parser_name"].split("_")
+    )
+    result["parser_label"] = python_attr_valid_name
+    result["parser_attr"] = python_attr_valid_name
+    return result
+
+
 component_types = [
     ComponentType(
         type_name="EventListener",
@@ -244,5 +260,45 @@ component_types = [
             },
         ],
         input_post_process=rag_engine_component_input_post_process,
+    ),
+    ComponentType(
+        type_name="Parser",
+        target_dir="components/parser",
+        template_files=[
+            "{parser_name}.yaml",
+            "{parser_name}.py",
+        ],
+        form_fields=[
+            {
+                "name": "parser_name",
+                "label": {
+                    "en_US": "Parser name",
+                    "zh_Hans": "解析器名称",
+                    "zh_Hant": "解析器名稱",
+                    "ja_JP": "パーサー名",
+                },
+                "required": True,
+                "format": {
+                    "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
+                    "error": {
+                        "en_US": "Invalid Parser name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_Hans": "无效的解析器名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的解析器名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効なパーサー名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
+                    },
+                },
+            },
+            {
+                "name": "parser_description",
+                "label": {
+                    "en_US": "Parser description",
+                    "zh_Hans": "解析器描述",
+                    "zh_Hant": "解析器描述",
+                    "ja_JP": "パーサーの説明",
+                },
+                "required": True,
+            },
+        ],
+        input_post_process=parser_component_input_post_process,
     ),
 ]

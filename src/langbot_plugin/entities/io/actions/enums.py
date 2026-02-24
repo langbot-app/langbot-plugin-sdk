@@ -64,6 +64,8 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_DELETE = "vector_delete"
     GET_RAG_FILE_STREAM = "get_rag_file_stream"
 
+    INVOKE_PARSER = "invoke_parser"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
@@ -84,6 +86,8 @@ class RuntimeToPluginAction(ActionType):
     ON_KB_CREATE = "on_kb_create"
     ON_KB_DELETE = "on_kb_delete"
     GET_RAG_CAPABILITIES = "get_rag_capabilities"
+
+    PARSE_DOCUMENT = "parse_document"
 
 
 class LangBotToRuntimeAction(ActionType):
@@ -115,6 +119,10 @@ class LangBotToRuntimeAction(ActionType):
     RAG_ON_KB_DELETE = "rag_on_kb_delete"
     GET_RAG_CREATION_SETTINGS_SCHEMA = "get_rag_creation_settings_schema"
     GET_RAG_RETRIEVAL_SETTINGS_SCHEMA = "get_rag_retrieval_settings_schema"
+
+    # Parser actions (LangBot -> Runtime -> Plugin)
+    LIST_PARSERS = "list_parsers"
+    PARSE_DOCUMENT = "parse_document"
 
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"

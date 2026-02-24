@@ -328,6 +328,26 @@ class ControlConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(resp)
 
+        # ================= Parser Actions =================
+
+        @self.action(LangBotToRuntimeAction.LIST_PARSERS)
+        async def list_parsers(data: dict[str, Any]) -> handler.ActionResponse:
+            """List all available parsers from plugins."""
+            parsers = await self.context.plugin_mgr.list_parsers()
+            return handler.ActionResponse.success({"parsers": parsers})
+
+        @self.action(LangBotToRuntimeAction.PARSE_DOCUMENT)
+        async def parse_document(data: dict[str, Any]) -> handler.ActionResponse:
+            """Parse document via Parser plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            context_data = data["context"]
+
+            resp = await self.context.plugin_mgr.parse_document(
+                plugin_author, plugin_name, context_data
+            )
+            return handler.ActionResponse.success(resp)
+
 
 # {"action": "ping", "data": {}, "seq_id": 1}
 # {"code": 0, "message": "ok", "data": {"msg": "hello"}, "seq_id": 1}
