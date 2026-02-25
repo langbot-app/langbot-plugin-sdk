@@ -184,6 +184,15 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
                                     item[field_name] = MessageChain.model_validate(
                                         field_value
                                     )
+                        # Special handling for Forward: recursively deserialize
+                        # message_chain inside each ForwardMessageNode
+                        if component_type == "Forward" and "node_list" in item:
+                            for node_data in item["node_list"]:
+                                if isinstance(node_data, dict) and "message_chain" in node_data:
+                                    mc = node_data["message_chain"]
+                                    if isinstance(mc, list):
+                                        node_data["message_chain"] = MessageChain.model_validate(mc)
+
                         # Special processing of the time field of the Source class
                         if component_type == "Source" and "time" in item:
                             item["time"] = datetime.fromtimestamp(item["time"])
