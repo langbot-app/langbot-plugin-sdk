@@ -228,6 +228,87 @@ def test_message_chain_with_forward():
     assert chain[0].display.title == "Test Forward"
 
 
+def test_forward_message_chain_deserialization():
+    """测试 Forward 消息的 node_list 中 message_chain 的反序列化"""
+    # Simulate raw dict data as it would come over the wire (e.g. from plugin runtime)
+    raw = [
+        {
+            "type": "Forward",
+            "display": {
+                "title": "Chat history",
+                "brief": "[Chat history]",
+                "source": "Chat history",
+                "preview": [],
+                "summary": "View 2 forwarded messages",
+            },
+            "node_list": [
+                {
+                    "sender_id": "111",
+                    "sender_name": "Alice",
+                    "message_chain": [
+                        {"type": "Plain", "text": "Hello from Alice"},
+                        {"type": "Image", "url": "http://example.com/a.png"},
+                    ],
+                    "message_id": 1,
+                },
+                {
+                    "sender_id": "222",
+                    "sender_name": "Bob",
+                    "message_chain": [
+                        {"type": "Plain", "text": "Hello from Bob"},
+                    ],
+                    "message_id": 2,
+                },
+            ],
+        }
+    ]
+
+    chain = MessageChain.model_validate(raw)
+    assert len(chain) == 1
+    fwd = chain[0]
+    assert isinstance(fwd, Forward)
+    assert len(fwd.node_list) == 2
+
+    # Verify nested message_chain is a proper MessageChain with typed components
+    alice_mc = fwd.node_list[0].message_chain
+    assert isinstance(alice_mc, MessageChain)
+    assert len(alice_mc) == 2
+    assert isinstance(alice_mc[0], Plain)
+    assert alice_mc[0].text == "Hello from Alice"
+    assert isinstance(alice_mc[1], Image)
+    assert alice_mc[1].url == "http://example.com/a.png"
+
+    bob_mc = fwd.node_list[1].message_chain
+    assert isinstance(bob_mc, MessageChain)
+    assert isinstance(bob_mc[0], Plain)
+    assert bob_mc[0].text == "Hello from Bob"
+
+
+def test_forward_roundtrip_serialization():
+    """测试 Forward 消息的序列化/反序列化往返"""
+    original = MessageChain([
+        Forward(
+            display=ForwardMessageDiaplay(title="Test"),
+            node_list=[
+                ForwardMessageNode(
+                    sender_id="123",
+                    sender_name="User",
+                    message_chain=MessageChain([Plain(text="nested msg")]),
+                ),
+            ],
+        )
+    ])
+
+    serialized = original.model_dump()
+    deserialized = MessageChain.model_validate(serialized)
+
+    fwd = deserialized[0]
+    assert isinstance(fwd, Forward)
+    assert isinstance(fwd.node_list[0].message_chain, MessageChain)
+    assert isinstance(fwd.node_list[0].message_chain[0], Plain)
+    assert fwd.node_list[0].message_chain[0].text == "nested msg"
+
+
 def test_message_chain_with_image():
     """测试带图片的消息链"""
     image = Image(image_id="test_image_id", url="http://example.com/image.jpg")
