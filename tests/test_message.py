@@ -338,6 +338,8 @@ def test_person_message_received_serialization():
         Plain,
         At,
     )
+    from langbot_plugin.api.entities.builtin.platform.events import FriendMessage
+    from langbot_plugin.api.entities.builtin.platform.entities import Friend
 
     # 创建一个消息链
     message_chain = MessageChain([Plain(text="Hello"), At(target=123456)])
@@ -348,6 +350,10 @@ def test_person_message_received_serialization():
         launcher_id="123456",
         sender_id="789012",
         message_chain=message_chain,
+        message_event=FriendMessage(
+            sender=Friend(id="789012", nickname="Test", remark=""),
+            message_chain=message_chain,
+        ),
     )
 
     # 测试自动序列化
@@ -417,6 +423,8 @@ def test_person_message_received_with_source():
         Plain,
         Source,
     )
+    from langbot_plugin.api.entities.builtin.platform.events import FriendMessage
+    from langbot_plugin.api.entities.builtin.platform.entities import Friend
     from datetime import datetime
 
     current_time = datetime.now()
@@ -428,6 +436,10 @@ def test_person_message_received_with_source():
         launcher_id="123456",
         sender_id="789012",
         message_chain=message_chain,
+        message_event=FriendMessage(
+            sender=Friend(id="789012", nickname="Test", remark=""),
+            message_chain=message_chain,
+        ),
     )
 
     # 序列化
