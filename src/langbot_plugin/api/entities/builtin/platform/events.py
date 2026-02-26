@@ -126,3 +126,98 @@ class GroupMessage(MessageEvent):
             "message_chain": self.message_chain.model_dump(),
             "time": self.time,
         }
+
+
+###############################
+# Notice Event
+class NoticeEvent(Event):
+    """通知事件。
+
+    notice_type 对应 OneBot v11 的 notice_type:
+        group_increase, group_decrease, group_admin, group_ban,
+        group_upload, group_recall, friend_recall, friend_add, notify
+
+    sub_type 对应各通知的子类型:
+        group_increase: approve / invite
+        group_decrease: leave / kick / kick_me
+        group_admin: set / unset
+        group_ban: ban / lift_ban
+        notify: poke / lucky_king / honor
+    """
+
+    type: str = "NoticeEvent"
+
+    notice_type: str = ""
+    """通知类型，如 group_increase, group_recall, notify 等。"""
+
+    sub_type: str = ""
+    """子类型，如 approve, kick, poke 等。"""
+
+    group_id: typing.Optional[typing.Union[int, str]] = None
+    """群号。"""
+
+    user_id: typing.Optional[typing.Union[int, str]] = None
+    """触发事件的用户 ID。"""
+
+    operator_id: typing.Optional[typing.Union[int, str]] = None
+    """操作者 ID（如踢人者、禁言操作者、撤回操作者）。"""
+
+    target_id: typing.Optional[typing.Union[int, str]] = None
+    """目标 ID（如被戳者、运气王）。"""
+
+    message_id: typing.Optional[typing.Union[int, str]] = None
+    """关联的消息 ID（撤回事件）。"""
+
+    duration: typing.Optional[int] = None
+    """禁言时长(秒)，0 表示解除禁言。"""
+
+    file: typing.Optional[dict] = None
+    """文件信息(group_upload 事件)，包含 id, name, size, busid。"""
+
+    honor_type: typing.Optional[str] = None
+    """荣誉类型(notify/honor 事件): talkative / performer / emotion。"""
+
+    time: float | None = None
+    """事件时间戳。"""
+
+    source_platform_object: typing.Optional[typing.Any] = None
+    """原消息平台对象。"""
+
+
+###############################
+# Request Event
+class RequestEvent(Event):
+    """请求事件。
+
+    request_type 对应 OneBot v11 的 request_type:
+        friend, group
+
+    sub_type 对应各请求的子类型 (仅 group):
+        group: add / invite
+    """
+
+    type: str = "RequestEvent"
+
+    request_type: str = ""
+    """请求类型: friend / group。"""
+
+    sub_type: str = ""
+    """子类型: add / invite (仅 group 请求)。"""
+
+    user_id: typing.Optional[typing.Union[int, str]] = None
+    """发送请求的用户 ID。"""
+
+    group_id: typing.Optional[typing.Union[int, str]] = None
+    """群号 (仅 group 请求)。"""
+
+    comment: str = ""
+    """验证信息/附言。"""
+
+    flag: str = ""
+    """请求 flag，用于处理请求时传入。"""
+
+    time: float | None = None
+    """事件时间戳。"""
+
+    source_platform_object: typing.Optional[typing.Any] = None
+    """原消息平台对象。"""

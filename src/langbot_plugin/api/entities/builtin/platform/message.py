@@ -46,6 +46,8 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
             "Voice": Voice,
             "Forward": Forward,
             "File": File,
+            "Notice": Notice,
+            "Request": Request,
             "WeChatMiniPrograms": WeChatMiniPrograms,
             "WeChatForwardMiniPrograms": WeChatForwardMiniPrograms,
             "WeChatEmoji": WeChatEmoji,
@@ -469,7 +471,135 @@ class Face(MessageComponent):
         return rps_dict[face_id]
 
 
-# ================ 个人微信专用组件 ================
+class Notice(MessageComponent):
+    """通知消息组件。
+
+    notice_type 对应 OneBot v11 的 notice_type:
+        group_increase, group_decrease, group_admin, group_ban,
+        group_upload, group_recall, friend_recall, friend_add, notify
+
+    sub_type 对应各通知的子类型:
+        group_increase: approve / invite
+        group_decrease: leave / kick / kick_me
+        group_admin: set / unset
+        group_ban: ban / lift_ban
+        notify: poke / lucky_king / honor
+    """
+
+    type: str = "Notice"
+    """消息组件类型。"""
+    notice_type: str = ""
+    """通知类型。"""
+    sub_type: str = ""
+    """子类型。"""
+    group_id: typing.Optional[typing.Union[int, str]] = None
+    """群号。"""
+    user_id: typing.Optional[typing.Union[int, str]] = None
+    """触发事件的用户 ID。"""
+    operator_id: typing.Optional[typing.Union[int, str]] = None
+    """操作者 ID。"""
+    target_id: typing.Optional[typing.Union[int, str]] = None
+    """目标 ID（被戳者、运气王等）。"""
+    message_id: typing.Optional[typing.Union[int, str]] = None
+    """关联的消息 ID（撤回事件）。"""
+    duration: typing.Optional[int] = None
+    """禁言时长(秒)。"""
+    file: typing.Optional[dict] = None
+    """文件信息(group_upload 事件)。"""
+    honor_type: typing.Optional[str] = None
+    """荣誉类型(notify/honor 事件)。"""
+
+    def __str__(self):
+        notice_name = self._get_notice_name()
+        if self.sub_type:
+            sub_name = self._get_sub_type_name()
+            return f"[通知]{notice_name}-{sub_name}"
+        return f"[通知]{notice_name}"
+
+    def _get_notice_name(self) -> str:
+        notice_name_dict = {
+            "group_increase": "群成员增加",
+            "group_decrease": "群成员减少",
+            "group_admin": "群管理员变动",
+            "group_ban": "群禁言",
+            "group_upload": "群文件上传",
+            "group_recall": "群消息撤回",
+            "group_card": "群名片更新",
+            "friend_recall": "私聊消息撤回",
+            "friend_add": "好友添加",
+            "notify": "提醒",
+            "essence": "群精华消息",
+            "group_msg_emoji_like": "群表情回应",
+        }
+        return notice_name_dict.get(self.notice_type, self.notice_type)
+
+    def _get_sub_type_name(self) -> str:
+        sub_type_name_dict = {
+            "approve": "同意",
+            "invite": "邀请",
+            "leave": "主动退群",
+            "kick": "被踢",
+            "kick_me": "登录号被踢",
+            "set": "设置",
+            "unset": "取消",
+            "ban": "禁言",
+            "lift_ban": "解除禁言",
+            "poke": "戳一戳",
+            "lucky_king": "运气王",
+            "honor": "荣誉",
+            "add": "添加",
+            "input_status": "输入状态",
+            "title": "头衔变更",
+            "profile_like": "点赞",
+        }
+        return sub_type_name_dict.get(self.sub_type, self.sub_type)
+
+
+class Request(MessageComponent):
+    """请求消息组件。
+
+    request_type 对应 OneBot v11 的 request_type:
+        friend, group
+
+    sub_type 对应各请求的子类型 (仅 group):
+        group: add / invite
+    """
+
+    type: str = "Request"
+    """消息组件类型。"""
+    request_type: str = ""
+    """请求类型: friend / group。"""
+    sub_type: str = ""
+    """子类型: add / invite (仅 group 请求)。"""
+    user_id: typing.Optional[typing.Union[int, str]] = None
+    """发送请求的用户 ID。"""
+    group_id: typing.Optional[typing.Union[int, str]] = None
+    """群号 (仅 group 请求)。"""
+    comment: str = ""
+    """验证信息/附言。"""
+    flag: str = ""
+    """请求 flag，用于处理请求时传入。"""
+
+    def __str__(self):
+        request_name = self._get_request_name()
+        if self.sub_type:
+            sub_name = self._get_sub_type_name()
+            return f"[请求]{request_name}-{sub_name}"
+        return f"[请求]{request_name}"
+
+    def _get_request_name(self) -> str:
+        request_name_dict = {
+            "friend": "加好友",
+            "group": "加群",
+        }
+        return request_name_dict.get(self.request_type, self.request_type)
+
+    def _get_sub_type_name(self) -> str:
+        sub_type_name_dict = {
+            "add": "主动加群",
+            "invite": "邀请入群",
+        }
+        return sub_type_name_dict.get(self.sub_type, self.sub_type)
 
 
 class WeChatMiniPrograms(MessageComponent):
