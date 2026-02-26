@@ -102,8 +102,8 @@ class GroupMessageReceived(BaseEventModel):
 class _WithReplyMessageChain(BaseEventModel):
     """事件模型基类，包含回复消息链对象"""
 
-    reply_message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
-        serialization_alias="reply_message_chain", default=None
+    reply_message_chain: typing.Optional[platform_message.MessageChain] = (
+        pydantic.Field(serialization_alias="reply_message_chain", default=None)
     )
     """回复消息链对象，仅在阻止默认行为时有效"""
 
@@ -157,9 +157,11 @@ class PersonNormalMessageReceived(_WithReplyMessageChain):
     def validate_message_event(cls, v):
         return platform_events.FriendMessage.model_validate(v)
 
-    user_message_alter: typing.Optional[typing.Union[provider_message.ContentElement, list[provider_message.ContentElement], str]] = pydantic.Field(
-        default=None
-    )
+    user_message_alter: typing.Optional[
+        typing.Union[
+            provider_message.ContentElement, list[provider_message.ContentElement], str
+        ]
+    ] = pydantic.Field(default=None)
     """修改后的 LLM 消息对象，可用于改写用户消息"""
 
 
@@ -199,9 +201,11 @@ class GroupNormalMessageReceived(_WithReplyMessageChain):
     def validate_message_event(cls, v):
         return platform_events.GroupMessage.model_validate(v)
 
-    user_message_alter: typing.Optional[typing.Union[provider_message.ContentElement, list[provider_message.ContentElement], str]] = pydantic.Field(
-        default=None
-    )
+    user_message_alter: typing.Optional[
+        typing.Union[
+            provider_message.ContentElement, list[provider_message.ContentElement], str
+        ]
+    ] = pydantic.Field(default=None)
     """修改后的 LLM 消息对象，可用于改写用户消息"""
 
 
@@ -270,6 +274,85 @@ class NormalMessageResponded(_WithReplyMessageChain):
 
     funcs_called: list[str]
     """调用的函数列表"""
+
+
+class NoticeReceived(BaseEventModel):
+    """收到通知事件时触发（群成员变动、禁言、撤回、戳一戳等）
+
+    notice_type 对应 OneBot v11 的 notice_type:
+        group_increase, group_decrease, group_admin, group_ban,
+        group_upload, group_recall, friend_recall, friend_add, notify
+
+    sub_type 对应各通知的子类型:
+        group_increase: approve / invite
+        group_decrease: leave / kick / kick_me
+        group_admin: set / unset
+        group_ban: ban / lift_ban
+        notify: poke / lucky_king / honor
+    """
+
+    event_name: str = "NoticeReceived"
+
+    notice_type: str
+    """通知类型，如 group_increase, group_recall, notify 等。"""
+
+    sub_type: str = ""
+    """子类型，如 approve, kick, poke 等。"""
+
+    group_id: typing.Optional[typing.Union[int, str]] = None
+    """群号。"""
+
+    user_id: typing.Optional[typing.Union[int, str]] = None
+    """触发事件的用户 ID。"""
+
+    operator_id: typing.Optional[typing.Union[int, str]] = None
+    """操作者 ID。"""
+
+    target_id: typing.Optional[typing.Union[int, str]] = None
+    """目标 ID（被戳者、运气王等）。"""
+
+    message_id: typing.Optional[typing.Union[int, str]] = None
+    """关联的消息 ID（撤回事件）。"""
+
+    duration: typing.Optional[int] = None
+    """禁言时长(秒)。"""
+
+    file: typing.Optional[dict] = None
+    """文件信息(group_upload 事件)。"""
+
+    honor_type: typing.Optional[str] = None
+    """荣誉类型(notify/honor 事件)。"""
+
+
+class RequestReceived(BaseEventModel):
+    """收到请求事件时触发（加好友请求、加群请求、邀请入群等）
+
+    request_type 对应 OneBot v11 的 request_type:
+        friend, group
+
+    sub_type 对应各请求的子类型 (仅 group):
+        group: add / invite
+    """
+
+    event_name: str = "RequestReceived"
+
+    request_type: str
+    """请求类型: friend / group。"""
+
+    sub_type: str = ""
+    """子类型: add / invite (仅 group 请求)。"""
+
+    user_id: typing.Optional[typing.Union[int, str]] = None
+    """发送请求的用户 ID。"""
+
+    group_id: typing.Optional[typing.Union[int, str]] = None
+    """群号 (仅 group 请求)。"""
+
+    comment: str = ""
+    """验证信息/附言。"""
+
+    flag: str = ""
+    """请求 flag，用于处理请求时传入。"""
 
 
 class PromptPreProcessing(BaseEventModel):
