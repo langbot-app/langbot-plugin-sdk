@@ -278,11 +278,20 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_RAG_FILE_STREAM)
         async def get_rag_file_stream(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward file stream from LangBot to plugin via chunked transfer."""
             result = await _proxy_rag_action(
                 PluginToRuntimeAction.GET_RAG_FILE_STREAM,
                 data,
                 timeout=60,
             )
+            # LangBot sent the file via FILE_CHUNK; read from local temp
+            file_key = result.get("file_key", "")
+            if file_key:
+                file_bytes = await self.read_local_file(file_key)
+                await self.delete_local_file(file_key)
+                # Forward to plugin subprocess via chunked transfer
+                plugin_file_key = await self.send_file(file_bytes, "")
+                return handler.ActionResponse.success({"file_key": plugin_file_key})
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.SET_PLUGIN_STORAGE)

@@ -329,4 +329,8 @@ class LangBotAPIProxy:
             PluginToRuntimeAction.GET_RAG_FILE_STREAM,
             {"storage_path": storage_path}
         )
-        return base64.b64decode(resp["content_base64"])
+        # File was transferred via FILE_CHUNK; read from local temp
+        file_key = resp["file_key"]
+        file_bytes = await self.plugin_runtime_handler.read_local_file(file_key)
+        await self.plugin_runtime_handler.delete_local_file(file_key)
+        return file_bytes
