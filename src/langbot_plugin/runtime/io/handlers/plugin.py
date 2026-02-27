@@ -617,11 +617,18 @@ class PluginConnectionHandler(handler.Handler):
 
     # ================= Parser Methods =================
 
-    async def parse_document(self, context_data: dict[str, Any]) -> dict[str, Any]:
-        """Call plugin to parse a document."""
+    async def parse_document(self, context_data: dict[str, Any], file_bytes: bytes) -> dict[str, Any]:
+        """Call plugin to parse a document.
+
+        Sends file content via chunked FILE_CHUNK transfer, then invokes
+        the PARSE_DOCUMENT action with a file_key reference.
+        """
+        file_key = await self.send_file(file_bytes, "")
+        context_data["file_key"] = file_key
+
         resp = await self.call_action(
             RuntimeToPluginAction.PARSE_DOCUMENT,
             {"context": context_data},
-            timeout=300,  # Parsing can be slow for large files
+            timeout=300,
         )
         return resp

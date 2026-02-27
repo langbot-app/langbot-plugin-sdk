@@ -4,7 +4,6 @@ import asyncio
 import os
 import mimetypes
 import typing
-import base64
 import aiofiles
 from copy import deepcopy
 
@@ -384,9 +383,13 @@ class PluginRuntimeHandler(Handler):
             """Parse a document using the Parser component."""
             context_data = data["context"]
 
-            # Convert base64 file content to bytes
-            file_content_base64 = context_data.get("file_content_base64", "")
-            file_bytes = base64.b64decode(file_content_base64) if file_content_base64 else b""
+            # Read file from local temp storage (transferred via FILE_CHUNK)
+            file_key = context_data.get("file_key", "")
+            if file_key:
+                file_bytes = await self.read_local_file(file_key)
+                await self.delete_local_file(file_key)
+            else:
+                file_bytes = b""
 
             parse_context = ParseContext(
                 file_content=file_bytes,

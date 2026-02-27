@@ -886,9 +886,9 @@ class PluginManager:
         return parsers
 
     async def parse_document(
-        self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any]
+        self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any], file_bytes: bytes
     ) -> dict[str, typing.Any]:
         """Call plugin to parse a document."""
         plugin, _ = self._get_connected_parser_plugin(plugin_author, plugin_name)
-        resp = await plugin._runtime_plugin_handler.parse_document(context_data)
+        resp = await plugin._runtime_plugin_handler.parse_document(context_data, file_bytes)
         return resp

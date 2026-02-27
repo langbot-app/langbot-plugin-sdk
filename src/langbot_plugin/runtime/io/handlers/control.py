@@ -1,7 +1,6 @@
 # handle connection from LangBot
 from __future__ import annotations
 
-import base64
 import json
 from typing import Any, AsyncGenerator
 
@@ -343,8 +342,16 @@ class ControlConnectionHandler(handler.Handler):
             plugin_name = data["plugin_name"]
             context_data = data["context"]
 
+            # Read file from local temp storage (transferred via FILE_CHUNK from LangBot)
+            file_key = context_data.pop("file_key", "")
+            if file_key:
+                file_bytes = await self.read_local_file(file_key)
+                await self.delete_local_file(file_key)
+            else:
+                file_bytes = b""
+
             resp = await self.context.plugin_mgr.parse_document(
-                plugin_author, plugin_name, context_data
+                plugin_author, plugin_name, context_data, file_bytes
             )
             return handler.ActionResponse.success(resp)
 
