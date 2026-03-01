@@ -334,3 +334,40 @@ class LangBotAPIProxy:
         file_bytes = await self.plugin_runtime_handler.read_local_file(file_key)
         await self.plugin_runtime_handler.delete_local_file(file_key)
         return file_bytes
+
+    # ================= Parser Capability APIs =================
+
+    async def invoke_parser(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        storage_path: str,
+        mime_type: str,
+        filename: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Invoke a Parser plugin to parse a document.
+
+        Args:
+            plugin_author: Author of the parser plugin.
+            plugin_name: Name of the parser plugin.
+            storage_path: Path to the file in Host's storage system.
+            mime_type: MIME type of the file.
+            filename: Original filename.
+            metadata: Optional extra metadata.
+
+        Returns:
+            Parse result dict with text, sections, and metadata.
+        """
+        return await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.INVOKE_PARSER,
+            {
+                "plugin_author": plugin_author,
+                "plugin_name": plugin_name,
+                "storage_path": storage_path,
+                "mime_type": mime_type,
+                "filename": filename,
+                "metadata": metadata or {},
+            },
+            timeout=300,
+        )

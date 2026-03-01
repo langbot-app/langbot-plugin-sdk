@@ -26,6 +26,16 @@ class RAGEngineCapability:
     DOC_INGESTION = "doc_ingestion"
     """Supports document upload and processing."""
 
+    DOC_PARSING = "doc_parsing"
+    """Supports native document parsing (file-to-text extraction).
+
+    This is a coarse-grained flag: the engine either handles parsing or it
+    does not.  A finer per-MIME-type declaration was considered but would
+    require coordinated changes across the SDK manifest, the backend KB info
+    pipeline, and the frontend prop chain, so a simple capability flag is
+    used instead.
+    """
+
 
 class RAGEngine(BaseComponent):
     """Complete RAG engine component with full lifecycle management.

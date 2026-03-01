@@ -4,7 +4,6 @@ import asyncio
 import os
 import mimetypes
 import typing
-import base64
 import aiofiles
 from copy import deepcopy
 
@@ -21,8 +20,9 @@ from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.rag_engine.engine import RAGEngine
+from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
-from langbot_plugin.api.entities.builtin.rag.models import IngestionContext
+from langbot_plugin.api.entities.builtin.rag.models import IngestionContext, ParseContext
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
 
@@ -358,6 +358,53 @@ class PluginRuntimeHandler(Handler):
                 capabilities = []
 
             return ActionResponse.success({"capabilities": capabilities})
+
+        # ========== Parser Handlers ==========
+
+        def _find_parser_component() -> ComponentContainer | None:
+            """Find Parser component in plugin."""
+            for component in self.plugin_container.components:
+                if component.manifest.kind == Parser.__kind__:
+                    return component
+            return None
+
+        def _get_parser_or_error() -> tuple[Parser | None, ActionResponse | None]:
+            """Get Parser instance or error response."""
+            parser_component = _find_parser_component()
+            if parser_component is None:
+                return None, ActionResponse.error("Parser component not found in this plugin")
+            if isinstance(parser_component.component_instance, NoneComponent):
+                return None, ActionResponse.error("Parser component is not initialized")
+            assert isinstance(parser_component.component_instance, Parser)
+            return parser_component.component_instance, None
+
+        @self.action(RuntimeToPluginAction.PARSE_DOCUMENT)
+        async def parse_document(data: dict[str, typing.Any]) -> ActionResponse:
+            """Parse a document using the Parser component."""
+            context_data = data["context"]
+
+            # Read file from local temp storage (transferred via FILE_CHUNK)
+            file_key = context_data.get("file_key", "")
+            if file_key:
+                file_bytes = await self.read_local_file(file_key)
+                await self.delete_local_file(file_key)
+            else:
+                file_bytes = b""
+
+            parse_context = ParseContext(
+                file_content=file_bytes,
+                mime_type=context_data.get("mime_type", "application/octet-stream"),
+                filename=context_data.get("filename", ""),
+                metadata=context_data.get("metadata", {}),
+            )
+
+            parser_instance, error = _get_parser_or_error()
+            if error:
+                return error
+
+            result = await parser_instance.parse(parse_context)
+
+            return ActionResponse.success(result.model_dump(mode="json"))
 
     async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
         # Read PLUGIN_DEBUG_KEY from environment variable

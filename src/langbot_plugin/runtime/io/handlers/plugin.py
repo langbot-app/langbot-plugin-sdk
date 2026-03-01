@@ -294,6 +294,18 @@ class PluginConnectionHandler(handler.Handler):
                 return handler.ActionResponse.success({"file_key": plugin_file_key})
             return handler.ActionResponse.success(result)
 
+        # ================= Parser Capability Handlers (Plugin -> Runtime -> Host) =================
+
+        @self.action(PluginToRuntimeAction.INVOKE_PARSER)
+        async def invoke_parser(data: dict[str, Any]) -> handler.ActionResponse:
+            """Plugin requests host to invoke a parser plugin."""
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.INVOKE_PARSER,
+                data,
+                timeout=300,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.SET_PLUGIN_STORAGE)
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
@@ -600,5 +612,23 @@ class PluginConnectionHandler(handler.Handler):
         """Get RAG capabilities from plugin."""
         resp = await self.call_action(
             RuntimeToPluginAction.GET_RAG_CAPABILITIES, {}, timeout=10
+        )
+        return resp
+
+    # ================= Parser Methods =================
+
+    async def parse_document(self, context_data: dict[str, Any], file_bytes: bytes) -> dict[str, Any]:
+        """Call plugin to parse a document.
+
+        Sends file content via chunked FILE_CHUNK transfer, then invokes
+        the PARSE_DOCUMENT action with a file_key reference.
+        """
+        file_key = await self.send_file(file_bytes, "")
+        context_data["file_key"] = file_key
+
+        resp = await self.call_action(
+            RuntimeToPluginAction.PARSE_DOCUMENT,
+            {"context": context_data},
+            timeout=300,
         )
         return resp

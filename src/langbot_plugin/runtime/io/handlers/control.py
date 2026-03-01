@@ -1,7 +1,6 @@
 # handle connection from LangBot
 from __future__ import annotations
 
-import base64
 import json
 from typing import Any, AsyncGenerator
 
@@ -325,6 +324,34 @@ class ControlConnectionHandler(handler.Handler):
 
             resp = await self.context.plugin_mgr.get_rag_retrieval_schema(
                 plugin_author, plugin_name
+            )
+            return handler.ActionResponse.success(resp)
+
+        # ================= Parser Actions =================
+
+        @self.action(LangBotToRuntimeAction.LIST_PARSERS)
+        async def list_parsers(data: dict[str, Any]) -> handler.ActionResponse:
+            """List all available parsers from plugins."""
+            parsers = await self.context.plugin_mgr.list_parsers()
+            return handler.ActionResponse.success({"parsers": parsers})
+
+        @self.action(LangBotToRuntimeAction.PARSE_DOCUMENT)
+        async def parse_document(data: dict[str, Any]) -> handler.ActionResponse:
+            """Parse document via Parser plugin."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            context_data = data["context"]
+
+            # Read file from local temp storage (transferred via FILE_CHUNK from LangBot)
+            file_key = context_data.pop("file_key", "")
+            if file_key:
+                file_bytes = await self.read_local_file(file_key)
+                await self.delete_local_file(file_key)
+            else:
+                file_bytes = b""
+
+            resp = await self.context.plugin_mgr.parse_document(
+                plugin_author, plugin_name, context_data, file_bytes
             )
             return handler.ActionResponse.success(resp)
 

@@ -13,6 +13,9 @@ from .models import (
     FileMetadata,
     FileObject,
     TextChunk,
+    TextSection,
+    ParseContext,
+    ParseResult,
     IngestionContext,
     IngestionResult,
 )
@@ -47,6 +50,9 @@ __all__ = [
     "FileMetadata",
     "FileObject",
     "TextChunk",
+    "TextSection",
+    "ParseContext",
+    "ParseResult",
     "IngestionContext",
     "IngestionResult",
     # Errors
