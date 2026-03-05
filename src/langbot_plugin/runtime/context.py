@@ -29,7 +29,3 @@ class RuntimeContext:
     plugin_mgr: plugin_mgr_cls.PluginManager
 
     ws_debug_port: int = 5401  # Default debug port
-
-    required_polymorphic_instances: list[dict] | None = None
-    """List of required polymorphic component instances from LangBot.
-    Each item contains: instance_id, plugin_author, plugin_name, component_kind, component_name, config"""
