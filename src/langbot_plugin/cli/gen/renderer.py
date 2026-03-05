@@ -242,9 +242,9 @@ component_types = [
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
                         "en_US": "Invalid Knowledge Engine name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
-                        "zh_Hans": "无效的 RAG 引擎名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
-                        "zh_Hant": "無效的 RAG 引擎名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
-                        "ja_JP": "無効な RAG エンジン名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
+                        "zh_Hans": "无效的 知识引擎名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的 知識引擎名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効なナレッジエンジン名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
                     },
                 },
             },
