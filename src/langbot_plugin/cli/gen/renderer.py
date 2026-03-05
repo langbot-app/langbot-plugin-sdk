@@ -99,19 +99,19 @@ def command_component_input_post_process(values: dict[str, Any]) -> dict[str, An
     return result
 
 
-def rag_engine_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+def knowledge_engine_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
     result = {
-        "rag_engine_name": values["rag_engine_name"],
-        "rag_engine_label": values["rag_engine_name"],
-        "rag_engine_description": values["rag_engine_description"],
-        "rag_engine_attr": values["rag_engine_name"],
+        "knowledge_engine_name": values["knowledge_engine_name"],
+        "knowledge_engine_label": values["knowledge_engine_name"],
+        "knowledge_engine_description": values["knowledge_engine_description"],
+        "knowledge_engine_attr": values["knowledge_engine_name"],
     }
 
     python_attr_valid_name = "".join(
-        word.capitalize() for word in values["rag_engine_name"].split("_")
+        word.capitalize() for word in values["knowledge_engine_name"].split("_")
     )
-    result["rag_engine_label"] = python_attr_valid_name
-    result["rag_engine_attr"] = python_attr_valid_name
+    result["knowledge_engine_label"] = python_attr_valid_name
+    result["knowledge_engine_attr"] = python_attr_valid_name
     return result
 
 
@@ -223,25 +223,25 @@ component_types = [
     ),
     ComponentType(
         type_name="KnowledgeEngine",
-        target_dir="components/rag_engine",
+        target_dir="components/knowledge_engine",
         template_files=[
-            "{rag_engine_name}.yaml",
-            "{rag_engine_name}.py",
+            "{knowledge_engine_name}.yaml",
+            "{knowledge_engine_name}.py",
         ],
         form_fields=[
             {
-                "name": "rag_engine_name",
+                "name": "knowledge_engine_name",
                 "label": {
-                    "en_US": "RAG Engine name",
-                    "zh_Hans": "RAG 引擎名称",
-                    "zh_Hant": "RAG 引擎名稱",
-                    "ja_JP": "RAG エンジン名",
+                    "en_US": "Knowledge Engine name",
+                    "zh_Hans": "知识引擎名称",
+                    "zh_Hant": "知識引擎名稱",
+                    "ja_JP": "ナレッジエンジン名",
                 },
                 "required": True,
                 "format": {
                     "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
                     "error": {
-                        "en_US": "Invalid RAG Engine name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "en_US": "Invalid Knowledge Engine name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
                         "zh_Hans": "无效的 RAG 引擎名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
                         "zh_Hant": "無效的 RAG 引擎名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
                         "ja_JP": "無効な RAG エンジン名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
@@ -249,17 +249,17 @@ component_types = [
                 },
             },
             {
-                "name": "rag_engine_description",
+                "name": "knowledge_engine_description",
                 "label": {
-                    "en_US": "RAG Engine description",
-                    "zh_Hans": "RAG 引擎描述",
-                    "zh_Hant": "RAG 引擎描述",
-                    "ja_JP": "RAG エンジンの説明",
+                    "en_US": "Knowledge Engine description",
+                    "zh_Hans": "知识引擎描述",
+                    "zh_Hant": "知識引擎描述",
+                    "ja_JP": "ナレッジエンジンの説明",
                 },
                 "required": True,
             },
         ],
-        input_post_process=rag_engine_component_input_post_process,
+        input_post_process=knowledge_engine_component_input_post_process,
     ),
     ComponentType(
         type_name="Parser",

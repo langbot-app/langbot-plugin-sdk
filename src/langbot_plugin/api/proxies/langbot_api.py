@@ -316,7 +316,7 @@ class LangBotAPIProxy:
             )
         )["count"]
 
-    async def get_rag_file_stream(self, storage_path: str) -> bytes:
+    async def get_knowledge_file_stream(self, storage_path: str) -> bytes:
         """Get file content from Host's storage.
 
         Args:
@@ -326,7 +326,7 @@ class LangBotAPIProxy:
             File content bytes.
         """
         resp = await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_RAG_FILE_STREAM,
+            PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
             {"storage_path": storage_path}
         )
         # File was transferred via FILE_CHUNK; read from local temp

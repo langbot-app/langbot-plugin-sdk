@@ -19,7 +19,7 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.rag_engine.engine import KnowledgeEngine
+from langbot_plugin.api.definition.components.knowledge_engine.engine import KnowledgeEngine
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import IngestionContext, ParseContext
@@ -263,23 +263,23 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success({})
 
-        # ================= RAG Engine Actions =================
+        # ================= Knowledge Engine Actions =================
 
-        def _find_rag_engine_component() -> ComponentContainer | None:
+        def _find_knowledge_engine_component() -> ComponentContainer | None:
             """Find the KnowledgeEngine component in the plugin."""
             for component in self.plugin_container.components:
                 if component.manifest.kind == KnowledgeEngine.__kind__:
                     return component
             return None
 
-        def _get_rag_engine_or_error() -> tuple[KnowledgeEngine | None, ActionResponse | None]:
+        def _get_knowledge_engine_or_error() -> tuple[KnowledgeEngine | None, ActionResponse | None]:
             """Get KnowledgeEngine singleton instance or error response.
 
             Returns:
-                (rag_engine, None) if successful
+                (knowledge_engine, None) if successful
                 (None, error_response) if failed
             """
-            rag_component = _find_rag_engine_component()
+            rag_component = _find_knowledge_engine_component()
             if rag_component is None:
                 return None, ActionResponse.error("KnowledgeEngine component not found in this plugin")
 
@@ -294,11 +294,11 @@ class PluginRuntimeHandler(Handler):
             context_data = data["context"]
 
             ingestion_context = IngestionContext.model_validate(context_data)
-            rag_engine, error = _get_rag_engine_or_error()
+            knowledge_engine, error = _get_knowledge_engine_or_error()
             if error:
                 return error
 
-            result = await rag_engine.ingest(ingestion_context)
+            result = await knowledge_engine.ingest(ingestion_context)
 
             return ActionResponse.success(result.model_dump(mode="json"))
 
@@ -308,11 +308,11 @@ class PluginRuntimeHandler(Handler):
             kb_id = data["kb_id"]
             document_id = data["document_id"]
 
-            rag_engine, error = _get_rag_engine_or_error()
+            knowledge_engine, error = _get_knowledge_engine_or_error()
             if error:
                 return error
 
-            success = await rag_engine.delete_document(kb_id, document_id)
+            success = await knowledge_engine.delete_document(kb_id, document_id)
 
             return ActionResponse.success({"success": success})
 
@@ -322,11 +322,11 @@ class PluginRuntimeHandler(Handler):
             kb_id = data["kb_id"]
             config = data.get("config", {})
 
-            rag_engine, error = _get_rag_engine_or_error()
+            knowledge_engine, error = _get_knowledge_engine_or_error()
             if error:
                 return error
 
-            await rag_engine.on_knowledge_base_create(kb_id, config)
+            await knowledge_engine.on_knowledge_base_create(kb_id, config)
 
             return ActionResponse.success({"success": True})
 
@@ -335,18 +335,18 @@ class PluginRuntimeHandler(Handler):
             """Notify KnowledgeEngine about KB deletion."""
             kb_id = data["kb_id"]
 
-            rag_engine, error = _get_rag_engine_or_error()
+            knowledge_engine, error = _get_knowledge_engine_or_error()
             if error:
                 return error
 
-            await rag_engine.on_knowledge_base_delete(kb_id)
+            await knowledge_engine.on_knowledge_base_delete(kb_id)
 
             return ActionResponse.success({"success": True})
 
         @self.action(RuntimeToPluginAction.GET_RAG_CAPABILITIES)
         async def get_rag_capabilities(data: dict[str, typing.Any]) -> ActionResponse:
             """Get RAG capabilities from the KnowledgeEngine component."""
-            rag_component = _find_rag_engine_component()
+            rag_component = _find_knowledge_engine_component()
             if rag_component is None:
                 return ActionResponse.error("KnowledgeEngine component not found in this plugin")
 

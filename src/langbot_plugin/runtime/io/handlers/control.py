@@ -247,12 +247,12 @@ class ControlConnectionHandler(handler.Handler):
                 "ws_debug_port": self.context.ws_debug_port,
             })
 
-        # ================= RAG Engine Actions =================
+        # ================= Knowledge Engine Actions =================
 
-        @self.action(LangBotToRuntimeAction.LIST_RAG_ENGINES)
-        async def list_rag_engines(data: dict[str, Any]) -> handler.ActionResponse:
-            """List all available RAG engines from plugins."""
-            engines = await self.context.plugin_mgr.list_rag_engines()
+        @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_ENGINES)
+        async def list_knowledge_engines(data: dict[str, Any]) -> handler.ActionResponse:
+            """List all available Knowledge Engines from plugins."""
+            engines = await self.context.plugin_mgr.list_knowledge_engines()
             return handler.ActionResponse.success({"engines": engines})
 
         @self.action(LangBotToRuntimeAction.RAG_INGEST_DOCUMENT)

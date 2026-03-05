@@ -24,7 +24,7 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.rag_engine.engine import KnowledgeEngine
+from langbot_plugin.api.definition.components.knowledge_engine.engine import KnowledgeEngine
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
@@ -689,9 +689,9 @@ class PluginManager:
         resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, retrieval_context)
         return resp
 
-    # ================= RAG Engine Methods =================
+    # ================= Knowledge Engine Methods =================
 
-    def _find_rag_engine_plugin(
+    def _find_knowledge_engine_plugin(
         self, plugin_author: str, plugin_name: str
     ) -> tuple[runtime_plugin_container.PluginContainer | None, str | None]:
         """Find plugin with KnowledgeEngine component and return (plugin, component_name)."""
@@ -719,7 +719,7 @@ class PluginManager:
         Raises:
             ValueError: If plugin not found, has no RAG component, or is not connected.
         """
-        plugin, component_name = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        plugin, component_name = self._find_knowledge_engine_plugin(plugin_author, plugin_name)
 
         if plugin is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
@@ -730,10 +730,10 @@ class PluginManager:
             
         return plugin, component_name
 
-    async def list_rag_engines(self) -> list[dict[str, typing.Any]]:
-        """List all available RAG engines from plugins.
+    async def list_knowledge_engines(self) -> list[dict[str, typing.Any]]:
+        """List all available Knowledge Engines from plugins.
 
-        Returns a list of RAG engines with their capabilities and configuration schemas.
+        Returns a list of Knowledge Engines with their capabilities and configuration schemas.
         """
         engines: list[dict[str, typing.Any]] = []
 
@@ -802,7 +802,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str
     ) -> dict[str, typing.Any]:
         """Get RAG creation settings schema from plugin manifest."""
-        plugin, _ = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        plugin, _ = self._find_knowledge_engine_plugin(plugin_author, plugin_name)
         if plugin is None:
             return {"schema": []}
         for component in plugin.components:
@@ -814,7 +814,7 @@ class PluginManager:
         self, plugin_author: str, plugin_name: str
     ) -> dict[str, typing.Any]:
         """Get RAG retrieval settings schema from plugin manifest."""
-        plugin, _ = self._find_rag_engine_plugin(plugin_author, plugin_name)
+        plugin, _ = self._find_knowledge_engine_plugin(plugin_author, plugin_name)
         if plugin is None:
             return {"schema": []}
         for component in plugin.components:

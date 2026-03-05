@@ -62,7 +62,7 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_UPSERT = "vector_upsert"
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
-    GET_RAG_FILE_STREAM = "get_rag_file_stream"
+    GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
 
     INVOKE_PARSER = "invoke_parser"
 
@@ -111,8 +111,8 @@ class LangBotToRuntimeAction(ActionType):
     # RAG actions
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
-    # RAG Engine actions (LangBot -> Runtime -> Plugin)
-    LIST_RAG_ENGINES = "list_rag_engines"
+    # Knowledge Engine actions (LangBot -> Runtime -> Plugin)
+    LIST_KNOWLEDGE_ENGINES = "list_knowledge_engines"
     RAG_INGEST_DOCUMENT = "rag_ingest_document"
     RAG_DELETE_DOCUMENT = "rag_delete_document"
     RAG_ON_KB_CREATE = "rag_on_kb_create"
