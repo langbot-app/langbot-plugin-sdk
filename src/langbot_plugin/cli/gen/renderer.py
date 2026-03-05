@@ -222,7 +222,7 @@ component_types = [
         input_post_process=command_component_input_post_process,
     ),
     ComponentType(
-        type_name="RAGEngine",
+        type_name="KnowledgeEngine",
         target_dir="components/rag_engine",
         template_files=[
             "{rag_engine_name}.yaml",

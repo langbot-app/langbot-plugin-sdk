@@ -127,7 +127,7 @@ class IngestionContext(pydantic.BaseModel):
     """Plugin-specific ingestion settings (from knowledge base creation_settings)."""
 
     parsed_content: ParseResult | None = None
-    """Pre-parsed content from an external Parser plugin. If present, RAGEngine can skip its own parsing."""
+    """Pre-parsed content from an external Parser plugin. If present, KnowledgeEngine can skip its own parsing."""
 
     def get_collection_id(self) -> str:
         """Get the collection ID, falling back to knowledge_base_id."""

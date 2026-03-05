@@ -14,7 +14,7 @@ class {{ parser_attr }}(Parser):
     """Parser component for extracting text from files.
 
     This component extracts structured text from binary files
-    before RAGEngine ingestion.
+    before KnowledgeEngine ingestion.
     """
 
     async def parse(self, context: ParseContext) -> ParseResult:

@@ -12,7 +12,7 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 class Parser(BaseComponent):
     """Parser component that extracts structured text from binary files.
 
-    This component is invoked before RAGEngine.ingest() to parse files like
+    This component is invoked before KnowledgeEngine.ingest() to parse files like
     PDF, Word, Markdown, etc. into structured text.
 
     A single parser can declare support for multiple MIME types via the

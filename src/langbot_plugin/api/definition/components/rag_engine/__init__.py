@@ -1,5 +1,5 @@
 """RAG engine components."""
 
-from .engine import RAGEngine, RAGEngineCapability
+from .engine import KnowledgeEngine, KnowledgeEngineCapability
 
-__all__ = ["RAGEngine", "RAGEngineCapability"]
+__all__ = ["KnowledgeEngine", "KnowledgeEngineCapability"]

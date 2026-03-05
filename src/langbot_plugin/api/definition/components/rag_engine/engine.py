@@ -13,7 +13,7 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 )
 
 
-class RAGEngineCapability:
+class KnowledgeEngineCapability:
     """Standard RAG engine capabilities.
 
     These capabilities inform the frontend which UI elements to render.
@@ -37,7 +37,7 @@ class RAGEngineCapability:
     """
 
 
-class RAGEngine(BaseComponent):
+class KnowledgeEngine(BaseComponent):
     """Complete RAG engine component with full lifecycle management.
 
     This component provides comprehensive RAG operations including document ingestion,
@@ -47,7 +47,7 @@ class RAGEngine(BaseComponent):
     to access Host capabilities.
     """
 
-    __kind__ = "RAGEngine"
+    __kind__ = "KnowledgeEngine"
 
     # ========== Capabilities ==========
 
@@ -58,13 +58,13 @@ class RAGEngine(BaseComponent):
         Override this method to declare what capabilities your RAG engine supports.
         The frontend will use these to determine which UI elements to show.
 
-        Available capabilities (see RAGEngineCapability):
+        Available capabilities (see KnowledgeEngineCapability):
         - 'doc_ingestion': Supports document upload and processing
 
         Returns:
             List of capability strings.
         """
-        return [RAGEngineCapability.DOC_INGESTION]
+        return [KnowledgeEngineCapability.DOC_INGESTION]
 
     # ========== Lifecycle Hooks ==========
 
