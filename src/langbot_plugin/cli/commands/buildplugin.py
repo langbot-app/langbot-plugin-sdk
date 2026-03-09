@@ -101,6 +101,7 @@ def build_plugin_process(output_dir: str) -> str:
 
     # Additional files/directories to always exclude
     always_exclude = {
+        ".git",
         "*.lbpkg",
         ".env",
         "__pycache__",
@@ -119,7 +120,9 @@ def build_plugin_process(output_dir: str) -> str:
             for d in dirs:
                 dir_path = os.path.join(root, d)
                 relative_dir_path = os.path.relpath(dir_path, ".")
-                if should_ignore(relative_dir_path, gitignore_patterns):
+                if should_ignore(relative_dir_path, gitignore_patterns) or any(
+                    fnmatch.fnmatch(d, pattern) for pattern in always_exclude
+                ):
                     dirs_to_remove.append(d)
                     cli_print("skipping_ignored_dir", relative_dir_path)
 
