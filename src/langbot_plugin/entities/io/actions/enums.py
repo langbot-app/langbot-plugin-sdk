@@ -66,6 +66,10 @@ class PluginToRuntimeAction(ActionType):
 
     INVOKE_PARSER = "invoke_parser"
 
+    """Knowledge Base Query APIs (query-based)"""
+    LIST_PIPELINE_KNOWLEDGE_BASES = "list_pipeline_knowledge_bases"
+    RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""

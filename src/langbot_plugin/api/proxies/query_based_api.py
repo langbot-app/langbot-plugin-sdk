@@ -83,5 +83,52 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
             },
         )
 
+    async def list_pipeline_knowledge_bases(self) -> list[dict[str, Any]]:
+        """List knowledge bases configured for the current pipeline.
+
+        Returns a list of dicts, each containing:
+        - uuid: Knowledge base UUID
+        - name: Knowledge base name
+        - description: Knowledge base description
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES,
+                {
+                    "query_id": self.query_id,
+                },
+            )
+        )["knowledge_bases"]
+
+    async def retrieve_knowledge(
+        self,
+        kb_id: str,
+        query_text: str,
+        top_k: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Retrieve relevant documents from a knowledge base.
+
+        The kb_id must be in the current pipeline's configured knowledge bases,
+        otherwise an error is returned.
+
+        Args:
+            kb_id: Knowledge base UUID (from list_pipeline_knowledge_bases result)
+            query_text: Search query text
+            top_k: Number of results to return (default: 5)
+
+        Returns a list of retrieval result entries.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
+                {
+                    "query_id": self.query_id,
+                    "kb_id": kb_id,
+                    "query_text": query_text,
+                    "top_k": top_k,
+                },
+            )
+        )["results"]
+
     class Config:
         arbitrary_types_allowed = True
