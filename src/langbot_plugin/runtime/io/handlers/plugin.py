@@ -296,6 +296,16 @@ class PluginConnectionHandler(handler.Handler):
 
         # ================= Parser Capability Handlers (Plugin -> Runtime -> Host) =================
 
+        @self.action(PluginToRuntimeAction.LIST_PARSERS)
+        async def list_parsers(data: dict[str, Any]) -> handler.ActionResponse:
+            """Plugin requests host to list available parser plugins."""
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.LIST_PARSERS,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.INVOKE_PARSER)
         async def invoke_parser(data: dict[str, Any]) -> handler.ActionResponse:
             """Plugin requests host to invoke a parser plugin."""
