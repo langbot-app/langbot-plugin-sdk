@@ -218,7 +218,8 @@ class LangBotAPIProxy:
                 {
                     "embedding_model_uuid": embedding_model_uuid,
                     "texts": texts
-                }
+                },
+                timeout=60,
             )
         )["vectors"]
 
