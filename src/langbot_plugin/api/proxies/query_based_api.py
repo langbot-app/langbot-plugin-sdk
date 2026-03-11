@@ -105,6 +105,7 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
         kb_id: str,
         query_text: str,
         top_k: int = 5,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve relevant documents from a knowledge base.
 
@@ -115,6 +116,7 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
             kb_id: Knowledge base UUID (from list_pipeline_knowledge_bases result)
             query_text: Search query text
             top_k: Number of results to return (default: 5)
+            filters: Optional metadata filters for retrieval
 
         Returns a list of retrieval result entries.
         """
@@ -126,6 +128,7 @@ class QueryBasedAPIProxy(pydantic.BaseModel):
                     "kb_id": kb_id,
                     "query_text": query_text,
                     "top_k": top_k,
+                    "filters": filters or {},
                 },
             )
         )["results"]
