@@ -64,7 +64,12 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_DELETE = "vector_delete"
     GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
 
+    LIST_PARSERS = "list_parsers"
     INVOKE_PARSER = "invoke_parser"
+
+    """Knowledge Base Query APIs (query-based)"""
+    LIST_PIPELINE_KNOWLEDGE_BASES = "list_pipeline_knowledge_bases"
+    RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
 
 
 class RuntimeToPluginAction(ActionType):

@@ -339,6 +339,22 @@ class LangBotAPIProxy:
 
     # ================= Parser Capability APIs =================
 
+    async def list_parsers(self, mime_type: str | None = None) -> list[dict[str, Any]]:
+        """List available Parser plugins.
+
+        Args:
+            mime_type: Optional MIME type to filter parsers by.
+
+        Returns:
+            List of parser metadata dicts.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.LIST_PARSERS,
+                {"mime_type": mime_type},
+            )
+        )["parsers"]
+
     async def invoke_parser(
         self,
         plugin_author: str,

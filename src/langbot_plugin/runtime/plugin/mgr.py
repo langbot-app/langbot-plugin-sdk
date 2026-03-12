@@ -879,6 +879,8 @@ class PluginManager:
 
                     parsers.append({
                         "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
+                        "plugin_author": plugin.manifest.metadata.author,
+                        "plugin_name": plugin.manifest.metadata.name,
                         "name": meta.label or meta.name,
                         "description": meta.description,
                         "supported_mime_types": supported_mime_types,
