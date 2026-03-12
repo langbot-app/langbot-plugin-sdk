@@ -202,7 +202,9 @@ class LangBotAPIProxy:
 
     # ================= RAG Capability APIs =================
 
-    async def invoke_embedding(self, embedding_model_uuid: str, texts: list[str]) -> list[list[float]]:
+    async def invoke_embedding(
+        self, embedding_model_uuid: str, texts: list[str]
+    ) -> list[list[float]]:
         """Generate embeddings using Host's embedding model.
 
         Args:
@@ -215,10 +217,7 @@ class LangBotAPIProxy:
         return (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.INVOKE_EMBEDDING,
-                {
-                    "embedding_model_uuid": embedding_model_uuid,
-                    "texts": texts
-                },
+                {"embedding_model_uuid": embedding_model_uuid, "texts": texts},
                 timeout=60,
             )
         )["vectors"]
@@ -274,7 +273,9 @@ class LangBotAPIProxy:
             query_text: Raw query text, used for full_text and hybrid search.
 
         Returns:
-            List of search results (dict with id, score, metadata).
+            List of search results (dict with id, distance, metadata).
+            Some hosts may also include an optional score field, but distance
+            is the stable field and lower values mean more similar results.
         """
         return (
             await self.plugin_runtime_handler.call_action(
@@ -286,7 +287,7 @@ class LangBotAPIProxy:
                     "filters": filters,
                     "search_type": search_type,
                     "query_text": query_text,
-                }
+                },
             )
         )["results"]
 
@@ -294,7 +295,7 @@ class LangBotAPIProxy:
         self,
         collection_id: str,
         file_ids: list[str] | None = None,
-        filters: dict[str, Any] | None = None
+        filters: dict[str, Any] | None = None,
     ) -> int:
         """Delete vectors from Host's vector store.
 
@@ -312,8 +313,8 @@ class LangBotAPIProxy:
                 {
                     "collection_id": collection_id,
                     "file_ids": file_ids,
-                    "filters": filters
-                }
+                    "filters": filters,
+                },
             )
         )["count"]
 
@@ -328,7 +329,7 @@ class LangBotAPIProxy:
         """
         resp = await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
-            {"storage_path": storage_path}
+            {"storage_path": storage_path},
         )
         # File was transferred via FILE_CHUNK; read from local temp
         file_key = resp["file_key"]
