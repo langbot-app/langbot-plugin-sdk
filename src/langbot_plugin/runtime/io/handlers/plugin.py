@@ -294,6 +294,25 @@ class PluginConnectionHandler(handler.Handler):
                 return handler.ActionResponse.success({"file_key": plugin_file_key})
             return handler.ActionResponse.success(result)
 
+        # ================= Knowledge Base Query Handlers (Plugin -> Runtime -> Host) =================
+
+        @self.action(PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES)
+        async def list_pipeline_knowledge_bases(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES,
+                data,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE)
+        async def retrieve_knowledge_base(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
         # ================= Parser Capability Handlers (Plugin -> Runtime -> Host) =================
 
         @self.action(PluginToRuntimeAction.LIST_PARSERS)
