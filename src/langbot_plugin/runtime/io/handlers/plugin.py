@@ -587,7 +587,7 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.INGEST_DOCUMENT,
             {"context": context_data},
-            timeout=300,  # Ingestion can be slow
+            timeout=1200,  # Ingestion can be slow for large documents
         )
         return resp
 
