@@ -251,6 +251,7 @@ class LangBotAPIProxy:
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.VECTOR_UPSERT,
             data,
+            timeout=60,
         )
 
     async def vector_search(
@@ -288,6 +289,7 @@ class LangBotAPIProxy:
                     "search_type": search_type,
                     "query_text": query_text,
                 },
+                timeout=30,
             )
         )["results"]
 
@@ -315,6 +317,7 @@ class LangBotAPIProxy:
                     "file_ids": file_ids,
                     "filters": filters,
                 },
+                timeout=30,
             )
         )["count"]
 
