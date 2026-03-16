@@ -81,6 +81,7 @@ class LangBotAPIProxy:
         messages: list[provider_message.Message],
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
+        timeout: float | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model"""
         resp = (
@@ -92,6 +93,7 @@ class LangBotAPIProxy:
                     "funcs": [f.model_dump() for f in funcs],
                     "extra_args": extra_args,
                 },
+                timeout=timeout if timeout is not None else 15.0,
             )
         )["message"]
 
@@ -320,6 +322,36 @@ class LangBotAPIProxy:
                 timeout=30,
             )
         )["count"]
+
+    async def vector_list(
+        self,
+        collection_id: str,
+        filters: dict[str, Any] | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List vectors from Host's vector store by metadata filter.
+
+        Args:
+            collection_id: Target collection ID.
+            filters: Optional metadata filters.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip for pagination.
+
+        Returns:
+            Dict with 'items' (list of dicts with id, document, metadata)
+            and 'total' (total count matching the filter, best-effort).
+        """
+        return await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.VECTOR_LIST,
+            {
+                "collection_id": collection_id,
+                "filters": filters,
+                "limit": limit,
+                "offset": offset,
+            },
+            timeout=30,
+        )
 
     async def get_knowledge_file_stream(self, storage_path: str) -> bytes:
         """Get file content from Host's storage.

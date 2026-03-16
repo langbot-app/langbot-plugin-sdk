@@ -62,6 +62,7 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_UPSERT = "vector_upsert"
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
+    VECTOR_LIST = "vector_list"
     GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
 
     LIST_PARSERS = "list_parsers"
