@@ -264,6 +264,7 @@ class LangBotAPIProxy:
         filters: dict[str, Any] | None = None,
         search_type: str = "vector",
         query_text: str = "",
+        vector_weight: float | None = None,
     ) -> list[dict[str, Any]]:
         """Search similar vectors in Host's vector store.
 
@@ -274,23 +275,27 @@ class LangBotAPIProxy:
             filters: Optional metadata filters.
             search_type: One of 'vector', 'full_text', 'hybrid'.
             query_text: Raw query text, used for full_text and hybrid search.
+            vector_weight: Weight for vector search in hybrid mode (0.0–1.0).
+                ``None`` means use equal weights (backward compatible).
 
         Returns:
             List of search results (dict with id, distance, metadata).
             Some hosts may also include an optional score field, but distance
             is the stable field and lower values mean more similar results.
         """
+        data = {
+            "collection_id": collection_id,
+            "query_vector": query_vector,
+            "top_k": top_k,
+            "filters": filters,
+            "search_type": search_type,
+            "query_text": query_text,
+            "vector_weight": vector_weight,
+        }
         return (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.VECTOR_SEARCH,
-                {
-                    "collection_id": collection_id,
-                    "query_vector": query_vector,
-                    "top_k": top_k,
-                    "filters": filters,
-                    "search_type": search_type,
-                    "query_text": query_text,
-                },
+                data,
                 timeout=30,
             )
         )["results"]
