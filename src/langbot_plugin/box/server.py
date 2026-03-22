@@ -23,6 +23,7 @@ from langbot_plugin.entities.io.actions.enums import CommonAction
 from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.utils.log import configure_process_logging
 
 from .actions import LangBotToBoxAction
 from .errors import (
@@ -259,7 +260,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+    configure_process_logging(stream=sys.stderr)
     asyncio.run(_run_server(args.host, args.port, args.mode))
 
 
