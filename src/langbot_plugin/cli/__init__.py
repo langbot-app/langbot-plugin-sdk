@@ -33,6 +33,10 @@ Commands:
         - [--stdio-control -s]: Use stdio for control connection
         - [--ws-control-port]: The port for control connection
         - [--ws-debug-port]: The port for debug connection
+    box: Run the sandbox box runtime
+        - [--host]: Bind address, default is 0.0.0.0
+        - [--port]: Bind port for ws relay, default is 5410
+        - [--mode]: Control channel transport (stdio or ws), default is stdio
 """
 
 
@@ -111,6 +115,19 @@ def main():
         "--skip-deps-check", action="store_true", help="Skip checking and installing dependencies for all installed plugins"
     )
 
+    # box command
+    box_parser = subparsers.add_parser("box", help="Run the sandbox box runtime")
+    box_parser.add_argument(
+        "--host", default="0.0.0.0", help="Bind address"
+    )
+    box_parser.add_argument(
+        "--port", type=int, default=5410, help="Bind port (ws relay)"
+    )
+    box_parser.add_argument(
+        "--mode", choices=["stdio", "ws"], default="stdio",
+        help="Control channel transport (default: stdio)"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -139,6 +156,9 @@ def main():
             publish_process()
         case "rt":
             runtime_app.main(args)
+        case "box":
+            from langbot_plugin.box.server import main as box_main
+            box_main()
         case _:
             cli_print("unknown_command", args.command)
             sys.exit(1)
