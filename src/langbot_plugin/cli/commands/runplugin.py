@@ -6,6 +6,7 @@ import dotenv
 import logging
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
+from langbot_plugin.utils.log import configure_process_logging
 from langbot_plugin.cli.run.controller import PluginRuntimeController
 from langbot_plugin.cli.i18n import cli_print
 
@@ -66,12 +67,7 @@ async def arun_plugin_process(stdio: bool = False, prod_mode: bool = False, plug
 
 
 def run_plugin_process(stdio: bool = False, prod_mode: bool = False, plugin_debug_key: str = "") -> None:
-    # Configure logging for plugin process
-    logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s.%(msecs)03d] (PluginProcess) %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    configure_process_logging()
 
     try:
         asyncio.run(arun_plugin_process(stdio, prod_mode, plugin_debug_key))

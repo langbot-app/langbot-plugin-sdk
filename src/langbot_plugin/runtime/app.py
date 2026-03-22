@@ -17,6 +17,7 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
 from langbot_plugin.runtime.settings import settings
+from langbot_plugin.utils.log import configure_process_logging
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +126,8 @@ class RuntimeApplication:
 
 
 def main(args: argparse.Namespace):
-    # Configure logging for runtime
-    logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s.%(msecs)03d] %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
+    configure_process_logging()
+
     app = RuntimeApplication(args)
 
     try:
