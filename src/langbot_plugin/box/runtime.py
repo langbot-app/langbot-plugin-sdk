@@ -8,6 +8,7 @@ import logging
 import uuid
 
 from .backend import BaseSandboxBackend, DockerBackend, PodmanBackend
+from .nsjail_backend import NsjailBackend
 from .errors import (
     BoxBackendUnavailableError,
     BoxManagedProcessConflictError,
@@ -61,7 +62,7 @@ class BoxRuntime:
         session_ttl_sec: int = 300,
     ):
         self.logger = logger
-        self.backends = backends or [PodmanBackend(logger), DockerBackend(logger)]
+        self.backends = backends or [PodmanBackend(logger), DockerBackend(logger), NsjailBackend(logger)]
         self.session_ttl_sec = session_ttl_sec
         self._backend: BaseSandboxBackend | None = None
         self._sessions: dict[str, _RuntimeSession] = {}
@@ -227,7 +228,7 @@ class BoxRuntime:
             self._backend = await self._select_backend()
         if self._backend is None:
             raise BoxBackendUnavailableError(
-                'LangBot Box backend unavailable. Install and start Podman or Docker before using sandbox_exec.'
+                'LangBot Box backend unavailable. Install and start Podman, Docker, or nsjail before using sandbox_exec.'
             )
         return self._backend
 
@@ -241,7 +242,7 @@ class BoxRuntime:
             except Exception as exc:
                 self.logger.warning(f'LangBot Box backend {backend.name} probe failed: {exc}')
 
-        self.logger.warning('LangBot Box backend unavailable: neither Podman nor Docker is ready')
+        self.logger.warning('LangBot Box backend unavailable: no supported backend (Podman, Docker, nsjail) is ready')
         return None
 
     async def _reap_expired_sessions_locked(self):
