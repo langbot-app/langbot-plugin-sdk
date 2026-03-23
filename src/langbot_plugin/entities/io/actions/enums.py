@@ -68,7 +68,11 @@ class PluginToRuntimeAction(ActionType):
     LIST_PARSERS = "list_parsers"
     INVOKE_PARSER = "invoke_parser"
 
-    """Knowledge Base Query APIs (query-based)"""
+    """Knowledge Base APIs (global, unrestricted)"""
+    LIST_KNOWLEDGE_BASES = "list_knowledge_bases"
+    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+
+    """Knowledge Base Query APIs (query-based, pipeline-scoped)"""
     LIST_PIPELINE_KNOWLEDGE_BASES = "list_pipeline_knowledge_bases"
     RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
 

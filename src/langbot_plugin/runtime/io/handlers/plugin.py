@@ -301,6 +301,23 @@ class PluginConnectionHandler(handler.Handler):
 
         # ================= Knowledge Base Query Handlers (Plugin -> Runtime -> Host) =================
 
+        @self.action(PluginToRuntimeAction.LIST_KNOWLEDGE_BASES)
+        async def list_knowledge_bases(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.LIST_KNOWLEDGE_BASES,
+                data,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE)
+        async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES)
         async def list_pipeline_knowledge_bases(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(

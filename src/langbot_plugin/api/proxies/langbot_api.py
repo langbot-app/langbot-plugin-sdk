@@ -377,6 +377,62 @@ class LangBotAPIProxy:
         await self.plugin_runtime_handler.delete_local_file(file_key)
         return file_bytes
 
+    # ================= Knowledge Base APIs =================
+
+    async def list_knowledge_bases(self) -> list[dict[str, Any]]:
+        """List all knowledge bases available in the LangBot instance.
+
+        Unlike query-based ``list_pipeline_knowledge_bases``, this API is
+        globally available and not restricted to a specific pipeline's
+        configured knowledge bases.
+
+        Returns:
+            List of dicts, each containing:
+            - uuid: Knowledge base UUID
+            - name: Knowledge base name
+            - description: Knowledge base description
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.LIST_KNOWLEDGE_BASES, {}
+            )
+        )["knowledge_bases"]
+
+    async def retrieve_knowledge(
+        self,
+        kb_id: str,
+        query_text: str,
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve relevant documents from any knowledge base.
+
+        Unlike query-based ``retrieve_knowledge``, this API is globally
+        available and can access any knowledge base without pipeline
+        restrictions.
+
+        Args:
+            kb_id: Knowledge base UUID
+            query_text: Search query text
+            top_k: Number of results to return (default: 5)
+            filters: Optional metadata filters for retrieval
+
+        Returns:
+            List of retrieval result entries.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
+                {
+                    "kb_id": kb_id,
+                    "query_text": query_text,
+                    "top_k": top_k,
+                    "filters": filters or {},
+                },
+                timeout=30,
+            )
+        )["results"]
+
     # ================= Parser Capability APIs =================
 
     async def list_parsers(self, mime_type: str | None = None) -> list[dict[str, Any]]:
