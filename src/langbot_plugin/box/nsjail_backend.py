@@ -14,7 +14,6 @@ import uuid
 from .backend import BaseSandboxBackend, _CommandResult, _MAX_RAW_OUTPUT_BYTES
 from .errors import BoxError
 from .models import (
-    DEFAULT_BOX_MOUNT_PATH,
     BoxExecutionResult,
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -104,7 +103,7 @@ class NsjailBackend(BaseSandboxBackend):
     async def start_session(self, spec: BoxSpec) -> BoxSessionInfo:
         validate_sandbox_security(spec)
 
-        now = dt.datetime.now(dt.UTC)
+        now = dt.datetime.now(dt.timezone.utc)
         session_dir_name = f'{self.instance_id}_{spec.session_id}_{uuid.uuid4().hex[:8]}'
         session_dir = self._base_dir / session_dir_name
 
@@ -123,6 +122,7 @@ class NsjailBackend(BaseSandboxBackend):
             'instance_id': self.instance_id,
             'host_path': spec.host_path,
             'host_path_mode': spec.host_path_mode.value if spec.host_path else None,
+            'mount_path': spec.mount_path,
             'network': spec.network.value,
             'cpus': spec.cpus,
             'memory_mb': spec.memory_mb,
@@ -135,7 +135,7 @@ class NsjailBackend(BaseSandboxBackend):
             f'LangBot Box backend start_session: backend=nsjail '
             f'session_id={spec.session_id} session_dir={session_dir} '
             f'network={spec.network.value} '
-            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} '
+            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} '
             f'cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit}'
         )
 
@@ -147,6 +147,7 @@ class NsjailBackend(BaseSandboxBackend):
             network=spec.network,
             host_path=spec.host_path,
             host_path_mode=spec.host_path_mode,
+            mount_path=spec.mount_path,
             cpus=spec.cpus,
             memory_mb=spec.memory_mb,
             pids_limit=spec.pids_limit,
@@ -156,7 +157,7 @@ class NsjailBackend(BaseSandboxBackend):
         )
 
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
-        start = dt.datetime.now(dt.UTC)
+        start = dt.datetime.now(dt.timezone.utc)
         session_dir = pathlib.Path(session.backend_session_id)
 
         args = self._build_nsjail_args(session, spec, session_dir)
@@ -172,7 +173,7 @@ class NsjailBackend(BaseSandboxBackend):
         )
 
         result = await self._run_nsjail(args, timeout_sec=spec.timeout_sec)
-        duration_ms = int((dt.datetime.now(dt.UTC) - start).total_seconds() * 1000)
+        duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
 
         if result.timed_out:
             return BoxExecutionResult(
@@ -228,6 +229,7 @@ class NsjailBackend(BaseSandboxBackend):
             env=spec.env,
             host_path=session.host_path,
             host_path_mode=session.host_path_mode,
+            mount_path=session.mount_path,
             cpus=session.cpus,
             memory_mb=session.memory_mb,
             pids_limit=session.pids_limit,
@@ -359,12 +361,12 @@ class NsjailBackend(BaseSandboxBackend):
         # Workspace mount.
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
             if spec.host_path_mode == BoxHostMountMode.READ_ONLY:
-                args.extend(['--bindmount_ro', f'{spec.host_path}:{DEFAULT_BOX_MOUNT_PATH}'])
+                args.extend(['--bindmount_ro', f'{spec.host_path}:{spec.mount_path}'])
             else:
-                args.extend(['--rw_bind', f'{spec.host_path}:{DEFAULT_BOX_MOUNT_PATH}'])
+                args.extend(['--rw_bind', f'{spec.host_path}:{spec.mount_path}'])
         else:
             workspace_dir = session_dir / 'workspace'
-            args.extend(['--rw_bind', f'{workspace_dir}:{DEFAULT_BOX_MOUNT_PATH}'])
+            args.extend(['--rw_bind', f'{workspace_dir}:{spec.mount_path}'])
 
         # /tmp and /home are always per-session writable.
         tmp_dir = session_dir / 'tmp'

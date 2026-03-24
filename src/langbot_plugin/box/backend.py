@@ -12,7 +12,6 @@ import uuid
 
 from .errors import BoxError
 from .models import (
-    DEFAULT_BOX_MOUNT_PATH,
     BoxExecutionResult,
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -89,7 +88,7 @@ class CLISandboxBackend(BaseSandboxBackend):
     async def start_session(self, spec: BoxSpec) -> BoxSessionInfo:
         validate_sandbox_security(spec)
 
-        now = dt.datetime.now(dt.UTC)
+        now = dt.datetime.now(dt.timezone.utc)
         container_name = self._build_container_name(spec.session_id)
 
         args = [
@@ -120,7 +119,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             args.extend(['--tmpfs', '/tmp:size=64m'])
 
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
-            mount_spec = f'{spec.host_path}:{DEFAULT_BOX_MOUNT_PATH}:{spec.host_path_mode.value}'
+            mount_spec = f'{spec.host_path}:{spec.mount_path}:{spec.host_path_mode.value}'
             args.extend(['-v', mount_spec])
 
         args.extend([spec.image, 'sh', '-lc', 'while true; do sleep 3600; done'])
@@ -129,7 +128,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             f'LangBot Box backend start_session: backend={self.name} '
             f'session_id={spec.session_id} container_name={container_name} '
             f'image={spec.image} network={spec.network.value} '
-            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} '
+            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} '
             f'cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} '
             f'read_only_rootfs={spec.read_only_rootfs}'
         )
@@ -144,6 +143,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             network=spec.network,
             host_path=spec.host_path,
             host_path_mode=spec.host_path_mode,
+            mount_path=spec.mount_path,
             cpus=spec.cpus,
             memory_mb=spec.memory_mb,
             pids_limit=spec.pids_limit,
@@ -153,7 +153,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         )
 
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
-        start = dt.datetime.now(dt.UTC)
+        start = dt.datetime.now(dt.timezone.utc)
         args = [self.command, 'exec']
 
         for key, value in spec.env.items():
@@ -179,7 +179,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         )
 
         result = await self._run_command(args, timeout_sec=spec.timeout_sec, check=False)
-        duration_ms = int((dt.datetime.now(dt.UTC) - start).total_seconds() * 1000)
+        duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
 
         if result.timed_out:
             return BoxExecutionResult(
