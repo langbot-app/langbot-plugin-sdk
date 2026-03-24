@@ -147,7 +147,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         return await self._call(LangBotToBoxAction.GET_BACKEND_INFO, {})
 
     async def delete_session(self, session_id: str) -> None:
-        await self._call(LangBotToBoxAction.DELETE_SESSION, {'session_id': session_id})
+        await self._call(LangBotToBoxAction.DELETE_SESSION, {'session_id': session_id}, timeout=30.0)
 
     async def create_session(self, spec: BoxSpec) -> dict:
         return await self._call(LangBotToBoxAction.CREATE_SESSION, spec.model_dump(mode='json'))
