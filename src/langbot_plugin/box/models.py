@@ -33,7 +33,7 @@ class BoxManagedProcessStatus(str, enum.Enum):
 
 class BoxSpec(pydantic.BaseModel):
     cmd: str = ''
-    workdir: str = '/workspace'
+    workdir: str = DEFAULT_BOX_MOUNT_PATH
     timeout_sec: int = 30
     network: BoxNetworkMode = BoxNetworkMode.OFF
     session_id: str
@@ -41,11 +41,25 @@ class BoxSpec(pydantic.BaseModel):
     image: str = DEFAULT_BOX_IMAGE
     host_path: str | None = None
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
+    mount_path: str = DEFAULT_BOX_MOUNT_PATH
     # Resource limits
     cpus: float = 1.0
     memory_mb: int = 512
     pids_limit: int = 128
     read_only_rootfs: bool = True
+
+    @pydantic.model_validator(mode='before')
+    @classmethod
+    def populate_workdir_from_mount_path(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if data.get('workdir') not in (None, ''):
+            return data
+        mount_path = data.get('mount_path')
+        if isinstance(mount_path, str) and mount_path.strip():
+            data = dict(data)
+            data['workdir'] = mount_path
+        return data
 
     @pydantic.field_validator('cmd')
     @classmethod
@@ -111,14 +125,22 @@ class BoxSpec(pydantic.BaseModel):
             raise ValueError('host_path must be an absolute host path')
         return value
 
+    @pydantic.field_validator('mount_path')
+    @classmethod
+    def validate_mount_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value.startswith('/'):
+            raise ValueError('mount_path must be an absolute path inside the sandbox')
+        return value
+
     @pydantic.model_validator(mode='after')
     def validate_host_mount_consistency(self) -> 'BoxSpec':
         if self.host_path is None:
             return self
         if self.host_path_mode == BoxHostMountMode.NONE:
             return self
-        if not self.workdir.startswith(DEFAULT_BOX_MOUNT_PATH):
-            raise ValueError('workdir must stay under /workspace when host_path is provided')
+        if self.workdir != self.mount_path and not self.workdir.startswith(f'{self.mount_path}/'):
+            raise ValueError('workdir must stay under mount_path when host_path is provided')
         return self
 
 
@@ -198,6 +220,7 @@ class BoxSessionInfo(pydantic.BaseModel):
     network: BoxNetworkMode
     host_path: str | None = None
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
+    mount_path: str = DEFAULT_BOX_MOUNT_PATH
     cpus: float = 1.0
     memory_mb: int = 512
     pids_limit: int = 128
@@ -210,7 +233,7 @@ class BoxManagedProcessSpec(pydantic.BaseModel):
     command: str
     args: list[str] = pydantic.Field(default_factory=list)
     env: dict[str, str] = pydantic.Field(default_factory=dict)
-    cwd: str = '/workspace'
+    cwd: str = DEFAULT_BOX_MOUNT_PATH
 
     @pydantic.field_validator('command')
     @classmethod

@@ -219,7 +219,8 @@ class BoxRuntime:
                 f'image={info.image} '
                 f'network={info.network.value} '
                 f'host_path={info.host_path} '
-                f'host_path_mode={info.host_path_mode.value}'
+                f'host_path_mode={info.host_path_mode.value} '
+                f'mount_path={info.mount_path}'
             )
             return runtime_session
 
@@ -284,6 +285,7 @@ class BoxRuntime:
             'image',
             'host_path',
             'host_path_mode',
+            'mount_path',
             'cpus',
             'memory_mb',
             'pids_limit',

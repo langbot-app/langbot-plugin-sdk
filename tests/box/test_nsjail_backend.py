@@ -99,11 +99,13 @@ async def test_start_session_with_host_path(backend, tmp_base):
         cmd='ls',
         host_path='/some/path',
         host_path_mode=BoxHostMountMode.READ_WRITE,
+        mount_path='/project',
     )
 
     info = await backend.start_session(spec)
     assert info.host_path == '/some/path'
     assert info.host_path_mode == BoxHostMountMode.READ_WRITE
+    assert info.mount_path == '/project'
 
 
 # ── stop_session ──────────────────────────────────────────────────────
@@ -214,6 +216,40 @@ def test_build_nsjail_args_host_path_ro(backend, tmp_base):
 
     ro_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount_ro']
     assert '/data/project:/workspace' in ro_binds
+
+
+def test_build_nsjail_args_uses_custom_mount_path(backend, tmp_base):
+    tmp_base.mkdir(parents=True, exist_ok=True)
+    session_dir = tmp_base / 'test_custom_mount'
+    for d in ('workspace', 'tmp', 'home'):
+        (session_dir / d).mkdir(parents=True)
+
+    session = BoxSessionInfo(
+        session_id='s4',
+        backend_name='nsjail',
+        backend_session_id=str(session_dir),
+        image='host',
+        network=BoxNetworkMode.OFF,
+        host_path='/data/project',
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        mount_path='/project',
+        created_at='2024-01-01T00:00:00+00:00',
+        last_used_at='2024-01-01T00:00:00+00:00',
+    )
+    spec = BoxSpec(
+        session_id='s4',
+        cmd='pwd',
+        workdir='/project/src',
+        host_path='/data/project',
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        mount_path='/project',
+    )
+
+    args = backend._build_nsjail_args(session, spec, session_dir)
+
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--rw_bind']
+    assert '/data/project:/project' in rw_binds
+    assert args[args.index('--cwd') + 1] == '/project/src'
 
 
 def test_build_resource_limits_cgroup(backend):
