@@ -347,22 +347,19 @@ class BoxRuntime:
             pass
 
         try:
-            await asyncio.wait_for(asyncio.shield(process.wait()), timeout=5)
-        except asyncio.TimeoutError:
             if process.returncode is None:
                 try:
                     process.terminate()
                 except ProcessLookupError:
                     pass
-            try:
-                await asyncio.wait_for(asyncio.shield(process.wait()), timeout=5)
-            except asyncio.TimeoutError:
-                if process.returncode is None:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-                await process.wait()
+            await asyncio.wait_for(asyncio.shield(process.wait()), timeout=5)
+        except asyncio.TimeoutError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            await process.wait()
         finally:
             managed_process.exit_code = process.returncode
             managed_process.exited_at = dt.datetime.now(_UTC)
