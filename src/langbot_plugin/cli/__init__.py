@@ -158,7 +158,7 @@ def main():
             runtime_app.main(args)
         case "box":
             from langbot_plugin.box.server import main as box_main
-            box_main()
+            box_main(sys.argv[2:])
         case _:
             cli_print("unknown_command", args.command)
             sys.exit(1)

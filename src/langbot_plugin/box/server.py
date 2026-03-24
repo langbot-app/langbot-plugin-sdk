@@ -251,14 +251,14 @@ async def _run_server(host: str, port: int, mode: str) -> None:
             await runner.cleanup()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description='LangBot Box Runtime Service')
     parser.add_argument('--host', default='0.0.0.0', help='Bind address')
     parser.add_argument('--port', type=int, default=5410, help='Bind port (ws relay)')
     parser.add_argument(
         '--mode', choices=['stdio', 'ws'], default='stdio', help='Control channel transport (default: stdio)'
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     configure_process_logging(stream=sys.stderr)
     asyncio.run(_run_server(args.host, args.port, args.mode))

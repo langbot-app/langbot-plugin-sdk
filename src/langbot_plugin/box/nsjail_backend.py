@@ -151,7 +151,7 @@ class NsjailBackend(BaseSandboxBackend):
             cpus=spec.cpus,
             memory_mb=spec.memory_mb,
             pids_limit=spec.pids_limit,
-            read_only_rootfs=True,  # always true for nsjail
+            read_only_rootfs=spec.read_only_rootfs,
             created_at=now,
             last_used_at=now,
         )
@@ -233,7 +233,7 @@ class NsjailBackend(BaseSandboxBackend):
             cpus=session.cpus,
             memory_mb=session.memory_mb,
             pids_limit=session.pids_limit,
-            read_only_rootfs=True,
+            read_only_rootfs=session.read_only_rootfs,
         )
 
         args = self._build_nsjail_args(session, pseudo_spec, session_dir)
