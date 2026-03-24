@@ -229,7 +229,7 @@ class BoxRuntime:
             self._backend = await self._select_backend()
         if self._backend is None:
             raise BoxBackendUnavailableError(
-                'LangBot Box backend unavailable. Install and start Podman, Docker, or nsjail before using sandbox_exec.'
+                'LangBot Box backend unavailable. Install and start Podman, Docker, or nsjail before using exec.'
             )
         return self._backend
 
@@ -297,7 +297,7 @@ class BoxRuntime:
             if session_val != spec_val:
                 display = session_val.value if hasattr(session_val, 'value') else session_val
                 raise BoxSessionConflictError(
-                    f'sandbox_exec session {spec.session_id} already exists with {field}={display}'
+                    f'Box session {spec.session_id} already exists with {field}={display}'
                 )
 
     async def _drain_managed_process_stderr(self, session_id: str, managed_process: _ManagedProcess) -> None:
