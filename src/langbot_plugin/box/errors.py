@@ -6,7 +6,7 @@ class BoxError(RuntimeError):
 
 
 class BoxValidationError(BoxError):
-    """Raised when sandbox_exec arguments are invalid."""
+    """Raised when exec tool arguments are invalid."""
 
 
 class BoxBackendUnavailableError(BoxError):
