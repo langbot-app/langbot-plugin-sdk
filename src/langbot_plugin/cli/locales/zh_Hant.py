@@ -70,4 +70,8 @@ messages = {
     "publish_failed": "!!! 插件發布失敗：{}",
     "publish_successful": "✅ 插件發布成功。你可以在 {}/market 查看",
     "publish_successful_new_plugin": "⚠️ 插件草稿發布成功。請在 {}/market 上傳使用截圖證明插件可用以完成提交。",
+
+    "pat_login_successful": "✅ 使用個人存取權杖登入成功！",
+    "pat_invalid_format": "權杖格式無效。個人存取權杖應以 'lbpat_' 開頭。",
+    "pat_saved": "權杖已儲存至：{}",
 }
