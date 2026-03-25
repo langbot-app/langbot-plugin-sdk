@@ -13,7 +13,27 @@ from langbot_plugin.cli.i18n import cli_print, t
 SERVER_URL = get_cloud_service_url()
 
 
-def login_process() -> None:
+def login_process(token: str | None = None) -> None:
+    if token is not None:
+        if not token.startswith("lbpat_"):
+            cli_print("pat_invalid_format")
+            return
+        
+        config = {
+            "access_token": token,
+            "token_type": "personal_access_token",
+            "login_time": int(time.time()),
+            "expires_in": 0,
+        }
+        
+        config_file = _save_config(config)
+        
+        print("\n" + "=" * 50)
+        cli_print("pat_login_successful")
+        cli_print("pat_saved", config_file)
+        print("=" * 50)
+        return
+
     """
     Implement LangBot CLI login process
 
@@ -200,6 +220,9 @@ def _is_token_valid(config: dict[str, Any]) -> bool:
     if not config:
         return False
 
+    if config.get("token_type") == "personal_access_token":
+        return True
+
     login_time = config.get("login_time", 0)
     expires_in = config.get("expires_in", 0)
 
@@ -247,6 +270,8 @@ def _refresh_token(config: dict[str, Any]) -> bool:
 def check_login_status() -> bool:
     """Check login status"""
     config = _load_config()
+    if config and config.get("token_type") == "personal_access_token":
+        return True
     if not _is_token_valid(config):
         # try refresh token
         if not _refresh_token(config):

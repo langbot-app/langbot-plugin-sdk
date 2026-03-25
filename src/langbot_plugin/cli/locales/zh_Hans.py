@@ -70,4 +70,8 @@ messages = {
     "publish_failed": "!!! 插件发布失败：{}",
     "publish_successful": "✅ 插件发布成功。你可以在 {}/market 查看",
     "publish_successful_new_plugin": "⚠️ 插件草稿发布成功。你还需要在 {}/market 上传使用截图证明插件可用以完成提交。",
+
+    "pat_login_successful": "✅ 使用个人访问令牌登录成功！",
+    "pat_invalid_format": "令牌格式无效。个人访问令牌应以 'lbpat_' 开头。",
+    "pat_saved": "令牌已保存至：{}",
 }

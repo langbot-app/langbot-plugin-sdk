@@ -68,6 +68,7 @@ def main():
 
     # login command
     login_parser = subparsers.add_parser("login", help="Login to LangBot account")
+    login_parser.add_argument("--token", "-t", help="Login with a personal access token", default=None)
 
     # logout command
     logout_parser = subparsers.add_parser("logout", help="Logout from LangBot account")
@@ -122,7 +123,7 @@ def main():
         case "ver":
             cli_print("version_info", __version__)
         case "login":
-            login_process()
+            login_process(token=args.token)
         case "logout":
             logout_process()
         case "init":
