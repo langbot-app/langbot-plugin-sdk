@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+"""
+Platform entity models.
+"""
+
 import abc
 from datetime import datetime
 from enum import Enum
@@ -7,71 +12,171 @@ import pydantic
 
 
 class Entity(pydantic.BaseModel):
-    """实体，表示一个用户或群。"""
+    """Base entity representing a user or group."""
 
     id: typing.Union[int, str]
-    """ID。"""
+    """Entity ID."""
 
     @abc.abstractmethod
     def get_name(self) -> str:
-        """名称。"""
+        """Get display name."""
 
 
-class Friend(Entity):
-    """私聊对象。"""
+###############################
+# EBA entities (backward-compatible additions)
+###############################
+
+class ChatType(str, Enum):
+    """Chat/session type."""
+
+    PRIVATE = "private"
+    """Private (direct) chat."""
+    GROUP = "group"
+    """Group chat."""
+
+
+class MemberRole(str, Enum):
+    """Group member role."""
+
+    OWNER = "owner"
+    """Group owner."""
+    ADMIN = "admin"
+    """Administrator."""
+    MEMBER = "member"
+    """Regular member."""
+
+
+class User(pydantic.BaseModel):
+    """Unified user entity.
+
+    Provides a common representation for Friend / GroupMember basics.
+    """
 
     id: typing.Union[int, str]
-    """ID。"""
+    """User ID."""
+
+    nickname: str = ""
+    """Display name / nickname."""
+
+    avatar_url: typing.Optional[str] = None
+    """Avatar URL."""
+
+    is_bot: bool = False
+    """Whether this user is a bot."""
+
+    username: typing.Optional[str] = None
+    """Platform username (e.g. Telegram @username)."""
+
+    remark: typing.Optional[str] = None
+    """Remark / alias set by the current user."""
+
+
+class UserGroup(pydantic.BaseModel):
+    """Group entity (EBA version).
+
+    Coexists with the legacy Group class; named UserGroup to avoid conflicts.
+    """
+
+    id: typing.Union[int, str]
+    """Group ID."""
+
+    name: str = ""
+    """Group name."""
+
+    description: typing.Optional[str] = None
+    """Group description."""
+
+    member_count: typing.Optional[int] = None
+    """Number of members."""
+
+    avatar_url: typing.Optional[str] = None
+    """Group avatar URL."""
+
+    owner_id: typing.Optional[typing.Union[int, str]] = None
+    """Owner's user ID."""
+
+
+class UserGroupMember(pydantic.BaseModel):
+    """Group member entity (EBA version)."""
+
+    user: User
+    """User information."""
+
+    group_id: typing.Union[int, str]
+    """ID of the group this member belongs to."""
+
+    role: MemberRole = MemberRole.MEMBER
+    """Role within the group."""
+
+    display_name: typing.Optional[str] = None
+    """Display name within the group."""
+
+    joined_at: typing.Optional[float] = None
+    """Timestamp when the user joined the group."""
+
+    title: typing.Optional[str] = None
+    """Special title / badge within the group."""
+
+
+###############################
+# Legacy entities (unchanged)
+###############################
+
+class Friend(Entity):
+    """Friend (direct-chat peer)."""
+
+    id: typing.Union[int, str]
+    """ID."""
     nickname: typing.Optional[str]
-    """昵称。"""
+    """Nickname."""
     remark: typing.Optional[str]
-    """备注。"""
+    """Remark."""
 
     def get_name(self) -> str:
         return self.nickname or self.remark or ""
 
 
 class Permission(str, Enum):
-    """群成员身份权限。"""
+    """Group member permission level."""
 
     Member = "MEMBER"
-    """成员。"""
+    """Regular member."""
     Administrator = "ADMINISTRATOR"
-    """管理员。"""
+    """Administrator."""
     Owner = "OWNER"
-    """群主。"""
+    """Group owner."""
 
     def __repr__(self) -> str:
         return repr(self.value)
 
 
 class Group(Entity):
-    """群。"""
+    """Group."""
 
     id: typing.Union[int, str]
-    """群号。"""
+    """Group ID."""
     name: str
-    """群名称。"""
+    """Group name."""
     permission: Permission
-    """Bot 在群中的权限。"""
+    """Bot's permission level in this group."""
 
     def get_name(self) -> str:
         return self.name
 
 
 class GroupMember(Entity):
-    """群成员。"""
+    """Group member."""
 
     id: typing.Union[int, str]
-    """群员 ID。"""
+    """Member ID."""
     member_name: str
-    """群员名称。"""
+    """Member display name."""
     permission: Permission
-    """在群中的权限。"""
+    """Permission level in the group."""
     group: Group
-    """群。"""
+    """The group this member belongs to."""
     special_title: str = ""
-    """群头衔。"""
+    """Special title within the group."""
 
     def get_name(self) -> str:
         return self.member_name
