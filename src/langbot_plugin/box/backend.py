@@ -130,7 +130,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             f'image={spec.image} network={spec.network.value} '
             f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} '
             f'cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} '
-            f'read_only_rootfs={spec.read_only_rootfs}'
+            f'read_only_rootfs={spec.read_only_rootfs} workspace_quota_mb={spec.workspace_quota_mb}'
         )
 
         await self._run_command(args, timeout_sec=30, check=True)
@@ -148,6 +148,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             memory_mb=spec.memory_mb,
             pids_limit=spec.pids_limit,
             read_only_rootfs=spec.read_only_rootfs,
+            workspace_quota_mb=spec.workspace_quota_mb,
             created_at=now,
             last_used_at=now,
         )
