@@ -220,7 +220,8 @@ class BoxRuntime:
                 f'network={info.network.value} '
                 f'host_path={info.host_path} '
                 f'host_path_mode={info.host_path_mode.value} '
-                f'mount_path={info.mount_path}'
+                f'mount_path={info.mount_path} '
+                f'workspace_quota_mb={info.workspace_quota_mb}'
             )
             return runtime_session
 
@@ -290,6 +291,7 @@ class BoxRuntime:
             'memory_mb',
             'pids_limit',
             'read_only_rootfs',
+            'workspace_quota_mb',
         )
         for field in _COMPAT_FIELDS:
             session_val = getattr(session, field)

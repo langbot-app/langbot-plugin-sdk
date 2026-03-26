@@ -47,6 +47,7 @@ class BoxSpec(pydantic.BaseModel):
     memory_mb: int = 512
     pids_limit: int = 128
     read_only_rootfs: bool = True
+    workspace_quota_mb: int = 0
 
     @pydantic.model_validator(mode='before')
     @classmethod
@@ -100,6 +101,13 @@ class BoxSpec(pydantic.BaseModel):
     def validate_pids_limit(cls, value: int) -> int:
         if value < 1:
             raise ValueError('pids_limit must be at least 1')
+        return value
+
+    @pydantic.field_validator('workspace_quota_mb')
+    @classmethod
+    def validate_workspace_quota_mb(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError('workspace_quota_mb must be greater than or equal to 0')
         return value
 
     @pydantic.field_validator('session_id')
@@ -162,6 +170,7 @@ class BoxProfile(pydantic.BaseModel):
     memory_mb: int = 512
     pids_limit: int = 128
     read_only_rootfs: bool = True
+    workspace_quota_mb: int = 0
     locked: frozenset[str] = frozenset()
 
     model_config = pydantic.ConfigDict(frozen=True)
@@ -225,6 +234,7 @@ class BoxSessionInfo(pydantic.BaseModel):
     memory_mb: int = 512
     pids_limit: int = 128
     read_only_rootfs: bool = True
+    workspace_quota_mb: int = 0
     created_at: dt.datetime
     last_used_at: dt.datetime
 
