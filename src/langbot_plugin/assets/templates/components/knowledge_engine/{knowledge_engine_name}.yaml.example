@@ -5,15 +5,24 @@ metadata:
   label:
     en_US: {{ knowledge_engine_label }}
     zh_Hans: {{ knowledge_engine_label }}
+    th_TH: {{ knowledge_engine_label }}
+    vi_VN: {{ knowledge_engine_label }}
+    es_ES: {{ knowledge_engine_label }}
   description:
     en_US: '{{ knowledge_engine_description }}'
     zh_Hans: '{{ knowledge_engine_description }}'
+    th_TH: '{{ knowledge_engine_description }}'
+    vi_VN: '{{ knowledge_engine_description }}'
+    es_ES: '{{ knowledge_engine_description }}'
 spec:
   creation_schema:
     - name: chunk_size
       label:
         en_US: Chunk Size
         zh_Hans: 分块大小
+        th_TH: ขนาดชิ้นส่วน
+        vi_VN: Kích thước khối
+        es_ES: Tamaño de fragmento
       type: integer
       required: false
       default: 500
@@ -22,6 +31,9 @@ spec:
       label:
         en_US: Score Threshold
         zh_Hans: 分数阈值
+        th_TH: เกณฑ์คะแนน
+        vi_VN: Ngưỡng điểm
+        es_ES: Umbral de puntuación
       type: float
       required: false
       default: 0.5

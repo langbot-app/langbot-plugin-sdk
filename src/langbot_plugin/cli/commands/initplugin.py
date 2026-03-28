@@ -71,6 +71,9 @@ form_fields = [
         "label": {
             "en_US": "Plugin author",
             "zh_Hans": "插件作者",
+            "th_TH": "ผู้พัฒนาปลั๊กอิน",
+            "vi_VN": "Tác giả plugin",
+            "es_ES": "Autor del plugin",
         },
         "required": True,
         "format": {
@@ -78,6 +81,9 @@ form_fields = [
             "error": {
                 "en_US": "Invalid plugin author, please use a valid name, which only contains letters, numbers, underscores and hyphens.",
                 "zh_Hans": "无效的插件作者，请使用一个有效的名称，只能包含字母、数字、下划线和连字符。",
+                "th_TH": "ชื่อผู้พัฒนาปลั๊กอินไม่ถูกต้อง กรุณาใช้ชื่อที่ถูกต้อง ซึ่งประกอบด้วยตัวอักษร ตัวเลข ขีดล่าง และขีดกลางเท่านั้น",
+                "vi_VN": "Tên tác giả plugin không hợp lệ, vui lòng sử dụng tên hợp lệ, chỉ chứa chữ cái, số, dấu gạch dưới và dấu gạch ngang.",
+                "es_ES": "Autor del plugin no válido, por favor use un nombre válido que solo contenga letras, números, guiones bajos y guiones.",
             },
         },
     },
@@ -86,6 +92,9 @@ form_fields = [
         "label": {
             "en_US": "Plugin description",
             "zh_Hans": "插件描述",
+            "th_TH": "คำอธิบายปลั๊กอิน",
+            "vi_VN": "Mô tả plugin",
+            "es_ES": "Descripción del plugin",
         },
         "required": True,
     },

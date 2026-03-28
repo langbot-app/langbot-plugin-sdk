@@ -19,6 +19,12 @@ class I18nMessage(pydantic.BaseModel):
     """Traditional Chinese"""
     ja_JP: typing.Optional[str] = None
     """Japanese"""
+    th_TH: typing.Optional[str] = None
+    """Thai"""
+    vi_VN: typing.Optional[str] = None
+    """Vietnamese"""
+    es_ES: typing.Optional[str] = None
+    """Spanish"""
 
 
 class I18nManager:
@@ -45,7 +51,7 @@ class I18nManager:
             except:
                 locale_str = ""
 
-        # 根据locale字符串判断语言
+        # Determine language from locale string
         if locale_str:
             locale_lower = locale_str.lower()
             if "zh" in locale_lower and (
@@ -61,10 +67,16 @@ class I18nManager:
                 return "zh_Hant"
             elif locale_lower.startswith("ja") or "japan" in locale_lower:
                 return "ja_JP"
+            elif locale_lower.startswith("th") or "thai" in locale_lower:
+                return "th_TH"
+            elif locale_lower.startswith("vi") or "viet" in locale_lower:
+                return "vi_VN"
+            elif locale_lower.startswith("es") or "spanish" in locale_lower:
+                return "es_ES"
             elif locale_lower.startswith("en"):
                 return "en_US"
 
-        # 默认返回英文
+        # Default to English
         return "en_US"
 
     def get_message(self, key: str, *args) -> str:

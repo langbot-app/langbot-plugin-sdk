@@ -5,6 +5,9 @@ metadata:
   label:
     en_US: DefaultEventListener
     zh_Hans: DefaultEventListener
+    th_TH: DefaultEventListener
+    vi_VN: DefaultEventListener
+    es_ES: DefaultEventListener
 spec:
 execution:
   python:

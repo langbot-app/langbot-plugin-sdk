@@ -8,26 +8,46 @@ import sys
 
 
 class I18nString(pydantic.BaseModel):
-    """国际化字符串"""
+    """Internationalized string"""
 
     en_US: str
-    """英文"""
+    """English"""
 
     zh_Hans: typing.Optional[str] = None
-    """中文"""
+    """Simplified Chinese"""
+
+    zh_Hant: typing.Optional[str] = None
+    """Traditional Chinese"""
 
     ja_JP: typing.Optional[str] = None
-    """日文"""
+    """Japanese"""
+
+    th_TH: typing.Optional[str] = None
+    """Thai"""
+
+    vi_VN: typing.Optional[str] = None
+    """Vietnamese"""
+
+    es_ES: typing.Optional[str] = None
+    """Spanish"""
 
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """Convert to dictionary"""
         dic = {}
         if self.en_US is not None:
             dic["en_US"] = self.en_US
         if self.zh_Hans is not None:
             dic["zh_Hans"] = self.zh_Hans
+        if self.zh_Hant is not None:
+            dic["zh_Hant"] = self.zh_Hant
         if self.ja_JP is not None:
             dic["ja_JP"] = self.ja_JP
+        if self.th_TH is not None:
+            dic["th_TH"] = self.th_TH
+        if self.vi_VN is not None:
+            dic["vi_VN"] = self.vi_VN
+        if self.es_ES is not None:
+            dic["es_ES"] = self.es_ES
         return dic
 
 

@@ -8,9 +8,15 @@ metadata:
   description:
     en_US: '{{ plugin_description }}'
     zh_Hans: '{{ plugin_description }}'
+    th_TH: '{{ plugin_description }}'
+    vi_VN: '{{ plugin_description }}'
+    es_ES: '{{ plugin_description }}'
   label:
     en_US: {{ plugin_label }}
     zh_Hans: {{ plugin_label }}
+    th_TH: {{ plugin_label }}
+    vi_VN: {{ plugin_label }}
+    es_ES: {{ plugin_label }}
   icon: assets/icon.svg  # replace in assets/icon.svg
 spec:
   config: []
