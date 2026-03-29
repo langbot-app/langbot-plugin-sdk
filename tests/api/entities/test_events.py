@@ -18,7 +18,10 @@ from langbot_plugin.api.entities.builtin.platform.message import (
 from langbot_plugin.api.entities.builtin.provider.session import Session, LauncherTypes
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.pipeline.query import Query
-from langbot_plugin.api.entities.builtin.platform.events import MessageEvent, FriendMessage, GroupMessage
+from langbot_plugin.api.entities.builtin.platform.events import (
+    FriendMessage,
+    GroupMessage,
+)
 from langbot_plugin.api.entities.builtin.platform.entities import (
     Friend,
     Group,

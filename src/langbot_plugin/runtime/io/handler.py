@@ -32,7 +32,8 @@ from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
 logger = logging.getLogger(__name__)
 
 FILE_STORAGE_DIR = "data/temp/lbp"
-FILE_CHUNK_LENGTH = 1024 * 16 # 16KB
+FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
+
 
 class Handler(abc.ABC):
     """The abstract base class for all handlers."""
@@ -75,7 +76,9 @@ class Handler(abc.ABC):
             chunk_amount = data["chunk_amount"]
             chunk_size = data["chunk_size"]
             # append the chunk to the file
-            async with aiofiles.open(os.path.join(FILE_STORAGE_DIR, file_key), "ab") as f:
+            async with aiofiles.open(
+                os.path.join(FILE_STORAGE_DIR, file_key), "ab"
+            ) as f:
                 await f.write(base64.b64decode(chunk_base64))
             if chunk_index == chunk_amount - 1:
                 return ActionResponse.success({})
@@ -268,9 +271,13 @@ class Handler(abc.ABC):
         hash_value = hashlib.sha256(file_bytes).hexdigest()
         file_key = f"{hash_value}.{file_extension}"
         file_length = len(file_bytes)
-        chunk_amount = max(1, (file_length + FILE_CHUNK_LENGTH - 1) // FILE_CHUNK_LENGTH)
+        chunk_amount = max(
+            1, (file_length + FILE_CHUNK_LENGTH - 1) // FILE_CHUNK_LENGTH
+        )
         for i in range(chunk_amount):
-            chunk_bytes = file_bytes[i * FILE_CHUNK_LENGTH: (i + 1) * FILE_CHUNK_LENGTH]
+            chunk_bytes = file_bytes[
+                i * FILE_CHUNK_LENGTH : (i + 1) * FILE_CHUNK_LENGTH
+            ]
             chunk_base64 = base64.b64encode(chunk_bytes).decode("utf-8")
             # response = await self.conn.send(json.dumps({
             #     "action": CommonAction.FILE_CHUNK.value,
@@ -283,14 +290,17 @@ class Handler(abc.ABC):
             #         "chunk_size": len(chunk_bytes),
             #     }
             # }))
-            await self.call_action(CommonAction.FILE_CHUNK, {
-                "file_key": file_key,
-                "file_length": file_length,
-                "chunk_base64": chunk_base64,
-                "chunk_index": i,
-                "chunk_amount": chunk_amount,
-                "chunk_size": len(chunk_bytes),
-            })
+            await self.call_action(
+                CommonAction.FILE_CHUNK,
+                {
+                    "file_key": file_key,
+                    "file_length": file_length,
+                    "chunk_base64": chunk_base64,
+                    "chunk_index": i,
+                    "chunk_amount": chunk_amount,
+                    "chunk_size": len(chunk_bytes),
+                },
+            )
         return file_key
 
     async def read_local_file(self, file_key: str) -> bytes:

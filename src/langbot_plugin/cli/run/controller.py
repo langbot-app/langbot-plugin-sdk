@@ -25,7 +25,9 @@ from langbot_plugin.api.definition.components.base import NoneComponent, BaseCom
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.tool.tool import Tool
-from langbot_plugin.api.definition.components.knowledge_engine.engine import KnowledgeEngine
+from langbot_plugin.api.definition.components.knowledge_engine.engine import (
+    KnowledgeEngine,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
@@ -92,7 +94,9 @@ class PluginRuntimeController:
         await self._controller_task
 
     async def mount(self) -> None:
-        logger.info(f"Mounting plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
+        logger.info(
+            f"Mounting plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}..."
+        )
 
         # Setup hot reloader in debug mode
         if not self.prod_mode:
@@ -109,7 +113,7 @@ class PluginRuntimeController:
 
                     # Re-initialize using the current plugin settings
                     # This will create new instances with the reloaded code
-                    if hasattr(self, 'handler') and self.handler is not None:
+                    if hasattr(self, "handler") and self.handler is not None:
                         # Get current plugin container to retrieve settings
                         container_data = await self.handler.get_plugin_container()
                         plugin_settings = {
@@ -147,8 +151,11 @@ class PluginRuntimeController:
 
                     # Set shutdown callback for debug mode
                     if not self.prod_mode:
+
                         async def shutdown_callback():
-                            logger.info("Received shutdown request, triggering reconnection...")
+                            logger.info(
+                                "Received shutdown request, triggering reconnection..."
+                            )
                             should_reconnect.set()
                             await connection.close()
 
@@ -158,10 +165,14 @@ class PluginRuntimeController:
                     self._connection_waiter.set_result(connection)
                     await self.handler.run()
 
-                async def make_connection_failed_callback(controller: Controller, e: Exception = None):
+                async def make_connection_failed_callback(
+                    controller: Controller, e: Exception = None
+                ):
                     if self.prod_mode:
                         # In production mode, exit on connection failure
-                        logger.error(f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} {e}, exit")
+                        logger.error(
+                            f"Connection failed to {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} {e}, exit"
+                        )
                         self._connection_waiter.set_exception(
                             ConnectionClosedError(f"Connection failed: {e}")
                         )
@@ -188,7 +199,7 @@ class PluginRuntimeController:
                 # wait for the connection to be established
                 try:
                     _ = await self._connection_waiter
-                except ConnectionClosedError as e:
+                except ConnectionClosedError:
                     if self.prod_mode:
                         # In production mode, propagate the error
                         raise
@@ -201,7 +212,9 @@ class PluginRuntimeController:
                 # send manifest info to runtime
                 self.plugin_container.status = RuntimeContainerStatus.MOUNTED
 
-                logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} mounted")
+                logger.info(
+                    f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} mounted"
+                )
 
                 # register plugin
                 await self.handler.register_plugin(prod_mode=self.prod_mode)
@@ -230,7 +243,9 @@ class PluginRuntimeController:
                 self.hot_reloader.stop()
 
     async def initialize(self, plugin_settings: dict[str, typing.Any]) -> None:
-        logger.info(f"Initializing plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}...")
+        logger.info(
+            f"Initializing plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name}..."
+        )
         logger.debug(f"plugin_settings: {plugin_settings}")
 
         self.plugin_container.enabled = plugin_settings["enabled"]
@@ -267,7 +282,9 @@ class PluginRuntimeController:
                     )
                     await component_container.component_instance.initialize()
 
-        logger.info(f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized")
+        logger.info(
+            f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized"
+        )
 
         self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
 

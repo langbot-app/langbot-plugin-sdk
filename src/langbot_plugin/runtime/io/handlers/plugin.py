@@ -72,7 +72,7 @@ class PluginConnectionHandler(handler.Handler):
 
                 if plugin_debug_key != runtime_settings.plugin_debug_key:
                     logger.warning(
-                        f"Plugin debug key verification failed. Expected key does not match."
+                        "Plugin debug key verification failed. Expected key does not match."
                     )
                     return handler.ActionResponse.error(
                         "Plugin debug key verification failed"
@@ -282,7 +282,9 @@ class PluginConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM)
-        async def get_knowledge_file_stream(data: dict[str, Any]) -> handler.ActionResponse:
+        async def get_knowledge_file_stream(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             """Forward file stream from LangBot to plugin via chunked transfer."""
             result = await _proxy_rag_action(
                 PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
@@ -319,7 +321,9 @@ class PluginConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES)
-        async def list_pipeline_knowledge_bases(data: dict[str, Any]) -> handler.ActionResponse:
+        async def list_pipeline_knowledge_bases(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES,
                 data,
@@ -327,7 +331,9 @@ class PluginConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE)
-        async def retrieve_knowledge_base(data: dict[str, Any]) -> handler.ActionResponse:
+        async def retrieve_knowledge_base(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
                 data,
@@ -668,7 +674,9 @@ class PluginConnectionHandler(handler.Handler):
 
     # ================= Parser Methods =================
 
-    async def parse_document(self, context_data: dict[str, Any], file_bytes: bytes) -> dict[str, Any]:
+    async def parse_document(
+        self, context_data: dict[str, Any], file_bytes: bytes
+    ) -> dict[str, Any]:
         """Call plugin to parse a document.
 
         Sends file content via chunked FILE_CHUNK transfer, then invokes

@@ -1,19 +1,16 @@
 # handle connection from LangBot
 from __future__ import annotations
 
-import json
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
     LangBotToRuntimeAction,
-    RuntimeToPluginAction,
 )
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
-import traceback
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
 
 
@@ -79,7 +76,9 @@ class ControlConnectionHandler(handler.Handler):
             author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             language = data.get("language", "en")
-            readme_bytes = await self.context.plugin_mgr.get_plugin_readme(author, plugin_name, language)
+            readme_bytes = await self.context.plugin_mgr.get_plugin_readme(
+                author, plugin_name, language
+            )
 
             if readme_bytes:
                 readme_file_key = await self.send_file(readme_bytes, "md")
@@ -87,19 +86,21 @@ class ControlConnectionHandler(handler.Handler):
                     {"readme_file_key": readme_file_key}
                 )
             else:
-                return handler.ActionResponse.success(
-                    {"readme_file_key": None}
-                )
+                return handler.ActionResponse.success({"readme_file_key": None})
 
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_ASSETS_FILE)
-        async def get_plugin_assets_file(data: dict[str, Any]) -> handler.ActionResponse:
+        async def get_plugin_assets_file(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             file_key = data["file_path"]
             (
                 file_bytes,
                 mime_type,
-            ) = await self.context.plugin_mgr.get_plugin_assets_file(author, plugin_name, file_key)
+            ) = await self.context.plugin_mgr.get_plugin_assets_file(
+                author, plugin_name, file_key
+            )
 
             if file_bytes:
                 file_file_key = await self.send_file(file_bytes, "")
@@ -202,7 +203,9 @@ class ControlConnectionHandler(handler.Handler):
             query_id = data["query_id"]
             include_plugins = data.get("include_plugins")
 
-            resp = await self.context.plugin_mgr.call_tool(tool_name, tool_parameters, session, query_id, include_plugins)
+            resp = await self.context.plugin_mgr.call_tool(
+                tool_name, tool_parameters, session, query_id, include_plugins
+            )
 
             return handler.ActionResponse.success(
                 {
@@ -224,7 +227,9 @@ class ControlConnectionHandler(handler.Handler):
         ) -> AsyncGenerator[handler.ActionResponse, None]:
             command_context = ExecuteContext.model_validate(data["command_context"])
             include_plugins = data.get("include_plugins")
-            async for resp in self.context.plugin_mgr.execute_command(command_context, include_plugins):
+            async for resp in self.context.plugin_mgr.execute_command(
+                command_context, include_plugins
+            ):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
         @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
@@ -234,7 +239,9 @@ class ControlConnectionHandler(handler.Handler):
             retriever_name = data["retriever_name"]
             retrieval_context = data["retrieval_context"]
 
-            resp = await self.context.plugin_mgr.retrieve_knowledge(plugin_author, plugin_name, retriever_name, retrieval_context)
+            resp = await self.context.plugin_mgr.retrieve_knowledge(
+                plugin_author, plugin_name, retriever_name, retrieval_context
+            )
             return handler.ActionResponse.success(resp)
 
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
@@ -242,15 +249,19 @@ class ControlConnectionHandler(handler.Handler):
             """Get debug information including debug key and WS URL."""
             from langbot_plugin.runtime.settings import settings as runtime_settings
 
-            return handler.ActionResponse.success({
-                "plugin_debug_key": runtime_settings.plugin_debug_key,
-                "ws_debug_port": self.context.ws_debug_port,
-            })
+            return handler.ActionResponse.success(
+                {
+                    "plugin_debug_key": runtime_settings.plugin_debug_key,
+                    "ws_debug_port": self.context.ws_debug_port,
+                }
+            )
 
         # ================= Knowledge Engine Actions =================
 
         @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_ENGINES)
-        async def list_knowledge_engines(data: dict[str, Any]) -> handler.ActionResponse:
+        async def list_knowledge_engines(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             """List all available Knowledge Engines from plugins."""
             engines = await self.context.plugin_mgr.list_knowledge_engines()
             return handler.ActionResponse.success({"engines": engines})
@@ -306,7 +317,9 @@ class ControlConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(resp)
 
         @self.action(LangBotToRuntimeAction.GET_RAG_CREATION_SETTINGS_SCHEMA)
-        async def get_rag_creation_settings_schema(data: dict[str, Any]) -> handler.ActionResponse:
+        async def get_rag_creation_settings_schema(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             """Get RAG creation settings schema from plugin."""
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]
@@ -317,7 +330,9 @@ class ControlConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(resp)
 
         @self.action(LangBotToRuntimeAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA)
-        async def get_rag_retrieval_settings_schema(data: dict[str, Any]) -> handler.ActionResponse:
+        async def get_rag_retrieval_settings_schema(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
             """Get RAG retrieval settings schema from plugin."""
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]

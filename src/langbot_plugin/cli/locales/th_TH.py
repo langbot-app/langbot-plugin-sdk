@@ -70,7 +70,6 @@ messages = {
     "publish_failed": "!!! ไม่สามารถเผยแพร่ปลั๊กอิน: {}",
     "publish_successful": "✅ เผยแพร่ปลั๊กอินสำเร็จ คุณสามารถตรวจสอบได้ที่ {}/market",
     "publish_successful_new_plugin": "⚠️ เผยแพร่ร่างปลั๊กอินสำเร็จ คุณต้องอัปโหลดภาพหน้าจอการใช้งานที่ {}/market เพื่อทำการส่งให้เสร็จสมบูรณ์",
-
     "pat_login_successful": "✅ เข้าสู่ระบบด้วย personal access token สำเร็จ!",
     "pat_invalid_format": "รูปแบบ token ไม่ถูกต้อง Personal access token ควรขึ้นต้นด้วย 'lbpat_'",
     "pat_saved": "บันทึก token ไปยัง: {}",

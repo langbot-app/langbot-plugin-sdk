@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from enum import Enum
-import signal
 import logging
 
 import asyncio

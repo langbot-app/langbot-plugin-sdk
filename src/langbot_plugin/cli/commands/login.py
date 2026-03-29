@@ -18,16 +18,16 @@ def login_process(token: str | None = None) -> None:
         if not token.startswith("lbpat_"):
             cli_print("pat_invalid_format")
             return
-        
+
         config = {
             "access_token": token,
             "token_type": "personal_access_token",
             "login_time": int(time.time()),
             "expires_in": 0,
         }
-        
+
         config_file = _save_config(config)
-        
+
         print("\n" + "=" * 50)
         cli_print("pat_login_successful")
         cli_print("pat_saved", config_file)

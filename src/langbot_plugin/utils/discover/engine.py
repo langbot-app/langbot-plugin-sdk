@@ -23,7 +23,7 @@ class ComponentDiscoveryEngine:
                 manifest = yaml.safe_load(f)
                 if not ComponentManifest.is_component_manifest(manifest):
                     return None
-                
+
                 comp = ComponentManifest(owner=owner, manifest=manifest, rel_path=path)
                 if not no_save:
                     if comp.kind not in self.components:
@@ -31,7 +31,9 @@ class ComponentDiscoveryEngine:
                     self.components[comp.kind].append(comp)
                 return comp
         except Exception as e:
-            logging.getLogger(__name__).warning(f"Failed to load component manifest {path}: {e}")
+            logging.getLogger(__name__).warning(
+                f"Failed to load component manifest {path}: {e}"
+            )
             return None
 
     def load_component_manifests_in_dir(

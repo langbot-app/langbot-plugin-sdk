@@ -5,7 +5,6 @@ from __future__ import annotations
 import typing
 import enum
 import pydantic
-import asyncio
 
 from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.definition.plugin import BasePlugin

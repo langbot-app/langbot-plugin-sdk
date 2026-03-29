@@ -99,7 +99,9 @@ def command_component_input_post_process(values: dict[str, Any]) -> dict[str, An
     return result
 
 
-def knowledge_engine_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+def knowledge_engine_component_input_post_process(
+    values: dict[str, Any],
+) -> dict[str, Any]:
     result = {
         "knowledge_engine_name": values["knowledge_engine_name"],
         "knowledge_engine_label": values["knowledge_engine_name"],

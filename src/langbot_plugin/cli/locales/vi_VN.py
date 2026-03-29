@@ -70,7 +70,6 @@ messages = {
     "publish_failed": "!!! Không thể xuất bản plugin: {}",
     "publish_successful": "✅ Xuất bản plugin thành công. Bạn có thể kiểm tra tại {}/market",
     "publish_successful_new_plugin": "⚠️ Xuất bản bản nháp plugin thành công. Bạn cần tải lên ảnh chụp màn hình sử dụng tại {}/market để hoàn tất việc gửi.",
-
     "pat_login_successful": "✅ Đã đăng nhập bằng personal access token!",
     "pat_invalid_format": "Định dạng token không hợp lệ. Personal access token phải bắt đầu bằng 'lbpat_'.",
     "pat_saved": "Đã lưu token tại: {}",

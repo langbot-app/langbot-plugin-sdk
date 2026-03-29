@@ -286,18 +286,20 @@ def test_forward_message_chain_deserialization():
 
 def test_forward_roundtrip_serialization():
     """测试 Forward 消息的序列化/反序列化往返"""
-    original = MessageChain([
-        Forward(
-            display=ForwardMessageDiaplay(title="Test"),
-            node_list=[
-                ForwardMessageNode(
-                    sender_id="123",
-                    sender_name="User",
-                    message_chain=MessageChain([Plain(text="nested msg")]),
-                ),
-            ],
-        )
-    ])
+    original = MessageChain(
+        [
+            Forward(
+                display=ForwardMessageDiaplay(title="Test"),
+                node_list=[
+                    ForwardMessageNode(
+                        sender_id="123",
+                        sender_name="User",
+                        message_chain=MessageChain([Plain(text="nested msg")]),
+                    ),
+                ],
+            )
+        ]
+    )
 
     serialized = original.model_dump()
     deserialized = MessageChain.model_validate(serialized)
