@@ -20,7 +20,7 @@ class StdioConnection(connection.Connection):
         stdout: asyncio.StreamReader,
         stdin: asyncio.StreamWriter,
         process: asyncio.subprocess.Process | None = None,
-        chunk_size: int = 16 * 1024  # 16KB chunks by default
+        chunk_size: int = 16 * 1024,  # 16KB chunks by default
     ):
         self.stdout = stdout
         self.stdin = stdin
@@ -33,7 +33,7 @@ class StdioConnection(connection.Connection):
     async def send(self, message: str) -> None:
         """Send message with chunking support for large data."""
         async with self._send_lock:  # 确保同一时间只有一个send操作
-            message_bytes = message.encode('utf-8')
+            message_bytes = message.encode("utf-8")
             message_size = len(message_bytes)
 
             # For small messages, send directly
@@ -48,26 +48,30 @@ class StdioConnection(connection.Connection):
             # For large messages, send in chunks
             try:
                 # Send start marker for chunked message
-                chunk_header = json.dumps({"type": "chunk_start", "total_size": message_size})
-                self.stdin.write(chunk_header.encode('utf-8') + b"\n")
+                chunk_header = json.dumps(
+                    {"type": "chunk_start", "total_size": message_size}
+                )
+                self.stdin.write(chunk_header.encode("utf-8") + b"\n")
                 await self.stdin.drain()
 
                 # Send message in chunks
                 for i in range(0, message_size, self.chunk_size):
-                    chunk_data = message_bytes[i:i + self.chunk_size]
-                    chunk_msg = json.dumps({
-                        "type": "chunk_data",
-                        "data": chunk_data.decode('utf-8', errors='replace'),
-                        "offset": i
-                    })
-                    self.stdin.write(chunk_msg.encode('utf-8') + b"\n")
+                    chunk_data = message_bytes[i : i + self.chunk_size]
+                    chunk_msg = json.dumps(
+                        {
+                            "type": "chunk_data",
+                            "data": chunk_data.decode("utf-8", errors="replace"),
+                            "offset": i,
+                        }
+                    )
+                    self.stdin.write(chunk_msg.encode("utf-8") + b"\n")
                     await self.stdin.drain()
                     # Small delay to prevent overwhelming the connection
                     await asyncio.sleep(0.001)
 
                 # Send end marker
                 chunk_end = json.dumps({"type": "chunk_end"})
-                self.stdin.write(chunk_end.encode('utf-8') + b"\n")
+                self.stdin.write(chunk_end.encode("utf-8") + b"\n")
                 await self.stdin.drain()
 
             except Exception:
@@ -137,7 +141,9 @@ class StdioConnection(connection.Connection):
 
                                     while True:
                                         chunk_line = await self._read_single_line()
-                                        if not chunk_line or not self._is_valid_json(chunk_line):
+                                        if not chunk_line or not self._is_valid_json(
+                                            chunk_line
+                                        ):
                                             continue
 
                                         chunk_data = json.loads(chunk_line)
@@ -152,7 +158,11 @@ class StdioConnection(connection.Connection):
                                             await asyncio.sleep(0)
 
                                 # Regular message (not chunk related)
-                                elif msg_data["type"] not in ["chunk_start", "chunk_data", "chunk_end"]:
+                                elif msg_data["type"] not in [
+                                    "chunk_start",
+                                    "chunk_data",
+                                    "chunk_end",
+                                ]:
                                     return line
                             else:
                                 # Regular JSON message

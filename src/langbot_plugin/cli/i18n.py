@@ -10,7 +10,7 @@ from .locales import get_locale_messages, SUPPORTED_LOCALES
 
 class I18nMessage(pydantic.BaseModel):
     """Internationalization message"""
-    
+
     en_US: str
     """English"""
     zh_Hans: typing.Optional[str] = None

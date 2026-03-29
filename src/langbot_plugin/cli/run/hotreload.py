@@ -6,9 +6,8 @@ import sys
 import logging
 import importlib
 from typing import Callable, Coroutine, Any
-from pathlib import Path
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+from watchdog.events import FileSystemEventHandler
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +32,11 @@ class PythonFileChangeHandler(FileSystemEventHandler):
             return
 
         # Only handle .py files
-        if not event.src_path.endswith('.py'):
+        if not event.src_path.endswith(".py"):
             return
 
         # Ignore __pycache__ and .pyc files
-        if '__pycache__' in event.src_path or event.src_path.endswith('.pyc'):
+        if "__pycache__" in event.src_path or event.src_path.endswith(".pyc"):
             return
 
         logger.info(f"Detected change in {event.src_path}")
@@ -48,8 +47,7 @@ class PythonFileChangeHandler(FileSystemEventHandler):
 
         # Schedule a new reload
         self._pending_reload = asyncio.run_coroutine_threadsafe(
-            self._debounced_reload(),
-            self._loop
+            self._debounced_reload(), self._loop
         )
 
     async def _debounced_reload(self):
@@ -108,7 +106,7 @@ def reload_plugin_modules(plugin_path: str):
             continue
 
         # Get module file path
-        module_file = getattr(module, '__file__', None)
+        module_file = getattr(module, "__file__", None)
         if module_file is None:
             continue
 

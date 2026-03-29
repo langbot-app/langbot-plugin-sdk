@@ -5,9 +5,7 @@ from typing import TextIO
 
 DEFAULT_LOG_DATEFMT = "%m-%d %H:%M:%S"
 _BASE_LOG_FORMAT = "[%(asctime)s.%(msecs)03d] %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s"
-_PREFIXED_LOG_FORMAT = (
-    "[%(asctime)s.%(msecs)03d] ({process_name}) %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s"
-)
+_PREFIXED_LOG_FORMAT = "[%(asctime)s.%(msecs)03d] ({process_name}) %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s"
 
 
 def build_process_log_format(process_name: str | None = None) -> str:

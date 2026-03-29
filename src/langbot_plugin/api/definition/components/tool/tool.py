@@ -13,6 +13,8 @@ class Tool(BaseComponent):
     __kind__ = "Tool"
 
     @abc.abstractmethod
-    async def call(self, params: dict[str, Any], session: provider_session.Session, query_id: int) -> str:
+    async def call(
+        self, params: dict[str, Any], session: provider_session.Session, query_id: int
+    ) -> str:
         """Call the tool."""
         pass

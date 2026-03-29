@@ -19,10 +19,15 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_engine.engine import KnowledgeEngine
+from langbot_plugin.api.definition.components.knowledge_engine.engine import (
+    KnowledgeEngine,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
-from langbot_plugin.api.entities.builtin.rag.models import IngestionContext, ParseContext
+from langbot_plugin.api.entities.builtin.rag.models import (
+    IngestionContext,
+    ParseContext,
+)
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
 
@@ -32,7 +37,9 @@ class PluginRuntimeHandler(Handler):
 
     plugin_container: PluginContainer
 
-    shutdown_callback: typing.Callable[[], typing.Coroutine[typing.Any, typing.Any, None]] | None = None
+    shutdown_callback: (
+        typing.Callable[[], typing.Coroutine[typing.Any, typing.Any, None]] | None
+    ) = None
     """Callback to trigger shutdown and reconnect."""
 
     def __init__(
@@ -58,30 +65,41 @@ class PluginRuntimeHandler(Handler):
         async def get_plugin_icon(data: dict[str, typing.Any]) -> ActionResponse:
             icon_path = self.plugin_container.manifest.icon_rel_path
             if icon_path is None:
-                return ActionResponse.success({"plugin_icon_file_key": "", "mime_type": ""})
+                return ActionResponse.success(
+                    {"plugin_icon_file_key": "", "mime_type": ""}
+                )
             async with aiofiles.open(icon_path, "rb") as f:
                 # icon_base64 = base64.b64encode(f.read()).decode("utf-8")
                 icon_bytes = await f.read()
 
             mime_type = mimetypes.guess_type(icon_path)[0]
 
-            plugin_icon_file_key = await self.send_file(icon_bytes, '')
+            plugin_icon_file_key = await self.send_file(icon_bytes, "")
 
             return ActionResponse.success(
                 {"plugin_icon_file_key": plugin_icon_file_key, "mime_type": mime_type}
             )
-        
+
         @self.action(RuntimeToPluginAction.GET_PLUGIN_README)
         async def get_plugin_readme(data: dict[str, typing.Any]) -> ActionResponse:
             language = data["language"]
-            readme_path = os.path.join("readme", f"README_{language}.md") if language != "en" else "README.md"
+            readme_path = (
+                os.path.join("readme", f"README_{language}.md")
+                if language != "en"
+                else "README.md"
+            )
             if not os.path.exists(readme_path):
                 readme_path = "README.md"
 
             async with aiofiles.open(readme_path, "rb") as f:
                 readme_bytes = await f.read()
             readme_file_key = await self.send_file(readme_bytes, "md")
-            return ActionResponse.success({"plugin_readme_file_key": readme_file_key, "mime_type": "text/markdown"})
+            return ActionResponse.success(
+                {
+                    "plugin_readme_file_key": readme_file_key,
+                    "mime_type": "text/markdown",
+                }
+            )
 
         @self.action(RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE)
         async def get_plugin_assets_file(data: dict[str, typing.Any]) -> ActionResponse:
@@ -95,7 +113,9 @@ class PluginRuntimeHandler(Handler):
 
             mime_type = mimetypes.guess_type(file_path)[0]
             file_file_key = await self.send_file(file_bytes, "")
-            return ActionResponse.success({"file_file_key": file_file_key, "mime_type": mime_type})
+            return ActionResponse.success(
+                {"file_file_key": file_file_key, "mime_type": mime_type}
+            )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
         async def emit_event(data: dict[str, typing.Any]) -> ActionResponse:
@@ -176,7 +196,9 @@ class PluginRuntimeHandler(Handler):
 
                     if "session" in params and "query_id" in params:
                         session = provider_session.Session.model_validate(session)
-                        resp = await tool_instance.call(tool_parameters, session=session, query_id=query_id)
+                        resp = await tool_instance.call(
+                            tool_parameters, session=session, query_id=query_id
+                        )
                     else:
                         resp = await tool_instance.call(tool_parameters)
 
@@ -226,27 +248,38 @@ class PluginRuntimeHandler(Handler):
         async def retrieve_knowledge(data: dict[str, typing.Any]) -> ActionResponse:
             """Retrieve knowledge using a KnowledgeEngine instance."""
             retriever_name = data["retriever_name"]
-            retrieval_context = RetrievalContext.model_validate(data["retrieval_context"])
+            retrieval_context = RetrievalContext.model_validate(
+                data["retrieval_context"]
+            )
 
             rag_component = None
             for component in self.plugin_container.components:
                 if component.manifest.kind == KnowledgeEngine.__kind__:
                     # If retriever_name is empty, use the first found KnowledgeEngine.
                     # Otherwise, find the specific named component.
-                    if not retriever_name or component.manifest.metadata.name == retriever_name:
+                    if (
+                        not retriever_name
+                        or component.manifest.metadata.name == retriever_name
+                    ):
                         rag_component = component
                         break
 
             if rag_component is None:
-                return ActionResponse.error(f"KnowledgeEngine {retriever_name} not found")
+                return ActionResponse.error(
+                    f"KnowledgeEngine {retriever_name} not found"
+                )
 
             if isinstance(rag_component.component_instance, NoneComponent):
-                return ActionResponse.error(f"KnowledgeEngine {retriever_name} is not initialized")
+                return ActionResponse.error(
+                    f"KnowledgeEngine {retriever_name} is not initialized"
+                )
 
             assert isinstance(rag_component.component_instance, KnowledgeEngine)
 
             # Call retrieve method - KnowledgeEngine returns RetrievalResponse
-            response = await rag_component.component_instance.retrieve(retrieval_context)
+            response = await rag_component.component_instance.retrieve(
+                retrieval_context
+            )
 
             return ActionResponse.success(response.model_dump(mode="json"))
 
@@ -272,7 +305,9 @@ class PluginRuntimeHandler(Handler):
                     return component
             return None
 
-        def _get_knowledge_engine_or_error() -> tuple[KnowledgeEngine | None, ActionResponse | None]:
+        def _get_knowledge_engine_or_error() -> tuple[
+            KnowledgeEngine | None, ActionResponse | None
+        ]:
             """Get KnowledgeEngine singleton instance or error response.
 
             Returns:
@@ -281,10 +316,14 @@ class PluginRuntimeHandler(Handler):
             """
             rag_component = _find_knowledge_engine_component()
             if rag_component is None:
-                return None, ActionResponse.error("KnowledgeEngine component not found in this plugin")
+                return None, ActionResponse.error(
+                    "KnowledgeEngine component not found in this plugin"
+                )
 
             if isinstance(rag_component.component_instance, NoneComponent):
-                return None, ActionResponse.error("KnowledgeEngine component is not initialized")
+                return None, ActionResponse.error(
+                    "KnowledgeEngine component is not initialized"
+                )
             assert isinstance(rag_component.component_instance, KnowledgeEngine)
             return rag_component.component_instance, None
 
@@ -348,7 +387,9 @@ class PluginRuntimeHandler(Handler):
             """Get RAG capabilities from the KnowledgeEngine component."""
             rag_component = _find_knowledge_engine_component()
             if rag_component is None:
-                return ActionResponse.error("KnowledgeEngine component not found in this plugin")
+                return ActionResponse.error(
+                    "KnowledgeEngine component not found in this plugin"
+                )
 
             # Get capabilities from the class method (doesn't need instance)
             component_class = rag_component.manifest.get_python_component_class()
@@ -372,7 +413,9 @@ class PluginRuntimeHandler(Handler):
             """Get Parser instance or error response."""
             parser_component = _find_parser_component()
             if parser_component is None:
-                return None, ActionResponse.error("Parser component not found in this plugin")
+                return None, ActionResponse.error(
+                    "Parser component not found in this plugin"
+                )
             if isinstance(parser_component.component_instance, NoneComponent):
                 return None, ActionResponse.error("Parser component is not initialized")
             assert isinstance(parser_component.component_instance, Parser)

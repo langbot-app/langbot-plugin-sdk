@@ -70,7 +70,6 @@ messages = {
     "publish_failed": "!!! プラグインの公開に失敗しました：{}",
     "publish_successful": "✅ プラグインの公開が完了しました。{}/market で確認できます",
     "publish_successful_new_plugin": "⚠️ プラグインの公開が完了しました。使用スクリーンショットを {}/market にアップロードして提出を完了してください。",
-
     "pat_login_successful": "✅ パーソナルアクセストークンでログインしました！",
     "pat_invalid_format": "トークンの形式が無効です。パーソナルアクセストークンは 'lbpat_' で始まる必要があります。",
     "pat_saved": "トークンの保存先：{}",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-import typing
 
 import pydantic
 
@@ -39,14 +38,16 @@ class CommandReturn(pydantic.BaseModel):
     """
 
     @classmethod
-    @pydantic.field_validator('error', mode='before')
-    def _validate_error(cls, v: Optional[errors.CommandError]) -> Optional[errors.CommandError]:
+    @pydantic.field_validator("error", mode="before")
+    def _validate_error(
+        cls, v: Optional[errors.CommandError]
+    ) -> Optional[errors.CommandError]:
         if v is not None:
             return errors.CommandError(message=v.message)
         return v
 
     @classmethod
-    @pydantic.field_serializer('error')
+    @pydantic.field_serializer("error")
     def _serialize_error(cls, v: Optional[errors.CommandError]) -> Optional[str]:
         if v is not None:
             return v.message

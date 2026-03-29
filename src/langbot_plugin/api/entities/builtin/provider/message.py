@@ -26,6 +26,7 @@ class ImageURLContentObject(pydantic.BaseModel):
     def __str__(self):
         return self.url[:128] + ("..." if len(self.url) > 128 else "")
 
+
 class ContentElement(pydantic.BaseModel):
     type: str
     """Type of the content"""
@@ -48,7 +49,7 @@ class ContentElement(pydantic.BaseModel):
         elif self.type == "image_url":
             return f"[Image]({self.image_url})"
         elif self.type == "image_base64":
-            return f"[Image](base64)"
+            return "[Image](base64)"
         elif self.type == "file_url":
             return f"[File]({self.file_url})"
         elif self.type == "file_base64":
@@ -125,9 +126,11 @@ class Message(pydantic.BaseModel):
                 if ce.type == "text":
                     if ce.text is not None:
                         mc.append(platform_message.Plain(text=ce.text))
-                elif ce.type == 'file_url':
+                elif ce.type == "file_url":
                     if ce.file_url is not None:
-                        mc.append(platform_message.File(url=ce.file_url, name=ce.file_name))
+                        mc.append(
+                            platform_message.File(url=ce.file_url, name=ce.file_name)
+                        )
                 elif ce.type == "image_url":
                     assert ce.image_url is not None
                     if ce.image_url.url.startswith("http"):
@@ -216,7 +219,9 @@ class MessageChunk(pydantic.BaseModel):
                     mc.append(platform_message.Plain(text=ce.text))
                 elif ce.type == "file_url":
                     if ce.file_url is not None:
-                        mc.append(platform_message.File(url=ce.file_url, name=ce.file_name))
+                        mc.append(
+                            platform_message.File(url=ce.file_url, name=ce.file_name)
+                        )
                 elif ce.type == "image_url":
                     if ce.image_url.url.startswith("http"):
                         mc.append(platform_message.Image(url=ce.image_url.url))
@@ -230,7 +235,6 @@ class MessageChunk(pydantic.BaseModel):
                 elif ce.type == "image_base64":  # base64
                     if ce.image_base64 is not None:
                         mc.append(platform_message.Image(base64=ce.image_base64))
-
 
             # 找第一个文字组件
             if prefix_text:
