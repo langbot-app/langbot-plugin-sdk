@@ -1,11 +1,11 @@
 import pydantic
 
-class CommandError(pydantic.BaseModel):
 
+class CommandError(pydantic.BaseModel):
     message: str
 
     def __init__(self, message: str):
-        
+
         super().__init__(message=message)
 
     def __str__(self):

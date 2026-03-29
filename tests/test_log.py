@@ -8,7 +8,10 @@ from langbot_plugin.utils.log import build_process_log_format, configure_process
 
 
 def test_build_process_log_format_supports_optional_prefix():
-    assert build_process_log_format() == "[%(asctime)s.%(msecs)03d] %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s"
+    assert (
+        build_process_log_format()
+        == "[%(asctime)s.%(msecs)03d] %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s"
+    )
     assert (
         build_process_log_format("BoxRuntime")
         == "[%(asctime)s.%(msecs)03d] (BoxRuntime) %(filename)s (%(lineno)d) - [%(levelname)s] : %(message)s"

@@ -25,7 +25,9 @@ from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
-from langbot_plugin.api.definition.components.knowledge_engine.engine import KnowledgeEngine
+from langbot_plugin.api.definition.components.knowledge_engine.engine import (
+    KnowledgeEngine,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
@@ -71,7 +73,9 @@ class PluginManager:
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
-    def find_plugin(self, plugin_author: str, plugin_name: str) -> runtime_plugin_container.PluginContainer | None:
+    def find_plugin(
+        self, plugin_author: str, plugin_name: str
+    ) -> runtime_plugin_container.PluginContainer | None:
         """Find a plugin by author and name.
 
         Args:
@@ -117,7 +121,7 @@ class PluginManager:
     async def launch_plugin(self, plugin_path: str):
         from langbot_plugin.runtime.settings import settings as runtime_settings
 
-        if get_platform() == 'win32':
+        if get_platform() == "win32":
             # Due to Windows's lack of supports for both stdio and subprocess:
             # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
             # We have to launch plugin via cmd but communicate via ws.
@@ -126,17 +130,21 @@ class PluginManager:
             # Build command with debug key if set
             cmd_args = [
                 python_path,
-                '-m', 'langbot_plugin.cli.__init__', 'run',
-                '--prod',
+                "-m",
+                "langbot_plugin.cli.__init__",
+                "run",
+                "--prod",
             ]
             if runtime_settings.plugin_debug_key:
-                cmd_args.extend(['--plugin-debug-key', runtime_settings.plugin_debug_key])
+                cmd_args.extend(
+                    ["--plugin-debug-key", runtime_settings.plugin_debug_key]
+                )
 
             process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
                 *cmd_args,
                 env={
                     "RUNTIME_WS_URL": f"ws://localhost:{self.context.ws_debug_port}/plugin/ws",
-                    **os.environ.copy()
+                    **os.environ.copy(),
                 },
                 cwd=plugin_path,
             )
@@ -153,7 +161,7 @@ class PluginManager:
             # Build args with debug key if set
             args = ["-m", "langbot_plugin.cli.__init__", "run", "-s", "--prod"]
             if runtime_settings.plugin_debug_key:
-                args.extend(['--plugin-debug-key', runtime_settings.plugin_debug_key])
+                args.extend(["--plugin-debug-key", runtime_settings.plugin_debug_key])
 
             ctrl = stdio_client_controller.StdioClientController(
                 command=python_path,
@@ -267,16 +275,16 @@ class PluginManager:
                 install_info["plugin_name"],
                 install_info["plugin_version"],
             ):
-                if progress['done']:
-                    plugin_file_data = progress['data']
+                if progress["done"]:
+                    plugin_file_data = progress["data"]
                 else:
                     yield {
                         "current_action": "downloading plugin package",
                         "metadata": {
-                            "download_current": progress['downloaded'],
-                            "download_total": progress['total'],
-                            "download_speed": progress['speed'],
-                        }
+                            "download_current": progress["downloaded"],
+                            "download_total": progress["total"],
+                            "download_speed": progress["speed"],
+                        },
                     }
 
             (
@@ -318,10 +326,12 @@ class PluginManager:
                         "current_dep": dep,
                         "deps_downloaded_size": total_downloaded,
                         "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
-                    }
+                    },
                 }
 
-                returncode, downloaded_bytes = await pkgmgr_helper.install_single_async(dep)
+                returncode, downloaded_bytes = await pkgmgr_helper.install_single_async(
+                    dep
+                )
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
@@ -337,7 +347,7 @@ class PluginManager:
                     "current_dep": "",
                     "deps_downloaded_size": total_downloaded,
                     "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
-                }
+                },
             }
 
         # initialize plugin settings
@@ -584,7 +594,9 @@ class PluginManager:
 
             # Filter by include_plugins if specified (pipeline-specific filtering)
             if include_plugins is not None:
-                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                plugin_id = (
+                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                )
                 if plugin_id not in include_plugins:
                     continue
 
@@ -612,7 +624,9 @@ class PluginManager:
             resp = await plugin._runtime_plugin_handler.get_plugin_icon()
 
             icon_file_key = resp["plugin_icon_file_key"]
-            icon_bytes = await plugin._runtime_plugin_handler.read_local_file(icon_file_key)
+            icon_bytes = await plugin._runtime_plugin_handler.read_local_file(
+                icon_file_key
+            )
             await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
             return icon_bytes, resp["mime_type"]
         return b"", ""
@@ -622,10 +636,14 @@ class PluginManager:
     ) -> bytes:
         plugin = self.find_plugin(plugin_author, plugin_name)
         if plugin is not None:
-            resp = await plugin._runtime_plugin_handler.get_plugin_readme(language=language)
+            resp = await plugin._runtime_plugin_handler.get_plugin_readme(
+                language=language
+            )
 
             readme_file_key = resp["plugin_readme_file_key"]
-            readme_bytes = await plugin._runtime_plugin_handler.read_local_file(readme_file_key)
+            readme_bytes = await plugin._runtime_plugin_handler.read_local_file(
+                readme_file_key
+            )
             await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
             return readme_bytes
 
@@ -636,20 +654,28 @@ class PluginManager:
     ) -> tuple[bytes, str]:
         plugin = self.find_plugin(plugin_author, plugin_name)
         if plugin is not None:
-            resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(file_key=file_key)
+            resp = await plugin._runtime_plugin_handler.get_plugin_assets_file(
+                file_key=file_key
+            )
             file_file_key = resp["file_file_key"]
-            file_bytes = await plugin._runtime_plugin_handler.read_local_file(file_file_key)
+            file_bytes = await plugin._runtime_plugin_handler.read_local_file(
+                file_file_key
+            )
             await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
             return file_bytes, resp["mime_type"]
         return b"", ""
 
-    async def list_tools(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
+    async def list_tools(
+        self, include_plugins: list[str] | None = None
+    ) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
 
         for plugin in self.plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
-                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                plugin_id = (
+                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                )
                 if plugin_id not in include_plugins:
                     continue
 
@@ -660,12 +686,19 @@ class PluginManager:
         return tools
 
     async def call_tool(
-        self, tool_name: str, tool_parameters: dict[str, typing.Any], session: dict[str, typing.Any], query_id: int, include_plugins: list[str] | None = None
+        self,
+        tool_name: str,
+        tool_parameters: dict[str, typing.Any],
+        session: dict[str, typing.Any],
+        query_id: int,
+        include_plugins: list[str] | None = None,
     ) -> dict[str, typing.Any]:
         for plugin in self.plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
-                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                plugin_id = (
+                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                )
                 if plugin_id not in include_plugins:
                     continue
 
@@ -685,13 +718,17 @@ class PluginManager:
 
         return {}
 
-    async def list_commands(self, include_plugins: list[str] | None = None) -> list[ComponentManifest]:
+    async def list_commands(
+        self, include_plugins: list[str] | None = None
+    ) -> list[ComponentManifest]:
         commands: list[ComponentManifest] = []
 
         for plugin in self.plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
-                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                plugin_id = (
+                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                )
                 if plugin_id not in include_plugins:
                     continue
 
@@ -707,7 +744,9 @@ class PluginManager:
         for plugin in self.plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
-                plugin_id = f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                plugin_id = (
+                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                )
                 if plugin_id not in include_plugins:
                     continue
 
@@ -727,7 +766,11 @@ class PluginManager:
                     break
 
     async def retrieve_knowledge(
-        self, plugin_author: str, plugin_name: str, retriever_name: str, retrieval_context: dict[str, typing.Any]
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        retriever_name: str,
+        retrieval_context: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """Retrieve knowledge using a KnowledgeEngine instance."""
         target_plugin = self.find_plugin(plugin_author, plugin_name)
@@ -738,7 +781,9 @@ class PluginManager:
         if target_plugin._runtime_plugin_handler is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
 
-        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(retriever_name, retrieval_context)
+        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(
+            retriever_name, retrieval_context
+        )
         return resp
 
     # ================= Knowledge Engine Methods =================
@@ -758,28 +803,34 @@ class PluginManager:
         # No RAG component found, but plugin exists
         return plugin, None
 
-    def _get_connected_rag_plugin(self, plugin_author: str, plugin_name: str) -> tuple[runtime_plugin_container.PluginContainer, str]:
+    def _get_connected_rag_plugin(
+        self, plugin_author: str, plugin_name: str
+    ) -> tuple[runtime_plugin_container.PluginContainer, str]:
         """Helper to find a RAG plugin and ensure it's connected.
-        
+
         Args:
             plugin_author: Author of the plugin
             plugin_name: Name of the plugin
-            
+
         Returns:
             Tuple of (plugin_container, component_name)
-            
+
         Raises:
             ValueError: If plugin not found, has no RAG component, or is not connected.
         """
-        plugin, component_name = self._find_knowledge_engine_plugin(plugin_author, plugin_name)
+        plugin, component_name = self._find_knowledge_engine_plugin(
+            plugin_author, plugin_name
+        )
 
         if plugin is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
         if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no KnowledgeEngine component")
+            raise ValueError(
+                f"Plugin {plugin_author}/{plugin_name} has no KnowledgeEngine component"
+            )
         if plugin._runtime_plugin_handler is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-            
+
         return plugin, component_name
 
     async def list_knowledge_engines(self) -> list[dict[str, typing.Any]]:
@@ -790,32 +841,46 @@ class PluginManager:
         engines: list[dict[str, typing.Any]] = []
 
         for plugin in self.plugins:
-            if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
+            if (
+                plugin.status
+                != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+            ):
                 continue
 
             for component in plugin.components:
                 if component.manifest.kind == KnowledgeEngine.__kind__:
                     # Get capabilities from the plugin
                     try:
-                        capabilities_resp = await plugin._runtime_plugin_handler.get_rag_capabilities()
+                        capabilities_resp = (
+                            await plugin._runtime_plugin_handler.get_rag_capabilities()
+                        )
                         capabilities = capabilities_resp.get("capabilities", [])
                     except Exception as e:
-                        logger.warning(f"Failed to get capabilities from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}")
+                        logger.warning(
+                            f"Failed to get capabilities from {plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}: {e}"
+                        )
                         capabilities = []
 
                     # Read schemas from manifest YAML
-                    creation_schema = {"schema": component.manifest.spec.get('creation_schema', [])}
-                    retrieval_schema = {"schema": component.manifest.spec.get('retrieval_schema', [])}
+                    creation_schema = {
+                        "schema": component.manifest.spec.get("creation_schema", [])
+                    }
+                    retrieval_schema = {
+                        "schema": component.manifest.spec.get("retrieval_schema", [])
+                    }
 
                     meta = component.manifest.metadata
-                    engines.append({
-                        "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
-                        "name": meta.label or meta.name,  # Pass I18n object or string directly
-                        "description": meta.description,   # Pass I18n object directly
-                        "capabilities": capabilities,
-                        "creation_schema": creation_schema,
-                        "retrieval_schema": retrieval_schema,
-                    })
+                    engines.append(
+                        {
+                            "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
+                            "name": meta.label
+                            or meta.name,  # Pass I18n object or string directly
+                            "description": meta.description,  # Pass I18n object directly
+                            "capabilities": capabilities,
+                            "creation_schema": creation_schema,
+                            "retrieval_schema": retrieval_schema,
+                        }
+                    )
         return engines
 
     async def rag_ingest_document(
@@ -831,11 +896,17 @@ class PluginManager:
     ) -> dict[str, typing.Any]:
         """Call plugin to delete a document."""
         plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
-        resp = await plugin._runtime_plugin_handler.rag_delete_document(kb_id, document_id)
+        resp = await plugin._runtime_plugin_handler.rag_delete_document(
+            kb_id, document_id
+        )
         return resp
 
     async def rag_on_kb_create(
-        self, plugin_author: str, plugin_name: str, kb_id: str, config: dict[str, typing.Any]
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        kb_id: str,
+        config: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """Notify plugin about KB creation."""
         plugin, _ = self._get_connected_rag_plugin(plugin_author, plugin_name)
@@ -859,7 +930,7 @@ class PluginManager:
             return {"schema": []}
         for component in plugin.components:
             if component.manifest.kind == KnowledgeEngine.__kind__:
-                return {"schema": component.manifest.spec.get('creation_schema', [])}
+                return {"schema": component.manifest.spec.get("creation_schema", [])}
         return {"schema": []}
 
     async def get_rag_retrieval_schema(
@@ -871,7 +942,7 @@ class PluginManager:
             return {"schema": []}
         for component in plugin.components:
             if component.manifest.kind == KnowledgeEngine.__kind__:
-                return {"schema": component.manifest.spec.get('retrieval_schema', [])}
+                return {"schema": component.manifest.spec.get("retrieval_schema", [])}
         return {"schema": []}
 
     # ================= Parser Methods =================
@@ -889,7 +960,9 @@ class PluginManager:
                 return plugin, component.manifest.metadata.name
         return plugin, None
 
-    def _get_connected_parser_plugin(self, plugin_author: str, plugin_name: str) -> tuple[runtime_plugin_container.PluginContainer, str]:
+    def _get_connected_parser_plugin(
+        self, plugin_author: str, plugin_name: str
+    ) -> tuple[runtime_plugin_container.PluginContainer, str]:
         """Helper to find a Parser plugin and ensure it's connected.
 
         Args:
@@ -907,7 +980,9 @@ class PluginManager:
         if plugin is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
         if component_name is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} has no Parser component")
+            raise ValueError(
+                f"Plugin {plugin_author}/{plugin_name} has no Parser component"
+            )
         if plugin._runtime_plugin_handler is None:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
 
@@ -921,28 +996,41 @@ class PluginManager:
         parsers: list[dict[str, typing.Any]] = []
 
         for plugin in self.plugins:
-            if plugin.status != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED:
+            if (
+                plugin.status
+                != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+            ):
                 continue
 
             for component in plugin.components:
                 if component.manifest.kind == Parser.__kind__:
                     meta = component.manifest.metadata
-                    supported_mime_types = component.manifest.spec.get('supported_mime_types', [])
+                    supported_mime_types = component.manifest.spec.get(
+                        "supported_mime_types", []
+                    )
 
-                    parsers.append({
-                        "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
-                        "plugin_author": plugin.manifest.metadata.author,
-                        "plugin_name": plugin.manifest.metadata.name,
-                        "name": meta.label or meta.name,
-                        "description": meta.description,
-                        "supported_mime_types": supported_mime_types,
-                    })
+                    parsers.append(
+                        {
+                            "plugin_id": f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}",
+                            "plugin_author": plugin.manifest.metadata.author,
+                            "plugin_name": plugin.manifest.metadata.name,
+                            "name": meta.label or meta.name,
+                            "description": meta.description,
+                            "supported_mime_types": supported_mime_types,
+                        }
+                    )
         return parsers
 
     async def parse_document(
-        self, plugin_author: str, plugin_name: str, context_data: dict[str, typing.Any], file_bytes: bytes
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        context_data: dict[str, typing.Any],
+        file_bytes: bytes,
     ) -> dict[str, typing.Any]:
         """Call plugin to parse a document."""
         plugin, _ = self._get_connected_parser_plugin(plugin_author, plugin_name)
-        resp = await plugin._runtime_plugin_handler.parse_document(context_data, file_bytes)
+        resp = await plugin._runtime_plugin_handler.parse_document(
+            context_data, file_bytes
+        )
         return resp

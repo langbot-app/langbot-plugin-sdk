@@ -52,12 +52,12 @@ async def download_plugin_streaming(
     url = f"{cloud_service_url}/api/v1/marketplace/plugins/download/{plugin_author}/{plugin_name}/{plugin_version}"
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
-        async with client.stream('GET', url) as response:
+        async with client.stream("GET", url) as response:
             assert response.status_code == 200, (
                 f"Failed to download plugin: HTTP {response.status_code}"
             )
 
-            total = int(response.headers.get('content-length', 0))
+            total = int(response.headers.get("content-length", 0))
             downloaded = 0
             chunks: list[bytes] = []
             start_time = time.time()
@@ -69,18 +69,18 @@ async def download_plugin_streaming(
                 speed = downloaded / elapsed if elapsed > 0 else 0
 
                 yield {
-                    'downloaded': downloaded,
-                    'total': total,
-                    'speed': speed,
-                    'done': False,
+                    "downloaded": downloaded,
+                    "total": total,
+                    "speed": speed,
+                    "done": False,
                 }
 
         yield {
-            'downloaded': downloaded,
-            'total': total if total > 0 else downloaded,
-            'speed': 0,
-            'done': True,
-            'data': b''.join(chunks),
+            "downloaded": downloaded,
+            "total": total if total > 0 else downloaded,
+            "speed": 0,
+            "done": True,
+            "data": b"".join(chunks),
         }
 
 

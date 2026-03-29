@@ -60,15 +60,22 @@ def main():
         "-s", "--stdio", action="store_true", help="Use stdio for control connection"
     )
     run_parser.add_argument(
-        "--prod", action="store_true", help="Mark this process as production plugin process, only used on Windows"
+        "--prod",
+        action="store_true",
+        help="Mark this process as production plugin process, only used on Windows",
     )
     run_parser.add_argument(
-        "--plugin-debug-key", type=str, help="Debug key for plugin authentication", default=""
+        "--plugin-debug-key",
+        type=str,
+        help="Debug key for plugin authentication",
+        default="",
     )
 
     # login command
     login_parser = subparsers.add_parser("login", help="Login to LangBot account")
-    login_parser.add_argument("--token", "-t", help="Login with a personal access token", default=None)
+    login_parser.add_argument(
+        "--token", "-t", help="Login with a personal access token", default=None
+    )
 
     # logout command
     logout_parser = subparsers.add_parser("logout", help="Logout from LangBot account")
@@ -108,7 +115,9 @@ def main():
         "--debug-only", action="store_true", help="Only run the debug server"
     )
     rt_parser.add_argument(
-        "--skip-deps-check", action="store_true", help="Skip checking and installing dependencies for all installed plugins"
+        "--skip-deps-check",
+        action="store_true",
+        help="Skip checking and installing dependencies for all installed plugins",
     )
 
     args = parser.parse_args()

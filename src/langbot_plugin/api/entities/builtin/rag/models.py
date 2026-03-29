@@ -151,4 +151,3 @@ class IngestionResult(pydantic.BaseModel):
 
     metadata: dict[str, Any] = Field(default_factory=dict)
     """Additional result metadata."""
-

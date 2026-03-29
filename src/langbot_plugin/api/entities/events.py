@@ -102,8 +102,8 @@ class GroupMessageReceived(BaseEventModel):
 class _WithReplyMessageChain(BaseEventModel):
     """事件模型基类，包含回复消息链对象"""
 
-    reply_message_chain: typing.Optional[platform_message.MessageChain] = pydantic.Field(
-        serialization_alias="reply_message_chain", default=None
+    reply_message_chain: typing.Optional[platform_message.MessageChain] = (
+        pydantic.Field(serialization_alias="reply_message_chain", default=None)
     )
     """回复消息链对象，仅在阻止默认行为时有效"""
 
@@ -157,9 +157,11 @@ class PersonNormalMessageReceived(_WithReplyMessageChain):
     def validate_message_event(cls, v):
         return platform_events.FriendMessage.model_validate(v)
 
-    user_message_alter: typing.Optional[typing.Union[provider_message.ContentElement, list[provider_message.ContentElement], str]] = pydantic.Field(
-        default=None
-    )
+    user_message_alter: typing.Optional[
+        typing.Union[
+            provider_message.ContentElement, list[provider_message.ContentElement], str
+        ]
+    ] = pydantic.Field(default=None)
     """修改后的 LLM 消息对象，可用于改写用户消息"""
 
 
@@ -199,9 +201,11 @@ class GroupNormalMessageReceived(_WithReplyMessageChain):
     def validate_message_event(cls, v):
         return platform_events.GroupMessage.model_validate(v)
 
-    user_message_alter: typing.Optional[typing.Union[provider_message.ContentElement, list[provider_message.ContentElement], str]] = pydantic.Field(
-        default=None
-    )
+    user_message_alter: typing.Optional[
+        typing.Union[
+            provider_message.ContentElement, list[provider_message.ContentElement], str
+        ]
+    ] = pydantic.Field(default=None)
     """修改后的 LLM 消息对象，可用于改写用户消息"""
 
 

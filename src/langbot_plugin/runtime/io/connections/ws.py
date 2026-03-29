@@ -12,8 +12,9 @@ class WebSocketConnection(io_connection.Connection):
     """The connection for WebSocket connections."""
 
     def __init__(
-        self, websocket: websockets.ServerConnection | websockets.ClientConnection,
-        chunk_size: int = 64 * 1024  # 64KB chunks by default
+        self,
+        websocket: websockets.ServerConnection | websockets.ClientConnection,
+        chunk_size: int = 64 * 1024,  # 64KB chunks by default
     ):
         self.websocket = websocket
         self.chunk_size = chunk_size
@@ -22,7 +23,7 @@ class WebSocketConnection(io_connection.Connection):
     async def send(self, message: str) -> None:
         """Send message with chunking support for large data."""
         async with self._send_lock:  # 确保同一时间只有一个send操作
-            message_bytes = message.encode('utf-8')
+            message_bytes = message.encode("utf-8")
             message_size = len(message_bytes)
 
             # For small messages, send directly
@@ -37,7 +38,7 @@ class WebSocketConnection(io_connection.Connection):
             try:
                 # Send message in chunks to avoid timeout
                 for i in range(0, message_size, self.chunk_size):
-                    chunk = message_bytes[i:i + self.chunk_size].decode('utf-8')
+                    chunk = message_bytes[i : i + self.chunk_size].decode("utf-8")
                     await self.websocket.send(chunk, text=True)
                     # Small delay to prevent overwhelming the connection
                     await asyncio.sleep(0.001)
@@ -59,7 +60,6 @@ class WebSocketConnection(io_connection.Connection):
             message_chunks = []
 
             while True:
-
                 async for data in self.websocket.recv_streaming(decode=True):
                     message_chunks.append(data)
                     # Yield control periodically to prevent blocking

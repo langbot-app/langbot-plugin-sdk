@@ -70,7 +70,6 @@ messages = {
     "publish_failed": "!!! Failed to publish plugin: {}",
     "publish_successful": "✅ Plugin published successfully. You can check it on {}/market",
     "publish_successful_new_plugin": "⚠️ Plugin draft published successfully. You need to upload usage screenshots on {}/market to complete the submission.",
-
     "pat_login_successful": "✅ Logged in with personal access token!",
     "pat_invalid_format": "Invalid token format. Personal access tokens should start with 'lbpat_'.",
     "pat_saved": "Token saved to: {}",

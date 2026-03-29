@@ -83,8 +83,10 @@ class Command(BaseComponent):
         if next_crt_command not in self.registered_subcommands:
             # find if there is a subcommand with '*' name
             for subcommand in self.registered_subcommands:
-                if subcommand == '*':
-                    async for return_value in self.registered_subcommands[subcommand].subcommand(self, context):
+                if subcommand == "*":
+                    async for return_value in self.registered_subcommands[
+                        subcommand
+                    ].subcommand(self, context):
                         yield return_value
                         return
 
