@@ -9,6 +9,7 @@ import asyncio
 import io
 import enum
 import sys
+import time
 import zipfile
 import yaml
 import logging
@@ -259,16 +260,31 @@ class PluginManager:
             ) = await self.install_plugin_from_file(plugin_file)
             del install_info["plugin_file"]
         elif source == PluginInstallSource.MARKETPLACE:
+            # Stream download with progress
+            plugin_file_data = None
+            async for progress in marketplace_helper.download_plugin_streaming(
+                install_info["plugin_author"],
+                install_info["plugin_name"],
+                install_info["plugin_version"],
+            ):
+                if progress['done']:
+                    plugin_file_data = progress['data']
+                else:
+                    yield {
+                        "current_action": "downloading plugin package",
+                        "metadata": {
+                            "download_current": progress['downloaded'],
+                            "download_total": progress['total'],
+                            "download_speed": progress['speed'],
+                        }
+                    }
+
             (
                 plugin_path,
                 plugin_author,
                 plugin_name,
                 plugin_version,
-            ) = await self.install_plugin_from_marketplace(
-                install_info["plugin_author"],
-                install_info["plugin_name"],
-                install_info["plugin_version"],
-            )
+            ) = await self.install_plugin_from_file(plugin_file_data)
         elif source == PluginInstallSource.GITHUB:
             plugin_file = install_info["plugin_file"]
             (
@@ -286,7 +302,43 @@ class PluginManager:
         yield {"current_action": "installing dependencies"}
         requirements_file = os.path.join(plugin_path, "requirements.txt")
         if os.path.exists(requirements_file):
-            pkgmgr_helper.install_requirements(requirements_file)
+            deps = pkgmgr_helper.parse_requirements(requirements_file)
+            total_deps = len(deps)
+            total_downloaded = 0
+            start_time = time.time()
+
+            for i, dep in enumerate(deps):
+                elapsed = time.time() - start_time
+                yield {
+                    "current_action": "installing dependencies",
+                    "metadata": {
+                        "deps_total": total_deps,
+                        "deps_installed": i,
+                        "deps_remaining": total_deps - i,
+                        "current_dep": dep,
+                        "deps_downloaded_size": total_downloaded,
+                        "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
+                    }
+                }
+
+                returncode, downloaded_bytes = await pkgmgr_helper.install_single_async(dep)
+                total_downloaded += downloaded_bytes
+
+                if returncode != 0:
+                    logger.error(f"Failed to install dependency: {dep}")
+
+            elapsed = time.time() - start_time
+            yield {
+                "current_action": "installing dependencies",
+                "metadata": {
+                    "deps_total": total_deps,
+                    "deps_installed": total_deps,
+                    "deps_remaining": 0,
+                    "current_dep": "",
+                    "deps_downloaded_size": total_downloaded,
+                    "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
+                }
+            }
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}
