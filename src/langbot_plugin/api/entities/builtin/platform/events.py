@@ -126,3 +126,58 @@ class GroupMessage(MessageEvent):
             "message_chain": self.message_chain.model_dump(),
             "time": self.time,
         }
+
+
+###############################
+# Feedback Event
+class FeedbackEvent(Event):
+    """User feedback event (like/dislike).
+
+    Fired when a user gives feedback (thumbs up / thumbs down) on an AI Bot
+    response.  Currently only supported by the WeChat Work (WeCom) AI Bot
+    adapter, but designed to be platform-agnostic so other adapters can adopt
+    it in the future.
+
+    Args:
+        feedback_id: Unique feedback identifier assigned by the platform.
+        feedback_type: ``1`` = like (thumbs up), ``2`` = dislike (thumbs down).
+        feedback_content: Optional free-form text the user attached.
+        inaccurate_reasons: Optional list of predefined "inaccurate" reason
+            tags selected by the user (for dislikes).
+        user_id: ID of the user who gave feedback.
+        session_id: Session / conversation ID (e.g. ``"person_xxx"`` or
+            ``"group_xxx"``).
+        message_id: ID of the message being rated.
+        stream_id: Stream ID (for streaming responses).
+        source_platform_object: Raw platform-specific object, kept for
+            adapter-level introspection.
+    """
+
+    type: str = "FeedbackEvent"
+
+    feedback_id: str
+    """Unique feedback identifier from the platform."""
+
+    feedback_type: int
+    """1 = like, 2 = dislike."""
+
+    feedback_content: typing.Optional[str] = None
+    """Free-form user feedback text."""
+
+    inaccurate_reasons: typing.Optional[typing.List[str]] = None
+    """Predefined inaccuracy reasons (for dislikes)."""
+
+    user_id: typing.Optional[str] = None
+    """ID of the user who submitted the feedback."""
+
+    session_id: typing.Optional[str] = None
+    """Session / conversation ID."""
+
+    message_id: typing.Optional[str] = None
+    """ID of the original message being rated."""
+
+    stream_id: typing.Optional[str] = None
+    """Stream message ID (for streaming responses)."""
+
+    source_platform_object: typing.Optional[typing.Any] = None
+    """Raw platform event object."""
