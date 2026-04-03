@@ -57,6 +57,8 @@ class PluginToRuntimeAction(ActionType):
     LIST_PLUGINS_MANIFEST = "list_plugins_manifest"
     LIST_COMMANDS = "list_commands"
     LIST_TOOLS = "list_tools"
+    GET_TOOL_DETAIL = "get_tool_detail"
+    CALL_TOOL = "call_tool"
 
     INVOKE_EMBEDDING = "invoke_embedding"
     VECTOR_UPSERT = "vector_upsert"
