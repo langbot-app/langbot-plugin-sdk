@@ -208,9 +208,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.INVOKE_LLM)
         async def invoke_llm(data: dict[str, Any]) -> handler.ActionResponse:
-            timeout = data.pop("timeout", 15.0)
+            timeout = data.pop("timeout", 120.0)
             if not isinstance(timeout, (int, float)) or timeout <= 0:
-                timeout = 15.0
+                timeout = 120.0
 
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.INVOKE_LLM,
