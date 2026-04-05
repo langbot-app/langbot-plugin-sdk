@@ -104,9 +104,12 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE)
         async def get_plugin_assets_file(data: dict[str, typing.Any]) -> ActionResponse:
             file_key = data["file_key"]
+            # Search order: assets/{key}, {key} (direct from plugin root)
             file_path = os.path.join("assets", file_key)
-            if not os.path.exists(file_path):
-                return ActionResponse.success({"file_file_key": "", "mime_type": ""})
+            if not os.path.exists(file_path) or os.path.isdir(file_path):
+                file_path = file_key
+            if not os.path.exists(file_path) or os.path.isdir(file_path):
+                return ActionResponse.success({"file_file_key": None, "mime_type": None})
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
@@ -115,6 +118,35 @@ class PluginRuntimeHandler(Handler):
             file_file_key = await self.send_file(file_bytes, "")
             return ActionResponse.success(
                 {"file_file_key": file_file_key, "mime_type": mime_type}
+            )
+
+        @self.action(RuntimeToPluginAction.PAGE_API)
+        async def page_api(data: dict[str, typing.Any]) -> ActionResponse:
+            """Handle a page API call from the frontend.
+
+            {
+                "page_id": str,
+                "endpoint": str,
+                "method": str,
+                "body": Any,
+            }
+            """
+            page_id = data["page_id"]
+            endpoint = data["endpoint"]
+            method = data.get("method", "POST")
+            body = data.get("body")
+
+            plugin_instance = self.plugin_container.plugin_instance
+            if hasattr(plugin_instance, "handle_page_api"):
+                result = await plugin_instance.handle_page_api(
+                    page_id=page_id,
+                    endpoint=endpoint,
+                    method=method,
+                    body=body,
+                )
+                return ActionResponse.success({"result": result})
+            return ActionResponse.success(
+                {"result": None, "error": "Plugin does not implement handle_page_api"}
             )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)

@@ -112,6 +112,22 @@ class ControlConnectionHandler(handler.Handler):
                     {"file_file_key": None, "mime_type": None}
                 )
 
+        @self.action(LangBotToRuntimeAction.PAGE_API)
+        async def page_api(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            result = await self.context.plugin_mgr.handle_page_api(
+                author,
+                plugin_name,
+                data["page_id"],
+                data["endpoint"],
+                data["method"],
+                data.get("body"),
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(
             data: dict[str, Any],

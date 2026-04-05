@@ -55,6 +55,24 @@ async def arun_plugin_process(
         )
         component_manifests.extend(manifests)
 
+    # Auto-populate spec.pages from discovered Page components
+    pages = plugin_manifest.spec.get("pages", [])
+    for cm in component_manifests:
+        if cm.kind == "Page":
+            # rel_path is e.g. "components/pages/default.yaml"
+            # HTML is relative to the YAML dir
+            yaml_dir = os.path.dirname(cm.rel_path)
+            html_rel = cm.spec.get("path", "index.html")
+            page_entry = {
+                "id": cm.metadata.name,
+                "label": cm.manifest["metadata"].get("label", {}),
+                "path": os.path.join(yaml_dir, html_rel),
+            }
+            if cm.metadata.icon:
+                page_entry["icon"] = cm.metadata.icon
+            pages.append(page_entry)
+    plugin_manifest.manifest["spec"]["pages"] = pages
+
     controller = PluginRuntimeController(
         plugin_manifest,
         component_manifests,
