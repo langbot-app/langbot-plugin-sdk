@@ -38,17 +38,19 @@ def generate_component_process(component_type: str) -> None:
 
     if not os.path.exists("components"):
         os.makedirs("components")
-        with open("components/__init__.py", "w", encoding="utf-8") as f:
-            f.write("")
+        if component_type_obj.type_name != "Page":
+            with open("components/__init__.py", "w", encoding="utf-8") as f:
+                f.write("")
 
     if not os.path.exists(component_type_obj.target_dir):
         os.makedirs(component_type_obj.target_dir)
 
-    if not os.path.exists(f"{component_type_obj.target_dir}/__init__.py"):
-        with open(
-            f"{component_type_obj.target_dir}/__init__.py", "w", encoding="utf-8"
-        ) as f:
-            f.write("")
+    if component_type_obj.type_name != "Page":
+        if not os.path.exists(f"{component_type_obj.target_dir}/__init__.py"):
+            with open(
+                f"{component_type_obj.target_dir}/__init__.py", "w", encoding="utf-8"
+            ) as f:
+                f.write("")
 
     # render templates
     for file in component_type_obj.template_files:

@@ -591,6 +591,25 @@ class PluginConnectionHandler(handler.Handler):
         )
         return resp
 
+    async def call_page_api(
+        self,
+        page_id: str,
+        endpoint: str,
+        method: str,
+        body: Any = None,
+    ) -> dict[str, Any]:
+        resp = await self.call_action(
+            RuntimeToPluginAction.PAGE_API,
+            {
+                "page_id": page_id,
+                "endpoint": endpoint,
+                "method": method,
+                "body": body,
+            },
+            timeout=30,
+        )
+        return resp
+
     async def emit_event(self, event_context: dict[str, Any]) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.EMIT_EVENT,

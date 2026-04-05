@@ -21,6 +21,29 @@ class BasePlugin(abc.ABC, langbot_api.LangBotAPIProxy):
     async def initialize(self) -> None:
         pass
 
+    async def handle_page_api(
+        self,
+        page_id: str,
+        endpoint: str,
+        method: str,
+        body: typing.Any = None,
+    ) -> typing.Any:
+        """Handle API calls from plugin pages.
+
+        Override this method to implement a backend for your plugin pages.
+        All plugin components can call this method.
+
+        Args:
+            page_id: The page identifier from manifest.yaml
+            endpoint: The API endpoint path requested by the page
+            method: HTTP method (GET, POST, PUT, DELETE)
+            body: Request body (JSON)
+
+        Returns:
+            Response data (will be JSON-serialized)
+        """
+        return None
+
     def __del__(self) -> None:
         pass
 
