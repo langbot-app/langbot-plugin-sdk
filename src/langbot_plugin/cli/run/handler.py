@@ -6,6 +6,7 @@ import mimetypes
 import typing
 import aiofiles
 from copy import deepcopy
+from pathlib import Path
 
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
@@ -30,6 +31,35 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 )
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
+
+
+def _resolve_asset_path(file_key: str) -> Path | None:
+    plugin_root = Path.cwd().resolve()
+    requested = Path(file_key)
+
+    if requested.is_absolute():
+        return None
+
+    if requested.parts and requested.parts[0] in {"assets", "components"}:
+        candidates = [plugin_root / requested]
+    else:
+        candidates = [plugin_root / "assets" / requested]
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not resolved.is_file():
+            continue
+        try:
+            relative = resolved.relative_to(plugin_root)
+        except ValueError:
+            continue
+        if relative.parts[:1] == ("assets",) or relative.parts[:2] == (
+            "components",
+            "pages",
+        ):
+            return resolved
+
+    return None
 
 
 class PluginRuntimeHandler(Handler):
@@ -104,17 +134,48 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE)
         async def get_plugin_assets_file(data: dict[str, typing.Any]) -> ActionResponse:
             file_key = data["file_key"]
-            file_path = os.path.join("assets", file_key)
-            if not os.path.exists(file_path):
-                return ActionResponse.success({"file_file_key": "", "mime_type": ""})
+            file_path = _resolve_asset_path(file_key)
+            if file_path is None:
+                return ActionResponse.success({"file_file_key": None, "mime_type": None})
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
 
-            mime_type = mimetypes.guess_type(file_path)[0]
+            mime_type = (
+                mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+            )
             file_file_key = await self.send_file(file_bytes, "")
             return ActionResponse.success(
                 {"file_file_key": file_file_key, "mime_type": mime_type}
+            )
+
+        @self.action(RuntimeToPluginAction.PAGE_API)
+        async def page_api(data: dict[str, typing.Any]) -> ActionResponse:
+            """Handle a page API call from the frontend.
+
+            {
+                "page_id": str,
+                "endpoint": str,
+                "method": str,
+                "body": Any,
+            }
+            """
+            page_id = data["page_id"]
+            endpoint = data["endpoint"]
+            method = data.get("method", "POST")
+            body = data.get("body")
+
+            plugin_instance = self.plugin_container.plugin_instance
+            if hasattr(plugin_instance, "handle_page_api"):
+                result = await plugin_instance.handle_page_api(
+                    page_id=page_id,
+                    endpoint=endpoint,
+                    method=method,
+                    body=body,
+                )
+                return ActionResponse.success({"data": result})
+            return ActionResponse.success(
+                {"data": None, "error": "Plugin does not implement handle_page_api"}
             )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)

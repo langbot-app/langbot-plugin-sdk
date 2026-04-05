@@ -658,12 +658,34 @@ class PluginManager:
                 file_key=file_key
             )
             file_file_key = resp["file_file_key"]
+            if not file_file_key:
+                return b"", ""
             file_bytes = await plugin._runtime_plugin_handler.read_local_file(
                 file_file_key
             )
             await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
             return file_bytes, resp["mime_type"]
         return b"", ""
+
+    async def handle_page_api(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        page_id: str,
+        endpoint: str,
+        method: str,
+        body: typing.Any = None,
+    ) -> dict[str, typing.Any]:
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None:
+            resp = await plugin._runtime_plugin_handler.call_page_api(
+                page_id=page_id,
+                endpoint=endpoint,
+                method=method,
+                body=body,
+            )
+            return resp
+        return {"error": "Plugin not found"}
 
     async def list_tools(
         self, include_plugins: list[str] | None = None
