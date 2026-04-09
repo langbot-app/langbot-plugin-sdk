@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import enum
+import ntpath
+import posixpath
 
 import pydantic
 
@@ -129,7 +131,7 @@ class BoxSpec(pydantic.BaseModel):
         if value is None:
             return None
         value = value.strip()
-        if not value.startswith('/'):
+        if not (posixpath.isabs(value) or ntpath.isabs(value)):
             raise ValueError('host_path must be an absolute host path')
         return value
 
