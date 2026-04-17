@@ -3,8 +3,12 @@
 Usage (stdio, launched by LangBot as subprocess):
     python -m langbot_plugin.box.server
 
-Usage (ws + ws relay, for remote/docker mode):
-    python -m langbot_plugin.box.server --port 5410
+Usage (ws, for remote/docker mode):
+    python -m langbot_plugin.box.server --mode ws --port 5410
+
+All WebSocket endpoints share a single port (default 5410):
+    /rpc/ws                                         — Action RPC (control channel)
+    /v1/sessions/{session_id}/managed-process/ws    — Managed process stdio relay
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import json
 import logging
 import sys
 from typing import Any
@@ -20,6 +25,7 @@ import pydantic
 from aiohttp import web
 
 from langbot_plugin.entities.io.actions.enums import CommonAction
+from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
@@ -39,6 +45,47 @@ logger = logging.getLogger('langbot.box.server')
 
 def _result_to_dict(result: BoxExecutionResult) -> dict:
     return result.model_dump(mode='json')
+
+
+# ── aiohttp WebSocket → Connection adapter ───────────────────────────
+
+
+class AiohttpWSConnection(Connection):
+    """Adapt an aiohttp ``WebSocketResponse`` to the SDK ``Connection`` interface.
+
+    This allows ``BoxServerHandler`` (and therefore ``Handler``) to work over
+    an aiohttp WebSocket without any changes to the handler/IO layer.
+    """
+
+    def __init__(self, ws: web.WebSocketResponse) -> None:
+        self._ws = ws
+        self._send_lock = asyncio.Lock()
+
+    async def send(self, message: str) -> None:
+        async with self._send_lock:
+            try:
+                await self._ws.send_str(message)
+            except ConnectionResetError:
+                raise ConnectionClosedError('Connection closed during send')
+
+    async def receive(self) -> str:
+        msg = await self._ws.receive()
+        if msg.type == web.WSMsgType.TEXT:
+            return msg.data
+        if msg.type in (
+            web.WSMsgType.CLOSE,
+            web.WSMsgType.CLOSING,
+            web.WSMsgType.CLOSED,
+            web.WSMsgType.ERROR,
+        ):
+            raise ConnectionClosedError('Connection closed')
+        raise ConnectionClosedError(f'Unexpected message type: {msg.type}')
+
+    async def close(self) -> None:
+        await self._ws.close()
+
+
+# ── BoxServerHandler ─────────────────────────────────────────────────
 
 
 class BoxServerHandler(Handler):
@@ -122,7 +169,7 @@ class BoxServerHandler(Handler):
             return ActionResponse.success({})
 
 
-# ── Managed process WebSocket relay (aiohttp) ────────────────────────
+# ── Managed process WebSocket relay ──────────────────────────────────
 
 
 def _error_response(exc: Exception) -> web.Response:
@@ -198,10 +245,31 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
     return ws
 
 
-def create_ws_relay_app(runtime: BoxRuntime) -> web.Application:
-    """Create a minimal aiohttp app that only serves the managed-process ws relay."""
+# ── Action RPC WebSocket handler ─────────────────────────────────────
+
+
+async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
+    """Handle action RPC over a single aiohttp WebSocket connection."""
+    runtime: BoxRuntime = request.app['runtime']
+
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    connection = AiohttpWSConnection(ws)
+    handler = BoxServerHandler(connection, runtime)
+    await handler.run()
+
+    return ws
+
+
+# ── App factory ──────────────────────────────────────────────────────
+
+
+def create_app(runtime: BoxRuntime) -> web.Application:
+    """Create the aiohttp app with all WebSocket routes on a single port."""
     app = web.Application()
     app['runtime'] = runtime
+    app.router.add_get('/rpc/ws', handle_rpc_ws)
     app.router.add_get('/v1/sessions/{session_id}/managed-process/ws', handle_managed_process_ws)
     return app
 
@@ -213,38 +281,36 @@ async def _run_server(host: str, port: int, mode: str) -> None:
     runtime = BoxRuntime(logger=logger)
     await runtime.initialize()
 
-    # Start aiohttp for ws relay (non-fatal — managed process attach
-    # degrades gracefully if the port is unavailable).
+    # Start aiohttp — serves managed-process relay and (in ws mode)
+    # also the action RPC endpoint, all on the same port.
     runner: web.AppRunner | None = None
     try:
-        ws_app = create_ws_relay_app(runtime)
+        ws_app = create_app(runtime)
         runner = web.AppRunner(ws_app)
         await runner.setup()
         site = web.TCPSite(runner, host, port)
         await site.start()
-        logger.info(f'Box ws relay listening on {host}:{port}')
+        logger.info(f'Box server listening on {host}:{port}')
     except OSError as exc:
-        logger.warning(f'Box ws relay failed to bind {host}:{port}: {exc}')
+        logger.warning(f'Box server failed to bind {host}:{port}: {exc}')
         logger.warning('Managed process WebSocket attach will be unavailable.')
-
-    async def new_connection_callback(connection: Connection) -> None:
-        handler = BoxServerHandler(connection, runtime)
-        await handler.run()
 
     try:
         if mode == 'stdio':
             from langbot_plugin.runtime.io.controllers.stdio.server import StdioServerController
 
+            async def new_connection_callback(connection: Connection) -> None:
+                handler = BoxServerHandler(connection, runtime)
+                await handler.run()
+
             ctrl = StdioServerController()
             await ctrl.run(new_connection_callback)
         else:
-            from langbot_plugin.runtime.io.controllers.ws.server import WebSocketServerController
-
-            # Action RPC uses port+1 to avoid conflict with ws relay
-            rpc_port = port + 1
-            logger.info(f'Box action RPC (ws) listening on {host}:{rpc_port}')
-            ctrl = WebSocketServerController(rpc_port)
-            await ctrl.run(new_connection_callback)
+            # In ws mode, action RPC is served via aiohttp on /rpc/ws.
+            # Keep the server alive until cancelled.
+            logger.info(f'Box action RPC available at ws://{host}:{port}/rpc/ws')
+            stop_event = asyncio.Event()
+            await stop_event.wait()
     finally:
         await runtime.shutdown()
         if runner is not None:
@@ -254,7 +320,7 @@ async def _run_server(host: str, port: int, mode: str) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description='LangBot Box Runtime Service')
     parser.add_argument('--host', default='0.0.0.0', help='Bind address')
-    parser.add_argument('--port', type=int, default=5410, help='Bind port (ws relay)')
+    parser.add_argument('--port', type=int, default=5410, help='Bind port')
     parser.add_argument(
         '--mode', choices=['stdio', 'ws'], default='stdio', help='Control channel transport (default: stdio)'
     )
