@@ -370,6 +370,12 @@ class NsjailBackend(BaseSandboxBackend):
             workspace_dir = session_dir / 'workspace'
             args.extend(['--rw_bind', f'{workspace_dir}:{spec.mount_path}'])
 
+        for mount in spec.extra_mounts:
+            if mount.mode == BoxHostMountMode.READ_ONLY:
+                args.extend(['--bindmount_ro', f'{mount.host_path}:{mount.mount_path}'])
+            elif mount.mode == BoxHostMountMode.READ_WRITE:
+                args.extend(['--rw_bind', f'{mount.host_path}:{mount.mount_path}'])
+
         # /tmp and /home are always per-session writable.
         tmp_dir = session_dir / 'tmp'
         home_dir = session_dir / 'home'

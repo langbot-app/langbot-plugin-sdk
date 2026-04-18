@@ -122,6 +122,10 @@ class CLISandboxBackend(BaseSandboxBackend):
             mount_spec = f'{spec.host_path}:{spec.mount_path}:{spec.host_path_mode.value}'
             args.extend(['-v', mount_spec])
 
+        for mount in spec.extra_mounts:
+            if mount.mode != BoxHostMountMode.NONE:
+                args.extend(['-v', f'{mount.host_path}:{mount.mount_path}:{mount.mode.value}'])
+
         args.extend([spec.image, 'sh', '-lc', 'while true; do sleep 3600; done'])
 
         self.logger.info(

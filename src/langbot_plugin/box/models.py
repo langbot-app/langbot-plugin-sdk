@@ -33,6 +33,30 @@ class BoxManagedProcessStatus(str, enum.Enum):
     EXITED = 'exited'
 
 
+class BoxMountSpec(pydantic.BaseModel):
+    """A single additional bind mount specification."""
+
+    host_path: str
+    mount_path: str
+    mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
+
+    @pydantic.field_validator('host_path')
+    @classmethod
+    def validate_host_path(cls, value: str) -> str:
+        value = value.strip()
+        if not (posixpath.isabs(value) or ntpath.isabs(value)):
+            raise ValueError('host_path must be an absolute host path')
+        return value
+
+    @pydantic.field_validator('mount_path')
+    @classmethod
+    def validate_mount_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value.startswith('/'):
+            raise ValueError('mount_path must be an absolute path inside the sandbox')
+        return value
+
+
 class BoxSpec(pydantic.BaseModel):
     cmd: str = ''
     workdir: str = DEFAULT_BOX_MOUNT_PATH
@@ -44,6 +68,7 @@ class BoxSpec(pydantic.BaseModel):
     host_path: str | None = None
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
     mount_path: str = DEFAULT_BOX_MOUNT_PATH
+    extra_mounts: list[BoxMountSpec] = pydantic.Field(default_factory=list)
     # Resource limits
     cpus: float = 1.0
     memory_mb: int = 512
