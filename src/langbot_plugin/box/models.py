@@ -8,7 +8,7 @@ import posixpath
 import pydantic
 
 
-DEFAULT_BOX_IMAGE = 'python:3.11-slim'
+DEFAULT_BOX_IMAGE = 'rockchin/langbot-sandbox:latest'
 DEFAULT_BOX_MOUNT_PATH = '/workspace'
 
 
@@ -69,6 +69,7 @@ class BoxSpec(pydantic.BaseModel):
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
     mount_path: str = DEFAULT_BOX_MOUNT_PATH
     extra_mounts: list[BoxMountSpec] = pydantic.Field(default_factory=list)
+    persistent: bool = False
     # Resource limits
     cpus: float = 1.0
     memory_mb: int = 512
@@ -257,6 +258,7 @@ class BoxSessionInfo(pydantic.BaseModel):
     host_path: str | None = None
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
     mount_path: str = DEFAULT_BOX_MOUNT_PATH
+    persistent: bool = False
     cpus: float = 1.0
     memory_mb: int = 512
     pids_limit: int = 128
@@ -267,6 +269,7 @@ class BoxSessionInfo(pydantic.BaseModel):
 
 
 class BoxManagedProcessSpec(pydantic.BaseModel):
+    process_id: str = 'default'
     command: str
     args: list[str] = pydantic.Field(default_factory=list)
     env: dict[str, str] = pydantic.Field(default_factory=dict)
@@ -301,6 +304,7 @@ class BoxManagedProcessSpec(pydantic.BaseModel):
 
 class BoxManagedProcessInfo(pydantic.BaseModel):
     session_id: str
+    process_id: str = 'default'
     status: BoxManagedProcessStatus
     command: str
     args: list[str]

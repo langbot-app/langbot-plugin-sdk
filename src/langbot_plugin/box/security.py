@@ -18,8 +18,6 @@ _BLOCKED_HOST_PATHS_POSIX = frozenset(
         '/var/run',
         '/run/docker.sock',
         '/var/run/docker.sock',
-        '/run/podman',
-        '/var/run/podman',
     }
 )
 

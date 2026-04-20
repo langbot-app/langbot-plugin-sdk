@@ -7,8 +7,9 @@ Usage (ws, for remote/docker mode):
     python -m langbot_plugin.box.server --mode ws --port 5410
 
 All WebSocket endpoints share a single port (default 5410):
-    /rpc/ws                                         — Action RPC (control channel)
-    /v1/sessions/{session_id}/managed-process/ws    — Managed process stdio relay
+    /rpc/ws                                                      — Action RPC (control channel)
+    /v1/sessions/{session_id}/managed-process/{process_id}/ws    — Managed process stdio relay
+    /v1/sessions/{session_id}/managed-process/ws                 — Legacy (process_id defaults to 'default')
 """
 
 from __future__ import annotations
@@ -156,7 +157,10 @@ class BoxServerHandler(Handler):
 
         @self.action(LangBotToBoxAction.GET_MANAGED_PROCESS)
         async def get_managed_process(data: dict[str, Any]) -> ActionResponse:
-            return ActionResponse.success(self._runtime.get_managed_process(data['session_id']))
+            return ActionResponse.success(self._runtime.get_managed_process(
+                data['session_id'],
+                data.get('process_id', 'default'),
+            ))
 
         @self.action(LangBotToBoxAction.GET_BACKEND_INFO)
         async def get_backend_info(data: dict[str, Any]) -> ActionResponse:
@@ -182,17 +186,18 @@ def _error_response(exc: Exception) -> web.Response:
 async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
     runtime: BoxRuntime = request.app['runtime']
     session_id = request.match_info['session_id']
+    process_id = request.match_info.get('process_id', 'default')
 
     runtime_session = runtime._sessions.get(session_id)
     if runtime_session is None:
         return _error_response(BoxSessionNotFoundError(f'session {session_id} not found'))
 
-    managed_process = runtime_session.managed_process
+    managed_process = runtime_session.managed_processes.get(process_id)
     if managed_process is None:
-        return _error_response(BoxManagedProcessNotFoundError(f'session {session_id} has no managed process'))
+        return _error_response(BoxManagedProcessNotFoundError(f'session {session_id} has no managed process with process_id={process_id}'))
     if not managed_process.is_running:
         return _error_response(
-            BoxManagedProcessConflictError(f'managed process in session {session_id} is not running')
+            BoxManagedProcessConflictError(f'managed process {process_id} in session {session_id} is not running')
         )
 
     ws = web.WebSocketResponse(protocols=('mcp',))
@@ -270,6 +275,8 @@ def create_app(runtime: BoxRuntime) -> web.Application:
     app = web.Application()
     app['runtime'] = runtime
     app.router.add_get('/rpc/ws', handle_rpc_ws)
+    app.router.add_get('/v1/sessions/{session_id}/managed-process/{process_id}/ws', handle_managed_process_ws)
+    # Backward-compatible route (defaults to process_id='default')
     app.router.add_get('/v1/sessions/{session_id}/managed-process/ws', handle_managed_process_ws)
     return app
 

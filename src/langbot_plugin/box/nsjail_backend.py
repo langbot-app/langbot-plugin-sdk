@@ -154,6 +154,7 @@ class NsjailBackend(BaseSandboxBackend):
             pids_limit=spec.pids_limit,
             read_only_rootfs=spec.read_only_rootfs,
             workspace_quota_mb=spec.workspace_quota_mb,
+            persistent=spec.persistent,
             created_at=now,
             last_used_at=now,
         )

@@ -95,7 +95,12 @@ class CLISandboxBackend(BaseSandboxBackend):
             self.command,
             'run',
             '-d',
-            '--rm',
+        ]
+
+        if not spec.persistent:
+            args.append('--rm')
+
+        args.extend([
             '--name',
             container_name,
             '--label',
@@ -104,7 +109,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             f'langbot.session_id={spec.session_id}',
             '--label',
             f'langbot.box.instance_id={self.instance_id}',
-        ]
+        ])
 
         if spec.network == BoxNetworkMode.OFF:
             args.extend(['--network', 'none'])
@@ -148,6 +153,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             host_path=spec.host_path,
             host_path_mode=spec.host_path_mode,
             mount_path=spec.mount_path,
+            persistent=spec.persistent,
             cpus=spec.cpus,
             memory_mb=spec.memory_mb,
             pids_limit=spec.pids_limit,
@@ -381,11 +387,6 @@ class CLISandboxBackend(BaseSandboxBackend):
         if len(message) > 300:
             message = f'{message[:297]}...'
         return f'{self.name} backend error: {message}'
-
-
-class PodmanBackend(CLISandboxBackend):
-    def __init__(self, logger: logging.Logger):
-        super().__init__(logger=logger, command='podman', backend_name='podman')
 
 
 class DockerBackend(CLISandboxBackend):

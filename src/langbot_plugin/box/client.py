@@ -50,7 +50,7 @@ class BoxRuntimeClient(abc.ABC):
     async def start_managed_process(self, session_id: str, spec: BoxManagedProcessSpec) -> BoxManagedProcessInfo: ...
 
     @abc.abstractmethod
-    async def get_managed_process(self, session_id: str) -> BoxManagedProcessInfo: ...
+    async def get_managed_process(self, session_id: str, process_id: str = 'default') -> BoxManagedProcessInfo: ...
 
     @abc.abstractmethod
     async def get_session(self, session_id: str) -> dict: ...
@@ -159,11 +159,14 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         )
         return BoxManagedProcessInfo.model_validate(data)
 
-    async def get_managed_process(self, session_id: str) -> BoxManagedProcessInfo:
-        data = await self._call(LangBotToBoxAction.GET_MANAGED_PROCESS, {'session_id': session_id})
+    async def get_managed_process(self, session_id: str, process_id: str = 'default') -> BoxManagedProcessInfo:
+        data = await self._call(LangBotToBoxAction.GET_MANAGED_PROCESS, {
+            'session_id': session_id,
+            'process_id': process_id,
+        })
         return BoxManagedProcessInfo.model_validate(data)
 
-    def get_managed_process_websocket_url(self, session_id: str, ws_relay_base_url: str) -> str:
+    def get_managed_process_websocket_url(self, session_id: str, ws_relay_base_url: str, process_id: str = 'default') -> str:
         base = ws_relay_base_url
         if base.startswith('https://'):
             scheme = 'wss://'
@@ -174,4 +177,4 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         else:
             scheme = 'ws://'
             suffix = base
-        return f'{scheme}{suffix}/v1/sessions/{session_id}/managed-process/ws'
+        return f'{scheme}{suffix}/v1/sessions/{session_id}/managed-process/{process_id}/ws'
