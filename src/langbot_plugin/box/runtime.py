@@ -11,7 +11,6 @@ from .backend import BaseSandboxBackend, DockerBackend
 from .nsjail_backend import NsjailBackend
 from .errors import (
     BoxBackendUnavailableError,
-    BoxManagedProcessConflictError,
     BoxManagedProcessNotFoundError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
@@ -133,9 +132,15 @@ class BoxRuntime:
             process_id = spec.process_id
             existing = runtime_session.managed_processes.get(process_id)
             if existing is not None and existing.is_running:
-                raise BoxManagedProcessConflictError(
-                    f'session {session_id} already has a running managed process with process_id={process_id}'
+                # Terminate the stale process before starting a new one.
+                # This happens when LangBot restarts while the Box runtime
+                # keeps the persistent session alive.
+                self.logger.info(
+                    f'LangBot Box terminating stale managed process before restart: '
+                    f'session_id={session_id} process_id={process_id}'
                 )
+                await self._terminate_managed_process(existing)
+                del runtime_session.managed_processes[process_id]
 
             backend = await self._get_backend()
             process = await backend.start_managed_process(runtime_session.info, spec)
