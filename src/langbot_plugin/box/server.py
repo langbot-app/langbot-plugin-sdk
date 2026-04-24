@@ -167,6 +167,11 @@ class BoxServerHandler(Handler):
             info = await self._runtime.get_backend_info()
             return ActionResponse.success(info)
 
+        @self.action(LangBotToBoxAction.INIT)
+        async def init(data: dict[str, Any]) -> ActionResponse:
+            self._runtime.init(data)
+            return ActionResponse.success({'initialized': True})
+
         @self.action(LangBotToBoxAction.SHUTDOWN)
         async def shutdown(data: dict[str, Any]) -> ActionResponse:
             await self._runtime.shutdown()

@@ -4,7 +4,9 @@ import asyncio
 import collections
 import dataclasses
 import datetime as dt
+import json
 import logging
+import os
 import uuid
 
 from .backend import BaseSandboxBackend, DockerBackend
@@ -61,14 +63,45 @@ class BoxRuntime:
         session_ttl_sec: int = 300,
     ):
         self.logger = logger
-        self.backends = backends or [DockerBackend(logger), NsjailBackend(logger)]
+
+        # Load configuration from environment variable (passed by LangBot)
+        self._box_config: dict = {}
+        config_json = os.getenv('LANGBOT_BOX_CONFIG', '')
+        if config_json:
+            try:
+                self._box_config = json.loads(config_json)
+            except json.JSONDecodeError:
+                logger.warning(f'Failed to parse LANGBOT_BOX_CONFIG: {config_json[:100]}')
+
+        # Build backend list
+        if backends is None:
+            backends = [
+                DockerBackend(logger),
+                NsjailBackend(logger),
+                self._create_e2b_backend(logger),
+            ]
+
+        self.backends = backends
         self.session_ttl_sec = session_ttl_sec
         self._backend: BaseSandboxBackend | None = None
         self._sessions: dict[str, _RuntimeSession] = {}
         self._lock = asyncio.Lock()
         self.instance_id = uuid.uuid4().hex[:12]
 
+    def _create_e2b_backend(self, logger: logging.Logger) -> 'E2BSandboxBackend | None':
+        """Create E2B backend if package is installed."""
+        try:
+            from .e2b_backend import E2BSandboxBackend
+            return E2BSandboxBackend(logger)
+        except ImportError:
+            logger.debug('e2b package not installed, E2B backend unavailable')
+            return None
+
     async def initialize(self):
+        # Apply configuration from env var to all backends
+        if self._box_config:
+            self._apply_config_to_backends(self._box_config)
+
         self._backend = await self._select_backend()
         if self._backend is not None:
             self._backend.instance_id = self.instance_id
@@ -76,6 +109,23 @@ class BoxRuntime:
                 await self._backend.cleanup_orphaned_containers(self.instance_id)
             except Exception as exc:
                 self.logger.warning(f'LangBot Box orphan container cleanup failed: {exc}')
+
+    def init(self, config: dict) -> None:
+        """Initialize with full box configuration from LangBot.
+
+        Called via RPC (INIT action) when connecting over WebSocket.
+        """
+        self._box_config.update(config)
+        self._apply_config_to_backends(config)
+
+    def _apply_config_to_backends(self, config: dict) -> None:
+        """Apply configuration sections to corresponding backends."""
+        for backend in self.backends:
+            if backend is None:
+                continue
+            backend_config = config.get(backend.name, {})
+            if backend_config and hasattr(backend, 'configure'):
+                backend.configure(backend_config)
 
     async def execute(self, spec: BoxSpec) -> BoxExecutionResult:
         if not spec.cmd:
@@ -251,7 +301,43 @@ class BoxRuntime:
         return self._backend
 
     async def _select_backend(self) -> BaseSandboxBackend | None:
+        # Check for explicit backend override via BOX_BACKEND env var
+        box_backend_env = os.getenv('BOX_BACKEND')
+        if box_backend_env:
+            # Find the specified backend
+            for backend in self.backends:
+                if backend is None:
+                    continue
+                if backend.name == box_backend_env:
+                    try:
+                        await backend.initialize()
+                        if await backend.is_available():
+                            self.logger.info(f'LangBot Box using backend (forced): {backend.name}')
+                            return backend
+                        else:
+                            self.logger.error(
+                                f'LangBot Box backend {backend.name} is not available '
+                                f'(BOX_BACKEND={box_backend_env})'
+                            )
+                            return None
+                    except Exception as exc:
+                        self.logger.error(
+                            f'LangBot Box backend {backend.name} probe failed: {exc} '
+                            f'(BOX_BACKEND={box_backend_env})'
+                        )
+                        return None
+            # Backend name not found
+            available_names = [b.name for b in self.backends if b is not None]
+            self.logger.error(
+                f'LangBot Box backend "{box_backend_env}" not found '
+                f'(available: {available_names})'
+            )
+            return None
+
+        # Auto-detect: select first available backend
         for backend in self.backends:
+            if backend is None:
+                continue
             try:
                 await backend.initialize()
                 if await backend.is_available():
@@ -260,7 +346,7 @@ class BoxRuntime:
             except Exception as exc:
                 self.logger.warning(f'LangBot Box backend {backend.name} probe failed: {exc}')
 
-        self.logger.warning('LangBot Box backend unavailable: no supported backend (Docker, nsjail) is ready')
+        self.logger.warning('LangBot Box backend unavailable: no supported backend (Docker, nsjail, E2B) is ready')
         return None
 
     async def _reap_expired_sessions_locked(self):

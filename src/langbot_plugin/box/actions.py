@@ -8,6 +8,7 @@ from langbot_plugin.entities.io.actions.enums import ActionType
 class LangBotToBoxAction(ActionType):
     """Actions sent from LangBot to the Box runtime."""
 
+    INIT = 'box_init'  # Initialize with full box config (highest priority)
     HEALTH = 'box_health'
     STATUS = 'box_status'
     EXEC = 'box_exec'

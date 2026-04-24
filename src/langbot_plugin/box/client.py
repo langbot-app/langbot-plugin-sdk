@@ -55,6 +55,9 @@ class BoxRuntimeClient(abc.ABC):
     @abc.abstractmethod
     async def get_session(self, session_id: str) -> dict: ...
 
+    @abc.abstractmethod
+    async def init(self, config: dict) -> None: ...
+
 
 def _translate_action_error(exc: Exception) -> BoxError:
     """Convert an ActionCallError message back into the appropriate BoxError subclass."""
@@ -178,3 +181,6 @@ class ActionRPCBoxClient(BoxRuntimeClient):
             scheme = 'ws://'
             suffix = base
         return f'{scheme}{suffix}/v1/sessions/{session_id}/managed-process/{process_id}/ws'
+
+    async def init(self, config: dict) -> None:
+        await self._call(LangBotToBoxAction.INIT, config)
