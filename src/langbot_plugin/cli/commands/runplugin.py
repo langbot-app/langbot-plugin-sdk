@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import os
 import asyncio
 import dotenv
+import os
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 from langbot_plugin.utils.log import configure_process_logging
 from langbot_plugin.cli.run.controller import PluginRuntimeController
 from langbot_plugin.cli.i18n import cli_print
+from langbot_plugin.cli.utils.page_components import (
+    discover_plugin_components,
+    populate_plugin_pages,
+)
 
 
 async def arun_plugin_process(
@@ -46,14 +50,8 @@ async def arun_plugin_process(
             cli_print("debug_url_not_set")
             return
 
-    # discover components
-    component_manifests = []
-
-    for comp_group in plugin_manifest.spec["components"].values():
-        manifests = discovery_engine.load_blueprint_comp_group(
-            comp_group, owner="builtin", no_save=True
-        )
-        component_manifests.extend(manifests)
+    component_manifests = discover_plugin_components(plugin_manifest, discovery_engine)
+    populate_plugin_pages(plugin_manifest, component_manifests)
 
     controller = PluginRuntimeController(
         plugin_manifest,

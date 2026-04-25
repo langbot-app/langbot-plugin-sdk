@@ -101,6 +101,8 @@ class RuntimeToPluginAction(ActionType):
 
     PARSE_DOCUMENT = "parse_document"
 
+    PAGE_API = "page_api"
+
 
 class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
@@ -138,6 +140,9 @@ class LangBotToRuntimeAction(ActionType):
 
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"
+
+    # Page API
+    PAGE_API = "page_api"
 
 
 class RuntimeToLangBotAction(ActionType):

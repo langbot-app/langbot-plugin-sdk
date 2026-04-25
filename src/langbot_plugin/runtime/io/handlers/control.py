@@ -112,6 +112,25 @@ class ControlConnectionHandler(handler.Handler):
                     {"file_file_key": None, "mime_type": None}
                 )
 
+        @self.action(LangBotToRuntimeAction.PAGE_API)
+        async def page_api(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            for field in ("plugin_author", "plugin_name", "page_id", "endpoint", "method"):
+                if field not in data:
+                    return handler.ActionResponse.success(
+                        {"data": None, "error": f"Missing required field: {field}"}
+                    )
+            result = await self.context.plugin_mgr.handle_page_api(
+                data["plugin_author"],
+                data["plugin_name"],
+                data["page_id"],
+                data["endpoint"],
+                data["method"],
+                data.get("body"),
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(LangBotToRuntimeAction.INSTALL_PLUGIN)
         async def install_plugin(
             data: dict[str, Any],
