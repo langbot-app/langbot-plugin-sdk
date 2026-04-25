@@ -23,6 +23,7 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
+from langbot_plugin.api.definition.components.page import Page
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -151,31 +152,29 @@ class PluginRuntimeHandler(Handler):
 
         @self.action(RuntimeToPluginAction.PAGE_API)
         async def page_api(data: dict[str, typing.Any]) -> ActionResponse:
-            """Handle a page API call from the frontend.
-
-            {
-                "page_id": str,
-                "endpoint": str,
-                "method": str,
-                "body": Any,
-            }
-            """
+            """Handle a page API call from the frontend."""
             page_id = data["page_id"]
             endpoint = data["endpoint"]
             method = data.get("method", "POST")
             body = data.get("body")
 
-            plugin_instance = self.plugin_container.plugin_instance
-            if hasattr(plugin_instance, "handle_page_api"):
-                result = await plugin_instance.handle_page_api(
-                    page_id=page_id,
+            for component in self.plugin_container.components:
+                if component.manifest.kind != Page.__kind__:
+                    continue
+                if component.manifest.metadata.name != page_id:
+                    continue
+                if isinstance(component.component_instance, NoneComponent):
+                    return ActionResponse.error("Page component is not initialized")
+                assert isinstance(component.component_instance, Page)
+                result = await component.component_instance.handle_api(
                     endpoint=endpoint,
                     method=method,
                     body=body,
                 )
                 return ActionResponse.success({"data": result})
+
             return ActionResponse.success(
-                {"data": None, "error": "Plugin does not implement handle_page_api"}
+                {"data": None, "error": f"Page '{page_id}' not found"}
             )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)

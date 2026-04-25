@@ -410,25 +410,22 @@ class PluginManager:
                 "Failed to get plugin settings, is LangBot connected?"
             ) from e
 
+        # Register the plugin container BEFORE calling initialize_plugin so
+        # that storage API calls during initialize() can resolve the owner.
+        plugin_container._runtime_plugin_handler = handler
+        plugin_container.debug = bool(handler.debug_plugin)
+        plugin_container.install_source = plugin_settings["install_source"]
+        plugin_container.install_info = plugin_settings["install_info"]
+        self.plugins.append(plugin_container)
+
         # initialize plugin
         await handler.initialize_plugin(plugin_settings)
 
-        # get plugin container from plugin
-        plugin_container = runtime_plugin_container.PluginContainer.from_dict(
-            await handler.get_plugin_container()
-        )
-
-        if handler.debug_plugin:  # due to python's fucking typing system, we need to explicitly set the debug flag
-            plugin_container.debug = True
-        else:
-            plugin_container.debug = False
-
-        plugin_container.install_source = plugin_settings["install_source"]
-        plugin_container.install_info = plugin_settings["install_info"]
-
-        plugin_container._runtime_plugin_handler = handler
-
-        self.plugins.append(plugin_container)
+        # refresh plugin container from plugin (components may have changed)
+        plugin_container_data = await handler.get_plugin_container()
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
+        plugin_container.components = refreshed.components
+        plugin_container.manifest = refreshed.manifest
 
     async def remove_plugin_container(
         self,
