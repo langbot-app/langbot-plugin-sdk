@@ -426,6 +426,7 @@ class PluginManager:
         refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
+        plugin_container.status = refreshed.status
 
     async def remove_plugin_container(
         self,
