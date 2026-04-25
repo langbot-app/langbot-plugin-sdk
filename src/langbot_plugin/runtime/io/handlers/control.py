@@ -116,11 +116,14 @@ class ControlConnectionHandler(handler.Handler):
         async def page_api(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            author = data["plugin_author"]
-            plugin_name = data["plugin_name"]
+            for field in ("plugin_author", "plugin_name", "page_id", "endpoint", "method"):
+                if field not in data:
+                    return handler.ActionResponse.success(
+                        {"data": None, "error": f"Missing required field: {field}"}
+                    )
             result = await self.context.plugin_mgr.handle_page_api(
-                author,
-                plugin_name,
+                data["plugin_author"],
+                data["plugin_name"],
                 data["page_id"],
                 data["endpoint"],
                 data["method"],

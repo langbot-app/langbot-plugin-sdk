@@ -674,15 +674,16 @@ class PluginManager:
         body: typing.Any = None,
     ) -> dict[str, typing.Any]:
         plugin = self.find_plugin(plugin_author, plugin_name)
-        if plugin is not None:
-            resp = await plugin._runtime_plugin_handler.call_page_api(
-                page_id=page_id,
-                endpoint=endpoint,
-                method=method,
-                body=body,
-            )
-            return resp
-        return {"error": "Plugin not found"}
+        if plugin is None:
+            return {"data": None, "error": "Plugin not found"}
+        if plugin._runtime_plugin_handler is None:
+            return {"data": None, "error": "Plugin is not connected"}
+        return await plugin._runtime_plugin_handler.call_page_api(
+            page_id=page_id,
+            endpoint=endpoint,
+            method=method,
+            body=body,
+        )
 
     async def list_tools(
         self, include_plugins: list[str] | None = None

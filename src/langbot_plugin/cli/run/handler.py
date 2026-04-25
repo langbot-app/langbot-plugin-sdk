@@ -153,7 +153,11 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.PAGE_API)
         async def page_api(data: dict[str, typing.Any]) -> ActionResponse:
             """Handle a page API call from the frontend."""
-            page_id = data["page_id"]
+            page_id = data.get("page_id", "")
+            if not page_id:
+                return ActionResponse.success(
+                    PageResponse.fail("page_id is required").model_dump()
+                )
 
             for component in self.plugin_container.components:
                 if component.manifest.kind != Page.__kind__:
@@ -161,8 +165,13 @@ class PluginRuntimeHandler(Handler):
                 if component.manifest.metadata.name != page_id:
                     continue
                 if isinstance(component.component_instance, NoneComponent):
-                    return ActionResponse.error("Page component is not initialized")
-                assert isinstance(component.component_instance, Page)
+                    return ActionResponse.success(
+                        PageResponse.fail("Page component is not initialized").model_dump()
+                    )
+                if not isinstance(component.component_instance, Page):
+                    return ActionResponse.success(
+                        PageResponse.fail("Page component type mismatch").model_dump()
+                    )
                 request = PageRequest(
                     endpoint=data.get("endpoint", ""),
                     method=data.get("method", "POST"),
@@ -174,7 +183,7 @@ class PluginRuntimeHandler(Handler):
                 return ActionResponse.success(response.model_dump())
 
             return ActionResponse.success(
-                {"data": None, "error": f"Page '{page_id}' not found"}
+                PageResponse.fail(f"Page '{page_id}' not found").model_dump()
             )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)
