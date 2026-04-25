@@ -23,7 +23,7 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
-from langbot_plugin.api.definition.components.page import Page
+from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -154,9 +154,6 @@ class PluginRuntimeHandler(Handler):
         async def page_api(data: dict[str, typing.Any]) -> ActionResponse:
             """Handle a page API call from the frontend."""
             page_id = data["page_id"]
-            endpoint = data["endpoint"]
-            method = data.get("method", "POST")
-            body = data.get("body")
 
             for component in self.plugin_container.components:
                 if component.manifest.kind != Page.__kind__:
@@ -166,12 +163,15 @@ class PluginRuntimeHandler(Handler):
                 if isinstance(component.component_instance, NoneComponent):
                     return ActionResponse.error("Page component is not initialized")
                 assert isinstance(component.component_instance, Page)
-                result = await component.component_instance.handle_api(
-                    endpoint=endpoint,
-                    method=method,
-                    body=body,
+                request = PageRequest(
+                    endpoint=data.get("endpoint", ""),
+                    method=data.get("method", "POST"),
+                    body=data.get("body"),
                 )
-                return ActionResponse.success({"data": result})
+                response = await component.component_instance.handle_api(request)
+                if not isinstance(response, PageResponse):
+                    response = PageResponse(data=response)
+                return ActionResponse.success(response.model_dump())
 
             return ActionResponse.success(
                 {"data": None, "error": f"Page '{page_id}' not found"}
