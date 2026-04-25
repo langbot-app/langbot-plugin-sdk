@@ -49,8 +49,6 @@ def populate_plugin_pages(
             "label": component_manifest.manifest["metadata"].get("label", {}),
             "path": os.path.normpath(os.path.join(yaml_dir, html_rel_path)),
         }
-        if component_manifest.metadata.icon:
-            page_entry["icon"] = component_manifest.metadata.icon
 
         pages.append(page_entry)
         seen_page_ids.add(page_id)
