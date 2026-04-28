@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import re
 import subprocess
 import sys
@@ -127,3 +128,111 @@ def _parse_downloaded_bytes(output: str) -> int:
             else:
                 total += int(val)
     return total
+
+
+async def verify_dependencies(deps: list[str]) -> list[str]:
+    """验证依赖是否真正安装成功
+
+    Args:
+        deps: 依赖列表，格式如 ['package==1.0.0', 'package>=2.0']
+
+    Returns:
+        未安装成功的依赖列表
+    """
+    missing = []
+    for dep in deps:
+        # 提取包名（去除版本约束）
+        pkg_name = (
+            dep.split("==")[0]
+            .split(">=")[0]
+            .split("<=")[0]
+            .split("<")[0]
+            .split(">")[0]
+            .split("[")[0]
+            .strip()
+        )
+        # 处理包名中的连字符（pip 安装时会转换为下划线）
+        pkg_name_normalized = pkg_name.replace("-", "_")
+        if importlib.util.find_spec(pkg_name_normalized) is None:
+            # 尝试原始名称
+            if importlib.util.find_spec(pkg_name) is None:
+                missing.append(dep)
+    return missing
+
+
+async def install_with_retry(
+    package: str,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    extra_params: list | None = None,
+) -> tuple[int, int, str]:
+    """带重试机制的依赖安装
+
+    Args:
+        package: 要安装的包名
+        max_retries: 最大重试次数
+        retry_delay: 重试间隔（秒）
+        extra_params: 额外的 pip 参数
+
+    Returns:
+        (returncode, downloaded_bytes, error_message)
+    """
+    last_error = ""
+    for attempt in range(max_retries):
+        returncode, downloaded_bytes = await install_single_async(package, extra_params)
+        if returncode == 0:
+            return returncode, downloaded_bytes, ""
+
+        # 获取错误信息
+        last_error = f"Attempt {attempt + 1}/{max_retries} failed with code {returncode}"
+
+        if attempt < max_retries - 1:
+            await asyncio.sleep(retry_delay)
+
+    return returncode, 0, last_error
+
+
+async def precheck_dependencies(requirements_file: str) -> dict:
+    """依赖预检查 - 检查依赖冲突和已安装状态
+
+    Args:
+        requirements_file: requirements.txt 文件路径
+
+    Returns:
+        {
+            'deps': list[str],           # 所有依赖列表
+            'already_installed': list[str],  # 已安装的依赖
+            'to_install': list[str],     # 需要安装的依赖
+            'conflicts': list[str]       # 可能的冲突（可选）
+        }
+    """
+    deps = parse_requirements(requirements_file)
+    already_installed = []
+    to_install = []
+
+    for dep in deps:
+        pkg_name = (
+            dep.split("==")[0]
+            .split(">=")[0]
+            .split("<=")[0]
+            .split("<")[0]
+            .split(">")[0]
+            .split("[")[0]
+            .strip()
+        )
+        pkg_name_normalized = pkg_name.replace("-", "_")
+
+        if (
+            importlib.util.find_spec(pkg_name_normalized) is not None
+            or importlib.util.find_spec(pkg_name) is not None
+        ):
+            already_installed.append(dep)
+        else:
+            to_install.append(dep)
+
+    return {
+        "deps": deps,
+        "already_installed": already_installed,
+        "to_install": to_install,
+        "conflicts": [],  # 暂不实现冲突检测
+    }
