@@ -300,51 +300,56 @@ class BoxRuntime:
             )
         return self._backend
 
-    async def _select_backend(self) -> BaseSandboxBackend | None:
-        # Check for explicit backend override via BOX_BACKEND env var
-        box_backend_env = os.getenv('BOX_BACKEND')
-        if box_backend_env:
-            # Find the specified backend
-            for backend in self.backends:
-                if backend is None:
-                    continue
-                if backend.name == box_backend_env:
-                    try:
-                        await backend.initialize()
-                        if await backend.is_available():
-                            self.logger.info(f'LangBot Box using backend (forced): {backend.name}')
-                            return backend
-                        else:
-                            self.logger.error(
-                                f'LangBot Box backend {backend.name} is not available '
-                                f'(BOX_BACKEND={box_backend_env})'
-                            )
-                            return None
-                    except Exception as exc:
-                        self.logger.error(
-                            f'LangBot Box backend {backend.name} probe failed: {exc} '
-                            f'(BOX_BACKEND={box_backend_env})'
-                        )
-                        return None
-            # Backend name not found
-            available_names = [b.name for b in self.backends if b is not None]
-            self.logger.error(
-                f'LangBot Box backend "{box_backend_env}" not found '
-                f'(available: {available_names})'
-            )
-            return None
+    # Backends grouped under each top-level box.backend choice.
+    # 'local' picks the first available local container backend (docker → nsjail).
+    _LOCAL_BACKEND_NAMES = ('docker', 'nsjail')
 
-        # Auto-detect: select first available backend
-        for backend in self.backends:
-            if backend is None:
-                continue
+    async def _select_backend(self) -> BaseSandboxBackend | None:
+        # Backend override priority: BOX_BACKEND env var > box.backend config.
+        # Accepted values: 'local', 'docker', 'nsjail', 'e2b'. 'local' fans out
+        # to a list; everything else must match a single backend name exactly.
+        configured = (self._box_config.get('backend') or '').strip()
+        forced = (os.getenv('BOX_BACKEND') or configured or '').strip()
+        source_label = 'BOX_BACKEND' if os.getenv('BOX_BACKEND') else 'box.backend'
+
+        candidates: list[BaseSandboxBackend]
+        if forced == 'local':
+            candidates = [
+                b for b in self.backends if b is not None and b.name in self._LOCAL_BACKEND_NAMES
+            ]
+            if not candidates:
+                self.logger.error(
+                    f'LangBot Box: no local backend registered '
+                    f'({source_label}={forced})'
+                )
+                return None
+        elif forced:
+            candidates = [b for b in self.backends if b is not None and b.name == forced]
+            if not candidates:
+                available_names = [b.name for b in self.backends if b is not None]
+                self.logger.error(
+                    f'LangBot Box backend "{forced}" not found '
+                    f'({source_label}={forced}, available: {available_names})'
+                )
+                return None
+        else:
+            candidates = [b for b in self.backends if b is not None]
+
+        for backend in candidates:
             try:
                 await backend.initialize()
                 if await backend.is_available():
-                    self.logger.info(f'LangBot Box using backend: {backend.name}')
+                    label = f'{backend.name} (forced via {source_label}={forced})' if forced else backend.name
+                    self.logger.info(f'LangBot Box using backend: {label}')
                     return backend
             except Exception as exc:
                 self.logger.warning(f'LangBot Box backend {backend.name} probe failed: {exc}')
+
+        if forced:
+            self.logger.error(
+                f'LangBot Box backend "{forced}" probed but not available '
+                f'({source_label}={forced})'
+            )
 
         self.logger.warning('LangBot Box backend unavailable: no supported backend (Docker, nsjail, E2B) is ready')
         return None

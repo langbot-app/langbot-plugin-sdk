@@ -84,7 +84,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
         super().__init__(logger)
         self._api_key: str | None = None
         self._api_url: str | None = None
-        self._default_template: str | None = None
+        self._template: str | None = None
         self._config_from_langbot: dict = {}
 
     def configure(self, config: dict) -> None:
@@ -101,7 +101,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
         # Environment variables take precedence
         self._api_key = os.getenv('E2B_API_KEY') or self._config_from_langbot.get('api_key')
         self._api_url = os.getenv('E2B_API_URL') or self._config_from_langbot.get('api_url')
-        self._default_template = self._config_from_langbot.get('default_template')
+        self._template = self._config_from_langbot.get('template')
 
     async def is_available(self) -> bool:
         """Check if E2B backend is available.
@@ -143,11 +143,11 @@ class E2BSandboxBackend(BaseSandboxBackend):
         # Build create parameters
         create_kwargs = {}
 
-        # Template - use spec.image if provided, otherwise default_template, otherwise E2B default
+        # Template - use spec.image if provided, otherwise configured template, otherwise E2B default
         if spec.image and spec.image != 'rockchin/langbot-sandbox:latest':
             create_kwargs['template'] = spec.image
-        elif self._default_template:
-            create_kwargs['template'] = self._default_template
+        elif self._template:
+            create_kwargs['template'] = self._template
 
         # Environment variables
         if spec.env:

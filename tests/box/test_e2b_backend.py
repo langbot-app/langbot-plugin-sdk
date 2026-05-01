@@ -122,14 +122,14 @@ async def test_configure_from_langbot(backend, mock_e2b_module):
     backend.configure({
         'api_key': 'config-api-key',
         'api_url': 'http://127.0.0.1:3000',
-        'default_template': 'python-3.11',
+        'template': 'python-3.11',
     })
     await backend.initialize()
 
     # Environment variable takes precedence, so if not set, use config
     assert backend._api_key == 'config-api-key'
     assert backend._api_url == 'http://127.0.0.1:3000'
-    assert backend._default_template == 'python-3.11'
+    assert backend._template == 'python-3.11'
 
 
 @pytest.mark.anyio
