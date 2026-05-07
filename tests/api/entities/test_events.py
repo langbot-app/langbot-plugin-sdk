@@ -19,6 +19,8 @@ from langbot_plugin.api.entities.builtin.provider.session import Session, Launch
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.pipeline.query import Query
 from langbot_plugin.api.entities.builtin.platform.events import (
+    FeedbackEvent,
+    FeedbackReceivedEvent,
     FriendMessage,
     GroupMessage,
 )
@@ -316,3 +318,36 @@ def test_validation_errors():
             sender_id="789012",
             message_chain=MessageChain([Plain(text="Hello")]).model_dump(),
         )
+
+
+def test_feedback_received_event_serialization_and_legacy_mapping():
+    event = FeedbackReceivedEvent(
+        feedback_id="feedback-1",
+        feedback_type=2,
+        feedback_content="not accurate",
+        inaccurate_reasons=["wrong_answer"],
+        user_id="user-1",
+        session_id="person_user-1",
+        message_id="msg-1",
+        stream_id="stream-1",
+        timestamp=123.0,
+        bot_uuid="bot-1",
+        adapter_name="wecom",
+    )
+
+    serialized = event.model_dump()
+    assert serialized["type"] == "feedback.received"
+    assert serialized["feedback_type"] == 2
+    assert serialized["inaccurate_reasons"] == ["wrong_answer"]
+
+    legacy_event = event.to_legacy_event()
+    assert isinstance(legacy_event, FeedbackEvent)
+    assert legacy_event.type == "FeedbackEvent"
+    assert legacy_event.feedback_id == event.feedback_id
+    assert legacy_event.feedback_type == event.feedback_type
+    assert legacy_event.feedback_content == event.feedback_content
+    assert legacy_event.inaccurate_reasons == event.inaccurate_reasons
+    assert legacy_event.user_id == event.user_id
+    assert legacy_event.session_id == event.session_id
+    assert legacy_event.message_id == event.message_id
+    assert legacy_event.stream_id == event.stream_id

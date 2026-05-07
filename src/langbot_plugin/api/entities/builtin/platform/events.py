@@ -328,6 +328,52 @@ class MessageReactionEvent(EBAEvent):
     group: typing.Optional[platform_entities.UserGroup] = None
 
 
+# ---- Feedback Events ----
+
+class FeedbackReceivedEvent(EBAEvent):
+    """User feedback received for a bot response."""
+
+    type: str = "feedback.received"
+
+    feedback_id: str
+    """Unique feedback identifier from the platform."""
+
+    feedback_type: int
+    """1 = like, 2 = dislike, 3 = cancel/remove feedback."""
+
+    feedback_content: typing.Optional[str] = None
+    """Free-form user feedback text."""
+
+    inaccurate_reasons: typing.Optional[typing.List[str]] = None
+    """Predefined inaccuracy reasons (for dislikes)."""
+
+    user_id: typing.Optional[str] = None
+    """ID of the user who submitted the feedback."""
+
+    session_id: typing.Optional[str] = None
+    """Session / conversation ID."""
+
+    message_id: typing.Optional[str] = None
+    """ID of the original message being rated."""
+
+    stream_id: typing.Optional[str] = None
+    """Stream message ID (for streaming responses)."""
+
+    def to_legacy_event(self) -> FeedbackEvent:
+        """Convert this EBA event to the legacy FeedbackEvent format."""
+        return FeedbackEvent(
+            feedback_id=self.feedback_id,
+            feedback_type=self.feedback_type,
+            feedback_content=self.feedback_content,
+            inaccurate_reasons=self.inaccurate_reasons,
+            user_id=self.user_id,
+            session_id=self.session_id,
+            message_id=self.message_id,
+            stream_id=self.stream_id,
+            source_platform_object=self.source_platform_object,
+        )
+
+
 # ---- Group Events ----
 
 class MemberJoinedEvent(EBAEvent):
