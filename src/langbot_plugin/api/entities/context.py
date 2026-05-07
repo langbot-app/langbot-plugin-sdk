@@ -17,7 +17,7 @@ cached_event_contexts: dict[int, EventContext] = {}
 class EventContext(pydantic.BaseModel):
     """事件上下文, 保存此次事件运行的信息"""
 
-    query_id: int
+    query_id: int = 0
     """请求ID"""
 
     eid: int = 0
@@ -84,7 +84,7 @@ class EventContext(pydantic.BaseModel):
     @classmethod
     def from_event(cls, event: BaseEventModel) -> EventContext:
         global global_eid_index
-        query_id = event.query.query_id
+        query_id = event.query.query_id if event.query else 0
         eid = global_eid_index
         event = event
         event_name = event.__class__.__name__
