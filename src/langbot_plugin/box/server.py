@@ -1,10 +1,10 @@
 """Standalone Box Runtime service exposing BoxRuntime via action RPC.
 
-Usage (auto, stdio on Unix/macOS and ws on Windows):
+Usage (ws, standalone/manual mode):
     python -m langbot_plugin.box.server
 
-Usage (ws, for remote/docker mode):
-    python -m langbot_plugin.box.server --mode ws --port 5410
+Usage (stdio, launched by LangBot as subprocess):
+    python -m langbot_plugin.box.server --stdio-control
 
 All WebSocket endpoints share a single port (default 5410):
     /rpc/ws                                                      — Action RPC (control channel)
@@ -42,12 +42,6 @@ from .models import BoxExecutionResult, BoxManagedProcessSpec, BoxSpec
 from .runtime import BoxRuntime
 
 logger = logging.getLogger('langbot.box.server')
-
-
-def _resolve_control_mode(mode: str) -> str:
-    if mode == 'auto':
-        return 'ws' if sys.platform == 'win32' else 'stdio'
-    return mode
 
 
 def _result_to_dict(result: BoxExecutionResult) -> dict:
@@ -338,17 +332,26 @@ async def _run_server(host: str, port: int, mode: str) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description='LangBot Box Runtime Service')
     parser.add_argument('--host', default='0.0.0.0', help='Bind address')
-    parser.add_argument('--port', type=int, default=5410, help='Bind port')
+    parser.add_argument('--ws-control-port', type=int, default=5410, help='The port for control connection')
+    parser.add_argument(
+        '--port',
+        type=int,
+        dest='ws_control_port',
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument('--stdio-control', action='store_true', help='Use stdio for control connection')
     parser.add_argument(
         '--mode',
         choices=['auto', 'stdio', 'ws'],
-        default='auto',
-        help='Control channel transport (default: auto; ws on Windows, stdio elsewhere)',
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)
 
+    stdio_control = args.stdio_control or args.mode == 'stdio'
+    control_mode = 'stdio' if stdio_control else 'ws'
+
     configure_process_logging(stream=sys.stderr)
-    asyncio.run(_run_server(args.host, args.port, _resolve_control_mode(args.mode)))
+    asyncio.run(_run_server(args.host, args.ws_control_port, control_mode))
 
 
 if __name__ == '__main__':

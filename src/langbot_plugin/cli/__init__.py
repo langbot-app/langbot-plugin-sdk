@@ -35,8 +35,8 @@ Commands:
         - [--ws-debug-port]: The port for debug connection
     box: Run the sandbox box runtime
         - [--host]: Bind address, default is 0.0.0.0
-        - [--port]: Bind port for ws relay, default is 5410
-        - [--mode]: Control channel transport (auto, stdio, or ws), default is auto
+        - [--stdio-control]: Use stdio for control connection
+        - [--ws-control-port]: The port for control connection, default is 5410
 """
 
 
@@ -130,13 +130,24 @@ def main():
         "--host", default="0.0.0.0", help="Bind address"
     )
     box_parser.add_argument(
-        "--port", type=int, default=5410, help="Bind port (ws relay)"
+        "--stdio-control", action="store_true", help="Use stdio for control connection"
+    )
+    box_parser.add_argument(
+        "--ws-control-port",
+        type=int,
+        default=5410,
+        help="The port for control connection",
+    )
+    box_parser.add_argument(
+        "--port",
+        type=int,
+        dest="ws_control_port",
+        help=argparse.SUPPRESS,
     )
     box_parser.add_argument(
         "--mode",
         choices=["auto", "stdio", "ws"],
-        default="auto",
-        help="Control channel transport (default: auto; ws on Windows, stdio elsewhere)",
+        help=argparse.SUPPRESS,
     )
 
     args = parser.parse_args()
