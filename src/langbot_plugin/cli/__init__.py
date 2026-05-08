@@ -36,7 +36,7 @@ Commands:
     box: Run the sandbox box runtime
         - [--host]: Bind address, default is 0.0.0.0
         - [--port]: Bind port for ws relay, default is 5410
-        - [--mode]: Control channel transport (stdio or ws), default is stdio
+        - [--mode]: Control channel transport (auto, stdio, or ws), default is auto
 """
 
 
@@ -133,8 +133,10 @@ def main():
         "--port", type=int, default=5410, help="Bind port (ws relay)"
     )
     box_parser.add_argument(
-        "--mode", choices=["stdio", "ws"], default="stdio",
-        help="Control channel transport (default: stdio)"
+        "--mode",
+        choices=["auto", "stdio", "ws"],
+        default="auto",
+        help="Control channel transport (default: auto; ws on Windows, stdio elsewhere)",
     )
 
     args = parser.parse_args()

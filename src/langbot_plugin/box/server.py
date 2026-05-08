@@ -1,6 +1,6 @@
 """Standalone Box Runtime service exposing BoxRuntime via action RPC.
 
-Usage (stdio, launched by LangBot as subprocess):
+Usage (auto, stdio on Unix/macOS and ws on Windows):
     python -m langbot_plugin.box.server
 
 Usage (ws, for remote/docker mode):
@@ -42,6 +42,12 @@ from .models import BoxExecutionResult, BoxManagedProcessSpec, BoxSpec
 from .runtime import BoxRuntime
 
 logger = logging.getLogger('langbot.box.server')
+
+
+def _resolve_control_mode(mode: str) -> str:
+    if mode == 'auto':
+        return 'ws' if sys.platform == 'win32' else 'stdio'
+    return mode
 
 
 def _result_to_dict(result: BoxExecutionResult) -> dict:
@@ -334,12 +340,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--host', default='0.0.0.0', help='Bind address')
     parser.add_argument('--port', type=int, default=5410, help='Bind port')
     parser.add_argument(
-        '--mode', choices=['stdio', 'ws'], default='stdio', help='Control channel transport (default: stdio)'
+        '--mode',
+        choices=['auto', 'stdio', 'ws'],
+        default='auto',
+        help='Control channel transport (default: auto; ws on Windows, stdio elsewhere)',
     )
     args = parser.parse_args(argv)
 
     configure_process_logging(stream=sys.stderr)
-    asyncio.run(_run_server(args.host, args.port, args.mode))
+    asyncio.run(_run_server(args.host, args.port, _resolve_control_mode(args.mode)))
 
 
 if __name__ == '__main__':
