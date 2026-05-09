@@ -329,13 +329,15 @@ class PluginManager:
                     },
                 }
 
-                returncode, downloaded_bytes = await pkgmgr_helper.install_single_async(
-                    dep
-                )
+                returncode, downloaded_bytes, output = await pkgmgr_helper.install_single_async(dep)
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
-                    logger.error(f"Failed to install dependency: {dep}")
+                    error_message = f"Failed to install dependency: {dep}"
+                    if output:
+                        error_message = f"{error_message}\n{output.strip()}"
+                    logger.error(error_message)
+                    raise RuntimeError(error_message)
 
             elapsed = time.time() - start_time
             yield {

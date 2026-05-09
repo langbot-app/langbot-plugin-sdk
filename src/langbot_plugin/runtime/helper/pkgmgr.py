@@ -54,8 +54,8 @@ def parse_requirements(file: str) -> list[str]:
     return deps
 
 
-def install_single(package: str, extra_params: list | None = None) -> tuple[int, int]:
-    """Install a single package via subprocess and return (returncode, downloaded_bytes)."""
+def install_single(package: str, extra_params: list | None = None) -> tuple[int, int, str]:
+    """Install a single package via subprocess and return (returncode, downloaded_bytes, output)."""
     if extra_params is None:
         extra_params = []
 
@@ -72,13 +72,14 @@ def install_single(package: str, extra_params: list | None = None) -> tuple[int,
     ] + extra_params
 
     result = subprocess.run(cmd, capture_output=True, text=True)
-    downloaded_bytes = _parse_downloaded_bytes(result.stdout + "\n" + result.stderr)
-    return result.returncode, downloaded_bytes
+    output = result.stdout + "\n" + result.stderr
+    downloaded_bytes = _parse_downloaded_bytes(output)
+    return result.returncode, downloaded_bytes, output
 
 
 async def install_single_async(
     package: str, extra_params: list | None = None
-) -> tuple[int, int]:
+) -> tuple[int, int, str]:
     """Install a single package via async subprocess, non-blocking for the event loop."""
     if extra_params is None:
         extra_params = []
@@ -107,7 +108,7 @@ async def install_single_async(
         + stderr_bytes.decode("utf-8", errors="ignore")
     )
     downloaded_bytes = _parse_downloaded_bytes(output)
-    return proc.returncode, downloaded_bytes
+    return proc.returncode, downloaded_bytes, output
 
 
 def _parse_downloaded_bytes(output: str) -> int:
