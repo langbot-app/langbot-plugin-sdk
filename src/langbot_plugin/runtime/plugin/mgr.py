@@ -466,6 +466,18 @@ class PluginManager:
                     asyncio_task = asyncio.create_task(task)
                     self.plugin_run_tasks.append(asyncio_task)
 
+                    # Poll until the plugin appears in self.plugins (with timeout)
+                    plugin_key = f"{plugin_author}/{plugin_name}"
+                    for _ in range(30):
+                        if self.find_plugin(plugin_author, plugin_name) is not None:
+                            logger.info(f"Plugin {plugin_key} restarted and registered")
+                            break
+                        await asyncio.sleep(1)
+                    else:
+                        logger.warning(
+                            f"Plugin {plugin_key} restart timed out waiting for registration"
+                        )
+
                 yield {"current_action": "plugin restarted"}
                 break
         else:
