@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from enum import Enum
 import logging
+import os
 
 import asyncio
 
@@ -35,6 +36,10 @@ class RuntimeApplication:
 
     def __init__(self, args: argparse.Namespace):
         self.args = args
+        if getattr(args, "pypi_index_url", ""):
+            os.environ["LANGBOT_PLUGIN_PYPI_INDEX_URL"] = args.pypi_index_url
+        if getattr(args, "pypi_trusted_host", ""):
+            os.environ["LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"] = args.pypi_trusted_host
         self.context = context.RuntimeContext()
 
         logger.info(f"settings.cloud_service_url: {settings.cloud_service_url}")

@@ -329,7 +329,9 @@ class PluginManager:
                     },
                 }
 
-                returncode, downloaded_bytes, output = await pkgmgr_helper.install_single_async(dep)
+                returncode, downloaded_bytes, output = (
+                    await pkgmgr_helper.install_single_async(dep)
+                )
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:

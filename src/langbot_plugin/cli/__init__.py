@@ -70,6 +70,18 @@ def main():
         help="Debug key for plugin authentication",
         default="",
     )
+    run_parser.add_argument(
+        "--pypi-index-url",
+        type=str,
+        help="PyPI index URL for plugin dependency installation (default: https://pypi.org/simple)",
+        default="",
+    )
+    run_parser.add_argument(
+        "--pypi-trusted-host",
+        type=str,
+        help="Comma-separated trusted hosts for plugin dependency installation",
+        default="",
+    )
 
     # login command
     login_parser = subparsers.add_parser("login", help="Login to LangBot account")
@@ -119,6 +131,18 @@ def main():
         action="store_true",
         help="Skip checking and installing dependencies for all installed plugins",
     )
+    rt_parser.add_argument(
+        "--pypi-index-url",
+        type=str,
+        help="PyPI index URL for plugin dependency installation (default: https://pypi.org/simple)",
+        default="",
+    )
+    rt_parser.add_argument(
+        "--pypi-trusted-host",
+        type=str,
+        help="Comma-separated trusted hosts for plugin dependency installation",
+        default="",
+    )
 
     args = parser.parse_args()
 
@@ -141,7 +165,13 @@ def main():
             generate_component_process(args.component_type)
         case "run":
             cli_print("running_plugin")
-            run_plugin_process(args.stdio, args.prod, args.plugin_debug_key)
+            run_plugin_process(
+                args.stdio,
+                args.prod,
+                args.plugin_debug_key,
+                args.pypi_index_url,
+                args.pypi_trusted_host,
+            )
         case "build":
             build_plugin_process(args.output)
         case "publish":
