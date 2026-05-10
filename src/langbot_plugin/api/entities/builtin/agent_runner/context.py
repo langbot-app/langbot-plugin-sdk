@@ -1,59 +1,72 @@
-"""Agent Runner context entities."""
+"""Agent run context as defined in Protocol v1."""
+
 from __future__ import annotations
 
 import typing
 import pydantic
 
-from langbot_plugin.api.entities.builtin.provider import message as provider_message
-from langbot_plugin.api.entities.builtin.provider import session as provider_session
-from langbot_plugin.api.entities.builtin.resource import tool as resource_tool
+from langbot_plugin.api.entities.builtin.provider.message import Message
+from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
+from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
+from langbot_plugin.api.entities.builtin.agent_runner.resources import AgentResources
+from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.agent_runner.event import (
+    ConversationContext,
+    AgentEventContext,
+    ActorContext,
+    SubjectContext,
+)
 
 
 class AgentRunContext(pydantic.BaseModel):
-    """Agent run context passed to AgentRunner.run()"""
+    """Agent run context passed to AgentRunner.run().
 
-    query_id: int
-    """Query ID for this request"""
+    Protocol v1 context structure. Contains:
+    - run_id: unique identifier for this run
+    - trigger: what triggered this run
+    - conversation: launcher/sender/bot/pipeline info
+    - event: event envelope subset (for future EBA)
+    - actor: who triggered the event
+    - subject: what the event is about
+    - messages: historical conversation messages
+    - input: user input
+    - resources: authorized resources
+    - runtime: host/environment info
+    - config: runner instance configuration
+    """
 
-    session: provider_session.Session
-    """Session information"""
+    run_id: str
+    """Unique identifier for this run."""
 
-    messages: list[provider_message.Message]
-    """Historical messages in the conversation"""
+    trigger: AgentTrigger
+    """Trigger information."""
 
-    user_message: provider_message.ContentElement
-    """Current user message"""
+    conversation: ConversationContext | None = None
+    """Conversation context."""
 
-    use_funcs: list[resource_tool.LLMTool]
-    """Available tools for the agent to use"""
+    event: AgentEventContext | None = None
+    """Event context (for EBA)."""
 
-    extra_config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Extra configuration from pipeline config"""
+    actor: ActorContext | None = None
+    """Actor context."""
 
-    class Config:
-        arbitrary_types_allowed = True
+    subject: SubjectContext | None = None
+    """Subject context."""
 
+    messages: list[Message] = pydantic.Field(default_factory=list)
+    """Historical messages in the conversation."""
 
-class AgentRunReturn(pydantic.BaseModel):
-    """Return value from AgentRunner.run()"""
+    input: AgentInput
+    """User input."""
 
-    type: str
-    """Return type: 'text' | 'chunk' | 'tool_call' | 'finish'"""
+    resources: AgentResources
+    """Authorized resources."""
 
-    content: typing.Optional[str] = None
-    """Text content for 'text' and 'chunk' types"""
+    runtime: AgentRuntimeContext
+    """Runtime context."""
 
-    message: typing.Optional[provider_message.Message] = None
-    """Complete message for 'finish' type"""
-
-    message_chunk: typing.Optional[provider_message.MessageChunk] = None
-    """Message chunk for 'chunk' type"""
-
-    tool_calls: typing.Optional[list[provider_message.ToolCall]] = None
-    """Tool calls for 'tool_call' type"""
-
-    finish_reason: typing.Optional[str] = None
-    """Finish reason for 'finish' type: 'stop' | 'length' | 'tool_calls' | 'error'"""
+    config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """Runner instance configuration."""
 
     class Config:
         arbitrary_types_allowed = True

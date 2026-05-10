@@ -294,7 +294,9 @@ class ControlConnectionHandler(handler.Handler):
             return handler.ActionResponse.success({"runners": runners})
 
         @self.action(LangBotToRuntimeAction.RUN_AGENT)
-        async def run_agent(data: dict[str, Any]) -> AsyncGenerator[handler.ActionResponse, None]:
+        async def run_agent(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             runner_name = data["runner_name"]
@@ -304,25 +306,6 @@ class ControlConnectionHandler(handler.Handler):
                 plugin_author, plugin_name, runner_name, context
             ):
                 yield handler.ActionResponse.success(result)
-
-        # KnowledgeRetriever actions
-        @self.action(LangBotToRuntimeAction.LIST_KNOWLEDGE_RETRIEVERS)
-        async def list_knowledge_retrievers(data: dict[str, Any]) -> handler.ActionResponse:
-            include_plugins = data.get("include_plugins")
-            retrievers = await self.context.plugin_mgr.list_knowledge_retrievers(include_plugins)
-            return handler.ActionResponse.success({"retrievers": retrievers})
-
-        @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
-        async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
-            plugin_author = data["plugin_author"]
-            plugin_name = data["plugin_name"]
-            retriever_name = data["retriever_name"]
-            retrieval_context = data["retrieval_context"]
-
-            resp = await self.context.plugin_mgr.retrieve_knowledge(
-                plugin_author, plugin_name, retriever_name, retrieval_context
-            )
-            return handler.ActionResponse.success(resp)
 
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
         async def get_debug_info(data: dict[str, Any]) -> handler.ActionResponse:
