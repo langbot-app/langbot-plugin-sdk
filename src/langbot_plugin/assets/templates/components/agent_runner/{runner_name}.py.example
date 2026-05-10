@@ -1,0 +1,83 @@
+"""Agent Runner implementation for Protocol v1."""
+from __future__ import annotations
+
+from typing import AsyncGenerator
+
+from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+from langbot_plugin.api.entities.builtin.agent_runner import (
+    AgentRunContext,
+    AgentRunResult,
+    AgentRunnerCapabilities,
+    AgentRunnerPermissions,
+)
+from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
+
+
+class {{ runner_attr }}(AgentRunner):
+    """{{ runner_description }}"""
+
+    @classmethod
+    def get_capabilities(cls) -> AgentRunnerCapabilities:
+        """Declare capabilities for this runner.
+
+        Override to enable features like streaming, tool calling, etc.
+        """
+        return AgentRunnerCapabilities(
+            streaming=False,
+            tool_calling=False,
+            knowledge_retrieval=False,
+            multimodal_input=False,
+            event_context=False,
+            platform_api=False,
+            interrupt=False,
+            stateful_session=False,
+        )
+
+    @classmethod
+    def get_permissions(cls) -> AgentRunnerPermissions:
+        """Declare permissions required by this runner.
+
+        Override to request access to models, tools, knowledge bases, etc.
+        """
+        return AgentRunnerPermissions(
+            models=[],  # ["list", "invoke", "stream", "embedding"]
+            tools=[],   # ["list", "detail", "call"]
+            knowledge_bases=[],  # ["list", "retrieve"]
+            storage=[],  # ["plugin", "workspace"]
+            files=[],  # ["config", "knowledge"]
+            platform_api=[],
+        )
+
+    async def run(self, ctx: AgentRunContext) -> AsyncGenerator[AgentRunResult, None]:
+        """Process user input and generate response.
+
+        Args:
+            ctx: Agent run context containing:
+                - run_id: Unique ID for this run
+                - trigger: Trigger information
+                - conversation: Launcher/sender/bot/pipeline info
+                - messages: Historical messages
+                - input: User input (use ctx.input.to_text() for plain text)
+                - resources: Authorized resources
+                - runtime: Host/environment info
+                - config: Runner configuration
+
+        Yields:
+            AgentRunResult events (message.delta, message.completed, run.completed, etc.)
+        """
+        # Example: get user input text
+        user_text = ctx.input.to_text()
+
+        # Example: return a simple response
+        # For streaming, use AgentRunResult.message_delta(chunk)
+        # For final response, use AgentRunResult.run_completed(message)
+
+        final_message = Message(
+            role="assistant",
+            content=f"Received: {user_text}",
+        )
+
+        yield AgentRunResult.run_completed(
+            message=final_message,
+            finish_reason="stop",
+        )
