@@ -1,4 +1,5 @@
 import asyncio
+import importlib.metadata
 import importlib.util
 import os
 import re
@@ -142,30 +143,87 @@ def _parse_downloaded_bytes(output: str) -> int:
     return total
 
 
-async def verify_dependencies(deps: list[str]) -> list[str]:
-    """Verify that installed dependencies are actually importable.
+_dist_to_packages: dict[str, set[str]] | None = None
 
-    Args:
-        deps: List of dependency specs, e.g. ['pkg==1.0.0', 'pkg>=2.0']
+
+def _extract_package_name(dep_spec: str) -> str:
+    """Extract the pip package name from a dependency spec string."""
+    for sep in ("==", ">=", "<=", "<", ">", "["):
+        dep_spec = dep_spec.split(sep)[0]
+    return dep_spec.strip()
+
+
+def _is_distribution_installed(pkg_name: str) -> bool:
+    """Check whether a pip distribution is installed via its metadata.
+
+    This is the authoritative check, regardless of whether the pip
+    package name matches the actual Python module name.
+    """
+    candidates = {pkg_name, pkg_name.replace("-", "_"), pkg_name.replace("_", "-")}
+    for name in candidates:
+        try:
+            importlib.metadata.distribution(name)
+            return True
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return False
+
+
+def _resolve_import_names(pkg_name: str) -> set[str]:
+    """Resolve top-level Python import names for a pip distribution.
+
+    Many pip package names differ from their importable module name.
+    E.g. yiri-mirai -> mirai, PyYAML -> yaml, Pillow -> PIL.
+    Uses importlib.metadata.packages_distributions() reverse mapping.
+    """
+    global _dist_to_packages
+
+    if _dist_to_packages is None:
+        _dist_to_packages = {}
+        try:
+            for top_pkg, dist_names in importlib.metadata.packages_distributions().items():
+                for dist_name in dist_names:
+                    key = dist_name.lower().replace("_", "-")
+                    _dist_to_packages.setdefault(key, set()).add(top_pkg)
+        except Exception:
+            pass
+
+    key = pkg_name.lower().replace("_", "-")
+    names = _dist_to_packages.get(key, set()).copy()
+    names.add(pkg_name.replace("-", "_"))
+    return names
+
+
+def _check_dependency_installed(dep_spec: str) -> bool:
+    """Check whether a dependency is installed and importable.
+
+    Resolution order:
+    1. importlib.metadata.distribution() - authoritative pip install check
+    2. packages_distributions() reverse mapping - find actual import names
+    3. fallback: find_spec on the normalized package name
+    """
+    pkg_name = _extract_package_name(dep_spec)
+
+    if _is_distribution_installed(pkg_name):
+        return True
+
+    for import_name in _resolve_import_names(pkg_name):
+        if importlib.util.find_spec(import_name) is not None:
+            return True
+
+    return False
+
+
+async def verify_dependencies(deps: list[str]) -> list[str]:
+    """Verify installed dependencies are actually importable.
 
     Returns:
-        List of dependencies that failed import verification.
+        List of dependency specs that failed verification.
     """
     missing = []
     for dep in deps:
-        pkg_name = (
-            dep.split("==")[0]
-            .split(">=")[0]
-            .split("<=")[0]
-            .split("<")[0]
-            .split(">")[0]
-            .split("[")[0]
-            .strip()
-        )
-        pkg_name_normalized = pkg_name.replace("-", "_")
-        if importlib.util.find_spec(pkg_name_normalized) is None:
-            if importlib.util.find_spec(pkg_name) is None:
-                missing.append(dep)
+        if not _check_dependency_installed(dep):
+            missing.append(dep)
     return missing
 
 
@@ -207,9 +265,6 @@ async def install_with_retry(
 async def precheck_dependencies(requirements_file: str) -> dict:
     """Pre-check dependency status before installation.
 
-    Args:
-        requirements_file: Path to requirements.txt.
-
     Returns:
         {
             'deps': list[str],
@@ -223,21 +278,7 @@ async def precheck_dependencies(requirements_file: str) -> dict:
     to_install = []
 
     for dep in deps:
-        pkg_name = (
-            dep.split("==")[0]
-            .split(">=")[0]
-            .split("<=")[0]
-            .split("<")[0]
-            .split(">")[0]
-            .split("[")[0]
-            .strip()
-        )
-        pkg_name_normalized = pkg_name.replace("-", "_")
-
-        if (
-            importlib.util.find_spec(pkg_name_normalized) is not None
-            or importlib.util.find_spec(pkg_name) is not None
-        ):
+        if _check_dependency_installed(dep):
             already_installed.append(dep)
         else:
             to_install.append(dep)
