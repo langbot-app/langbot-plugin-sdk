@@ -30,6 +30,8 @@ class MessageReceived(BaseEventModel):
 
     event_name: str = "MessageReceived"
 
+    bot_uuid: str = ""
+    adapter_name: str = ""
     message_id: typing.Union[int, str] = ""
     message_chain: platform_message.MessageChain = pydantic.Field(
         default_factory=platform_message.MessageChain,
@@ -52,6 +54,8 @@ class MessageReceived(BaseEventModel):
     @classmethod
     def from_platform_event(cls, event: platform_events.MessageReceivedEvent) -> "MessageReceived":
         return cls(
+            bot_uuid=event.bot_uuid,
+            adapter_name=event.adapter_name,
             message_id=event.message_id,
             message_chain=event.message_chain,
             sender=event.sender,
