@@ -385,6 +385,8 @@ def test_eba_plugin_event_models_convert_from_platform_events():
         (
             MessageReceived,
             MessageReceivedEvent(
+                bot_uuid="bot-1",
+                adapter_name="discord",
                 message_id="msg-1",
                 message_chain=message_chain,
                 sender=user,
@@ -392,7 +394,7 @@ def test_eba_plugin_event_models_convert_from_platform_events():
                 chat_id="group-1",
                 group=group,
             ),
-            {"message_id": "msg-1", "chat_id": "group-1"},
+            {"message_id": "msg-1", "chat_id": "group-1", "bot_uuid": "bot-1", "adapter_name": "discord"},
         ),
         (
             MessageEdited,

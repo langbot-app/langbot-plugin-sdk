@@ -45,6 +45,7 @@ class MessageChain(pydantic.RootModel[list[pydantic.SerializeAsAny[MessageCompon
             "Voice": Voice,
             "Forward": Forward,
             "File": File,
+            "Face": Face,
             "WeChatMiniPrograms": WeChatMiniPrograms,
             "WeChatForwardMiniPrograms": WeChatForwardMiniPrograms,
             "WeChatEmoji": WeChatEmoji,
