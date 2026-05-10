@@ -313,6 +313,65 @@ class PluginRuntimeHandler(Handler):
                     f"Command {command_context.command} not found"
                 )
 
+        @self.action(RuntimeToPluginAction.RUN_AGENT)
+        async def run_agent(
+            data: dict[str, typing.Any],
+        ) -> typing.AsyncGenerator[ActionResponse, None]:
+            """Run an AgentRunner component."""
+            from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+            from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
+            from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+
+            runner_name = data["runner_name"]
+            context_data = data["context"]
+
+            # Validate context
+            try:
+                run_context = AgentRunContext.model_validate(context_data)
+            except Exception as e:
+                yield ActionResponse.error(f"Context validation failed: {e}")
+                return
+
+            # Find the AgentRunner component
+            runner_component = None
+            for component in self.plugin_container.components:
+                if component.manifest.kind == AgentRunner.__kind__:
+                    if component.manifest.metadata.name == runner_name:
+                        runner_component = component
+                        break
+
+            if runner_component is None:
+                yield ActionResponse.error(
+                    f"AgentRunner {runner_name} not found",
+                    data={"type": "run.failed", "data": {"error": f"AgentRunner {runner_name} not found", "code": "runner.not_found"}}
+                )
+                return
+
+            # Check if initialized
+            if isinstance(runner_component.component_instance, NoneComponent):
+                yield ActionResponse.error(
+                    f"AgentRunner {runner_name} not initialized",
+                    data={"type": "run.failed", "data": {"error": f"AgentRunner {runner_name} not initialized", "code": "runner.not_initialized"}}
+                )
+                return
+
+            runner_instance = runner_component.component_instance
+            assert isinstance(runner_instance, AgentRunner)
+
+            # Run the agent and stream results
+            try:
+                async for result in runner_instance.run(run_context):
+                    yield ActionResponse.success(result.model_dump(mode="json"))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        error=f"Error running agent: {e}",
+                        code="runner.exception",
+                    ).model_dump(mode="json")
+                )
+
         @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, typing.Any]) -> ActionResponse:
             """Retrieve knowledge using a KnowledgeEngine instance."""

@@ -31,6 +31,7 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
+    RuntimeToPluginAction,
 )
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
@@ -429,7 +430,9 @@ class PluginManager:
 
         # refresh plugin container from plugin (components may have changed)
         plugin_container_data = await handler.get_plugin_container()
-        refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(
+            plugin_container_data
+        )
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
         plugin_container.status = refreshed.status
@@ -802,12 +805,24 @@ class PluginManager:
 
                     break
 
-    # AgentRunner methods
+    # AgentRunner methods (Protocol v1)
     async def list_agent_runners(
         self, include_plugins: list[str] | None = None
     ) -> list[dict[str, typing.Any]]:
-        """List all available AgentRunner components from plugins."""
-        from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+        """List all available AgentRunner components from plugins.
+
+        Returns v1 protocol format with capabilities, permissions, and config.
+        A plugin can have multiple AgentRunner components.
+        """
+        from langbot_plugin.api.definition.components.agent_runner.runner import (
+            AgentRunner,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
+            AgentRunnerCapabilities,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
+            AgentRunnerPermissions,
+        )
 
         runners: list[dict[str, typing.Any]] = []
 
@@ -822,13 +837,34 @@ class PluginManager:
 
             for component in plugin.components:
                 if component.manifest.kind == AgentRunner.__kind__:
+                    # Get spec from manifest, with defaults
+                    spec = component.manifest.spec or {}
+
+                    # Parse capabilities from manifest or use class defaults
+                    capabilities_data = spec.get("capabilities", {})
+                    capabilities = AgentRunnerCapabilities(**capabilities_data)
+
+                    # Parse permissions from manifest or use class defaults
+                    permissions_data = spec.get("permissions", {})
+                    permissions = AgentRunnerPermissions(**permissions_data)
+
+                    # Get config schema
+                    config_schema = spec.get("config", [])
+
+                    # Get protocol version
+                    protocol_version = spec.get("protocol_version", "1")
+
                     runners.append(
                         {
                             "plugin_author": plugin.manifest.metadata.author,
                             "plugin_name": plugin.manifest.metadata.name,
                             "runner_name": component.manifest.metadata.name,
                             "runner_description": component.manifest.metadata.description,
-                            "manifest": component.manifest.model_dump(),
+                            "manifest": component.manifest.manifest,  # raw manifest dict
+                            "protocol_version": protocol_version,
+                            "capabilities": capabilities.model_dump(),
+                            "permissions": permissions.model_dump(),
+                            "config": config_schema,
                         }
                     )
 
@@ -841,10 +877,16 @@ class PluginManager:
         runner_name: str,
         context: dict[str, typing.Any],
     ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
-        """Run an AgentRunner component."""
-        from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-        from langbot_plugin.api.entities.builtin.agent_runner.context import (
-            AgentRunContext,
+        """Run an AgentRunner component with Protocol v1.
+
+        Forwards the RUN_AGENT action to the plugin process and streams results back.
+        All errors are converted to run.failed events.
+        """
+        from langbot_plugin.api.definition.components.agent_runner.runner import (
+            AgentRunner,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.result import (
+            AgentRunResult,
         )
 
         # Find the plugin
@@ -858,14 +900,13 @@ class PluginManager:
                 break
 
         if target_plugin is None:
-            yield {
-                "type": "finish",
-                "finish_reason": "error",
-                "content": f"Plugin {plugin_author}/{plugin_name} not found",
-            }
+            yield AgentRunResult.run_failed(
+                error=f"Plugin {plugin_author}/{plugin_name} not found",
+                code="runner.plugin_not_found",
+            ).model_dump(mode="json")
             return
 
-        # Find the component
+        # Find the component (supports multiple runners per plugin)
         target_component = None
         for component in target_plugin.components:
             if (
@@ -876,90 +917,43 @@ class PluginManager:
                 break
 
         if target_component is None:
-            yield {
-                "type": "finish",
-                "finish_reason": "error",
-                "content": f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
-            }
+            yield AgentRunResult.run_failed(
+                error=f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
+                code="runner.not_found",
+            ).model_dump(mode="json")
             return
 
-        # Get the runner instance
-        runner_instance = target_component.python_component_inst
-
-        if runner_instance is None:
-            yield {
-                "type": "finish",
-                "finish_reason": "error",
-                "content": f"AgentRunner {runner_name} not initialized",
-            }
+        # Check if plugin handler exists for forwarding
+        if target_plugin._runtime_plugin_handler is None:
+            yield AgentRunResult.run_failed(
+                error=f"Plugin {plugin_author}/{plugin_name} has no runtime handler",
+                code="runner.handler_not_found",
+            ).model_dump(mode="json")
             return
 
-        # Parse context
-        run_context = AgentRunContext.model_validate(context)
-
-        # Run the agent
+        # Forward RUN_AGENT action to the plugin process and stream results
         try:
-            async for result in runner_instance.run(run_context):
-                yield result.model_dump()
+            gen = target_plugin._runtime_plugin_handler.call_action_generator(
+                RuntimeToPluginAction.RUN_AGENT,
+                {
+                    "runner_name": runner_name,
+                    "context": context,
+                },
+                timeout=300,
+            )
+
+            # call_action_generator yields response.data directly on success,
+            # or raises ActionCallError on failure
+            async for result_data in gen:
+                yield result_data
+
         except Exception as e:
             import traceback
-
             traceback.print_exc()
-            yield {
-                "type": "finish",
-                "finish_reason": "error",
-                "content": f"Error running agent: {e}",
-            }
-
-    # KnowledgeRetriever methods
-    async def list_knowledge_retrievers(
-        self, include_plugins: list[str] | None = None
-    ) -> list[dict[str, typing.Any]]:
-        """List all available KnowledgeRetriever components from plugins."""
-        retrievers: list[dict[str, typing.Any]] = []
-
-        for plugin in self.plugins:
-            if include_plugins is not None:
-                plugin_id = (
-                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
-                )
-                if plugin_id not in include_plugins:
-                    continue
-
-            for component in plugin.components:
-                if component.manifest.kind == "KnowledgeRetriever":
-                    retrievers.append(
-                        {
-                            "plugin_author": plugin.manifest.metadata.author,
-                            "plugin_name": plugin.manifest.metadata.name,
-                            "retriever_name": component.manifest.metadata.name,
-                            "retriever_description": component.manifest.metadata.description,
-                            "manifest": component.manifest.model_dump(),
-                        }
-                    )
-
-        return retrievers
-
-    async def retrieve_knowledge(
-        self,
-        plugin_author: str,
-        plugin_name: str,
-        retriever_name: str,
-        retrieval_context: dict[str, typing.Any],
-    ) -> dict[str, typing.Any]:
-        """Retrieve knowledge using a KnowledgeEngine instance."""
-        target_plugin = self.find_plugin(plugin_author, plugin_name)
-
-        if target_plugin is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
-
-        if target_plugin._runtime_plugin_handler is None:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
-
-        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(
-            retriever_name, retrieval_context
-        )
-        return resp
+            yield AgentRunResult.run_failed(
+                error=f"Error forwarding to plugin: {e}",
+                code="runner.forward_exception",
+            ).model_dump(mode="json")
 
     # ================= Knowledge Engine Methods =================
 

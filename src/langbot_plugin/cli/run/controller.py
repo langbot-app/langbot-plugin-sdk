@@ -30,6 +30,7 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
 )
 from langbot_plugin.api.definition.components.page import Page
 from langbot_plugin.api.definition.components.parser.parser import Parser
+from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 
@@ -269,11 +270,20 @@ class PluginRuntimeController:
             KnowledgeEngine,
             Parser,
             Page,
+            AgentRunner,
         ]
 
         for component_cls in preinitialize_component_classes:
             for component_container in self.plugin_container.components:
+                logger.debug(
+                    f"Checking component {component_container.manifest.metadata.name}: "
+                    f"kind={component_container.manifest.kind}, expected={component_cls.__kind__}"
+                )
                 if component_container.manifest.kind == component_cls.__kind__:
+                    logger.info(
+                        f"Initializing {component_cls.__kind__} component: "
+                        f"{component_container.manifest.metadata.name}"
+                    )
                     component_impl_cls = (
                         component_container.manifest.get_python_component_class()
                     )
@@ -283,6 +293,10 @@ class PluginRuntimeController:
                         self.plugin_container.plugin_instance
                     )
                     await component_container.component_instance.initialize()
+                    logger.info(
+                        f"Component {component_container.manifest.metadata.name} initialized, "
+                        f"instance type: {type(component_container.component_instance).__name__}"
+                    )
 
         logger.info(
             f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized"

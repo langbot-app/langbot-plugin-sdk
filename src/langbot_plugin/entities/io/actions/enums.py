@@ -92,6 +92,9 @@ class RuntimeToPluginAction(ActionType):
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
 
+    # AgentRunner actions
+    RUN_AGENT = "run_agent"
+
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
     INGEST_DOCUMENT = "ingest_document"
     DELETE_DOCUMENT = "delete_document"
@@ -125,10 +128,6 @@ class LangBotToRuntimeAction(ActionType):
     # AgentRunner actions
     LIST_AGENT_RUNNERS = "list_agent_runners"
     RUN_AGENT = "run_agent"
-
-    # Knowledge Retriever actions
-    LIST_KNOWLEDGE_RETRIEVERS = "list_knowledge_retrievers"
-    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
     # Knowledge Engine actions (LangBot -> Runtime -> Plugin)
     LIST_KNOWLEDGE_ENGINES = "list_knowledge_engines"
