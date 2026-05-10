@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 
+from packaging.requirements import Requirement
 from pip._internal import main as pipmain
 
 
@@ -147,10 +148,20 @@ _dist_to_packages: dict[str, set[str]] | None = None
 
 
 def _extract_package_name(dep_spec: str) -> str:
-    """Extract the pip package name from a dependency spec string."""
-    for sep in ("==", ">=", "<=", "<", ">", "["):
-        dep_spec = dep_spec.split(sep)[0]
-    return dep_spec.strip()
+    """Extract the pip package name from a dependency spec string.
+
+    Uses ``packaging.requirements.Requirement`` for proper PEP 508 parsing,
+    handling all version operators, extras, environment markers, and URL
+    references (e.g. ``yiri-mirai>=1.0`` → ``yiri-mirai``).
+
+    Falls back to a simple operator split for truly malformed specs.
+    """
+    try:
+        return Requirement(dep_spec).name
+    except Exception:
+        for sep in ("==", ">=", "<=", "!=", "~=", "===", "<", ">", "["):
+            dep_spec = dep_spec.split(sep)[0]
+        return dep_spec.strip()
 
 
 def _is_distribution_installed(pkg_name: str) -> bool:
@@ -246,7 +257,7 @@ async def install_with_retry(
     """
     last_error = ""
     for attempt in range(max_retries):
-        returncode, downloaded_bytes, _ = await install_single_async(
+        returncode, downloaded_bytes, output = await install_single_async(
             package, extra_params
         )
         if returncode == 0:
@@ -255,6 +266,8 @@ async def install_with_retry(
         last_error = (
             f"Attempt {attempt + 1}/{max_retries} failed with code {returncode}"
         )
+        if output.strip():
+            last_error += f"\n{output.strip()}"
 
         if attempt < max_retries - 1:
             await asyncio.sleep(retry_delay)

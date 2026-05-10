@@ -328,20 +328,22 @@ class PluginManager:
             total_downloaded = 0
             start_time = time.time()
             failed_deps = []
+            already_installed_count = len(already_installed)
+            to_install_count = len(to_install)
 
-            for i, dep in enumerate(deps):
+            for i, dep in enumerate(to_install):
                 elapsed = time.time() - start_time
                 yield {
                     "current_action": "installing dependencies",
                     "metadata": {
                         "deps_total": total_deps,
-                        "deps_installed": i,
-                        "deps_remaining": total_deps - i,
+                        "deps_installed": already_installed_count + i,
+                        "deps_remaining": to_install_count - i,
                         "current_dep": dep,
                         "deps_downloaded_size": total_downloaded,
                         "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
-                        "already_installed": len(already_installed),
-                        "to_install": len(to_install),
+                        "already_installed": already_installed_count,
+                        "to_install": to_install_count,
                     },
                 }
 
