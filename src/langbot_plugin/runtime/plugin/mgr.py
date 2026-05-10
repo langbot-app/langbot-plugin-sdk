@@ -312,10 +312,22 @@ class PluginManager:
         yield {"current_action": "installing dependencies"}
         requirements_file = os.path.join(plugin_path, "requirements.txt")
         if os.path.exists(requirements_file):
-            deps = pkgmgr_helper.parse_requirements(requirements_file)
+            precheck_result = await pkgmgr_helper.precheck_dependencies(
+                requirements_file
+            )
+            deps = precheck_result["deps"]
+            to_install = precheck_result["to_install"]
+            already_installed = precheck_result["already_installed"]
+
+            logger.info(
+                f"Dependency precheck: {len(already_installed)} already installed, "
+                f"{len(to_install)} to install"
+            )
+
             total_deps = len(deps)
             total_downloaded = 0
             start_time = time.time()
+            failed_deps = []
 
             for i, dep in enumerate(deps):
                 elapsed = time.time() - start_time
@@ -328,33 +340,54 @@ class PluginManager:
                         "current_dep": dep,
                         "deps_downloaded_size": total_downloaded,
                         "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
+                        "already_installed": len(already_installed),
+                        "to_install": len(to_install),
                     },
                 }
 
-                returncode, downloaded_bytes, output = (
-                    await pkgmgr_helper.install_single_async(dep)
+                returncode, downloaded_bytes, error_msg = (
+                    await pkgmgr_helper.install_with_retry(dep, max_retries=3)
                 )
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
-                    error_message = f"Failed to install dependency: {dep}"
-                    if output:
-                        error_message = f"{error_message}\n{output.strip()}"
-                    logger.error(error_message)
-                    raise RuntimeError(error_message)
+                    logger.error(
+                        f"Failed to install dependency after retries: {dep}, "
+                        f"error: {error_msg}"
+                    )
+                    failed_deps.append(dep)
+
+            missing_deps = await pkgmgr_helper.verify_dependencies(deps)
+            if missing_deps:
+                logger.warning(
+                    f"Dependency verification failed, missing: {missing_deps}"
+                )
+                for dep in missing_deps:
+                    if dep not in failed_deps:
+                        failed_deps.append(dep)
 
             elapsed = time.time() - start_time
             yield {
                 "current_action": "installing dependencies",
                 "metadata": {
                     "deps_total": total_deps,
-                    "deps_installed": total_deps,
+                    "deps_installed": total_deps - len(failed_deps),
                     "deps_remaining": 0,
+                    "deps_failed": len(failed_deps),
+                    "failed_deps": failed_deps,
                     "current_dep": "",
                     "deps_downloaded_size": total_downloaded,
                     "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
                 },
             }
+
+            if failed_deps:
+                error_message = (
+                    f"Plugin {plugin_author}/{plugin_name} has {len(failed_deps)} "
+                    f"failed dependencies: {failed_deps}"
+                )
+                logger.error(error_message)
+                raise RuntimeError(error_message)
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}

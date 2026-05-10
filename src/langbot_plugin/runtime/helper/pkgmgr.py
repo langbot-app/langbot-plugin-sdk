@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import os
 import re
 import subprocess
@@ -139,3 +140,111 @@ def _parse_downloaded_bytes(output: str) -> int:
             else:
                 total += int(val)
     return total
+
+
+async def verify_dependencies(deps: list[str]) -> list[str]:
+    """Verify that installed dependencies are actually importable.
+
+    Args:
+        deps: List of dependency specs, e.g. ['pkg==1.0.0', 'pkg>=2.0']
+
+    Returns:
+        List of dependencies that failed import verification.
+    """
+    missing = []
+    for dep in deps:
+        pkg_name = (
+            dep.split("==")[0]
+            .split(">=")[0]
+            .split("<=")[0]
+            .split("<")[0]
+            .split(">")[0]
+            .split("[")[0]
+            .strip()
+        )
+        pkg_name_normalized = pkg_name.replace("-", "_")
+        if importlib.util.find_spec(pkg_name_normalized) is None:
+            if importlib.util.find_spec(pkg_name) is None:
+                missing.append(dep)
+    return missing
+
+
+async def install_with_retry(
+    package: str,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    extra_params: list | None = None,
+) -> tuple[int, int, str]:
+    """Install a package with retry on failure.
+
+    Args:
+        package: Package name to install.
+        max_retries: Maximum number of retry attempts.
+        retry_delay: Delay between retries in seconds.
+        extra_params: Additional pip parameters.
+
+    Returns:
+        (returncode, downloaded_bytes, error_message)
+    """
+    last_error = ""
+    for attempt in range(max_retries):
+        returncode, downloaded_bytes, _ = await install_single_async(
+            package, extra_params
+        )
+        if returncode == 0:
+            return returncode, downloaded_bytes, ""
+
+        last_error = (
+            f"Attempt {attempt + 1}/{max_retries} failed with code {returncode}"
+        )
+
+        if attempt < max_retries - 1:
+            await asyncio.sleep(retry_delay)
+
+    return returncode, 0, last_error
+
+
+async def precheck_dependencies(requirements_file: str) -> dict:
+    """Pre-check dependency status before installation.
+
+    Args:
+        requirements_file: Path to requirements.txt.
+
+    Returns:
+        {
+            'deps': list[str],
+            'already_installed': list[str],
+            'to_install': list[str],
+            'conflicts': list[str],
+        }
+    """
+    deps = parse_requirements(requirements_file)
+    already_installed = []
+    to_install = []
+
+    for dep in deps:
+        pkg_name = (
+            dep.split("==")[0]
+            .split(">=")[0]
+            .split("<=")[0]
+            .split("<")[0]
+            .split(">")[0]
+            .split("[")[0]
+            .strip()
+        )
+        pkg_name_normalized = pkg_name.replace("-", "_")
+
+        if (
+            importlib.util.find_spec(pkg_name_normalized) is not None
+            or importlib.util.find_spec(pkg_name) is not None
+        ):
+            already_installed.append(dep)
+        else:
+            to_install.append(dep)
+
+    return {
+        "deps": deps,
+        "already_installed": already_installed,
+        "to_install": to_install,
+        "conflicts": [],
+    }
