@@ -107,10 +107,67 @@ class AgentRunContext(BaseModel):
     subject: SubjectContext | None = None
     messages: list[Message] = []
     input: AgentInput
+    params: dict[str, Any] = {}
     resources: AgentResources
+    state: AgentRunState = AgentRunState()
     runtime: AgentRuntimeContext
     config: dict[str, Any] = {}
 ```
+
+字段边界：
+- `config`: 静态 runner 配置，来自 pipeline/runner config。
+- `params`: 单次运行业务参数，只读，非持久化。
+- `state`: Host 管理的 scoped 状态快照，持久化。
+- `runtime.metadata`: Host/runtime 可观测性信息，非业务输入契约。
+
+### 5.0.1 params
+
+单次运行公开业务参数。
+
+语义：
+- JSON-safe，runner 只读
+- 非持久化（不带到下一次 run）
+- 不等同于 LangBot query.variables
+- Host 应过滤内部变量、secrets、权限控制变量
+
+用途：
+- Workflow inputs
+- Prompt variables
+- Pipeline 前序 stage 生成的公开业务变量
+- 用户定义变量
+
+### 5.0.2 AgentRunState
+
+```python
+class AgentRunState(BaseModel):
+    conversation: dict[str, Any] = {}
+    actor: dict[str, Any] = {}
+    subject: dict[str, Any] = {}
+    runner: dict[str, Any] = {}
+```
+
+Host 管理的 scoped 状态快照。
+
+语义：
+- Scoped（conversation/actor/subject/runner）
+- 持久化（Host 持久化并下次 run 重新加载）
+- Runner 可读，通过 `state.updated` 结果请求更新
+
+Scope 定义：
+- `conversation`: 当前会话 + 当前 runner 状态。例如：外部平台 conversation/thread ID，会话级上下文。
+- `actor`: 当前用户跨会话状态。例如：用户偏好、长期记忆、用户画像数据。
+- `subject`: 当前群组/频道/对象状态。例如：群设置、频道上下文、共享状态。
+- `runner`: Runner 实例级状态（谨慎使用）。例如：runner 级配置或缓存。
+
+Key 命名约定：
+- 使用命名空间前缀：`external.*`, `memory.*`, `config.*`, `cache.*`
+- 示例：`external.conversation_id`, `external.thread_id`, `memory.summary`
+
+重要：
+- State 不是 config（静态 runner 配置）。
+- State 不是 params（单次运行业务参数）。
+- State 不是 runtime.metadata（Host 可观测性信息）。
+- State 更新应通过 `AgentRunResult.state_updated()` 请求。
 
 ### 5.1 AgentTrigger
 
@@ -264,13 +321,21 @@ LangBot 映射为 `Message`。
 {
   "type": "state.updated",
   "data": {
-    "key": "external_conversation_id",
+    "scope": "conversation",
+    "key": "external.conversation_id",
     "value": "abc"
   }
 }
 ```
 
-本阶段只记录，不要求 LangBot 自动持久化。官方插件应优先使用 plugin storage。
+Runner 请求 Host 持久化状态变更。
+
+参数：
+- `scope`: 状态 scope，必须为 `conversation`、`actor`、`subject`、`runner` 之一。默认 `conversation`（向后兼容）。
+- `key`: 状态 key，应使用命名空间前缀（如 `external.conversation_id`）。
+- `value`: 状态值，必须 JSON-serializable。
+
+SDK 定义协议；LangBot host 处理实际持久化。本阶段 Host 应支持持久化，Runner 应正确使用 scope。
 
 ### 6.6 run.completed
 

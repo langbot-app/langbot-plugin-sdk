@@ -17,6 +17,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     StorageResource,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.agent_runner.state import (
+    AgentRunState,
+    VALID_STATE_SCOPES,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.event import (
     ConversationContext,
     AgentEventContext,
@@ -46,6 +50,8 @@ __all__ = [
     "FileResource",
     "StorageResource",
     "AgentRuntimeContext",
+    "AgentRunState",
+    "VALID_STATE_SCOPES",
     "ConversationContext",
     "AgentEventContext",
     "ActorContext",
