@@ -7,6 +7,7 @@ import pydantic
 import enum
 
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
+from langbot_plugin.api.entities.builtin.agent_runner.state import VALID_STATE_SCOPES, STATE_SCOPE_LITERAL
 
 
 class AgentRunResultType(str, enum.Enum):
@@ -100,15 +101,48 @@ class AgentRunResult(pydantic.BaseModel):
         )
 
     @classmethod
-    def state_updated(cls, key: str, value: typing.Any) -> "AgentRunResult":
+    def state_updated(
+        cls,
+        key: str,
+        value: typing.Any,
+        scope: STATE_SCOPE_LITERAL = "conversation",
+    ) -> "AgentRunResult":
         """Create a state.updated result.
 
-        LangBot records this but does not auto-persist.
-        Official plugins should use plugin storage instead.
+        Runner requests host to persist a state change.
+        SDK defines the protocol; LangBot host handles actual persistence.
+
+        Args:
+            key: State key, should use namespace prefix (e.g., external.conversation_id)
+            value: State value, must be JSON-serializable
+            scope: State scope - one of: conversation, actor, subject, runner.
+                Defaults to "conversation" for backward compatibility.
+
+        Returns:
+            AgentRunResult with type="state.updated" and data containing scope/key/value.
+
+        Raises:
+            ValueError: If scope is not one of the valid scopes.
+
+        Example:
+            # Store external platform conversation ID
+            yield AgentRunResult.state_updated(
+                "external.conversation_id",
+                "abc123",
+                scope="conversation"
+            )
+
+            # Store user preference (backward compatible)
+            yield AgentRunResult.state_updated("preferred_language", "en")
         """
+        if scope not in VALID_STATE_SCOPES:
+            raise ValueError(
+                f"Invalid scope '{scope}'. Must be one of: {', '.join(VALID_STATE_SCOPES)}"
+            )
+
         return cls(
             type=AgentRunResultType.STATE_UPDATED,
-            data={"key": key, "value": value},
+            data={"scope": scope, "key": key, "value": value},
         )
 
     @classmethod

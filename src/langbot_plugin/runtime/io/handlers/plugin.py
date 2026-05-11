@@ -221,6 +221,24 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.INVOKE_LLM_STREAM)
+        async def invoke_llm_stream(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            """Forward INVOKE_LLM_STREAM to LangBot control handler."""
+            timeout = data.pop("timeout", 120.0)
+            if not isinstance(timeout, (int, float)) or timeout <= 0:
+                timeout = 120.0
+
+            async for chunk in self.context.control_handler.call_action_generator(
+                PluginToRuntimeAction.INVOKE_LLM_STREAM,
+                {
+                    **data,
+                },
+                timeout=float(timeout),
+            ):
+                yield handler.ActionResponse.success(chunk)
+
         @self.action(PluginToRuntimeAction.INVOKE_EMBEDDING)
         async def invoke_embedding(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(

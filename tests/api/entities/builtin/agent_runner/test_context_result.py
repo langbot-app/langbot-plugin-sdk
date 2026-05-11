@@ -19,6 +19,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     StorageResource,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.agent_runner.state import (
+    AgentRunState,
+    VALID_STATE_SCOPES,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
     AgentRunnerCapabilities,
 )
@@ -61,6 +65,74 @@ class TestAgentRunContextV1:
         assert ctx.input.text == "Hello"
         assert ctx.messages == []
         assert ctx.config == {}
+        # New fields: params and state have defaults
+        assert ctx.params == {}
+        assert ctx.state.conversation == {}
+        assert ctx.state.actor == {}
+        assert ctx.state.subject == {}
+        assert ctx.state.runner == {}
+
+    def test_params_default_empty_dict(self):
+        """Test params defaults to empty dict."""
+        trigger = AgentTrigger(type="message.received")
+        input = AgentInput(text="Hello")
+        resources = AgentResources()
+        runtime = AgentRuntimeContext()
+
+        ctx = AgentRunContext(
+            run_id="run_params",
+            trigger=trigger,
+            input=input,
+            resources=resources,
+            runtime=runtime,
+        )
+
+        assert ctx.params == {}
+        assert isinstance(ctx.params, dict)
+
+    def test_state_default_all_scopes_empty(self):
+        """Test state defaults with all scopes empty."""
+        trigger = AgentTrigger(type="message.received")
+        input = AgentInput(text="Hello")
+        resources = AgentResources()
+        runtime = AgentRuntimeContext()
+
+        ctx = AgentRunContext(
+            run_id="run_state",
+            trigger=trigger,
+            input=input,
+            resources=resources,
+            runtime=runtime,
+        )
+
+        assert ctx.state.conversation == {}
+        assert ctx.state.actor == {}
+        assert ctx.state.subject == {}
+        assert ctx.state.runner == {}
+
+    def test_params_and_state_from_dict(self):
+        """Test constructing params and state from dict."""
+        data = {
+            "run_id": "run_dict",
+            "trigger": {"type": "message.received", "source": "pipeline"},
+            "input": {"text": "Hello"},
+            "resources": {},
+            "runtime": {},
+            "params": {"workflow_input": "value1", "prompt_var": "value2"},
+            "state": {
+                "conversation": {"external.conversation_id": "conv_abc"},
+                "actor": {"preferred_language": "en"},
+                "subject": {},
+                "runner": {},
+            },
+        }
+
+        ctx = AgentRunContext.model_validate(data)
+
+        assert ctx.params["workflow_input"] == "value1"
+        assert ctx.params["prompt_var"] == "value2"
+        assert ctx.state.conversation["external.conversation_id"] == "conv_abc"
+        assert ctx.state.actor["preferred_language"] == "en"
 
     def test_full_context_validate(self):
         """Test full context with all optional fields."""
@@ -98,10 +170,18 @@ class TestAgentRunContextV1:
             text="What's up?",
             contents=[ContentElement(type="text", text="What's up?")],
         )
+        params = {
+            "workflow_input": "test_workflow",
+            "custom_var": 42,
+        }
         resources = AgentResources(
             models=[ModelResource(model_id="gpt-4", model_type="chat")],
             tools=[ToolResource(tool_name="search", tool_type="function")],
             storage=StorageResource(plugin_storage=True, workspace_storage=True),
+        )
+        state = AgentRunState(
+            conversation={"external.conversation_id": "conv_xyz"},
+            actor={"memory.summary": "User likes coffee"},
         )
         runtime = AgentRuntimeContext(
             langbot_version="1.0.0",
@@ -119,7 +199,9 @@ class TestAgentRunContextV1:
             subject=subject,
             messages=messages,
             input=input,
+            params=params,
             resources=resources,
+            state=state,
             runtime=runtime,
             config={"model": "gpt-4"},
         )
@@ -129,6 +211,9 @@ class TestAgentRunContextV1:
         assert ctx.resources.models[0].model_id == "gpt-4"
         assert len(ctx.messages) == 2
         assert ctx.config["model"] == "gpt-4"
+        assert ctx.params["workflow_input"] == "test_workflow"
+        assert ctx.state.conversation["external.conversation_id"] == "conv_xyz"
+        assert ctx.state.actor["memory.summary"] == "User likes coffee"
 
     def test_context_missing_required_field(self):
         """Test that missing required fields raise validation error."""
@@ -150,6 +235,49 @@ class TestAgentRunContextV1:
         ctx = AgentRunContext.model_validate(data)
         assert ctx.run_id == "run_dict"
         assert ctx.input.text == "Hello from dict"
+
+
+class TestAgentRunState:
+    """Test AgentRunState entity."""
+
+    def test_state_default_factory(self):
+        """Test state creates with all empty dicts."""
+        state = AgentRunState()
+        assert state.conversation == {}
+        assert state.actor == {}
+        assert state.subject == {}
+        assert state.runner == {}
+
+    def test_state_with_values(self):
+        """Test state with actual values."""
+        state = AgentRunState(
+            conversation={"external.conversation_id": "abc", "external.thread_id": "xyz"},
+            actor={"preferred_language": "zh"},
+            subject={"group_topic": "general"},
+            runner={"cache_version": 1},
+        )
+
+        assert state.conversation["external.conversation_id"] == "abc"
+        assert state.actor["preferred_language"] == "zh"
+        assert state.subject["group_topic"] == "general"
+        assert state.runner["cache_version"] == 1
+
+    def test_state_model_dump(self):
+        """Test state serialization."""
+        state = AgentRunState(
+            conversation={"key": "value"},
+        )
+        dumped = state.model_dump()
+        assert dumped["conversation"]["key"] == "value"
+        assert dumped["actor"] == {}
+
+    def test_valid_state_scopes_constant(self):
+        """Test VALID_STATE_SCOPES contains all scopes."""
+        assert "conversation" in VALID_STATE_SCOPES
+        assert "actor" in VALID_STATE_SCOPES
+        assert "subject" in VALID_STATE_SCOPES
+        assert "runner" in VALID_STATE_SCOPES
+        assert len(VALID_STATE_SCOPES) == 4
 
 
 class TestAgentRunResultV1:
@@ -210,16 +338,49 @@ class TestAgentRunResultV1:
         assert result.type == AgentRunResultType.TOOL_CALL_COMPLETED
         assert result.data["error"] == "API timeout"
 
-    def test_state_updated_validate(self):
-        """Test state.updated result."""
+    def test_state_updated_backward_compatible(self):
+        """Test state.updated backward compatible (default scope=conversation)."""
         result = AgentRunResult.state_updated(
-            key="external_conversation_id",
+            key="external.conversation_id",
             value="abc123",
         )
 
         assert result.type == AgentRunResultType.STATE_UPDATED
-        assert result.data["key"] == "external_conversation_id"
+        assert result.data["scope"] == "conversation"
+        assert result.data["key"] == "external.conversation_id"
         assert result.data["value"] == "abc123"
+
+    def test_state_updated_with_scope(self):
+        """Test state.updated with explicit scope."""
+        result = AgentRunResult.state_updated(
+            key="preferred_language",
+            value="en",
+            scope="actor",
+        )
+
+        assert result.type == AgentRunResultType.STATE_UPDATED
+        assert result.data["scope"] == "actor"
+        assert result.data["key"] == "preferred_language"
+        assert result.data["value"] == "en"
+
+    def test_state_updated_all_scopes(self):
+        """Test state.updated with all valid scopes."""
+        for scope in VALID_STATE_SCOPES:
+            result = AgentRunResult.state_updated(
+                key="test_key",
+                value="test_value",
+                scope=scope,
+            )
+            assert result.data["scope"] == scope
+
+    def test_state_updated_invalid_scope_raises(self):
+        """Test state.updated with invalid scope raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid scope"):
+            AgentRunResult.state_updated(
+                key="test_key",
+                value="test_value",
+                scope="invalid_scope",
+            )
 
     def test_run_completed_validate(self):
         """Test run.completed result."""
