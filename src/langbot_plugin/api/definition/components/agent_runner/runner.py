@@ -44,9 +44,14 @@ class AgentRunner(BaseComponent):
                 )
 
             async def run(self, ctx: AgentRunContext) -> AsyncGenerator[AgentRunResult, None]:
-                # Stream response from LLM
-                for chunk_text in ["Hello", " ", "world"]:
-                    chunk = MessageChunk(role="assistant", content=chunk_text)
+                # Get API proxy with run_id for LLM/tool/KB calls
+                api = self.get_run_api(ctx)
+
+                # Stream response from LLM (with run_id tracking)
+                model_uuid = ctx.resources.models[0].model_id
+                messages = ctx.messages
+
+                async for chunk in api.invoke_llm_stream(model_uuid, messages):
                     yield AgentRunResult.message_delta(chunk)
 
                 # Final message
@@ -57,6 +62,25 @@ class AgentRunner(BaseComponent):
 
     __kind__ = "AgentRunner"
     __protocol_version__ = "1"
+
+    def get_run_api(self, ctx: AgentRunContext) -> "AgentRunAPIProxy":
+        """Get an API proxy configured with the run context.
+
+        Use this proxy for LLM calls, tool calls, and knowledge base retrieval
+        to ensure proper context tracking and resource authorization.
+
+        Args:
+            ctx: The agent run context containing run_id, runtime.query_id, and resources.
+
+        Returns:
+            AgentRunAPIProxy: API proxy with context for Host API calls.
+        """
+        from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+
+        return AgentRunAPIProxy(
+            ctx=ctx,
+            plugin_runtime_handler=self.plugin.plugin_runtime_handler,
+        )
 
     @classmethod
     def get_capabilities(cls) -> AgentRunnerCapabilities:

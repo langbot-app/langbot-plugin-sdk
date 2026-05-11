@@ -135,10 +135,10 @@ def create_mock_plugin(
             for idx, (rname, _) in enumerate(runner_components):
                 if rname == runner_name and idx < len(mock_handler_responses):
                     for resp in mock_handler_responses[idx]:
-                        yield {"ok": True, "data": resp}
+                        yield resp  # Yield response data directly (matches real call_action_generator)
                     return
             # No matching responses found
-            yield {"ok": False, "message": f"No mock responses for {runner_name}"}
+            yield {"type": "run.failed", "data": {"error": f"No mock responses for {runner_name}", "code": "runner.mock_error"}}
 
         mock_handler = Mock()
         mock_handler.call_action_generator = mock_call_action_generator
