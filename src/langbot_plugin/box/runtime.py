@@ -117,6 +117,8 @@ class BoxRuntime:
         """
         self._box_config.update(config)
         self._apply_config_to_backends(config)
+        if not self._sessions:
+            self._backend = None
 
     def _apply_config_to_backends(self, config: dict) -> None:
         """Apply configuration sections to corresponding backends."""

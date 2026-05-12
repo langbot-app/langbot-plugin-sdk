@@ -164,6 +164,26 @@ async def test_auto_detect_none_when_all_unavailable(logger):
     assert selected is None
 
 
+@pytest.mark.anyio
+async def test_init_config_reselects_backend_before_sessions(logger):
+    """INIT config from LangBot can change the selected backend."""
+    backend_docker = MockBackend(logger, 'docker', available=True)
+    backend_e2b = MockBackend(logger, 'e2b', available=True)
+
+    runtime = BoxRuntime(logger, backends=[backend_docker, backend_e2b])
+
+    with mock.patch('os.getenv', return_value=None):
+        await runtime.initialize()
+        assert runtime._backend is backend_docker
+
+        runtime.init({'backend': 'e2b'})
+        assert runtime._backend is None
+
+        selected = await runtime._get_backend()
+
+    assert selected is backend_e2b
+
+
 # ── Custom backends list ────────────────────────────────────────────────
 
 def test_custom_backends_list_preserved(logger):
