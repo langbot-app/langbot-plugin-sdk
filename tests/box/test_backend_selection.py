@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import datetime as dt
 from unittest import mock
 
 import pytest
 
 from langbot_plugin.box.backend import BaseSandboxBackend
+from langbot_plugin.box.models import BoxSessionInfo, BoxSpec
 from langbot_plugin.box.runtime import BoxRuntime
 
 
@@ -23,18 +25,43 @@ class MockBackend(BaseSandboxBackend):
         super().__init__(logger)
         self.name = name
         self._available = available
+        self._alive = True
+        self.started_sessions = 0
+        self.stopped_sessions = 0
 
     async def is_available(self) -> bool:
         return self._available
 
     async def start_session(self, spec):
-        pass
+        self.started_sessions += 1
+        now = dt.datetime.now(dt.timezone.utc)
+        return BoxSessionInfo(
+            session_id=spec.session_id,
+            backend_name=self.name,
+            backend_session_id=f'{self.name}-{self.started_sessions}',
+            image=spec.image,
+            network=spec.network,
+            host_path=spec.host_path,
+            host_path_mode=spec.host_path_mode,
+            mount_path=spec.mount_path,
+            persistent=spec.persistent,
+            cpus=spec.cpus,
+            memory_mb=spec.memory_mb,
+            pids_limit=spec.pids_limit,
+            read_only_rootfs=spec.read_only_rootfs,
+            workspace_quota_mb=spec.workspace_quota_mb,
+            created_at=now,
+            last_used_at=now,
+        )
 
     async def exec(self, session, spec):
         pass
 
     async def stop_session(self, session):
-        pass
+        self.stopped_sessions += 1
+
+    async def is_session_alive(self, session) -> bool:
+        return self._alive
 
 
 # ── E2B backend creation ────────────────────────────────────────────────
@@ -182,6 +209,24 @@ async def test_init_config_reselects_backend_before_sessions(logger):
         selected = await runtime._get_backend()
 
     assert selected is backend_e2b
+
+
+@pytest.mark.anyio
+async def test_create_session_recreates_disappeared_backend_session(logger):
+    """A stale in-memory session is dropped if its backend session vanished."""
+    backend = MockBackend(logger, 'docker', available=True)
+    runtime = BoxRuntime(logger, backends=[backend])
+    spec = BoxSpec(session_id='mcp-shared', cmd='true', persistent=True, read_only_rootfs=False)
+
+    with mock.patch('os.getenv', return_value=None):
+        first = await runtime.create_session(spec)
+        backend._alive = False
+        second = await runtime.create_session(spec)
+
+    assert first['backend_session_id'] == 'docker-1'
+    assert second['backend_session_id'] == 'docker-2'
+    assert backend.started_sessions == 2
+    assert backend.stopped_sessions == 1
 
 
 # ── Custom backends list ────────────────────────────────────────────────

@@ -266,6 +266,18 @@ class BoxRuntime:
             existing = self._sessions.get(spec.session_id)
             if existing is not None:
                 self._assert_session_compatible(existing.info, spec)
+                backend = await self._get_backend()
+                if not await backend.is_session_alive(existing.info):
+                    self.logger.warning(
+                        'LangBot Box session backend disappeared, recreating: '
+                        f'session_id={spec.session_id} '
+                        f'backend_session_id={existing.info.backend_session_id} '
+                        f'backend={existing.info.backend_name}'
+                    )
+                    await self._drop_session_locked(spec.session_id)
+                    existing = None
+
+            if existing is not None:
                 existing.info.last_used_at = dt.datetime.now(_UTC)
                 self.logger.info(
                     'LangBot Box session reused: '

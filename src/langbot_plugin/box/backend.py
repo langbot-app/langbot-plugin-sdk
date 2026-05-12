@@ -62,6 +62,9 @@ class BaseSandboxBackend(abc.ABC):
     async def stop_session(self, session: BoxSessionInfo):
         pass
 
+    async def is_session_alive(self, session: BoxSessionInfo) -> bool:
+        return True
+
     async def start_managed_process(self, session: BoxSessionInfo, spec):
         raise BoxError(f'{self.name} backend does not support managed processes')
 
@@ -223,6 +226,20 @@ class CLISandboxBackend(BaseSandboxBackend):
             timeout_sec=20,
             check=False,
         )
+
+    async def is_session_alive(self, session: BoxSessionInfo) -> bool:
+        result = await self._run_command(
+            [
+                self.command,
+                'inspect',
+                '-f',
+                '{{.State.Running}}',
+                session.backend_session_id,
+            ],
+            timeout_sec=5,
+            check=False,
+        )
+        return result.return_code == 0 and result.stdout.strip().lower() == 'true'
 
     async def cleanup_orphaned_containers(self, current_instance_id: str = ''):
         """Remove langbot.box containers from previous instances.
