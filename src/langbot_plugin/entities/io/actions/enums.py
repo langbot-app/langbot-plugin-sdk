@@ -61,6 +61,7 @@ class PluginToRuntimeAction(ActionType):
     CALL_TOOL = "call_tool"
 
     INVOKE_EMBEDDING = "invoke_embedding"
+    INVOKE_RERANK = "invoke_rerank"
     VECTOR_UPSERT = "vector_upsert"
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"

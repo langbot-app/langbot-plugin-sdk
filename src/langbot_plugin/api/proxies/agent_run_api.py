@@ -386,3 +386,54 @@ class AgentRunAPIProxy:
                 PluginToRuntimeAction.GET_LANGBOT_VERSION, {}
             )
         )["version"]
+
+    # ================= Rerank API =================
+
+    async def invoke_rerank(
+        self,
+        rerank_model_uuid: str,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]]:
+        """Invoke a rerank model to re-score documents.
+
+        Args:
+            rerank_model_uuid: UUID of the rerank model
+            query: The query text for reranking
+            documents: List of document texts to rerank
+            top_k: Optional number of top results to return
+            timeout: Request timeout in seconds
+
+        Returns:
+            List of dicts with 'index' and 'relevance_score' keys,
+            sorted by relevance_score descending
+
+        Example:
+            results = await api.invoke_rerank(
+                rerank_model_uuid="xxx-xxx",
+                query="What is machine learning?",
+                documents=["Doc 1 text", "Doc 2 text", "Doc 3 text"],
+                top_k=5,
+            )
+            # results = [
+            #     {"index": 2, "relevance_score": 0.95},
+            #     {"index": 0, "relevance_score": 0.82},
+            #     ...
+            # ]
+        """
+        # Note: Rerank model access is validated by LangBot host
+        # The model must be in ctx.resources.models with rerank capability
+        resp = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.INVOKE_RERANK,
+            {
+                "run_id": self.run_id,
+                "rerank_model_uuid": rerank_model_uuid,
+                "query": query,
+                "documents": documents,
+                "top_k": top_k,
+            },
+            timeout=timeout,
+        )
+        return resp.get("results", [])
