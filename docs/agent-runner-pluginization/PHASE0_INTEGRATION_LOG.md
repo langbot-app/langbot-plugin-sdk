@@ -92,3 +92,34 @@ LangBot + SDK + runner repo Phase 0 聃调通过。
    - 持久化 migration
    - 模板 `ai.yaml/default-pipeline-config.json` 更新
    - proxy action 二次权限校验
+
+---
+
+## Phase 3 完成记录 (2026-05-13)
+
+### 迁移完成
+
+所有 7 个官方 runner 插件已完成迁移：
+
+| 插件 | 状态 | 实现位置 |
+|------|------|----------|
+| local-agent | ✅ | `langbot-local-agent/` (独立仓库) |
+| dify-agent | ✅ | `langbot-agent-runner/dify-agent/` |
+| n8n-agent | ✅ | `langbot-agent-runner/n8n-agent/` |
+| coze-agent | ✅ | `langbot-agent-runner/coze-agent/` |
+| dashscope-agent | ✅ | `langbot-agent-runner/dashscope-agent/` |
+| langflow-agent | ✅ | `langbot-agent-runner/langflow-agent/` |
+| tbox-agent | ✅ | `langbot-agent-runner/tbox-agent/` |
+
+### 新增文件
+
+每个插件包含：
+- `components/agent_runner/default.py` - AgentRunner 实现
+- `components/agent_runner/default.yaml` - 组件 manifest
+- `pkg/*_client.py` - 平台 API 客户端
+- `main.py` - 插件入口
+
+### LangBot 侧变更
+
+- 旧 runner 文件标记为 legacy（添加 DEPRECATED docstring）
+- 新增 `PROGRESS.md` 跟踪实现进度
