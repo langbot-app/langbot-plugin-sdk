@@ -20,6 +20,17 @@ logger = logging.getLogger(__name__)
 LONG_RUNNING_OPERATION_TIMEOUT = 180.0
 
 
+def _get_caller_plugin_identity(handler_instance: "PluginConnectionHandler") -> str | None:
+    """Get the caller plugin identity (author/name) from the handler instance.
+
+    Returns None if the handler is not associated with a registered plugin.
+    """
+    for plugin_container in handler_instance.context.plugin_mgr.plugins:
+        if plugin_container._runtime_plugin_handler == handler_instance:
+            return f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+    return None
+
+
 class PluginConnectionHandler(handler.Handler):
     """The handler for plugin connection."""
 
@@ -212,6 +223,11 @@ class PluginConnectionHandler(handler.Handler):
             if not isinstance(timeout, (int, float)) or timeout <= 0:
                 timeout = 120.0
 
+            # Inject caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.INVOKE_LLM,
                 {
@@ -229,6 +245,11 @@ class PluginConnectionHandler(handler.Handler):
             timeout = data.pop("timeout", 120.0)
             if not isinstance(timeout, (int, float)) or timeout <= 0:
                 timeout = 120.0
+
+            # Inject caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
             async for chunk in self.context.control_handler.call_action_generator(
                 PluginToRuntimeAction.INVOKE_LLM_STREAM,
@@ -331,6 +352,11 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            # Inject caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
                 data,
@@ -352,6 +378,11 @@ class PluginConnectionHandler(handler.Handler):
         async def retrieve_knowledge_base(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
+            # Inject caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
                 data,
@@ -385,12 +416,17 @@ class PluginConnectionHandler(handler.Handler):
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
+            caller_identity = _get_caller_plugin_identity(self)
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
+
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.SET_BINARY_STORAGE,
@@ -404,12 +440,17 @@ class PluginConnectionHandler(handler.Handler):
         async def get_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
+            caller_identity = _get_caller_plugin_identity(self)
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
+
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE,
@@ -425,12 +466,17 @@ class PluginConnectionHandler(handler.Handler):
         ) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
+            caller_identity = _get_caller_plugin_identity(self)
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
+
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
@@ -444,12 +490,17 @@ class PluginConnectionHandler(handler.Handler):
         async def delete_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
+            caller_identity = _get_caller_plugin_identity(self)
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
+
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
@@ -464,6 +515,11 @@ class PluginConnectionHandler(handler.Handler):
             data["owner_type"] = "workspace"
             data["owner"] = "default"
 
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.SET_BINARY_STORAGE,
                 {
@@ -476,6 +532,11 @@ class PluginConnectionHandler(handler.Handler):
         async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
+
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE,
@@ -492,6 +553,11 @@ class PluginConnectionHandler(handler.Handler):
             data["owner_type"] = "workspace"
             data["owner"] = "default"
 
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
                 {
@@ -507,6 +573,11 @@ class PluginConnectionHandler(handler.Handler):
             data["owner_type"] = "workspace"
             data["owner"] = "default"
 
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
                 {
@@ -518,11 +589,18 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.GET_CONFIG_FILE)
         async def get_config_file(data: dict[str, Any]) -> handler.ActionResponse:
             """Get a config file by file key"""
+            # Attach caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
             # Forward the request to LangBot
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_CONFIG_FILE,
                 {
                     "file_key": data["file_key"],
+                    "run_id": data.get("run_id"),  # Pass run_id for AgentRunner validation
+                    "caller_plugin_identity": data.get("caller_plugin_identity"),
                 },
             )
             return handler.ActionResponse.success(result)
@@ -556,16 +634,30 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
-            tool_name = data["tool_name"]
-            tool_parameters = data["tool_parameters"]
-            session = data["session"]
-            query_id = data["query_id"]
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id
+            """Forward tool call to LangBot Host with caller_plugin_identity injection.
+
+            Supports both 'parameters' (AgentRunAPIProxy) and 'tool_parameters' (LangBotAPIProxy).
+            """
+            # Support both 'parameters' (new) and 'tool_parameters' (old) for backward compatibility
+            if "parameters" in data and "tool_parameters" not in data:
+                # New AgentRunAPIProxy format - use 'parameters' as 'tool_parameters' for Host
+                data["tool_parameters"] = data["parameters"]
+            elif "tool_parameters" in data:
+                # Old LangBotAPIProxy format - already has 'tool_parameters'
+                pass
+
+            # Inject caller_plugin_identity for Host-side AgentRunner validation
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
+            # Forward to LangBot Host via control_handler (enables Host validation)
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.CALL_TOOL,
+                data,
+                timeout=LONG_RUNNING_OPERATION_TIMEOUT,
             )
-            return handler.ActionResponse.success(
-                {"tool_response": resp}
-            )
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:
