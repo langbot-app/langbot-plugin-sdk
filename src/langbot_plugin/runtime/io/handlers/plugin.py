@@ -320,13 +320,13 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
-        @self.action(PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM)
+        @self.action(PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM)
         async def get_knowledge_file_stream(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
             """Forward file stream from LangBot to plugin via chunked transfer."""
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
+                PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM,
                 data,
                 timeout=60,
             )

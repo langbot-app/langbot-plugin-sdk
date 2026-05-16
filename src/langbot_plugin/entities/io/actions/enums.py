@@ -66,7 +66,7 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
     VECTOR_LIST = "vector_list"
-    GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
+    GET_KNOWLEDGE_FILE_STREAM = "get_knowledge_file_stream"
 
     LIST_PARSERS = "list_parsers"
     INVOKE_PARSER = "invoke_parser"
@@ -125,6 +125,9 @@ class LangBotToRuntimeAction(ActionType):
     CALL_TOOL = "call_tool"
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
+
+    # KnowledgeEngine retrieval action
+    RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
     # AgentRunner actions
     LIST_AGENT_RUNNERS = "list_agent_runners"
