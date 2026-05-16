@@ -100,10 +100,6 @@ def test_message_chunk_matches_message_content_conversion():
     assert chunk.readable_str() == "assistant: partial"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#60 ContentElement allows type='image_url' without image_url payload",
-)
 def test_message_image_url_content_should_validate_required_payload():
     message = Message(role="user", content=[ContentElement(type="image_url")])
 

@@ -3,13 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-import pytest
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="#62 PluginConnectionHandler direct import fails due to circular import",
-)
 def test_plugin_connection_handler_should_be_directly_importable():
     result = subprocess.run(
         [

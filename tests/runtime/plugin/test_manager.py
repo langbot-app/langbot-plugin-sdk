@@ -212,10 +212,6 @@ class FakeHandler:
         return {"context": context_data, "text": file_bytes.decode()}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#63 PluginManager instances share plugins/plugin_handlers class lists",
-)
 def test_plugin_manager_instances_should_not_share_plugin_state():
     PluginManager.plugins = []
     first = PluginManager(SimpleNamespace())
@@ -281,6 +277,40 @@ async def test_install_plugin_from_file_rejects_same_version_duplicate(tmp_path,
 
     with pytest.raises(ValueError, match="already exists"):
         await manager.install_plugin_from_file(_plugin_zip(version="1.0.0"))
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_raises_when_dependency_install_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    plugin_path = tmp_path / "data/plugins/tester__demo"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "requirements.txt").write_text("missing-package\n", encoding="utf-8")
+    manager = _manager()
+
+    async def fake_install_from_file(plugin_file):
+        return "data/plugins/tester__demo", "tester", "demo", "1.0.0"
+
+    async def fake_install_single_async(dep):
+        return 1, 0, "pip could not find package"
+
+    monkeypatch.setattr(manager, "install_plugin_from_file", fake_install_from_file)
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.install_single_async",
+        fake_install_single_async,
+    )
+
+    progress = []
+    with pytest.raises(RuntimeError, match="pip could not find package"):
+        async for item in manager.install_plugin(
+            PluginInstallSource.LOCAL,
+            {"plugin_file": b"zip"},
+        ):
+            progress.append(item["current_action"])
+
+    assert progress[0] == "downloading plugin package"
+    assert "installing dependencies" in progress
+    assert "initializing plugin settings" not in progress
+    assert "launching plugin" not in progress
 
 
 @pytest.mark.asyncio
@@ -481,10 +511,6 @@ async def test_parser_methods_validate_components_and_delegate_to_handler():
         await manager.parse_document("tester", "demo", {}, b"")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#64 emit_event appends emitted plugins twice when handler emits",
-)
 @pytest.mark.asyncio
 async def test_emit_event_should_report_each_emitting_plugin_once():
     manager = _manager()

@@ -14,6 +14,9 @@ class ComponentDiscoveryEngine:
     components: typing.Dict[str, typing.List[ComponentManifest]] = {}
     """组件列表"""
 
+    def __init__(self):
+        self.components = {}
+
     def load_component_manifest(
         self, path: str, owner: str = "builtin", no_save: bool = False
     ) -> ComponentManifest | None:

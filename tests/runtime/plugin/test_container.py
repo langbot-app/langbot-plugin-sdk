@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.plugin import NonePlugin
@@ -106,10 +104,6 @@ def test_plugin_container_roundtrip_uses_none_plugin_placeholder():
     assert restored.components == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#61 PluginContainer.from_dict drops install_source/install_info fields",
-)
 def test_plugin_container_roundtrip_should_preserve_install_metadata():
     container = PluginContainer(
         debug=False,

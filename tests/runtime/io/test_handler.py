@@ -81,10 +81,6 @@ async def test_call_action_timeout_cleans_waiter():
     assert handler.resp_waiters == {}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#58 call_action wraps ActionCallError in a second ActionCallError",
-)
 @pytest.mark.asyncio
 async def test_call_action_error_response_should_preserve_peer_message():
     conn = QueueConnection()

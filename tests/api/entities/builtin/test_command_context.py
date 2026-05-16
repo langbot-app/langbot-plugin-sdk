@@ -27,10 +27,6 @@ def _session() -> Session:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#59 CommandReturn error serializer is not applied by dumps",
-)
 def test_command_return_serializes_command_error_to_message():
     ret = CommandReturn(error=CommandError(message="failed"))
 
@@ -64,10 +60,6 @@ def test_execute_context_shift_advances_current_command_and_params():
     assert context.crt_params == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#59 CommandNotFoundError defaults message to None but concatenates it",
-)
 def test_command_not_found_error_default_message_should_be_constructible():
     assert str(CommandNotFoundError()) == "未知命令: "
 

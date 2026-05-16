@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import yaml
-import pytest
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 
@@ -110,10 +109,6 @@ def test_find_components_filters_supplied_component_list(tmp_path):
     assert [c.kind for c in engine.find_components("Tool", components)] == ["Tool"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#56 ComponentDiscoveryEngine.components is shared by instances",
-)
 def test_component_registry_should_be_isolated_per_engine_instance(tmp_path):
     path = tmp_path / "tool.yaml"
     _write_manifest(path)

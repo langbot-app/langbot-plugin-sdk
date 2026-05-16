@@ -70,11 +70,9 @@ class Handler(abc.ABC):
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
             file_key = data["file_key"]
-            file_length = data["file_length"]
             chunk_base64 = data["chunk_base64"]
             chunk_index = data["chunk_index"]
             chunk_amount = data["chunk_amount"]
-            chunk_size = data["chunk_size"]
             # append the chunk to the file
             async with aiofiles.open(
                 os.path.join(FILE_STORAGE_DIR, file_key), "ab"
@@ -180,6 +178,8 @@ class Handler(abc.ABC):
             return response.data
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
+        except ActionCallError:
+            raise
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:
@@ -218,6 +218,8 @@ class Handler(abc.ABC):
                     raise ActionCallTimeoutError(
                         f"Action {action.value} call timed out"
                     )
+                except ActionCallError:
+                    raise
                 except Exception as e:
                     raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:

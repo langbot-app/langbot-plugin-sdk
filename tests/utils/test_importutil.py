@@ -4,15 +4,9 @@ import importlib
 import sys
 import textwrap
 
-import pytest
-
 from langbot_plugin.utils import importutil
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#57 import_dot_style_dir/import_dir rewrite non-SDK paths incorrectly",
-)
 def test_import_dot_style_dir_imports_python_modules_from_package(tmp_path, monkeypatch):
     package = tmp_path / "samplepkg"
     package.mkdir()
@@ -27,10 +21,6 @@ def test_import_dot_style_dir_imports_python_modules_from_package(tmp_path, monk
     assert importlib.import_module("samplepkg.alpha").VALUE == 42
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#57 import_modules_in_pkg fails outside langbot_plugin source root",
-)
 def test_import_modules_in_pkg_uses_package_file_location(tmp_path, monkeypatch):
     package = tmp_path / "anotherpkg"
     package.mkdir()
@@ -44,10 +34,6 @@ def test_import_modules_in_pkg_uses_package_file_location(tmp_path, monkeypatch)
     assert sys.modules["anotherpkg.beta"].FLAG == "loaded"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#57 import_dir rewrites arbitrary paths into invalid module names",
-)
 def test_import_dir_skips_init_files(tmp_path, monkeypatch):
     package = tmp_path / "thirdpkg"
     package.mkdir()
