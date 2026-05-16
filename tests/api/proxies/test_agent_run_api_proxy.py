@@ -7,15 +7,13 @@ These tests verify that AgentRunAPIProxy:
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import typing
 
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy, PermissionDeniedError
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
-from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.api.entities.builtin.provider.message import Message
-from langbot_plugin.api.entities.builtin.resource.tool import LLMTool
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     AgentResources,
@@ -98,13 +96,13 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         assert not hasattr(proxy, 'list_tools'), \
             "AgentRunAPIProxy should not expose list_tools (use get_allowed_tools() instead)"
 
-    def test_does_not_expose_get_tool_detail(self):
-        """AgentRunAPIProxy should NOT have get_tool_detail method."""
+    def test_exposes_get_tool_detail_with_validation(self):
+        """AgentRunAPIProxy exposes get_tool_detail() for authorized tool schemas."""
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert not hasattr(proxy, 'get_tool_detail'), \
-            "AgentRunAPIProxy should not expose get_tool_detail (use get_allowed_tools() instead)"
+        assert hasattr(proxy, 'get_tool_detail'), \
+            "AgentRunAPIProxy should expose get_tool_detail() for authorized function calling"
 
     def test_does_not_expose_vector_upsert(self):
         """AgentRunAPIProxy should NOT have vector_upsert method."""
@@ -210,7 +208,7 @@ class TestAgentRunAPIProxyResourceValidation:
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         messages = [Message(role='user', content='Hello')]
-        result = await proxy.invoke_llm('model_001', messages)
+        await proxy.invoke_llm('model_001', messages)
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
@@ -250,7 +248,7 @@ class TestAgentRunAPIProxyResourceValidation:
         )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.call_tool('web_search', {'query': 'hello'})
+        await proxy.call_tool('web_search', {'query': 'hello'})
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
@@ -290,7 +288,7 @@ class TestAgentRunAPIProxyResourceValidation:
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         # Note: query_id is NOT passed - auto-filled from ctx
-        results = await proxy.retrieve_knowledge('kb_001', 'search query')
+        await proxy.retrieve_knowledge('kb_001', 'search query')
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]

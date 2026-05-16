@@ -621,16 +621,21 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
         async def get_tool_detail(data: dict[str, Any]) -> handler.ActionResponse:
-            tool_name = data["tool_name"]
-            tools = await self.context.plugin_mgr.list_tools()
-            for tool in tools:
-                if tool.metadata.name == tool_name:
-                    return handler.ActionResponse.success(
-                        {"tool": tool.to_plain_dict()}
-                    )
-            return handler.ActionResponse.error(
-                message=f"Tool not found: {tool_name}"
+            """Forward tool detail requests to LangBot Host.
+
+            AgentRunner calls include run_id so Host can validate the tool against
+            the active run session. Legacy plugin calls still work without run_id.
+            """
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_TOOL_DETAIL,
+                data,
+                timeout=30,
             )
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
