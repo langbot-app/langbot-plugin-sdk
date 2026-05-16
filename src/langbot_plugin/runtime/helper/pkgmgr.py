@@ -147,23 +147,6 @@ def _parse_downloaded_bytes(output: str) -> int:
 _dist_to_packages: dict[str, set[str]] | None = None
 
 
-def _extract_package_name(dep_spec: str) -> str:
-    """Extract the pip package name from a dependency spec string.
-
-    Uses ``packaging.requirements.Requirement`` for proper PEP 508 parsing,
-    handling all version operators, extras, environment markers, and URL
-    references (e.g. ``yiri-mirai>=1.0`` → ``yiri-mirai``).
-
-    Falls back to a simple operator split for truly malformed specs.
-    """
-    try:
-        return Requirement(dep_spec).name
-    except Exception:
-        for sep in ("==", ">=", "<=", "!=", "~=", "===", "<", ">", "["):
-            dep_spec = dep_spec.split(sep)[0]
-        return dep_spec.strip()
-
-
 def _is_distribution_installed(pkg_name: str) -> bool:
     """Check whether a pip distribution is installed via its metadata.
 
@@ -206,17 +189,52 @@ def _resolve_import_names(pkg_name: str) -> set[str]:
 
 
 def _check_dependency_installed(dep_spec: str) -> bool:
-    """Check whether a dependency is installed and importable.
+    """Check whether a dependency requirement is fully satisfied.
 
-    Resolution order:
-    1. importlib.metadata.distribution() - authoritative pip install check
-    2. packages_distributions() reverse mapping - find actual import names
-    3. fallback: find_spec on the normalized package name
+    Returns True only when:
+    1. Environment markers do not apply → treat as satisfied (skip)
+    2. Distribution is installed AND version satisfies the specifier
+    3. Package is importable (fallback for name-mismatch cases,
+       e.g. yiri-mirai → mirai, PyYAML → yaml)
+
+    Returns False when the installed version does not meet the specifier
+    or the package is not installed at all.
     """
-    pkg_name = _extract_package_name(dep_spec)
+    try:
+        req = Requirement(dep_spec)
+    except Exception:
+        # parse_requirements() already filters comments, empty lines, and
+        # option lines (-r / --index-url).  If Requirement() still fails, the
+        # input is genuinely malformed and no heuristic name extraction will
+        # be reliable.  Return False so pip gets a chance to install it.
+        return False
+
+    if req.marker and not req.marker.evaluate():
+        return True
+
+    pkg_name = req.name
 
     if _is_distribution_installed(pkg_name):
-        return True
+        if req.url:
+            # URL requirements (e.g. ``foo @ https://...``) cannot be
+            # reliably verified from Python — the installed distribution
+            # may have come from a different source or version.  Reading
+            # pip's internal direct_url.json (PEP 610) is fragile and
+            # couples us to pip implementation details.  Returning True
+            # would risk silently keeping a mismatched version.
+            #
+            # Instead, return False so pip decides.  If the URL points to
+            # an already-satisfied version, pip will output "Requirement
+            # already satisfied" and exit without downloading — the
+            # overhead is a single subprocess spawn.
+            return False
+        if not req.specifier:
+            return True
+        try:
+            installed_version = importlib.metadata.version(pkg_name)
+            return installed_version in req.specifier
+        except importlib.metadata.PackageNotFoundError:
+            return False
 
     for import_name in _resolve_import_names(pkg_name):
         if importlib.util.find_spec(import_name) is not None:
@@ -233,8 +251,18 @@ async def verify_dependencies(deps: list[str]) -> list[str]:
     """
     missing = []
     for dep in deps:
-        if not _check_dependency_installed(dep):
-            missing.append(dep)
+        if _check_dependency_installed(dep):
+            continue
+        # _check_dependency_installed always returns False for URL
+        # requirements (preferring pip to decide).  After pip has run,
+        # distribution existence is sufficient verification.
+        try:
+            req = Requirement(dep)
+            if req.url and _is_distribution_installed(req.name):
+                continue
+        except Exception:
+            pass
+        missing.append(dep)
     return missing
 
 
