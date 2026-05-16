@@ -1042,6 +1042,27 @@ class PluginManager:
                 code="runner.forward_exception",
             ).model_dump(mode="json")
 
+    async def retrieve_knowledge(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        retriever_name: str,
+        retrieval_context: dict[str, typing.Any],
+    ) -> dict[str, typing.Any]:
+        """Retrieve knowledge using a KnowledgeEngine instance."""
+        target_plugin = self.find_plugin(plugin_author, plugin_name)
+
+        if target_plugin is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+
+        if target_plugin._runtime_plugin_handler is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+
+        resp = await target_plugin._runtime_plugin_handler.retrieve_knowledge(
+            retriever_name, retrieval_context
+        )
+        return resp
+
     # ================= Knowledge Engine Methods =================
 
     def _find_knowledge_engine_plugin(

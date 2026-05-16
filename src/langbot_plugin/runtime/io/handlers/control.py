@@ -307,6 +307,19 @@ class ControlConnectionHandler(handler.Handler):
             ):
                 yield handler.ActionResponse.success(result)
 
+        @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
+        async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            """Retrieve knowledge using a KnowledgeEngine instance."""
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            retriever_name = data["retriever_name"]
+            retrieval_context = data["retrieval_context"]
+
+            resp = await self.context.plugin_mgr.retrieve_knowledge(
+                plugin_author, plugin_name, retriever_name, retrieval_context
+            )
+            return handler.ActionResponse.success(resp)
+
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
         async def get_debug_info(data: dict[str, Any]) -> handler.ActionResponse:
             """Get debug information including debug key and WS URL."""
