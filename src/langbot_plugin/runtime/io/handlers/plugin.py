@@ -651,6 +651,18 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
         async def get_tool_detail(data: dict[str, Any]) -> handler.ActionResponse:
+            if "run_id" in data:
+                caller_identity = _get_caller_plugin_identity(self)
+                if caller_identity:
+                    data["caller_plugin_identity"] = caller_identity
+
+                result = await self.context.control_handler.call_action(
+                    PluginToRuntimeAction.GET_TOOL_DETAIL,
+                    data,
+                    timeout=30,
+                )
+                return handler.ActionResponse.success(result)
+
             tool_name = data["tool_name"]
             tools = await self.context.plugin_mgr.list_tools()
             for tool in tools:
