@@ -27,6 +27,7 @@ from .models import (
     BoxSessionInfo,
     BoxSpec,
 )
+from .skill_store import BoxSkillStore
 
 _UTC = dt.timezone.utc
 _MANAGED_PROCESS_STDERR_PREVIEW_LIMIT = 4000
@@ -87,6 +88,7 @@ class BoxRuntime:
         self._sessions: dict[str, _RuntimeSession] = {}
         self._lock = asyncio.Lock()
         self.instance_id = uuid.uuid4().hex[:12]
+        self.skill_store = BoxSkillStore(self._box_config)
 
     def _create_e2b_backend(self, logger: logging.Logger) -> 'E2BSandboxBackend | None':
         """Create E2B backend if package is installed."""
@@ -117,6 +119,7 @@ class BoxRuntime:
         """
         self._box_config.update(config)
         self._apply_config_to_backends(config)
+        self.skill_store.update_config(self._box_config)
         if not self._sessions:
             self._backend = None
 

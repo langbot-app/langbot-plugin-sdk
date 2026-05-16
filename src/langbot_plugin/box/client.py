@@ -58,6 +58,52 @@ class BoxRuntimeClient(abc.ABC):
     @abc.abstractmethod
     async def init(self, config: dict) -> None: ...
 
+    async def list_skills(self) -> list[dict]:
+        raise NotImplementedError
+
+    async def get_skill(self, name: str) -> dict | None:
+        raise NotImplementedError
+
+    async def create_skill(self, skill: dict) -> dict:
+        raise NotImplementedError
+
+    async def update_skill(self, name: str, skill: dict) -> dict:
+        raise NotImplementedError
+
+    async def delete_skill(self, name: str) -> None:
+        raise NotImplementedError
+
+    async def scan_skill_directory(self, path: str) -> dict:
+        raise NotImplementedError
+
+    async def list_skill_files(
+        self,
+        name: str,
+        path: str = '.',
+        include_hidden: bool = False,
+        max_entries: int = 200,
+    ) -> dict:
+        raise NotImplementedError
+
+    async def read_skill_file(self, name: str, path: str) -> dict:
+        raise NotImplementedError
+
+    async def write_skill_file(self, name: str, path: str, content: str) -> dict:
+        raise NotImplementedError
+
+    async def preview_skill_zip(self, file_bytes: bytes, filename: str, source_subdir: str = '') -> list[dict]:
+        raise NotImplementedError
+
+    async def install_skill_zip(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        source_paths: list[str] | None = None,
+        source_path: str = '',
+        source_subdir: str = '',
+    ) -> list[dict]:
+        raise NotImplementedError
+
 
 def _translate_action_error(exc: Exception) -> BoxError:
     """Convert an ActionCallError message back into the appropriate BoxError subclass."""
@@ -184,3 +230,82 @@ class ActionRPCBoxClient(BoxRuntimeClient):
 
     async def init(self, config: dict) -> None:
         await self._call(LangBotToBoxAction.INIT, config)
+
+    async def list_skills(self) -> list[dict]:
+        data = await self._call(LangBotToBoxAction.LIST_SKILLS, {})
+        return data['skills']
+
+    async def get_skill(self, name: str) -> dict | None:
+        data = await self._call(LangBotToBoxAction.GET_SKILL, {'name': name})
+        return data.get('skill')
+
+    async def create_skill(self, skill: dict) -> dict:
+        data = await self._call(LangBotToBoxAction.CREATE_SKILL, {'skill': skill})
+        return data['skill']
+
+    async def update_skill(self, name: str, skill: dict) -> dict:
+        data = await self._call(LangBotToBoxAction.UPDATE_SKILL, {'name': name, 'skill': skill})
+        return data['skill']
+
+    async def delete_skill(self, name: str) -> None:
+        await self._call(LangBotToBoxAction.DELETE_SKILL, {'name': name})
+
+    async def scan_skill_directory(self, path: str) -> dict:
+        return await self._call(LangBotToBoxAction.SCAN_SKILL_DIRECTORY, {'path': path})
+
+    async def list_skill_files(
+        self,
+        name: str,
+        path: str = '.',
+        include_hidden: bool = False,
+        max_entries: int = 200,
+    ) -> dict:
+        return await self._call(
+            LangBotToBoxAction.LIST_SKILL_FILES,
+            {
+                'name': name,
+                'path': path,
+                'include_hidden': include_hidden,
+                'max_entries': max_entries,
+            },
+        )
+
+    async def read_skill_file(self, name: str, path: str) -> dict:
+        return await self._call(LangBotToBoxAction.READ_SKILL_FILE, {'name': name, 'path': path})
+
+    async def write_skill_file(self, name: str, path: str, content: str) -> dict:
+        return await self._call(
+            LangBotToBoxAction.WRITE_SKILL_FILE,
+            {'name': name, 'path': path, 'content': content},
+        )
+
+    async def preview_skill_zip(self, file_bytes: bytes, filename: str, source_subdir: str = '') -> list[dict]:
+        file_key = await self.handler.send_file(file_bytes, 'zip')
+        data = await self._call(
+            LangBotToBoxAction.PREVIEW_SKILL_ZIP,
+            {'file_key': file_key, 'filename': filename, 'source_subdir': source_subdir},
+            timeout=60.0,
+        )
+        return data['skills']
+
+    async def install_skill_zip(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        source_paths: list[str] | None = None,
+        source_path: str = '',
+        source_subdir: str = '',
+    ) -> list[dict]:
+        file_key = await self.handler.send_file(file_bytes, 'zip')
+        data = await self._call(
+            LangBotToBoxAction.INSTALL_SKILL_ZIP,
+            {
+                'file_key': file_key,
+                'filename': filename,
+                'source_paths': source_paths or [],
+                'source_path': source_path,
+                'source_subdir': source_subdir,
+            },
+            timeout=120.0,
+        )
+        return data['skills']

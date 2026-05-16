@@ -167,6 +167,106 @@ class BoxServerHandler(Handler):
             info = await self._runtime.get_backend_info()
             return ActionResponse.success(info)
 
+        @self.action(LangBotToBoxAction.LIST_SKILLS)
+        async def list_skills(data: dict[str, Any]) -> ActionResponse:
+            return ActionResponse.success({'skills': self._runtime.skill_store.list_skills()})
+
+        @self.action(LangBotToBoxAction.GET_SKILL)
+        async def get_skill(data: dict[str, Any]) -> ActionResponse:
+            skill = self._runtime.skill_store.get_skill(data['name'])
+            return ActionResponse.success({'skill': skill})
+
+        @self.action(LangBotToBoxAction.CREATE_SKILL)
+        async def create_skill(data: dict[str, Any]) -> ActionResponse:
+            try:
+                skill = self._runtime.skill_store.create_skill(data['skill'])
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success({'skill': skill})
+
+        @self.action(LangBotToBoxAction.UPDATE_SKILL)
+        async def update_skill(data: dict[str, Any]) -> ActionResponse:
+            try:
+                skill = self._runtime.skill_store.update_skill(data['name'], data['skill'])
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success({'skill': skill})
+
+        @self.action(LangBotToBoxAction.DELETE_SKILL)
+        async def delete_skill(data: dict[str, Any]) -> ActionResponse:
+            try:
+                result = self._runtime.skill_store.delete_skill(data['name'])
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success(result)
+
+        @self.action(LangBotToBoxAction.SCAN_SKILL_DIRECTORY)
+        async def scan_skill_directory(data: dict[str, Any]) -> ActionResponse:
+            try:
+                skill = self._runtime.skill_store.scan_directory(data['path'])
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success(skill)
+
+        @self.action(LangBotToBoxAction.LIST_SKILL_FILES)
+        async def list_skill_files(data: dict[str, Any]) -> ActionResponse:
+            try:
+                result = self._runtime.skill_store.list_skill_files(
+                    data['name'],
+                    data.get('path', '.'),
+                    include_hidden=bool(data.get('include_hidden', False)),
+                    max_entries=int(data.get('max_entries', 200)),
+                )
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success(result)
+
+        @self.action(LangBotToBoxAction.READ_SKILL_FILE)
+        async def read_skill_file(data: dict[str, Any]) -> ActionResponse:
+            try:
+                result = self._runtime.skill_store.read_skill_file(data['name'], data['path'])
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success(result)
+
+        @self.action(LangBotToBoxAction.WRITE_SKILL_FILE)
+        async def write_skill_file(data: dict[str, Any]) -> ActionResponse:
+            try:
+                result = self._runtime.skill_store.write_skill_file(data['name'], data['path'], data.get('content', ''))
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success(result)
+
+        @self.action(LangBotToBoxAction.PREVIEW_SKILL_ZIP)
+        async def preview_skill_zip(data: dict[str, Any]) -> ActionResponse:
+            try:
+                file_bytes = await self.read_local_file(data['file_key'])
+                await self.delete_local_file(data['file_key'])
+                result = self._runtime.skill_store.preview_zip_upload(
+                    file_bytes=file_bytes,
+                    filename=data.get('filename', 'skill.zip'),
+                    source_subdir=data.get('source_subdir') or '',
+                )
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success({'skills': result})
+
+        @self.action(LangBotToBoxAction.INSTALL_SKILL_ZIP)
+        async def install_skill_zip(data: dict[str, Any]) -> ActionResponse:
+            try:
+                file_bytes = await self.read_local_file(data['file_key'])
+                await self.delete_local_file(data['file_key'])
+                result = self._runtime.skill_store.install_zip_upload(
+                    file_bytes=file_bytes,
+                    filename=data.get('filename', 'skill.zip'),
+                    source_paths=data.get('source_paths') or [],
+                    source_path=data.get('source_path') or '',
+                    source_subdir=data.get('source_subdir') or '',
+                )
+            except Exception as exc:
+                return ActionResponse.error(f'BoxValidationError: {exc}')
+            return ActionResponse.success({'skills': result})
+
         @self.action(LangBotToBoxAction.INIT)
         async def init(data: dict[str, Any]) -> ActionResponse:
             self._runtime.init(data)
