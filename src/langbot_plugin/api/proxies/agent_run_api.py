@@ -11,6 +11,7 @@ Uses composition + delegation pattern:
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from langbot_plugin.runtime.io.handler import Handler
@@ -157,13 +158,20 @@ class AgentRunAPIProxy:
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
         self._validate_model_access(llm_model_uuid)
-        return await self._api.invoke_llm(
-            llm_model_uuid=llm_model_uuid,
-            messages=messages,
-            funcs=funcs,
-            extra_args=extra_args,
-            timeout=timeout,
+        effective_timeout = timeout if timeout is not None else 120.0
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.INVOKE_LLM,
+            {
+                "run_id": self.run_id,
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+                "timeout": effective_timeout,
+            },
+            effective_timeout,
         )
+        return provider_message.Message.model_validate(resp["message"])
 
     async def invoke_llm_stream(
         self,
@@ -174,13 +182,19 @@ class AgentRunAPIProxy:
     ):
         """Invoke an LLM model with streaming, permission validation."""
         self._validate_model_access(llm_model_uuid)
-        async for chunk in self._api.invoke_llm_stream(
-            llm_model_uuid=llm_model_uuid,
-            messages=messages,
-            funcs=funcs,
-            extra_args=extra_args,
+        async for chunk_data in self._api.plugin_runtime_handler.call_action_generator(
+            PluginToRuntimeAction.INVOKE_LLM_STREAM,
+            {
+                "run_id": self.run_id,
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+                "timeout": 120.0,
+            },
+            120.0,
         ):
-            yield chunk
+            yield provider_message.MessageChunk.model_validate(chunk_data["chunk"])
 
     # ================= Tool APIs (delegated with validation) =================
 
@@ -200,7 +214,15 @@ class AgentRunAPIProxy:
             PermissionDeniedError: Tool not authorized for this run
         """
         self._validate_tool_access(tool_name)
-        return await self._api.get_tool_detail(tool_name)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.GET_TOOL_DETAIL,
+            {
+                "run_id": self.run_id,
+                "tool_name": tool_name,
+            },
+            30,
+        )
+        return resp.get("tool", resp)
 
     async def call_tool(
         self,
@@ -214,13 +236,18 @@ class AgentRunAPIProxy:
         Returns 'result' key instead of 'tool_response'.
         """
         self._validate_tool_access(tool_name)
-        # LangBotAPIProxy.call_tool returns 'tool_response', we want 'result'
-        return await self._api.call_tool(
-            tool_name=tool_name,
-            parameters=parameters,
-            session=session or {},
-            query_id=self.query_id,
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.CALL_TOOL,
+            {
+                "run_id": self.run_id,
+                "tool_name": tool_name,
+                "parameters": parameters,
+                "session": session or {},
+                "query_id": self.query_id,
+            },
+            180,
         )
+        return resp.get("result", resp.get("tool_response", resp))
 
     # ================= Knowledge Base API (delegated with validation) =================
 
@@ -233,54 +260,120 @@ class AgentRunAPIProxy:
     ) -> list[dict[str, Any]]:
         """Retrieve from knowledge base with permission validation."""
         self._validate_knowledge_base_access(kb_id)
-        return await self._api.retrieve_knowledge(
-            kb_id=kb_id,
-            query_text=query_text,
-            top_k=top_k,
-            filters=filters,
-        )
+        return (
+            await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
+                {
+                    "run_id": self.run_id,
+                    "query_id": self.query_id,
+                    "kb_id": kb_id,
+                    "query_text": query_text,
+                    "top_k": top_k,
+                    "filters": filters or {},
+                },
+                30,
+            )
+        )["results"]
 
     # ================= Storage APIs (delegated with validation) =================
 
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value with permission validation."""
         self._validate_plugin_storage_access()
-        await self._api.set_plugin_storage(key, value)
+        await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.SET_PLUGIN_STORAGE,
+            {
+                "run_id": self.run_id,
+                "key": key,
+                "value_base64": base64.b64encode(value).decode("utf-8"),
+            },
+        )
 
     async def get_plugin_storage(self, key: str) -> bytes:
         """Get a plugin storage value with permission validation."""
         self._validate_plugin_storage_access()
-        return await self._api.get_plugin_storage(key)
+        resp = (
+            await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_PLUGIN_STORAGE,
+                {
+                    "run_id": self.run_id,
+                    "key": key,
+                },
+            )
+        )["value_base64"]
+        return base64.b64decode(resp)
 
     async def get_plugin_storage_keys(self) -> list[str]:
         """Get all plugin storage keys with permission validation."""
         self._validate_plugin_storage_access()
-        return await self._api.get_plugin_storage_keys()
+        return (
+            await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_PLUGIN_STORAGE_KEYS,
+                {
+                    "run_id": self.run_id,
+                },
+            )
+        )["keys"]
 
     async def delete_plugin_storage(self, key: str) -> None:
         """Delete a plugin storage value with permission validation."""
         self._validate_plugin_storage_access()
-        await self._api.delete_plugin_storage(key)
+        await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.DELETE_PLUGIN_STORAGE,
+            {
+                "run_id": self.run_id,
+                "key": key,
+            },
+        )
 
     async def set_workspace_storage(self, key: str, value: bytes) -> None:
         """Set a workspace storage value with permission validation."""
         self._validate_workspace_storage_access()
-        await self._api.set_workspace_storage(key, value)
+        await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.SET_WORKSPACE_STORAGE,
+            {
+                "run_id": self.run_id,
+                "key": key,
+                "value_base64": base64.b64encode(value).decode("utf-8"),
+            },
+        )
 
     async def get_workspace_storage(self, key: str) -> bytes:
         """Get a workspace storage value with permission validation."""
         self._validate_workspace_storage_access()
-        return await self._api.get_workspace_storage(key)
+        resp = (
+            await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_WORKSPACE_STORAGE,
+                {
+                    "run_id": self.run_id,
+                    "key": key,
+                },
+            )
+        )["value_base64"]
+        return base64.b64decode(resp)
 
     async def get_workspace_storage_keys(self) -> list[str]:
         """Get all workspace storage keys with permission validation."""
         self._validate_workspace_storage_access()
-        return await self._api.get_workspace_storage_keys()
+        return (
+            await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_WORKSPACE_STORAGE_KEYS,
+                {
+                    "run_id": self.run_id,
+                },
+            )
+        )["keys"]
 
     async def delete_workspace_storage(self, key: str) -> None:
         """Delete a workspace storage value with permission validation."""
         self._validate_workspace_storage_access()
-        await self._api.delete_workspace_storage(key)
+        await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE,
+            {
+                "run_id": self.run_id,
+                "key": key,
+            },
+        )
 
     # ================= File API (delegated with validation) =================
 
@@ -294,7 +387,16 @@ class AgentRunAPIProxy:
             The file content as bytes
         """
         self._validate_file_access(file_key)
-        return await self._api.get_config_file(file_key)
+        resp = (
+            await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_CONFIG_FILE,
+                {
+                    "run_id": self.run_id,
+                    "file_key": file_key,
+                },
+            )
+        )["file_base64"]
+        return base64.b64decode(resp)
 
     # ================= Version API (no authorization needed, delegated) =================
 
