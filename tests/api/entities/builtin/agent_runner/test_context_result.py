@@ -64,6 +64,7 @@ class TestAgentRunContextV1:
         assert ctx.trigger.type == "message.received"
         assert ctx.input.text == "Hello"
         assert ctx.messages == []
+        assert ctx.prompt == []
         assert ctx.config == {}
         # New fields: params and state have defaults
         assert ctx.params == {}
@@ -166,6 +167,9 @@ class TestAgentRunContextV1:
             Message(role="user", content="Hi"),
             Message(role="assistant", content="Hello"),
         ]
+        prompt = [
+            Message(role="system", content="You are helpful."),
+        ]
         input = AgentInput(
             text="What's up?",
             contents=[ContentElement(type="text", text="What's up?")],
@@ -198,6 +202,7 @@ class TestAgentRunContextV1:
             actor=actor,
             subject=subject,
             messages=messages,
+            prompt=prompt,
             input=input,
             params=params,
             resources=resources,
@@ -209,6 +214,7 @@ class TestAgentRunContextV1:
         assert ctx.run_id == "run_full"
         assert ctx.conversation.launcher_type == "person"
         assert ctx.resources.models[0].model_id == "gpt-4"
+        assert ctx.prompt[0].content == "You are helpful."
         assert len(ctx.messages) == 2
         assert ctx.config["model"] == "gpt-4"
         assert ctx.params["workflow_input"] == "test_workflow"

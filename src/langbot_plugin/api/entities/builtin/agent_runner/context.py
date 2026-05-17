@@ -29,6 +29,7 @@ class AgentRunContext(pydantic.BaseModel):
     - event: event envelope subset (for future EBA)
     - actor: who triggered the event
     - subject: what the event is about
+    - prompt: effective prompt/instruction messages prepared by the host
     - messages: historical conversation messages
     - input: user input
     - params: single-run public business parameters (read-only, non-persistent)
@@ -64,6 +65,14 @@ class AgentRunContext(pydantic.BaseModel):
 
     messages: list[Message] = pydantic.Field(default_factory=list)
     """Historical messages in the conversation."""
+
+    prompt: list[Message] = pydantic.Field(default_factory=list)
+    """Effective prompt/instruction messages prepared by the host.
+
+    This is the prompt after host-side preprocessing and prompt-related plugin
+    events have run. Runners should prefer this over static prompt data in
+    config when they need to call a model directly.
+    """
 
     input: AgentInput
     """User input."""

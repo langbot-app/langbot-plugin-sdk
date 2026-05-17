@@ -625,6 +625,40 @@ class TestAgentRunAPIProxyFieldConsistency:
         assert 'timeout' in data
 
     @pytest.mark.anyio
+    async def test_invoke_llm_can_send_remove_think_override(self):
+        """INVOKE_LLM: remove_think override is passed when supplied."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'message': {'role': 'assistant', 'content': 'Hello'}}
+
+        ctx = create_mock_context(models=[{'model_id': 'model_001'}])
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        await proxy.invoke_llm('model_001', [Message(role='user', content='Hello')], remove_think=True)
+
+        call_args = mock_handler.call_action_mock.call_args
+        data = call_args[0][1]
+
+        assert data['remove_think'] is True
+
+    @pytest.mark.anyio
+    async def test_invoke_rerank_validates_authorized_model(self):
+        """INVOKE_RERANK: SDK validates rerank model through ctx.resources.models."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'results': []}
+
+        ctx = create_mock_context(models=[{'model_id': 'rerank_001'}])
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        await proxy.invoke_rerank('rerank_001', 'query', ['doc'], extra_args={'top_n': 2})
+
+        call_args = mock_handler.call_action_mock.call_args
+        data = call_args[0][1]
+        assert data['extra_args'] == {'top_n': 2}
+
+        with pytest.raises(PermissionDeniedError):
+            await proxy.invoke_rerank('rerank_999', 'query', ['doc'])
+
+    @pytest.mark.anyio
     async def test_call_tool_sends_correct_fields(self):
         """CALL_TOOL: SDK fields match Host handler expectations."""
         mock_handler = MockHandler()

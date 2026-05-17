@@ -51,7 +51,7 @@ class AgentRunAPIProxy:
     - get_allowed_files(): returns ctx.resources.files
 
     Additional APIs (AgentRunner-specific):
-    - invoke_rerank(): requires rerank model authorization (validated by host)
+    - invoke_rerank(): requires rerank model authorization in ctx.resources
 
     Not available (platform actions, use AgentRunResult.action_requested instead):
     - get_bots() / get_bot_info() / send_message()
@@ -155,20 +155,24 @@ class AgentRunAPIProxy:
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
         timeout: float | None = None,
+        remove_think: bool | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
         self._validate_model_access(llm_model_uuid)
         effective_timeout = timeout if timeout is not None else 120.0
+        payload = {
+            "run_id": self.run_id,
+            "llm_model_uuid": llm_model_uuid,
+            "messages": [m.model_dump() for m in messages],
+            "funcs": [f.model_dump() for f in funcs],
+            "extra_args": extra_args,
+            "timeout": effective_timeout,
+        }
+        if remove_think is not None:
+            payload["remove_think"] = remove_think
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.INVOKE_LLM,
-            {
-                "run_id": self.run_id,
-                "llm_model_uuid": llm_model_uuid,
-                "messages": [m.model_dump() for m in messages],
-                "funcs": [f.model_dump() for f in funcs],
-                "extra_args": extra_args,
-                "timeout": effective_timeout,
-            },
+            payload,
             effective_timeout,
         )
         return provider_message.Message.model_validate(resp["message"])
@@ -179,19 +183,23 @@ class AgentRunAPIProxy:
         messages: list[provider_message.Message],
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
+        remove_think: bool | None = None,
     ):
         """Invoke an LLM model with streaming, permission validation."""
         self._validate_model_access(llm_model_uuid)
+        payload = {
+            "run_id": self.run_id,
+            "llm_model_uuid": llm_model_uuid,
+            "messages": [m.model_dump() for m in messages],
+            "funcs": [f.model_dump() for f in funcs],
+            "extra_args": extra_args,
+            "timeout": 120.0,
+        }
+        if remove_think is not None:
+            payload["remove_think"] = remove_think
         async for chunk_data in self._api.plugin_runtime_handler.call_action_generator(
             PluginToRuntimeAction.INVOKE_LLM_STREAM,
-            {
-                "run_id": self.run_id,
-                "llm_model_uuid": llm_model_uuid,
-                "messages": [m.model_dump() for m in messages],
-                "funcs": [f.model_dump() for f in funcs],
-                "extra_args": extra_args,
-                "timeout": 120.0,
-            },
+            payload,
             120.0,
         ):
             yield provider_message.MessageChunk.model_validate(chunk_data["chunk"])
@@ -412,6 +420,7 @@ class AgentRunAPIProxy:
         query: str,
         documents: list[str],
         top_k: int | None = None,
+        extra_args: dict[str, Any] | None = None,
         timeout: float = 30.0,
     ) -> list[dict[str, Any]]:
         """Invoke a rerank model to re-score documents.
@@ -421,6 +430,7 @@ class AgentRunAPIProxy:
             query: The query text for reranking
             documents: List of document texts to rerank
             top_k: Optional number of top results to return
+            extra_args: Optional provider-specific options
             timeout: Request timeout in seconds
 
         Returns:
@@ -440,8 +450,7 @@ class AgentRunAPIProxy:
             #     ...
             # ]
         """
-        # Note: Rerank model access is validated by LangBot host
-        # The model must be in ctx.resources.models with rerank capability
+        self._validate_model_access(rerank_model_uuid)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.INVOKE_RERANK,
             {
@@ -450,6 +459,7 @@ class AgentRunAPIProxy:
                 "query": query,
                 "documents": documents,
                 "top_k": top_k,
+                "extra_args": extra_args or {},
             },
             timeout=timeout,
         )
