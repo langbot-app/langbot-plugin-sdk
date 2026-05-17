@@ -270,7 +270,14 @@ class BoxSkillStore:
             'bytes_written': len(content.encode('utf-8')),
         }
 
-    def preview_zip_upload(self, *, file_bytes: bytes, filename: str, source_subdir: str = '') -> list[dict]:
+    def preview_zip_upload(
+        self,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        source_subdir: str = '',
+        target_suffix: str = 'upload',
+    ) -> list[dict]:
         if not file_bytes:
             raise ValueError('Uploaded file is empty')
 
@@ -281,7 +288,7 @@ class BoxSkillStore:
             return self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
-                suffix='upload',
+                suffix=target_suffix,
             )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -294,6 +301,7 @@ class BoxSkillStore:
         source_paths: list[str] | None = None,
         source_path: str = '',
         source_subdir: str = '',
+        target_suffix: str = 'upload',
     ) -> list[dict]:
         if not file_bytes:
             raise ValueError('Uploaded file is empty')
@@ -305,7 +313,7 @@ class BoxSkillStore:
             previews = self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
-                suffix='upload',
+                suffix=target_suffix,
             )
             selected_previews = self._select_preview_candidates(
                 previews,

@@ -246,6 +246,7 @@ class BoxServerHandler(Handler):
                     file_bytes=file_bytes,
                     filename=data.get('filename', 'skill.zip'),
                     source_subdir=data.get('source_subdir') or '',
+                    target_suffix=data.get('target_suffix', 'upload'),
                 )
             except Exception as exc:
                 return ActionResponse.error(f'BoxValidationError: {exc}')
@@ -262,6 +263,7 @@ class BoxServerHandler(Handler):
                     source_paths=data.get('source_paths') or [],
                     source_path=data.get('source_path') or '',
                     source_subdir=data.get('source_subdir') or '',
+                    target_suffix=data.get('target_suffix', 'upload'),
                 )
             except Exception as exc:
                 return ActionResponse.error(f'BoxValidationError: {exc}')

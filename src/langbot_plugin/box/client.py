@@ -91,7 +91,13 @@ class BoxRuntimeClient(abc.ABC):
     async def write_skill_file(self, name: str, path: str, content: str) -> dict:
         raise NotImplementedError
 
-    async def preview_skill_zip(self, file_bytes: bytes, filename: str, source_subdir: str = '') -> list[dict]:
+    async def preview_skill_zip(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        source_subdir: str = '',
+        target_suffix: str = 'upload',
+    ) -> list[dict]:
         raise NotImplementedError
 
     async def install_skill_zip(
@@ -101,6 +107,7 @@ class BoxRuntimeClient(abc.ABC):
         source_paths: list[str] | None = None,
         source_path: str = '',
         source_subdir: str = '',
+        target_suffix: str = 'upload',
     ) -> list[dict]:
         raise NotImplementedError
 
@@ -279,11 +286,22 @@ class ActionRPCBoxClient(BoxRuntimeClient):
             {'name': name, 'path': path, 'content': content},
         )
 
-    async def preview_skill_zip(self, file_bytes: bytes, filename: str, source_subdir: str = '') -> list[dict]:
+    async def preview_skill_zip(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        source_subdir: str = '',
+        target_suffix: str = 'upload',
+    ) -> list[dict]:
         file_key = await self.handler.send_file(file_bytes, 'zip')
         data = await self._call(
             LangBotToBoxAction.PREVIEW_SKILL_ZIP,
-            {'file_key': file_key, 'filename': filename, 'source_subdir': source_subdir},
+            {
+                'file_key': file_key,
+                'filename': filename,
+                'source_subdir': source_subdir,
+                'target_suffix': target_suffix,
+            },
             timeout=60.0,
         )
         return data['skills']
@@ -295,6 +313,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         source_paths: list[str] | None = None,
         source_path: str = '',
         source_subdir: str = '',
+        target_suffix: str = 'upload',
     ) -> list[dict]:
         file_key = await self.handler.send_file(file_bytes, 'zip')
         data = await self._call(
@@ -305,6 +324,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 'source_paths': source_paths or [],
                 'source_path': source_path,
                 'source_subdir': source_subdir,
+                'target_suffix': target_suffix,
             },
             timeout=120.0,
         )
