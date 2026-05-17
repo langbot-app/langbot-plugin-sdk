@@ -67,6 +67,8 @@ class PluginManager:
 
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
+        self.plugin_handlers = []
+        self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
 
@@ -620,8 +622,6 @@ class PluginManager:
 
             if resp["emitted"]:
                 emitted_plugins.append(plugin)
-
-            emitted_plugins.append(plugin)
 
             event_context = EventContext.model_validate(resp["event_context"])
 
