@@ -224,6 +224,8 @@ class BoxRuntime:
     # ── Observability ─────────────────────────────────────────────────
 
     async def get_backend_info(self) -> dict:
+        if self._backend is None:
+            self._backend = await self._select_backend()
         backend = self._backend
         if backend is None:
             return {'name': None, 'available': False}
