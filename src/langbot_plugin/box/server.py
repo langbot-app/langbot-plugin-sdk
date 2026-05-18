@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
-import json
 import logging
 import sys
 from typing import Any
@@ -41,11 +40,11 @@ from .errors import (
 from .models import BoxExecutionResult, BoxManagedProcessSpec, BoxSpec
 from .runtime import BoxRuntime
 
-logger = logging.getLogger('langbot.box.server')
+logger = logging.getLogger("langbot.box.server")
 
 
 def _result_to_dict(result: BoxExecutionResult) -> dict:
-    return result.model_dump(mode='json')
+    return result.model_dump(mode="json")
 
 
 # ── aiohttp WebSocket → Connection adapter ───────────────────────────
@@ -67,7 +66,7 @@ class AiohttpWSConnection(Connection):
             try:
                 await self._ws.send_str(message)
             except ConnectionResetError:
-                raise ConnectionClosedError('Connection closed during send')
+                raise ConnectionClosedError("Connection closed during send")
 
     async def receive(self) -> str:
         msg = await self._ws.receive()
@@ -79,8 +78,8 @@ class AiohttpWSConnection(Connection):
             web.WSMsgType.CLOSED,
             web.WSMsgType.ERROR,
         ):
-            raise ConnectionClosedError('Connection closed')
-        raise ConnectionClosedError(f'Unexpected message type: {msg.type}')
+            raise ConnectionClosedError("Connection closed")
+        raise ConnectionClosedError(f"Unexpected message type: {msg.type}")
 
     async def close(self) -> None:
         await self._ws.close()
@@ -92,7 +91,7 @@ class AiohttpWSConnection(Connection):
 class BoxServerHandler(Handler):
     """Server-side handler that registers box actions backed by BoxRuntime."""
 
-    name = 'BoxServerHandler'
+    name = "BoxServerHandler"
 
     def __init__(self, connection: Connection, runtime: BoxRuntime):
         super().__init__(connection)
@@ -119,7 +118,7 @@ class BoxServerHandler(Handler):
             try:
                 spec = BoxSpec.model_validate(data)
             except pydantic.ValidationError as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             result = await self._runtime.execute(spec)
             return ActionResponse.success(_result_to_dict(result))
 
@@ -128,39 +127,50 @@ class BoxServerHandler(Handler):
             try:
                 spec = BoxSpec.model_validate(data)
             except pydantic.ValidationError as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             info = await self._runtime.create_session(spec)
             return ActionResponse.success(info)
 
         @self.action(LangBotToBoxAction.GET_SESSION)
         async def get_session(data: dict[str, Any]) -> ActionResponse:
-            return ActionResponse.success(self._runtime.get_session(data['session_id']))
+            return ActionResponse.success(self._runtime.get_session(data["session_id"]))
 
         @self.action(LangBotToBoxAction.GET_SESSIONS)
         async def get_sessions(data: dict[str, Any]) -> ActionResponse:
-            return ActionResponse.success({'sessions': self._runtime.get_sessions()})
+            return ActionResponse.success({"sessions": self._runtime.get_sessions()})
 
         @self.action(LangBotToBoxAction.DELETE_SESSION)
         async def delete_session(data: dict[str, Any]) -> ActionResponse:
-            await self._runtime.delete_session(data['session_id'])
-            return ActionResponse.success({'deleted': data['session_id']})
+            await self._runtime.delete_session(data["session_id"])
+            return ActionResponse.success({"deleted": data["session_id"]})
 
         @self.action(LangBotToBoxAction.START_MANAGED_PROCESS)
         async def start_managed_process(data: dict[str, Any]) -> ActionResponse:
-            session_id = data['session_id']
+            session_id = data["session_id"]
             try:
-                spec = BoxManagedProcessSpec.model_validate(data['spec'])
+                spec = BoxManagedProcessSpec.model_validate(data["spec"])
             except pydantic.ValidationError as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             info = await self._runtime.start_managed_process(session_id, spec)
             return ActionResponse.success(info)
 
         @self.action(LangBotToBoxAction.GET_MANAGED_PROCESS)
         async def get_managed_process(data: dict[str, Any]) -> ActionResponse:
-            return ActionResponse.success(self._runtime.get_managed_process(
-                data['session_id'],
-                data.get('process_id', 'default'),
-            ))
+            return ActionResponse.success(
+                self._runtime.get_managed_process(
+                    data["session_id"],
+                    data.get("process_id", "default"),
+                )
+            )
+
+        @self.action(LangBotToBoxAction.STOP_MANAGED_PROCESS)
+        async def stop_managed_process(data: dict[str, Any]) -> ActionResponse:
+            await self._runtime.stop_managed_process(
+                data["session_id"], data.get("process_id", "default")
+            )
+            return ActionResponse.success(
+                {"stopped": data.get("process_id", "default")}
+            )
 
         @self.action(LangBotToBoxAction.GET_BACKEND_INFO)
         async def get_backend_info(data: dict[str, Any]) -> ActionResponse:
@@ -169,110 +179,118 @@ class BoxServerHandler(Handler):
 
         @self.action(LangBotToBoxAction.LIST_SKILLS)
         async def list_skills(data: dict[str, Any]) -> ActionResponse:
-            return ActionResponse.success({'skills': self._runtime.skill_store.list_skills()})
+            return ActionResponse.success(
+                {"skills": self._runtime.skill_store.list_skills()}
+            )
 
         @self.action(LangBotToBoxAction.GET_SKILL)
         async def get_skill(data: dict[str, Any]) -> ActionResponse:
-            skill = self._runtime.skill_store.get_skill(data['name'])
-            return ActionResponse.success({'skill': skill})
+            skill = self._runtime.skill_store.get_skill(data["name"])
+            return ActionResponse.success({"skill": skill})
 
         @self.action(LangBotToBoxAction.CREATE_SKILL)
         async def create_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._runtime.skill_store.create_skill(data['skill'])
+                skill = self._runtime.skill_store.create_skill(data["skill"])
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
-            return ActionResponse.success({'skill': skill})
+                return ActionResponse.error(f"BoxValidationError: {exc}")
+            return ActionResponse.success({"skill": skill})
 
         @self.action(LangBotToBoxAction.UPDATE_SKILL)
         async def update_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._runtime.skill_store.update_skill(data['name'], data['skill'])
+                skill = self._runtime.skill_store.update_skill(
+                    data["name"], data["skill"]
+                )
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
-            return ActionResponse.success({'skill': skill})
+                return ActionResponse.error(f"BoxValidationError: {exc}")
+            return ActionResponse.success({"skill": skill})
 
         @self.action(LangBotToBoxAction.DELETE_SKILL)
         async def delete_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.delete_skill(data['name'])
+                result = self._runtime.skill_store.delete_skill(data["name"])
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.SCAN_SKILL_DIRECTORY)
         async def scan_skill_directory(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._runtime.skill_store.scan_directory(data['path'])
+                skill = self._runtime.skill_store.scan_directory(data["path"])
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(skill)
 
         @self.action(LangBotToBoxAction.LIST_SKILL_FILES)
         async def list_skill_files(data: dict[str, Any]) -> ActionResponse:
             try:
                 result = self._runtime.skill_store.list_skill_files(
-                    data['name'],
-                    data.get('path', '.'),
-                    include_hidden=bool(data.get('include_hidden', False)),
-                    max_entries=int(data.get('max_entries', 200)),
+                    data["name"],
+                    data.get("path", "."),
+                    include_hidden=bool(data.get("include_hidden", False)),
+                    max_entries=int(data.get("max_entries", 200)),
                 )
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.READ_SKILL_FILE)
         async def read_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.read_skill_file(data['name'], data['path'])
+                result = self._runtime.skill_store.read_skill_file(
+                    data["name"], data["path"]
+                )
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.WRITE_SKILL_FILE)
         async def write_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.write_skill_file(data['name'], data['path'], data.get('content', ''))
+                result = self._runtime.skill_store.write_skill_file(
+                    data["name"], data["path"], data.get("content", "")
+                )
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
+                return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.PREVIEW_SKILL_ZIP)
         async def preview_skill_zip(data: dict[str, Any]) -> ActionResponse:
             try:
-                file_bytes = await self.read_local_file(data['file_key'])
-                await self.delete_local_file(data['file_key'])
+                file_bytes = await self.read_local_file(data["file_key"])
+                await self.delete_local_file(data["file_key"])
                 result = self._runtime.skill_store.preview_zip_upload(
                     file_bytes=file_bytes,
-                    filename=data.get('filename', 'skill.zip'),
-                    source_subdir=data.get('source_subdir') or '',
-                    target_suffix=data.get('target_suffix', 'upload'),
+                    filename=data.get("filename", "skill.zip"),
+                    source_subdir=data.get("source_subdir") or "",
+                    target_suffix=data.get("target_suffix", "upload"),
                 )
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
-            return ActionResponse.success({'skills': result})
+                return ActionResponse.error(f"BoxValidationError: {exc}")
+            return ActionResponse.success({"skills": result})
 
         @self.action(LangBotToBoxAction.INSTALL_SKILL_ZIP)
         async def install_skill_zip(data: dict[str, Any]) -> ActionResponse:
             try:
-                file_bytes = await self.read_local_file(data['file_key'])
-                await self.delete_local_file(data['file_key'])
+                file_bytes = await self.read_local_file(data["file_key"])
+                await self.delete_local_file(data["file_key"])
                 result = self._runtime.skill_store.install_zip_upload(
                     file_bytes=file_bytes,
-                    filename=data.get('filename', 'skill.zip'),
-                    source_paths=data.get('source_paths') or [],
-                    source_path=data.get('source_path') or '',
-                    source_subdir=data.get('source_subdir') or '',
-                    target_suffix=data.get('target_suffix', 'upload'),
+                    filename=data.get("filename", "skill.zip"),
+                    source_paths=data.get("source_paths") or [],
+                    source_path=data.get("source_path") or "",
+                    source_subdir=data.get("source_subdir") or "",
+                    target_suffix=data.get("target_suffix", "upload"),
                 )
             except Exception as exc:
-                return ActionResponse.error(f'BoxValidationError: {exc}')
-            return ActionResponse.success({'skills': result})
+                return ActionResponse.error(f"BoxValidationError: {exc}")
+            return ActionResponse.success({"skills": result})
 
         @self.action(LangBotToBoxAction.INIT)
         async def init(data: dict[str, Any]) -> ActionResponse:
             self._runtime.init(data)
-            return ActionResponse.success({'initialized': True})
+            return ActionResponse.success({"initialized": True})
 
         @self.action(LangBotToBoxAction.SHUTDOWN)
         async def shutdown(data: dict[str, Any]) -> ActionResponse:
@@ -285,29 +303,37 @@ class BoxServerHandler(Handler):
 
 def _error_response(exc: Exception) -> web.Response:
     return web.json_response(
-        {'error': {'code': type(exc).__name__, 'message': str(exc)}},
+        {"error": {"code": type(exc).__name__, "message": str(exc)}},
         status=400,
     )
 
 
 async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
-    runtime: BoxRuntime = request.app['runtime']
-    session_id = request.match_info['session_id']
-    process_id = request.match_info.get('process_id', 'default')
+    runtime: BoxRuntime = request.app["runtime"]
+    session_id = request.match_info["session_id"]
+    process_id = request.match_info.get("process_id", "default")
 
     runtime_session = runtime._sessions.get(session_id)
     if runtime_session is None:
-        return _error_response(BoxSessionNotFoundError(f'session {session_id} not found'))
+        return _error_response(
+            BoxSessionNotFoundError(f"session {session_id} not found")
+        )
 
     managed_process = runtime_session.managed_processes.get(process_id)
     if managed_process is None:
-        return _error_response(BoxManagedProcessNotFoundError(f'session {session_id} has no managed process with process_id={process_id}'))
+        return _error_response(
+            BoxManagedProcessNotFoundError(
+                f"session {session_id} has no managed process with process_id={process_id}"
+            )
+        )
     if not managed_process.is_running:
         return _error_response(
-            BoxManagedProcessConflictError(f'managed process {process_id} in session {session_id} is not running')
+            BoxManagedProcessConflictError(
+                f"managed process {process_id} in session {session_id} is not running"
+            )
         )
 
-    ws = web.WebSocketResponse(protocols=('mcp',))
+    ws = web.WebSocketResponse(protocols=("mcp",))
     await ws.prepare(request)
 
     async with managed_process.attach_lock:
@@ -315,7 +341,7 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
         stdout = process.stdout
         stdin = process.stdin
         if stdout is None or stdin is None:
-            await ws.close(message=b'managed process stdio unavailable')
+            await ws.close(message=b"managed process stdio unavailable")
             return ws
 
         async def _stdout_to_ws() -> None:
@@ -323,13 +349,13 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
                 line = await stdout.readline()
                 if not line:
                     break
-                await ws.send_str(line.decode('utf-8', errors='replace').rstrip('\n'))
+                await ws.send_str(line.decode("utf-8", errors="replace").rstrip("\n"))
                 runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
 
         async def _ws_to_stdin() -> None:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
-                    stdin.write((msg.data + '\n').encode('utf-8'))
+                    stdin.write((msg.data + "\n").encode("utf-8"))
                     await stdin.drain()
                     runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
                 elif msg.type in (
@@ -362,7 +388,7 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
 
 async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
     """Handle action RPC over a single aiohttp WebSocket connection."""
-    runtime: BoxRuntime = request.app['runtime']
+    runtime: BoxRuntime = request.app["runtime"]
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -380,12 +406,25 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
 def create_app(runtime: BoxRuntime) -> web.Application:
     """Create the aiohttp app with all WebSocket routes on a single port."""
     app = web.Application()
-    app['runtime'] = runtime
-    app.router.add_get('/rpc/ws', handle_rpc_ws)
-    app.router.add_get('/v1/sessions/{session_id}/managed-process/{process_id}/ws', handle_managed_process_ws)
+    app["runtime"] = runtime
+    app.router.add_get("/rpc/ws", handle_rpc_ws)
+    app.router.add_get(
+        "/v1/sessions/{session_id}/managed-process/{process_id}/ws",
+        handle_managed_process_ws,
+    )
     # Backward-compatible route (defaults to process_id='default')
-    app.router.add_get('/v1/sessions/{session_id}/managed-process/ws', handle_managed_process_ws)
+    app.router.add_get(
+        "/v1/sessions/{session_id}/managed-process/ws", handle_managed_process_ws
+    )
     return app
+
+
+def create_ws_relay_app(runtime: BoxRuntime) -> web.Application:
+    """Backward-compatible alias for older callers.
+
+    The relay and action RPC endpoints now live in one aiohttp app.
+    """
+    return create_app(runtime)
 
 
 # ── Entry point ──────────────────────────────────────────────────────
@@ -404,14 +443,16 @@ async def _run_server(host: str, port: int, mode: str) -> None:
         await runner.setup()
         site = web.TCPSite(runner, host, port)
         await site.start()
-        logger.info(f'Box server listening on {host}:{port}')
+        logger.info(f"Box server listening on {host}:{port}")
     except OSError as exc:
-        logger.warning(f'Box server failed to bind {host}:{port}: {exc}')
-        logger.warning('Managed process WebSocket attach will be unavailable.')
+        logger.warning(f"Box server failed to bind {host}:{port}: {exc}")
+        logger.warning("Managed process WebSocket attach will be unavailable.")
 
     try:
-        if mode == 'stdio':
-            from langbot_plugin.runtime.io.controllers.stdio.server import StdioServerController
+        if mode == "stdio":
+            from langbot_plugin.runtime.io.controllers.stdio.server import (
+                StdioServerController,
+            )
 
             async def new_connection_callback(connection: Connection) -> None:
                 handler = BoxServerHandler(connection, runtime)
@@ -422,7 +463,7 @@ async def _run_server(host: str, port: int, mode: str) -> None:
         else:
             # In ws mode, action RPC is served via aiohttp on /rpc/ws.
             # Keep the server alive until cancelled.
-            logger.info(f'Box action RPC available at ws://{host}:{port}/rpc/ws')
+            logger.info(f"Box action RPC available at ws://{host}:{port}/rpc/ws")
             stop_event = asyncio.Event()
             await stop_event.wait()
     finally:
@@ -432,29 +473,36 @@ async def _run_server(host: str, port: int, mode: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description='LangBot Box Runtime Service')
-    parser.add_argument('--host', default='0.0.0.0', help='Bind address')
-    parser.add_argument('--ws-control-port', type=int, default=5410, help='The port for control connection')
+    parser = argparse.ArgumentParser(description="LangBot Box Runtime Service")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address")
     parser.add_argument(
-        '--port',
+        "--ws-control-port",
         type=int,
-        dest='ws_control_port',
+        default=5410,
+        help="The port for control connection",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        dest="ws_control_port",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument('--stdio-control', action='store_true', help='Use stdio for control connection')
     parser.add_argument(
-        '--mode',
-        choices=['auto', 'stdio', 'ws'],
+        "--stdio-control", action="store_true", help="Use stdio for control connection"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "stdio", "ws"],
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args(argv)
 
-    stdio_control = args.stdio_control or args.mode == 'stdio'
-    control_mode = 'stdio' if stdio_control else 'ws'
+    stdio_control = args.stdio_control or args.mode == "stdio"
+    control_mode = "stdio" if stdio_control else "ws"
 
     configure_process_logging(stream=sys.stderr)
     asyncio.run(_run_server(args.host, args.ws_control_port, control_mode))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
