@@ -4,6 +4,8 @@ import datetime as dt
 import json
 import logging
 import os
+import posixpath
+import shlex
 
 from .backend import BaseSandboxBackend, _MAX_RAW_OUTPUT_BYTES
 from .errors import BoxError
@@ -67,6 +69,11 @@ def _adapt_path_for_e2b(path: str) -> str:
     if path == '/workspace' or path.startswith('/workspace/'):
         return path.replace('/workspace', E2B_WORKSPACE_DIR, 1)
     return path
+
+
+def _rewrite_command_paths_for_e2b(command: str) -> str:
+    """Rewrite LangBot's logical /workspace paths for E2B's real writable path."""
+    return command.replace('/workspace', E2B_WORKSPACE_DIR)
 
 
 class E2BSandboxBackend(BaseSandboxBackend):
@@ -197,7 +204,11 @@ class E2BSandboxBackend(BaseSandboxBackend):
             network=spec.network,
             host_path=spec.host_path,
             host_path_mode=spec.host_path_mode,
-            mount_path=mount_path,
+            # Keep the logical mount path in session metadata. The runtime
+            # compares future BoxSpec objects against this value when reusing
+            # sessions; storing the E2B-internal path here makes every later
+            # /workspace request look incompatible.
+            mount_path=spec.mount_path,
             persistent=spec.persistent,
             cpus=spec.cpus,
             memory_mb=spec.memory_mb,
@@ -225,8 +236,9 @@ class E2BSandboxBackend(BaseSandboxBackend):
         if self._api_url:
             connect_kwargs['domain'] = self._api_url
 
-        # Adapt workdir for E2B environment (use session's mount_path as base)
+        # Adapt workdir and logical /workspace command paths for E2B.
         workdir = _adapt_path_for_e2b(spec.workdir)
+        command = _rewrite_command_paths_for_e2b(spec.cmd)
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
@@ -246,11 +258,13 @@ class E2BSandboxBackend(BaseSandboxBackend):
         except Exception as exc:
             raise BoxError(f'Failed to connect to E2B sandbox: {exc}')
 
+        await self._sync_mounts_to_e2b(sandbox, spec)
+
         # Run the command
-        # Note: E2B requires workdir to exist before running command
-        # We create it as part of the command, not via cwd parameter
+        # Note: E2B requires cwd to exist before running command. We create it
+        # as part of the command and then run from that directory.
         run_kwargs = {
-            'cmd': f'mkdir -p {workdir} && cd {workdir} && {spec.cmd}',
+            'cmd': f'mkdir -p {shlex.quote(workdir)} && cd {shlex.quote(workdir)} && {command}',
             'timeout': spec.timeout_sec,
         }
         if spec.env:
@@ -274,6 +288,8 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 )
             raise BoxError(f'E2B command execution failed: {exc}')
 
+        await self._sync_mounts_from_e2b(sandbox, spec)
+
         duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
 
         # Process output - apply truncation if needed
@@ -289,6 +305,100 @@ class E2BSandboxBackend(BaseSandboxBackend):
             stderr=stderr,
             duration_ms=duration_ms,
         )
+
+    async def _sync_mounts_to_e2b(self, sandbox, spec: BoxSpec) -> None:
+        """Best-effort upload of all logical mounts into public E2B."""
+        if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
+            await self._sync_host_tree_to_e2b(
+                sandbox,
+                host_root=spec.host_path,
+                remote_root=_adapt_path_for_e2b(spec.mount_path),
+            )
+
+        for mount in spec.extra_mounts:
+            if mount.mode == BoxHostMountMode.NONE:
+                continue
+            await self._sync_host_tree_to_e2b(
+                sandbox,
+                host_root=mount.host_path,
+                remote_root=_adapt_path_for_e2b(mount.mount_path),
+            )
+
+    async def _sync_mounts_from_e2b(self, sandbox, spec: BoxSpec) -> None:
+        """Best-effort download of writable E2B mounts into host paths."""
+        if spec.host_path is not None and spec.host_path_mode == BoxHostMountMode.READ_WRITE:
+            await self._sync_e2b_tree_to_host(
+                sandbox,
+                remote_root=_adapt_path_for_e2b(spec.mount_path),
+                host_root=spec.host_path,
+            )
+
+        for mount in spec.extra_mounts:
+            if mount.mode != BoxHostMountMode.READ_WRITE:
+                continue
+            await self._sync_e2b_tree_to_host(
+                sandbox,
+                remote_root=_adapt_path_for_e2b(mount.mount_path),
+                host_root=mount.host_path,
+            )
+
+    async def _sync_host_tree_to_e2b(self, sandbox, *, host_root: str, remote_root: str) -> None:
+        """Best-effort sync for public E2B, which has no local bind mounts."""
+        if not os.path.isdir(host_root):
+            return
+
+        for root, dirs, files in os.walk(host_root):
+            dirs[:] = [d for d in dirs if d not in {'.git', '__pycache__', '.venv', 'node_modules'}]
+            rel_dir = os.path.relpath(root, host_root)
+            remote_dir = remote_root if rel_dir == '.' else posixpath.join(remote_root, rel_dir.replace(os.sep, '/'))
+            try:
+                await sandbox.commands.run(f'mkdir -p {shlex.quote(remote_dir)}', timeout=10)
+            except Exception as exc:
+                self.logger.debug(f'Failed to create E2B sync dir {remote_dir}: {exc}')
+                continue
+
+            for filename in files:
+                host_file = os.path.join(root, filename)
+                try:
+                    if os.path.getsize(host_file) > _MAX_RAW_OUTPUT_BYTES:
+                        continue
+                    with open(host_file, 'rb') as f:
+                        data = f.read()
+                    remote_file = posixpath.join(remote_dir, filename)
+                    await sandbox.files.write(remote_file, data)
+                except Exception as exc:
+                    self.logger.debug(f'Failed to sync host file to E2B {host_file}: {exc}')
+
+    async def _sync_e2b_tree_to_host(self, sandbox, *, remote_root: str, host_root: str) -> None:
+        """Best-effort download of an E2B mount into the matching host path."""
+        os.makedirs(host_root, exist_ok=True)
+        try:
+            entries = await sandbox.files.list(remote_root, depth=16)
+        except Exception as exc:
+            self.logger.debug(f'Failed to list E2B mount for sync {remote_root}: {exc}')
+            return
+
+        for entry in entries:
+            remote_path = str(getattr(entry, 'path', '') or '')
+            if not remote_path or remote_path == remote_root or not remote_path.startswith(remote_root + '/'):
+                continue
+            rel_path = remote_path[len(remote_root) :].lstrip('/')
+            real_host_root = os.path.realpath(host_root)
+            host_path = os.path.realpath(os.path.join(real_host_root, *rel_path.split('/')))
+            if not (host_path == real_host_root or host_path.startswith(real_host_root + os.sep)):
+                continue
+
+            entry_type = getattr(getattr(entry, 'type', None), 'value', '')
+            try:
+                if entry_type == 'dir':
+                    os.makedirs(host_path, exist_ok=True)
+                elif entry_type == 'file':
+                    os.makedirs(os.path.dirname(host_path), exist_ok=True)
+                    data = await sandbox.files.read(remote_path, format='bytes')
+                    with open(host_path, 'wb') as f:
+                        f.write(bytes(data))
+            except Exception as exc:
+                self.logger.debug(f'Failed to sync E2B file to host {remote_path}: {exc}')
 
     async def stop_session(self, session: BoxSessionInfo):
         """Kill the E2B sandbox."""
