@@ -160,8 +160,9 @@ async def test_start_session_basic(backend, mock_e2b_module):
     assert info.backend_name == 'e2b'
     assert info.session_id == 'sess1'
     assert info.backend_session_id == 'sandbox-test-123'
-    # Path should be adapted
-    assert info.mount_path == '/home/user/workspace'
+    # Session metadata keeps LangBot's logical mount path so later specs
+    # with /workspace can reuse the same session.
+    assert info.mount_path == '/workspace'
 
     # Verify AsyncSandbox.create was called with api_key
     mock_e2b_module.create.assert_called_once()
@@ -229,8 +230,9 @@ async def test_start_session_custom_mount_path(backend, mock_e2b_module):
 
     info = await backend.start_session(spec)
 
-    # Path should be adapted
-    assert info.mount_path == '/home/user/workspace/myproject'
+    # Session metadata keeps the logical mount path; command execution adapts
+    # it to E2B's internal writable path.
+    assert info.mount_path == '/workspace/myproject'
 
 
 # ── CubeSandbox host-mount metadata ───────────────────────────────────

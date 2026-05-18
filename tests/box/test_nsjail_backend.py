@@ -22,6 +22,7 @@ from langbot_plugin.box.nsjail_backend import (
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
     BoxHostMountMode,
+    BoxMountSpec,
     BoxNetworkMode,
     BoxSessionInfo,
     BoxSpec,
@@ -80,6 +81,7 @@ async def test_start_session_creates_directories(backend, tmp_base):
 
     session_dir = pathlib.Path(info.backend_session_id)
     assert session_dir.exists()
+    assert (session_dir / 'root').is_dir()
     assert (session_dir / 'workspace').is_dir()
     assert (session_dir / 'tmp').is_dir()
     assert (session_dir / 'home').is_dir()
@@ -87,7 +89,7 @@ async def test_start_session_creates_directories(backend, tmp_base):
 
     assert info.backend_name == 'nsjail'
     assert info.session_id == 'sess1'
-    assert info.image == 'host'
+    assert info.image == spec.image
     assert info.read_only_rootfs is True
 
 
@@ -128,31 +130,35 @@ async def test_stop_session_removes_directory(backend, tmp_base):
 def test_build_nsjail_args_basic(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
     session_dir = tmp_base / 'test_session'
-    for d in ('workspace', 'tmp', 'home'):
+    for d in ('root', 'workspace', 'tmp', 'home'):
         (session_dir / d).mkdir(parents=True)
 
+    spec = BoxSpec(session_id='s1', cmd='echo hello', env={'FOO': 'bar'})
     session = BoxSessionInfo(
         session_id='s1',
         backend_name='nsjail',
         backend_session_id=str(session_dir),
-        image='host',
+        image=spec.image,
         network=BoxNetworkMode.OFF,
         created_at='2024-01-01T00:00:00+00:00',
         last_used_at='2024-01-01T00:00:00+00:00',
     )
-    spec = BoxSpec(session_id='s1', cmd='echo hello', env={'FOO': 'bar'})
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
     assert args[0] == 'nsjail'
     assert '--mode' in args
     assert args[args.index('--mode') + 1] == 'o'
-    assert '--clone_newnet' in args
+    assert '--chroot' in args
+    assert args[args.index('--chroot') + 1] == str(session_dir / 'root')
+    assert '--clone_newnet' not in args
+    assert '--clone_newuser' not in args
+    assert '--clone_newns' not in args
     assert '--disable_clone_newnet' not in args
     assert '--really_quiet' in args
 
     # Writable mounts should reference session directories.
-    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--rw_bind']
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
     workspace_mount = f'{session_dir}/workspace:/workspace'
     assert workspace_mount in rw_binds
 
@@ -162,13 +168,18 @@ def test_build_nsjail_args_basic(backend, tmp_base):
 
     # Command is the last part after '--'.
     separator_idx = args.index('--')
-    assert args[separator_idx + 1] == 'sh'
+    assert args[separator_idx + 1] == '/bin/sh'
+
+    # Mount target directories are created under the per-session chroot root.
+    assert (session_dir / 'root' / 'workspace').is_dir()
+    assert (session_dir / 'root' / 'tmp').is_dir()
+    assert (session_dir / 'root' / 'home').is_dir()
 
 
 def test_build_nsjail_args_network_on(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
     session_dir = tmp_base / 'test_session_net'
-    for d in ('workspace', 'tmp', 'home'):
+    for d in ('root', 'workspace', 'tmp', 'home'):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
@@ -191,7 +202,7 @@ def test_build_nsjail_args_network_on(backend, tmp_base):
 def test_build_nsjail_args_host_path_ro(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
     session_dir = tmp_base / 'test_hp'
-    for d in ('workspace', 'tmp', 'home'):
+    for d in ('root', 'workspace', 'tmp', 'home'):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
@@ -221,7 +232,7 @@ def test_build_nsjail_args_host_path_ro(backend, tmp_base):
 def test_build_nsjail_args_uses_custom_mount_path(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
     session_dir = tmp_base / 'test_custom_mount'
-    for d in ('workspace', 'tmp', 'home'):
+    for d in ('root', 'workspace', 'tmp', 'home'):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
@@ -247,9 +258,44 @@ def test_build_nsjail_args_uses_custom_mount_path(backend, tmp_base):
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
-    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--rw_bind']
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
     assert '/data/project:/project' in rw_binds
     assert args[args.index('--cwd') + 1] == '/project/src'
+    assert (session_dir / 'root' / 'project').is_dir()
+
+
+def test_build_nsjail_args_extra_mounts_prepare_targets(backend, tmp_base):
+    tmp_base.mkdir(parents=True, exist_ok=True)
+    session_dir = tmp_base / 'test_extra_mount'
+    for d in ('root', 'workspace', 'tmp', 'home'):
+        (session_dir / d).mkdir(parents=True)
+
+    session = BoxSessionInfo(
+        session_id='s5',
+        backend_name='nsjail',
+        backend_session_id=str(session_dir),
+        image='host',
+        network=BoxNetworkMode.OFF,
+        created_at='2024-01-01T00:00:00+00:00',
+        last_used_at='2024-01-01T00:00:00+00:00',
+    )
+    spec = BoxSpec(
+        session_id='s5',
+        cmd='ls /workspace/.skills/demo',
+        extra_mounts=[
+            BoxMountSpec(
+                host_path='/data/skills/demo',
+                mount_path='/workspace/.skills/demo',
+                mode=BoxHostMountMode.READ_WRITE,
+            )
+        ],
+    )
+
+    args = backend._build_nsjail_args(session, spec, session_dir)
+
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
+    assert '/data/skills/demo:/workspace/.skills/demo' in rw_binds
+    assert (session_dir / 'root' / 'workspace' / '.skills' / 'demo').is_dir()
 
 
 def test_build_resource_limits_cgroup(backend):
@@ -342,6 +388,28 @@ def test_detect_cgroup_v2_root_user():
     with (
         mock.patch('os.getuid', return_value=0),
         mock.patch.object(pathlib.Path, 'exists', always_exists),
+    ):
+        assert NsjailBackend._detect_cgroup_v2() is True
+
+
+def test_detect_cgroup_v2_user_slice_must_be_writable():
+    orig_exists = pathlib.Path.exists
+
+    def fake_exists(self):
+        path = str(self)
+        return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers') or 'user.slice' in path
+
+    with (
+        mock.patch('os.getuid', return_value=1000),
+        mock.patch.object(pathlib.Path, 'exists', fake_exists),
+        mock.patch('os.access', return_value=False),
+    ):
+        assert NsjailBackend._detect_cgroup_v2() is False
+
+    with (
+        mock.patch('os.getuid', return_value=1000),
+        mock.patch.object(pathlib.Path, 'exists', fake_exists),
+        mock.patch('os.access', return_value=True),
     ):
         assert NsjailBackend._detect_cgroup_v2() is True
 
