@@ -108,11 +108,12 @@ class NsjailBackend(BaseSandboxBackend):
         session_dir = self._base_dir / session_dir_name
 
         # Per-session writable directories.
+        root_dir = session_dir / 'root'
         workspace_dir = session_dir / 'workspace'
         tmp_dir = session_dir / 'tmp'
         home_dir = session_dir / 'home'
 
-        for d in (workspace_dir, tmp_dir, home_dir):
+        for d in (root_dir, workspace_dir, tmp_dir, home_dir):
             d.mkdir(parents=True, exist_ok=True)
 
         # If host_path is specified, we will use it directly instead of the
@@ -144,7 +145,10 @@ class NsjailBackend(BaseSandboxBackend):
             session_id=spec.session_id,
             backend_name=self.name,
             backend_session_id=str(session_dir),
-            image='host',
+            # Keep the requested logical image in metadata so runtime session
+            # reuse sees later specs as compatible. nsjail still executes
+            # against host-mounted system paths rather than a container image.
+            image=spec.image,
             network=spec.network,
             host_path=spec.host_path,
             host_path_mode=spec.host_path_mode,
@@ -288,20 +292,19 @@ class NsjailBackend(BaseSandboxBackend):
         # Mode: one-shot execution.
         args.extend(['--mode', 'o'])
 
-        # Namespace isolation.
-        args.extend([
-            '--clone_newuser',
-            '--clone_newns',
-            '--clone_newpid',
-            '--clone_newipc',
-            '--clone_newuts',
-            '--clone_newcgroup',
-        ])
+        # nsjail enables the relevant clone namespaces by default. Some
+        # versions do not expose positive --clone_new* flags, only disable
+        # flags, so rely on defaults for broad compatibility.
+
+        # Use a per-session chroot root so nsjail can create mount targets
+        # without needing write access to the host root.
+        root_dir = session_dir / 'root'
+        root_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_chroot_mount_targets(root_dir, session, spec)
+        args.extend(['--chroot', str(root_dir)])
 
         # Network namespace.
-        if spec.network == BoxNetworkMode.OFF:
-            args.append('--clone_newnet')
-        else:
+        if spec.network != BoxNetworkMode.OFF:
             args.append('--disable_clone_newnet')
 
         # Read-only system mounts.
@@ -333,7 +336,7 @@ class NsjailBackend(BaseSandboxBackend):
         # The actual command.
         quoted_workdir = shlex.quote(spec.workdir)
         user_cmd = f'mkdir -p {quoted_workdir} && cd {quoted_workdir} && {spec.cmd}'
-        args.extend(['--', 'sh', '-lc', user_cmd])
+        args.extend(['--', '/bin/sh', '-lc', user_cmd])
 
         return args
 
@@ -366,24 +369,56 @@ class NsjailBackend(BaseSandboxBackend):
             if spec.host_path_mode == BoxHostMountMode.READ_ONLY:
                 args.extend(['--bindmount_ro', f'{spec.host_path}:{spec.mount_path}'])
             else:
-                args.extend(['--rw_bind', f'{spec.host_path}:{spec.mount_path}'])
+                args.extend(['--bindmount', f'{spec.host_path}:{spec.mount_path}'])
         else:
             workspace_dir = session_dir / 'workspace'
-            args.extend(['--rw_bind', f'{workspace_dir}:{spec.mount_path}'])
+            args.extend(['--bindmount', f'{workspace_dir}:{spec.mount_path}'])
 
         for mount in spec.extra_mounts:
             if mount.mode == BoxHostMountMode.READ_ONLY:
                 args.extend(['--bindmount_ro', f'{mount.host_path}:{mount.mount_path}'])
             elif mount.mode == BoxHostMountMode.READ_WRITE:
-                args.extend(['--rw_bind', f'{mount.host_path}:{mount.mount_path}'])
+                args.extend(['--bindmount', f'{mount.host_path}:{mount.mount_path}'])
 
         # /tmp and /home are always per-session writable.
         tmp_dir = session_dir / 'tmp'
         home_dir = session_dir / 'home'
-        args.extend(['--rw_bind', f'{tmp_dir}:/tmp'])
-        args.extend(['--rw_bind', f'{home_dir}:/home'])
+        args.extend(['--bindmount', f'{tmp_dir}:/tmp'])
+        args.extend(['--bindmount', f'{home_dir}:/home'])
 
         return args
+
+    def _ensure_chroot_mount_targets(
+        self,
+        root_dir: pathlib.Path,
+        session: BoxSessionInfo,
+        spec: BoxSpec,
+    ) -> None:
+        mount_paths = {
+            '/proc',
+            '/dev',
+            '/tmp',
+            '/home',
+            spec.mount_path,
+            session.mount_path,
+        }
+        mount_paths.update(_READONLY_SYSTEM_MOUNTS)
+        mount_paths.update(_READONLY_ETC_ENTRIES)
+        for mount in spec.extra_mounts:
+            mount_paths.add(mount.mount_path)
+
+        for mount_path in mount_paths:
+            if not mount_path:
+                continue
+            target = root_dir / mount_path.lstrip('/')
+            try:
+                if os.path.isfile(mount_path):
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.touch(exist_ok=True)
+                else:
+                    target.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                self.logger.debug(f'Failed to prepare nsjail mount target {target}: {exc}')
 
     def _build_resource_limits(self, spec: BoxSpec) -> list[str]:
         args: list[str] = []
@@ -455,7 +490,7 @@ class NsjailBackend(BaseSandboxBackend):
         # A rough heuristic: if the user owns a cgroup directory we're probably
         # running under systemd user delegation.
         user_slice = cgroup_mount / f'user.slice/user-{os.getuid()}.slice'
-        if user_slice.exists():
+        if user_slice.exists() and os.access(user_slice, os.W_OK):
             return True
         # If running as root (uid 0), cgroup v2 is always usable.
         if os.getuid() == 0:
