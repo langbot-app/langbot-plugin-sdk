@@ -33,6 +33,7 @@ from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
     RuntimeToPluginAction,
 )
+from langbot_plugin.entities.io.errors import ActionCallTimeoutError
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
@@ -41,6 +42,48 @@ from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 
 logger = logging.getLogger(__name__)
+
+
+def _remaining_deadline_seconds(context: dict[str, typing.Any]) -> float | None:
+    deadline_at = (context.get("runtime") or {}).get("deadline_at")
+    if deadline_at is None:
+        return None
+    try:
+        return float(deadline_at) - time.time()
+    except (TypeError, ValueError):
+        return None
+
+
+def _runner_action_timeout(context: dict[str, typing.Any]) -> float:
+    remaining = _remaining_deadline_seconds(context)
+    if remaining is None:
+        return 300
+    if remaining <= 0:
+        return 0.001
+    return max(remaining + 1.0, 0.001)
+
+
+async def _anext_with_deadline(
+    gen: AsyncGenerator[dict[str, typing.Any], None],
+    context: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
+    remaining = _remaining_deadline_seconds(context)
+    if remaining is not None and remaining <= 0:
+        await gen.aclose()
+        raise asyncio.TimeoutError
+
+    try:
+        if remaining is None:
+            return await anext(gen)
+        return await asyncio.wait_for(anext(gen), timeout=remaining)
+    except StopAsyncIteration:
+        exhausted = _remaining_deadline_seconds(context)
+        if exhausted is not None and exhausted <= 0:
+            raise asyncio.TimeoutError
+        raise
+    except asyncio.TimeoutError:
+        await gen.aclose()
+        raise
 
 
 class PluginInstallSource(enum.Enum):
@@ -939,14 +982,24 @@ class PluginManager:
                     "runner_name": runner_name,
                     "context": context,
                 },
-                timeout=300,
+                timeout=_runner_action_timeout(context),
             )
 
             # call_action_generator yields response.data directly on success,
             # or raises ActionCallError on failure
-            async for result_data in gen:
+            while True:
+                try:
+                    result_data = await _anext_with_deadline(gen, context)
+                except StopAsyncIteration:
+                    break
                 yield result_data
 
+        except (asyncio.TimeoutError, ActionCallTimeoutError):
+            yield AgentRunResult.run_failed(
+                error="Agent runner timed out",
+                code="runner.timeout",
+                retryable=True,
+            ).model_dump(mode="json")
         except Exception as e:
             import traceback
             traceback.print_exc()

@@ -7,6 +7,7 @@ These tests verify that AgentRunAPIProxy:
 """
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -47,6 +48,7 @@ class MockHandler:
 def create_mock_context(
     run_id: str = 'test_run',
     query_id: int | None = None,
+    deadline_at: float | None = None,
     models: list[dict] | None = None,
     tools: list[dict] | None = None,
     knowledge_bases: list[dict] | None = None,
@@ -58,7 +60,7 @@ def create_mock_context(
         run_id=run_id,
         trigger=AgentTrigger(type='user_message'),
         input=AgentInput(content='test input'),
-        runtime=AgentRuntimeContext(query_id=query_id),
+        runtime=AgentRuntimeContext(query_id=query_id, deadline_at=deadline_at),
         resources=AgentResources(
             models=[ModelResource.model_validate(m) for m in (models or [])],
             tools=[ToolResource.model_validate(t) for t in (tools or [])],
@@ -568,6 +570,44 @@ class TestAgentRunAPIProxyTimeoutValues:
         timeout = call_args[0][2]
 
         assert timeout == 30
+
+    @pytest.mark.anyio
+    async def test_invoke_llm_timeout_is_bounded_by_run_deadline(self):
+        """invoke_llm timeout is capped by ctx.runtime.deadline_at."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'message': {'role': 'assistant', 'content': 'Hello'}}
+
+        ctx = create_mock_context(
+            deadline_at=time.time() + 5,
+            models=[{'model_id': 'model_001'}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        await proxy.invoke_llm('model_001', [Message(role='user', content='Hello')])
+
+        timeout = mock_handler.call_action_mock.call_args[0][2]
+        payload_timeout = mock_handler.call_action_mock.call_args[0][1]["timeout"]
+
+        assert 0 < timeout <= 5
+        assert payload_timeout == timeout
+
+    @pytest.mark.anyio
+    async def test_call_tool_timeout_is_bounded_by_run_deadline(self):
+        """tool calls use the remaining run deadline instead of the full default."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'result': {}}
+
+        ctx = create_mock_context(
+            deadline_at=time.time() + 5,
+            tools=[{'tool_name': 'test_tool'}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        await proxy.call_tool('test_tool', {'param': 'value'})
+
+        timeout = mock_handler.call_action_mock.call_args[0][2]
+
+        assert 0 < timeout <= 5
 
 
 class TestAgentRunAPIProxyActionEnumCorrectness:

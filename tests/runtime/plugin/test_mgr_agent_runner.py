@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
+import time
 import typing
 from unittest.mock import Mock
+
+import pytest
 
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
@@ -53,6 +55,18 @@ class FailingAgentRunner(AgentRunner):
         chunk = MessageChunk(role="assistant", content="Starting...")
         yield AgentRunResult.message_delta(chunk)
         raise RuntimeError("Intentional test failure")
+
+
+class SlowAgentRunner(AgentRunner):
+    """Mock AgentRunner that exceeds the run deadline."""
+
+    async def run(
+        self, ctx: AgentRunContext
+    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+        import asyncio
+
+        await asyncio.sleep(0.05)
+        yield AgentRunResult.run_completed(finish_reason="stop")
 
 
 def create_mock_component_manifest(
@@ -476,3 +490,54 @@ class TestRunAgent:
         assert len(results) == 1
         assert results[0]["type"] == "run.failed"
         assert results[0]["data"]["code"] == "runner.not_initialized"
+
+    @pytest.mark.anyio
+    async def test_run_agent_deadline_returns_timeout(self):
+        """PluginManager enforces total runner deadline while forwarding."""
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mock_context = Mock(spec=RuntimeContext)
+        mgr = PluginManager(mock_context)
+
+        mock_responses = [
+            {"type": "run.completed", "data": {"finish_reason": "stop"}},
+        ]
+        plugin = create_mock_plugin(
+            "test-author", "test-plugin", [("default", None)],
+            mock_handler_responses=[mock_responses],
+        )
+        mgr.plugins = [plugin]
+
+        ctx = create_run_context()
+        ctx.runtime.deadline_at = time.time() - 1
+
+        results = []
+        async for result in mgr.run_agent(
+            "test-author",
+            "test-plugin",
+            "default",
+            ctx.model_dump(mode="json"),
+        ):
+            results.append(result)
+
+        assert len(results) == 1
+        assert results[0]["type"] == "run.failed"
+        assert results[0]["data"]["code"] == "runner.timeout"
+        assert results[0]["data"]["retryable"] is True
+
+
+@pytest.mark.anyio
+async def test_plugin_runtime_runner_deadline_cancels_runner_coroutine():
+    """The plugin-process helper converts an expired runner coroutine to run.failed."""
+    from langbot_plugin.cli.run.handler import _iter_runner_results_with_deadline
+
+    ctx = create_run_context()
+    ctx.runtime.deadline_at = time.time() + 0.01
+
+    results = [result async for result in _iter_runner_results_with_deadline(SlowAgentRunner(), ctx)]
+
+    assert len(results) == 1
+    assert results[0].type.value == "run.failed"
+    assert results[0].data["code"] == "runner.timeout"
+    assert results[0].data["retryable"] is True
