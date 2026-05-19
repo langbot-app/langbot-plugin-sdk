@@ -12,6 +12,7 @@ Uses composition + delegation pattern:
 from __future__ import annotations
 
 import base64
+import time
 from typing import Any
 
 from langbot_plugin.runtime.io.handler import Handler
@@ -90,6 +91,31 @@ class AgentRunAPIProxy:
         """Query ID from runtime context (for legacy compatibility)."""
         return self.ctx.runtime.query_id or 0
 
+    def _remaining_deadline_seconds(self) -> float | None:
+        deadline_at = self.ctx.runtime.deadline_at
+        if deadline_at is None:
+            return None
+        try:
+            return float(deadline_at) - time.time()
+        except (TypeError, ValueError):
+            return None
+
+    def _bounded_timeout(
+        self,
+        default: float,
+        requested: float | None = None,
+    ) -> float:
+        base_timeout = default if requested is None else requested
+        if not isinstance(base_timeout, (int, float)) or base_timeout <= 0:
+            base_timeout = default
+
+        remaining = self._remaining_deadline_seconds()
+        if remaining is None:
+            return float(base_timeout)
+        if remaining <= 0:
+            return 0.001
+        return max(min(float(base_timeout), remaining), 0.001)
+
     # ================= Resource Helper Methods =================
 
     def get_allowed_models(self) -> list[Any]:
@@ -159,7 +185,7 @@ class AgentRunAPIProxy:
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
         self._validate_model_access(llm_model_uuid)
-        effective_timeout = timeout if timeout is not None else 120.0
+        effective_timeout = self._bounded_timeout(default=120.0, requested=timeout)
         payload = {
             "run_id": self.run_id,
             "llm_model_uuid": llm_model_uuid,
@@ -187,20 +213,21 @@ class AgentRunAPIProxy:
     ):
         """Invoke an LLM model with streaming, permission validation."""
         self._validate_model_access(llm_model_uuid)
+        effective_timeout = self._bounded_timeout(default=120.0)
         payload = {
             "run_id": self.run_id,
             "llm_model_uuid": llm_model_uuid,
             "messages": [m.model_dump() for m in messages],
             "funcs": [f.model_dump() for f in funcs],
             "extra_args": extra_args,
-            "timeout": 120.0,
+            "timeout": effective_timeout,
         }
         if remove_think is not None:
             payload["remove_think"] = remove_think
         async for chunk_data in self._api.plugin_runtime_handler.call_action_generator(
             PluginToRuntimeAction.INVOKE_LLM_STREAM,
             payload,
-            120.0,
+            effective_timeout,
         ):
             yield provider_message.MessageChunk.model_validate(chunk_data["chunk"])
 
@@ -222,13 +249,14 @@ class AgentRunAPIProxy:
             PermissionDeniedError: Tool not authorized for this run
         """
         self._validate_tool_access(tool_name)
+        timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.GET_TOOL_DETAIL,
             {
                 "run_id": self.run_id,
                 "tool_name": tool_name,
             },
-            30,
+            timeout,
         )
         return resp.get("tool", resp)
 
@@ -244,6 +272,7 @@ class AgentRunAPIProxy:
         Returns 'result' key instead of 'tool_response'.
         """
         self._validate_tool_access(tool_name)
+        timeout = self._bounded_timeout(default=180.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.CALL_TOOL,
             {
@@ -253,7 +282,7 @@ class AgentRunAPIProxy:
                 "session": session or {},
                 "query_id": self.query_id,
             },
-            180,
+            timeout,
         )
         return resp.get("result", resp.get("tool_response", resp))
 
@@ -268,6 +297,7 @@ class AgentRunAPIProxy:
     ) -> list[dict[str, Any]]:
         """Retrieve from knowledge base with permission validation."""
         self._validate_knowledge_base_access(kb_id)
+        timeout = self._bounded_timeout(default=30.0)
         return (
             await self._api.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
@@ -279,7 +309,7 @@ class AgentRunAPIProxy:
                     "top_k": top_k,
                     "filters": filters or {},
                 },
-                30,
+                timeout,
             )
         )["results"]
 
@@ -295,6 +325,7 @@ class AgentRunAPIProxy:
                 "key": key,
                 "value_base64": base64.b64encode(value).decode("utf-8"),
             },
+            self._bounded_timeout(default=15.0),
         )
 
     async def get_plugin_storage(self, key: str) -> bytes:
@@ -307,6 +338,7 @@ class AgentRunAPIProxy:
                     "run_id": self.run_id,
                     "key": key,
                 },
+                self._bounded_timeout(default=15.0),
             )
         )["value_base64"]
         return base64.b64decode(resp)
@@ -320,6 +352,7 @@ class AgentRunAPIProxy:
                 {
                     "run_id": self.run_id,
                 },
+                self._bounded_timeout(default=15.0),
             )
         )["keys"]
 
@@ -332,6 +365,7 @@ class AgentRunAPIProxy:
                 "run_id": self.run_id,
                 "key": key,
             },
+            self._bounded_timeout(default=15.0),
         )
 
     async def set_workspace_storage(self, key: str, value: bytes) -> None:
@@ -344,6 +378,7 @@ class AgentRunAPIProxy:
                 "key": key,
                 "value_base64": base64.b64encode(value).decode("utf-8"),
             },
+            self._bounded_timeout(default=15.0),
         )
 
     async def get_workspace_storage(self, key: str) -> bytes:
@@ -356,6 +391,7 @@ class AgentRunAPIProxy:
                     "run_id": self.run_id,
                     "key": key,
                 },
+                self._bounded_timeout(default=15.0),
             )
         )["value_base64"]
         return base64.b64decode(resp)
@@ -369,6 +405,7 @@ class AgentRunAPIProxy:
                 {
                     "run_id": self.run_id,
                 },
+                self._bounded_timeout(default=15.0),
             )
         )["keys"]
 
@@ -381,6 +418,7 @@ class AgentRunAPIProxy:
                 "run_id": self.run_id,
                 "key": key,
             },
+            self._bounded_timeout(default=15.0),
         )
 
     # ================= File API (delegated with validation) =================
@@ -402,6 +440,7 @@ class AgentRunAPIProxy:
                     "run_id": self.run_id,
                     "file_key": file_key,
                 },
+                self._bounded_timeout(default=15.0),
             )
         )["file_base64"]
         return base64.b64decode(resp)
@@ -451,6 +490,7 @@ class AgentRunAPIProxy:
             # ]
         """
         self._validate_model_access(rerank_model_uuid)
+        effective_timeout = self._bounded_timeout(default=30.0, requested=timeout)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.INVOKE_RERANK,
             {
@@ -461,6 +501,6 @@ class AgentRunAPIProxy:
                 "top_k": top_k,
                 "extra_args": extra_args or {},
             },
-            timeout=timeout,
+            timeout=effective_timeout,
         )
         return resp.get("results", [])
