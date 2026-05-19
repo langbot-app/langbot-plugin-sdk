@@ -5,6 +5,7 @@ import os
 import mimetypes
 import typing
 import aiofiles
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -65,6 +66,51 @@ def _resolve_asset_path(file_key: str) -> Path | None:
             return resolved
 
     return None
+
+
+def _remaining_deadline_seconds(deadline_at: typing.Any) -> float | None:
+    if deadline_at is None:
+        return None
+    try:
+        return float(deadline_at) - time.time()
+    except (TypeError, ValueError):
+        return None
+
+
+async def _iter_runner_results_with_deadline(
+    runner_instance: typing.Any,
+    run_context: typing.Any,
+) -> typing.AsyncGenerator[typing.Any, None]:
+    """Iterate runner results and cancel the runner when the run deadline expires."""
+    from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+
+    result_gen = runner_instance.run(run_context)
+    try:
+        while True:
+            remaining = _remaining_deadline_seconds(run_context.runtime.deadline_at)
+            if remaining is not None and remaining <= 0:
+                raise asyncio.TimeoutError
+
+            try:
+                if remaining is None:
+                    result = await anext(result_gen)
+                else:
+                    result = await asyncio.wait_for(anext(result_gen), timeout=remaining)
+            except StopAsyncIteration:
+                break
+
+            yield result
+    except asyncio.TimeoutError:
+        yield AgentRunResult.run_failed(
+            error="Agent runner timed out",
+            code="runner.timeout",
+            retryable=True,
+        )
+    finally:
+        try:
+            await result_gen.aclose()
+        except Exception:
+            pass
 
 
 class PluginRuntimeHandler(Handler):
@@ -368,7 +414,10 @@ class PluginRuntimeHandler(Handler):
 
             # Run the agent and stream results
             try:
-                async for result in runner_instance.run(run_context):
+                async for result in _iter_runner_results_with_deadline(
+                    runner_instance,
+                    run_context,
+                ):
                     yield ActionResponse.success(result.model_dump(mode="json"))
             except Exception as e:
                 import traceback

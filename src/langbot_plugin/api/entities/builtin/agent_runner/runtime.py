@@ -24,7 +24,7 @@ class AgentRuntimeContext(pydantic.BaseModel):
     trace_id: str | None = None
     """Trace ID for observability."""
 
-    deadline_at: int | None = None
+    deadline_at: float | None = None
     """Deadline timestamp (epoch seconds) for timeout."""
 
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
