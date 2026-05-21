@@ -1,10 +1,16 @@
-"""Standalone Box Runtime service exposing BoxRuntime via action RPC.
+"""Box Runtime service exposing BoxRuntime via action RPC.
 
-Usage (ws, standalone/manual mode):
-    python -m langbot_plugin.box.server
+This module is the implementation of the `box` CLI subcommand. The only
+supported entry point is the `lbp` CLI, which mirrors the plugin runtime's
+`rt` subcommand:
 
-Usage (stdio, launched by LangBot as subprocess):
-    python -m langbot_plugin.box.server --stdio-control
+    lbp box        # WebSocket control transport (default)
+    lbp box -s     # stdio control transport
+
+`main()` is invoked by the CLI with the parsed argument namespace, exactly
+as `lbp rt` drives ``langbot_plugin.runtime.app.main``. There is no
+``python -m langbot_plugin.box`` / ``python -m langbot_plugin.box.server``
+launch path.
 
 All WebSocket endpoints share a single port (default 5410):
     /rpc/ws                                                      — Action RPC (control channel)
@@ -472,37 +478,17 @@ async def _run_server(host: str, port: int, mode: str) -> None:
             await runner.cleanup()
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="LangBot Box Runtime Service")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address")
-    parser.add_argument(
-        "--ws-control-port",
-        type=int,
-        default=5410,
-        help="The port for control connection",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        dest="ws_control_port",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--stdio-control", action="store_true", help="Use stdio for control connection"
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["auto", "stdio", "ws"],
-        help=argparse.SUPPRESS,
-    )
-    args = parser.parse_args(argv)
+def main(args: argparse.Namespace) -> None:
+    """Run the Box runtime service.
 
-    stdio_control = args.stdio_control or args.mode == "stdio"
-    control_mode = "stdio" if stdio_control else "ws"
+    Invoked by the `box` CLI subcommand with the parsed argument namespace,
+    mirroring how `lbp rt` drives ``langbot_plugin.runtime.app.main``. The
+    argument schema is defined once, on the `box` subparser in
+    ``langbot_plugin.cli``.
+    """
+    # Mode selection mirrors the plugin runtime (`lbp rt`): WebSocket by
+    # default, stdio when `-s`/`--stdio-control` is passed.
+    control_mode = "stdio" if args.stdio_control else "ws"
 
     configure_process_logging(stream=sys.stderr)
     asyncio.run(_run_server(args.host, args.ws_control_port, control_mode))
-
-
-if __name__ == "__main__":
-    main()

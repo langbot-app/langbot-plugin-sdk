@@ -130,24 +130,16 @@ def main():
         "--host", default="0.0.0.0", help="Bind address"
     )
     box_parser.add_argument(
-        "--stdio-control", action="store_true", help="Use stdio for control connection"
+        "-s",
+        "--stdio-control",
+        action="store_true",
+        help="Use stdio for control connection",
     )
     box_parser.add_argument(
         "--ws-control-port",
         type=int,
         default=5410,
         help="The port for control connection",
-    )
-    box_parser.add_argument(
-        "--port",
-        type=int,
-        dest="ws_control_port",
-        help=argparse.SUPPRESS,
-    )
-    box_parser.add_argument(
-        "--mode",
-        choices=["auto", "stdio", "ws"],
-        help=argparse.SUPPRESS,
     )
 
     args = parser.parse_args()
@@ -180,7 +172,8 @@ def main():
             runtime_app.main(args)
         case "box":
             from langbot_plugin.box.server import main as box_main
-            box_main(sys.argv[2:])
+
+            box_main(args)
         case _:
             cli_print("unknown_command", args.command)
             sys.exit(1)
