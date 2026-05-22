@@ -371,12 +371,11 @@ class BoxRuntime:
     _LOCAL_BACKEND_NAMES = ("docker", "nsjail")
 
     async def _select_backend(self) -> BaseSandboxBackend | None:
-        # Backend override priority: BOX_BACKEND env var > box.backend config.
+        # Backend selection comes from box.backend only.
         # Accepted values: 'local', 'docker', 'nsjail', 'e2b'. 'local' fans out
-        # to a list; everything else must match a single backend name exactly.
-        configured = (self._box_config.get("backend") or "").strip()
-        forced = (os.getenv("BOX_BACKEND") or configured or "").strip()
-        source_label = "BOX_BACKEND" if os.getenv("BOX_BACKEND") else "box.backend"
+        # to local container backends; everything else must match one backend exactly.
+        forced = (self._box_config.get("backend") or "").strip()
+        source_label = "box.backend"
 
         candidates: list[BaseSandboxBackend]
         if forced == "local":

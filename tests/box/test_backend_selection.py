@@ -100,18 +100,19 @@ def test_e2b_import_failure_returns_none(logger):
         assert len(active_backends) >= 2
 
 
-# ── BOX_BACKEND environment variable ───────────────────────────────────
+# ── box.backend configuration ──────────────────────────────────────────
 
 @pytest.mark.anyio
-async def test_box_backend_forces_specific_backend(logger):
-    """BOX_BACKEND env var forces selection of named backend."""
+async def test_box_backend_config_forces_specific_backend(logger):
+    """box.backend config forces selection of named backend."""
     backend_e2b = MockBackend(logger, 'e2b', available=True)
     backend_docker = MockBackend(logger, 'docker', available=True)
     backend_nsjail = MockBackend(logger, 'nsjail', available=False)
 
     runtime = BoxRuntime(logger, backends=[backend_e2b, backend_docker, backend_nsjail])
+    runtime.init({'backend': 'docker'})
 
-    with mock.patch('os.getenv', side_effect=lambda k: 'docker' if k == 'BOX_BACKEND' else None):
+    with mock.patch('os.getenv', return_value=None):
         selected = await runtime._select_backend()
 
     assert selected.name == 'docker'
@@ -119,52 +120,70 @@ async def test_box_backend_forces_specific_backend(logger):
 
 
 @pytest.mark.anyio
-async def test_box_backend_unavailable_returns_none(logger):
-    """When BOX_BACKEND specifies unavailable backend, returns None."""
+async def test_box_backend_config_unavailable_returns_none(logger):
+    """When box.backend specifies unavailable backend, returns None."""
     backend_e2b = MockBackend(logger, 'e2b', available=False)
     backend_docker = MockBackend(logger, 'docker', available=True)
 
     runtime = BoxRuntime(logger, backends=[backend_e2b, backend_docker])
+    runtime.init({'backend': 'e2b'})
 
-    with mock.patch('os.getenv', side_effect=lambda k: 'e2b' if k == 'BOX_BACKEND' else None):
+    with mock.patch('os.getenv', return_value=None):
         selected = await runtime._select_backend()
 
     assert selected is None
 
 
 @pytest.mark.anyio
-async def test_box_backend_not_found_returns_none(logger):
-    """When BOX_BACKEND specifies unknown backend name, returns None."""
+async def test_box_backend_config_not_found_returns_none(logger):
+    """When box.backend specifies unknown backend name, returns None."""
     backend_docker = MockBackend(logger, 'docker', available=True)
 
     runtime = BoxRuntime(logger, backends=[backend_docker])
+    runtime.init({'backend': 'unknown'})
 
-    with mock.patch('os.getenv', side_effect=lambda k: 'unknown' if k == 'BOX_BACKEND' else None):
+    with mock.patch('os.getenv', return_value=None):
         selected = await runtime._select_backend()
 
     assert selected is None
 
 
 @pytest.mark.anyio
-async def test_box_backend_no_fallback(logger):
-    """When BOX_BACKEND is set but backend unavailable, does NOT fallback."""
+async def test_box_backend_config_no_fallback(logger):
+    """When box.backend is set but backend unavailable, does NOT fallback."""
     backend_e2b = MockBackend(logger, 'e2b', available=False)
     backend_docker = MockBackend(logger, 'docker', available=True)
 
     runtime = BoxRuntime(logger, backends=[backend_e2b, backend_docker])
+    runtime.init({'backend': 'e2b'})
 
-    with mock.patch('os.getenv', side_effect=lambda k: 'e2b' if k == 'BOX_BACKEND' else None):
+    with mock.patch('os.getenv', return_value=None):
         selected = await runtime._select_backend()
 
     # Should return None, not fallback to docker
     assert selected is None
 
 
+@pytest.mark.anyio
+async def test_box_backend_env_var_is_ignored(logger):
+    """BOX_BACKEND is not an independent override; use box.backend instead."""
+    backend_docker = MockBackend(logger, 'docker', available=True)
+    backend_e2b = MockBackend(logger, 'e2b', available=True)
+
+    runtime = BoxRuntime(logger, backends=[backend_docker, backend_e2b])
+    runtime.init({'backend': 'docker'})
+
+    with mock.patch('os.getenv', side_effect=lambda k: 'e2b' if k == 'BOX_BACKEND' else None):
+        selected = await runtime._select_backend()
+
+    assert selected is backend_docker
+
+
 # ── Auto-detect backend selection ───────────────────────────────────────
 
 @pytest.mark.anyio
 async def test_auto_detect_first_available(logger):
-    """Without BOX_BACKEND, selects first available backend."""
+    """Without box.backend, selects first available backend."""
     backend_e2b = MockBackend(logger, 'e2b', available=False)
     backend_docker = MockBackend(logger, 'docker', available=True)
     backend_nsjail = MockBackend(logger, 'nsjail', available=False)
@@ -242,14 +261,15 @@ def test_custom_backends_list_preserved(logger):
 
 
 @pytest.mark.anyio
-async def test_custom_backends_with_box_backend(logger):
-    """BOX_BACKEND works with custom backends list."""
+async def test_custom_backends_with_box_backend_config(logger):
+    """box.backend works with custom backends list."""
     backend_a = MockBackend(logger, 'a', available=True)
     backend_b = MockBackend(logger, 'b', available=True)
 
     runtime = BoxRuntime(logger, backends=[backend_a, backend_b])
+    runtime.init({'backend': 'b'})
 
-    with mock.patch('os.getenv', side_effect=lambda k: 'b' if k == 'BOX_BACKEND' else None):
+    with mock.patch('os.getenv', return_value=None):
         selected = await runtime._select_backend()
 
     assert selected.name == 'b'
