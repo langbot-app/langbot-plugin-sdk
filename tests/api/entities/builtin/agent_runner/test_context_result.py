@@ -356,6 +356,76 @@ class TestAgentRunResultV1:
         assert result.type == AgentRunResultType.ARTIFACT_CREATED
         assert result.data["artifact_id"] == "artifact_1"
 
+    def test_artifact_created_with_new_fields(self):
+        """Test artifact.created with all new fields."""
+        import base64
+
+        content = b"test image content"
+        result = AgentRunResult.artifact_created(
+            run_id="run_1",
+            artifact_id="artifact_1",
+            artifact_type="image",
+            mime_type="image/png",
+            name="test.png",
+            size_bytes=len(content),
+            sha256="abc123",
+            metadata={"source": "generated"},
+            content_base64=base64.b64encode(content).decode("utf-8"),
+        )
+
+        assert result.run_id == "run_1"
+        assert result.type == AgentRunResultType.ARTIFACT_CREATED
+        assert result.data["artifact_id"] == "artifact_1"
+        assert result.data["artifact_type"] == "image"
+        assert result.data["mime_type"] == "image/png"
+        assert result.data["name"] == "test.png"
+        assert result.data["size_bytes"] == len(content)
+        assert result.data["sha256"] == "abc123"
+        assert result.data["metadata"] == {"source": "generated"}
+        assert result.data["content_base64"] == base64.b64encode(content).decode("utf-8")
+
+    def test_artifact_created_backward_compat_size(self):
+        """Test artifact.created backward compatibility: size -> size_bytes."""
+        result = AgentRunResult.artifact_created(
+            run_id="run_1",
+            artifact_id="artifact_1",
+            artifact_type="file",
+            size=1024,  # Deprecated parameter
+        )
+
+        # size should be mapped to size_bytes
+        assert result.data["size_bytes"] == 1024
+
+    def test_artifact_created_size_bytes_preferred(self):
+        """Test artifact.created prefers size_bytes over deprecated size."""
+        result = AgentRunResult.artifact_created(
+            run_id="run_1",
+            artifact_id="artifact_1",
+            artifact_type="file",
+            size=2048,  # Deprecated
+            size_bytes=1024,  # Preferred
+        )
+
+        # size_bytes should take precedence
+        assert result.data["size_bytes"] == 1024
+
+    def test_artifact_created_metadata_only(self):
+        """Test artifact.created without content (metadata-only)."""
+        result = AgentRunResult.artifact_created(
+            run_id="run_1",
+            artifact_id="artifact_1",
+            artifact_type="file",
+            mime_type="application/pdf",
+            name="document.pdf",
+            size_bytes=1024,
+            sha256="abc123",
+            metadata={"source": "external"},
+        )
+
+        assert result.data["artifact_id"] == "artifact_1"
+        # content_base64 is not added when not provided
+        assert "content_base64" not in result.data
+
     def test_tool_call_started_validate(self):
         """Test tool.call.started result."""
         result = AgentRunResult.tool_call_started(
