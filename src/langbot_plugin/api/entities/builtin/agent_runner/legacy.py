@@ -59,10 +59,14 @@ class AgentRunReturn(pydantic.BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def to_v1_result(self) -> AgentRunResult:
+    def to_v1_result(self, run_id: str = "legacy") -> AgentRunResult:
         """Convert legacy AgentRunReturn to v1 AgentRunResult.
 
         WARNING: This is a migration helper only.
+
+        Args:
+            run_id: Run identifier (defaults to "legacy" for backward compatibility).
+                Callers should pass the actual run_id from context if available.
         """
         warnings.warn(
             "AgentRunReturn is deprecated. Use AgentRunResult instead.",
@@ -72,23 +76,23 @@ class AgentRunReturn(pydantic.BaseModel):
 
         if self.type == "chunk":
             if self.message_chunk:
-                return AgentRunResult.message_delta(self.message_chunk)
+                return AgentRunResult.message_delta(run_id, self.message_chunk)
             elif self.content:
                 # Create a simple chunk from content
                 chunk = MessageChunk(role="assistant", content=self.content)
-                return AgentRunResult.message_delta(chunk)
+                return AgentRunResult.message_delta(run_id, chunk)
             else:
                 return AgentRunResult.run_failed(
-                    "Empty chunk content", "conversion.error"
+                    run_id, "Empty chunk content", "conversion.error"
                 )
 
         elif self.type == "text":
             if self.content:
                 message = Message(role="assistant", content=self.content)
-                return AgentRunResult.message_completed(message)
+                return AgentRunResult.message_completed(run_id, message)
             else:
                 return AgentRunResult.run_failed(
-                    "Empty text content", "conversion.error"
+                    run_id, "Empty text content", "conversion.error"
                 )
 
         elif self.type == "tool_call":
@@ -96,27 +100,31 @@ class AgentRunReturn(pydantic.BaseModel):
                 # Only report first tool call for legacy conversion
                 tc = self.tool_calls[0]
                 return AgentRunResult.tool_call_started(
+                    run_id=run_id,
                     tool_call_id=tc.id,
                     tool_name=tc.function.name,
                     parameters={"arguments": tc.function.arguments},
                 )
             else:
-                return AgentRunResult.run_failed("Empty tool_calls", "conversion.error")
+                return AgentRunResult.run_failed(run_id, "Empty tool_calls", "conversion.error")
 
         elif self.type == "finish":
             if self.finish_reason == "error":
                 return AgentRunResult.run_failed(
+                    run_id=run_id,
                     error=self.content or "Unknown error",
                     code="runner.error",
                 )
             else:
                 return AgentRunResult.run_completed(
+                    run_id=run_id,
                     message=self.message,
                     finish_reason=self.finish_reason or "stop",
                 )
 
         else:
             return AgentRunResult.run_failed(
+                run_id=run_id,
                 error=f"Unknown legacy type: {self.type}",
                 code="conversion.error",
             )
@@ -237,6 +245,10 @@ def create_legacy_context(
     from langbot_plugin.api.entities.builtin.agent_runner.runtime import (
         AgentRuntimeContext,
     )
+    from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
+    from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+    from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
+    from langbot_plugin.api.entities.builtin.agent_runner.context_access import ContextAccess
 
     runtime = AgentRuntimeContext(
         langbot_version=None,
@@ -247,16 +259,50 @@ def create_legacy_context(
         metadata={},
     )
 
+    # Build event context (REQUIRED for Protocol v1)
+    event = AgentEventContext(
+        event_id=str(query_id),
+        event_type="message.received",
+        event_time=None,
+        source="pipeline",
+        source_event_type=None,
+        data={},
+    )
+
+    # Build delivery context (REQUIRED for Protocol v1)
+    delivery = DeliveryContext(
+        surface="pipeline",
+        reply_target=None,
+        supports_streaming=False,
+        supports_edit=False,
+        supports_reaction=False,
+        max_message_size=None,
+        platform_capabilities={},
+    )
+
+    # Build bootstrap context with historical messages
+    bootstrap = BootstrapContext(
+        messages=messages,
+        summary=None,
+        artifacts=[],
+        metadata={},
+    )
+
     return AgentRunContext(
         run_id=f"run_{query_id}",
         trigger=trigger,
         conversation=conversation,
-        event=None,
+        event=event,  # REQUIRED
         actor=None,
         subject=None,
-        messages=messages,
         input=agent_input,
+        delivery=delivery,  # REQUIRED
         resources=resources,
+        context=ContextAccess(),  # REQUIRED
+        state={},
         runtime=runtime,
         config=extra_config,
+        bootstrap=bootstrap,  # Historical messages go here
+        compatibility=None,
+        metadata={},
     )

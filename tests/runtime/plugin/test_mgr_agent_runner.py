@@ -14,6 +14,8 @@ from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigge
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
 from langbot_plugin.api.entities.builtin.agent_runner.resources import AgentResources
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
+from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
 
@@ -26,9 +28,10 @@ class MockAgentRunner(AgentRunner):
     ) -> typing.AsyncGenerator[AgentRunResult, None]:
         """Mock run that yields results."""
         yield AgentRunResult.message_completed(
-            Message(role="assistant", content=f"Echo: {ctx.input.to_text()}")
+            run_id=ctx.run_id,
+            message=Message(role="assistant", content=f"Echo: {ctx.input.to_text()}"),
         )
-        yield AgentRunResult.run_completed(finish_reason="stop")
+        yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
 
 
 class StreamingAgentRunner(AgentRunner):
@@ -40,8 +43,8 @@ class StreamingAgentRunner(AgentRunner):
         """Mock run that streams chunks using MessageChunk."""
         for word in ["Hello", " ", "world"]:
             chunk = MessageChunk(role="assistant", content=word)
-            yield AgentRunResult.message_delta(chunk)
-        yield AgentRunResult.run_completed(finish_reason="stop")
+            yield AgentRunResult.message_delta(run_id=ctx.run_id, delta=chunk)
+        yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
 
 
 class FailingAgentRunner(AgentRunner):
@@ -53,7 +56,7 @@ class FailingAgentRunner(AgentRunner):
         """Mock run that raises an exception after yielding."""
         # Must have at least one yield to be an async generator
         chunk = MessageChunk(role="assistant", content="Starting...")
-        yield AgentRunResult.message_delta(chunk)
+        yield AgentRunResult.message_delta(run_id=ctx.run_id, delta=chunk)
         raise RuntimeError("Intentional test failure")
 
 
@@ -66,7 +69,7 @@ class SlowAgentRunner(AgentRunner):
         import asyncio
 
         await asyncio.sleep(0.05)
-        yield AgentRunResult.run_completed(finish_reason="stop")
+        yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
 
 
 def create_mock_component_manifest(
@@ -169,7 +172,13 @@ def create_run_context() -> AgentRunContext:
     return AgentRunContext(
         run_id="test_run",
         trigger=AgentTrigger(type="message.received"),
+        event=AgentEventContext(
+            event_id="test_event",
+            event_type="message.received",
+            source="test",
+        ),
         input=AgentInput(text="Hello"),
+        delivery=DeliveryContext(surface="test"),
         resources=AgentResources(),
         runtime=AgentRuntimeContext(),
     )

@@ -6,8 +6,19 @@ from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
 from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
     AgentRunnerPermissions,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.context_policy import (
+    AgentRunnerContextPolicy,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
+    AgentRunnerManifest,
+    DynamicFormItemSchema,
+    I18nObject,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
-from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
+from langbot_plugin.api.entities.builtin.agent_runner.input import (
+    AgentInput,
+    ArtifactRef,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     AgentResources,
     ModelResource,
@@ -26,8 +37,19 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import (
     AgentEventContext,
     ActorContext,
     SubjectContext,
+    RawEventRef,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+    ContextAccess,
+    InlineContextPolicy,
+    ContextAPICapabilities,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
+from langbot_plugin.api.entities.builtin.agent_runner.context import (
+    AgentRunContext,
+    CompatibilityContext,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
     AgentRunResultType,
@@ -36,13 +58,26 @@ from langbot_plugin.api.entities.builtin.agent_runner.legacy import (
     AgentRunReturn,
     create_legacy_context,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.transcript import TranscriptItem
+from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
+    HistoryPage,
+    HistorySearchResult,
+    AgentEventRecord,
+    EventPage,
+)
 
 __all__ = [
-    # v1 entities
+    # Manifest and policy
+    "AgentRunnerManifest",
+    "DynamicFormItemSchema",
+    "I18nObject",
     "AgentRunnerCapabilities",
     "AgentRunnerPermissions",
+    "AgentRunnerContextPolicy",
+    # Event and context
     "AgentTrigger",
     "AgentInput",
+    "ArtifactRef",
     "AgentResources",
     "ModelResource",
     "ToolResource",
@@ -56,10 +91,25 @@ __all__ = [
     "AgentEventContext",
     "ActorContext",
     "SubjectContext",
+    "RawEventRef",
+    # Protocol v1 context access
+    "ContextAccess",
+    "InlineContextPolicy",
+    "ContextAPICapabilities",
+    "DeliveryContext",
+    "BootstrapContext",
+    "CompatibilityContext",
+    # Main context and result
     "AgentRunContext",
     "AgentRunResult",
     "AgentRunResultType",
     # Legacy (deprecated)
     "AgentRunReturn",
     "create_legacy_context",
+    # History and Event APIs
+    "TranscriptItem",
+    "HistoryPage",
+    "HistorySearchResult",
+    "AgentEventRecord",
+    "EventPage",
 ]

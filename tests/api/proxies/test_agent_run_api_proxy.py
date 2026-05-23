@@ -27,6 +27,8 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
+from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
+from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
 
 
 class MockHandler:
@@ -59,7 +61,13 @@ def create_mock_context(
     return AgentRunContext(
         run_id=run_id,
         trigger=AgentTrigger(type='user_message'),
+        event=AgentEventContext(
+            event_id='test_event',
+            event_type='message.received',
+            source='test',
+        ),
         input=AgentInput(content='test input'),
+        delivery=DeliveryContext(surface='test'),
         runtime=AgentRuntimeContext(query_id=query_id, deadline_at=deadline_at),
         resources=AgentResources(
             models=[ModelResource.model_validate(m) for m in (models or [])],

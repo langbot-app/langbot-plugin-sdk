@@ -13,10 +13,25 @@ class AgentTrigger(pydantic.BaseModel):
     """
 
     type: str
-    """Trigger type, e.g., 'message.received'."""
+    """Trigger type, e.g., 'message.received'. Should match event.event_type or coarser."""
 
-    source: typing.Literal["pipeline", "event_router"] = "pipeline"
-    """Source of the trigger."""
+    source: typing.Literal[
+        "platform",
+        "webui",
+        "api",
+        "scheduler",
+        "system",
+        "pipeline_compat",
+    ] = "pipeline_compat"
+    """Source of the trigger.
+
+    - platform: Direct platform event
+    - webui: WebUI debug chat
+    - api: API trigger
+    - scheduler: Scheduled trigger
+    - system: System event
+    - pipeline_compat: Pipeline compatibility adapter
+    """
 
     timestamp: int | None = None
     """Trigger timestamp (epoch seconds)."""
