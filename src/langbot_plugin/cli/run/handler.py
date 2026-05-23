@@ -98,6 +98,7 @@ async def _iter_runner_results_with_deadline(
             yield result
     except asyncio.TimeoutError:
         yield AgentRunResult.run_failed(
+            run_id=run_context.run_id,
             error="Agent runner timed out",
             code="runner.timeout",
             retryable=True,

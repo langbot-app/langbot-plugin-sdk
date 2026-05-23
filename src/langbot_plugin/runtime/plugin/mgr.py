@@ -932,6 +932,9 @@ class PluginManager:
             AgentRunResult,
         )
 
+        # Extract run_id from context for error responses
+        run_id = context.get("run_id", "unknown")
+
         # Find the plugin
         target_plugin = None
         for plugin in self.plugins:
@@ -944,6 +947,7 @@ class PluginManager:
 
         if target_plugin is None:
             yield AgentRunResult.run_failed(
+                run_id=run_id,
                 error=f"Plugin {plugin_author}/{plugin_name} not found",
                 code="runner.plugin_not_found",
             ).model_dump(mode="json")
@@ -961,6 +965,7 @@ class PluginManager:
 
         if target_component is None:
             yield AgentRunResult.run_failed(
+                run_id=run_id,
                 error=f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
                 code="runner.not_found",
             ).model_dump(mode="json")
@@ -969,6 +974,7 @@ class PluginManager:
         # Check if plugin handler exists for forwarding
         if target_plugin._runtime_plugin_handler is None:
             yield AgentRunResult.run_failed(
+                run_id=run_id,
                 error=f"Plugin {plugin_author}/{plugin_name} has no runtime handler",
                 code="runner.handler_not_found",
             ).model_dump(mode="json")
@@ -996,6 +1002,7 @@ class PluginManager:
 
         except (asyncio.TimeoutError, ActionCallTimeoutError):
             yield AgentRunResult.run_failed(
+                run_id=run_id,
                 error="Agent runner timed out",
                 code="runner.timeout",
                 retryable=True,
@@ -1004,6 +1011,7 @@ class PluginManager:
             import traceback
             traceback.print_exc()
             yield AgentRunResult.run_failed(
+                run_id=run_id,
                 error=f"Error forwarding to plugin: {e}",
                 code="runner.forward_exception",
             ).model_dump(mode="json")

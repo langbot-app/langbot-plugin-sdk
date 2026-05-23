@@ -79,6 +79,12 @@ class PluginToRuntimeAction(ActionType):
     LIST_PIPELINE_KNOWLEDGE_BASES = "list_pipeline_knowledge_bases"
     RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
 
+    """Agent History/Event APIs (run-scoped, requires run_id authorization)"""
+    HISTORY_PAGE = "history_page"
+    HISTORY_SEARCH = "history_search"
+    EVENT_GET = "event_get"
+    EVENT_PAGE = "event_page"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""

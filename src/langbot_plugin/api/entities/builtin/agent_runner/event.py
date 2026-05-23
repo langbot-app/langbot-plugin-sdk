@@ -6,17 +6,30 @@ import typing
 import pydantic
 
 
+class RawEventRef(pydantic.BaseModel):
+    """Reference to raw event payload stored by Host.
+
+    Large platform payloads should be stored as artifacts and referenced here.
+    """
+
+    artifact_id: str | None = None
+    """Artifact ID containing the raw payload."""
+
+    storage_key: str | None = None
+    """Storage key for raw payload (alternative to artifact)."""
+
+
 class ConversationContext(pydantic.BaseModel):
     """Conversation context for an agent run.
 
     Carries launcher/sender/bot/pipeline/history semantics.
     """
 
-    session_id: str | None = None
-    """Session identifier."""
-
     conversation_id: str | None = None
-    """Conversation identifier."""
+    """Stable conversation identifier."""
+
+    thread_id: str | None = None
+    """Thread ID within conversation (for platforms supporting threads)."""
 
     launcher_type: str | None = None
     """Launcher type (person, group)."""
@@ -27,33 +40,52 @@ class ConversationContext(pydantic.BaseModel):
     sender_id: str | None = None
     """Sender ID."""
 
-    bot_uuid: str | None = None
+    bot_id: str | None = None
     """Bot UUID."""
 
+    workspace_id: str | None = None
+    """Workspace ID (for multi-tenant scenarios)."""
+
+    # Legacy fields for backward compatibility
+    session_id: str | None = None
+    """Session identifier (legacy, prefer conversation_id)."""
+
     pipeline_uuid: str | None = None
-    """Pipeline UUID."""
+    """Pipeline UUID (legacy)."""
 
 
 class AgentEventContext(pydantic.BaseModel):
-    """Event envelope subset for EBA (Event-Based Architecture) support."""
+    """Event envelope for EBA (Event-Based Architecture) support.
 
-    event_type: str | None = None
-    """Event type."""
+    Protocol v1 is event-first: event is a required field in AgentRunContext.
+    """
 
-    event_id: str | None = None
-    """Event ID."""
+    event_id: str
+    """Unique event identifier."""
 
-    event_timestamp: int | None = None
-    """Event timestamp."""
+    event_type: str
+    """Event type using stable protocol names (e.g., message.received)."""
 
-    event_data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Event payload."""
+    event_time: int | None = None
+    """Event timestamp (epoch seconds)."""
+
+    source: str
+    """Event source (platform, webui, api, scheduler, system, pipeline_compat)."""
+
+    source_event_type: str | None = None
+    """Original platform event type (for debugging/logging)."""
+
+    raw_ref: RawEventRef | None = None
+    """Reference to raw event payload."""
+
+    data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """Event payload. Large data should be in raw_ref/artifacts."""
 
 
 class ActorContext(pydantic.BaseModel):
     """Actor (who triggered the event) context."""
 
-    actor_type: str | None = None
+    actor_type: str
     """Actor type (user, system, plugin)."""
 
     actor_id: str | None = None
@@ -62,15 +94,18 @@ class ActorContext(pydantic.BaseModel):
     actor_name: str | None = None
     """Actor display name."""
 
+    metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """Additional actor metadata."""
+
 
 class SubjectContext(pydantic.BaseModel):
     """Subject (what the event is about) context."""
 
-    subject_type: str | None = None
+    subject_type: str
     """Subject type (message, conversation, etc.)."""
 
     subject_id: str | None = None
     """Subject ID."""
 
-    subject_data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Subject data."""

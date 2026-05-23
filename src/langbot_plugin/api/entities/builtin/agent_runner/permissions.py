@@ -15,12 +15,12 @@ class AgentRunnerPermissions(pydantic.BaseModel):
     produce ctx.resources.
     """
 
-    models: list[typing.Literal["list", "invoke", "stream", "embedding"]] = (
+    models: list[typing.Literal["invoke", "stream", "rerank"]] = (
         pydantic.Field(default_factory=list)
     )
     """Model operations allowed."""
 
-    tools: list[typing.Literal["list", "detail", "call"]] = pydantic.Field(
+    tools: list[typing.Literal["detail", "call"]] = pydantic.Field(
         default_factory=list
     )
     """Tool operations allowed."""
@@ -30,7 +30,22 @@ class AgentRunnerPermissions(pydantic.BaseModel):
     )
     """Knowledge base operations allowed."""
 
-    storage: list[typing.Literal["plugin", "workspace"]] = pydantic.Field(
+    history: list[typing.Literal["page", "search"]] = pydantic.Field(
+        default_factory=list
+    )
+    """History operations allowed."""
+
+    events: list[typing.Literal["get", "page"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Event operations allowed."""
+
+    artifacts: list[typing.Literal["metadata", "read"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Artifact operations allowed."""
+
+    storage: list[typing.Literal["plugin", "workspace", "binding"]] = pydantic.Field(
         default_factory=list
     )
     """Storage scopes allowed."""
