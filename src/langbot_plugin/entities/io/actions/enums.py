@@ -89,6 +89,12 @@ class PluginToRuntimeAction(ActionType):
     ARTIFACT_METADATA = "artifact_metadata"
     ARTIFACT_READ = "artifact_read"
 
+    """Agent State APIs (run-scoped, requires run_id authorization)"""
+    STATE_GET = "state_get"
+    STATE_SET = "state_set"
+    STATE_DELETE = "state_delete"
+    STATE_LIST = "state_list"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
