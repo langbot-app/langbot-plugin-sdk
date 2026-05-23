@@ -643,3 +643,97 @@ class AgentRunAPIProxy:
             timeout,
         )
         return resp
+
+    # ================= Artifact APIs (run-scoped) =================
+
+    async def artifact_metadata(self, artifact_id: str) -> dict[str, Any]:
+        """Get metadata for an artifact.
+
+        Args:
+            artifact_id: The artifact ID to retrieve metadata for.
+
+        Returns:
+            ArtifactMetadata as dict with artifact_id, artifact_type, mime_type,
+            size_bytes, source, conversation_id, run_id, etc.
+
+        Raises:
+            PermissionDeniedError: If artifact not accessible by current run.
+        """
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.ARTIFACT_METADATA,
+            {
+                "run_id": self.run_id,
+                "artifact_id": artifact_id,
+            },
+            timeout,
+        )
+        return resp
+
+    async def artifact_read(
+        self,
+        artifact_id: str,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Read artifact content.
+
+        For small artifacts, returns content_base64 directly.
+        For large artifacts, may return file_key for chunked transfer.
+
+        Args:
+            artifact_id: The artifact ID to read.
+            offset: Byte offset to start reading from (for range reads).
+            limit: Maximum bytes to read. Host may enforce a hard limit.
+
+        Returns:
+            ArtifactReadResult as dict with:
+            - artifact_id: The artifact identifier
+            - mime_type: MIME type of content
+            - size_bytes: Total artifact size
+            - offset: Offset of this read
+            - length: Length of data read (or None for file_key mode)
+            - content_base64: Base64-encoded content (for inline mode)
+            - file_key: File key for chunked transfer (for large artifacts)
+            - has_more: Whether more data is available
+
+        Raises:
+            PermissionDeniedError: If artifact not accessible by current run.
+
+        Note:
+            Host may enforce max read size limits to prevent memory exhaustion.
+            For large artifacts, prefer using file_key and chunked transfer.
+        """
+        timeout = self._bounded_timeout(default=60.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.ARTIFACT_READ,
+            {
+                "run_id": self.run_id,
+                "artifact_id": artifact_id,
+                "offset": offset,
+                "limit": limit,
+            },
+            timeout,
+        )
+        return resp
+
+    # Alias for artifact_read with range semantics
+    async def artifact_read_range(
+        self,
+        artifact_id: str,
+        offset: int = 0,
+        length: int | None = None,
+    ) -> dict[str, Any]:
+        """Read a range of artifact content.
+
+        Alias for artifact_read with clearer range semantics.
+
+        Args:
+            artifact_id: The artifact ID to read.
+            offset: Byte offset to start reading from.
+            length: Maximum bytes to read.
+
+        Returns:
+            ArtifactReadResult as dict.
+        """
+        return await self.artifact_read(artifact_id, offset=offset, limit=length)

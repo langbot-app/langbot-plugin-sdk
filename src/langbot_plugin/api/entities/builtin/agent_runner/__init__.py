@@ -65,6 +65,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
     AgentEventRecord,
     EventPage,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
+    ArtifactMetadata,
+    ArtifactReadResult,
+)
 
 __all__ = [
     # Manifest and policy
@@ -112,4 +116,7 @@ __all__ = [
     "HistorySearchResult",
     "AgentEventRecord",
     "EventPage",
+    # Artifact APIs
+    "ArtifactMetadata",
+    "ArtifactReadResult",
 ]

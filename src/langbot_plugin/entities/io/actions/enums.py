@@ -85,6 +85,10 @@ class PluginToRuntimeAction(ActionType):
     EVENT_GET = "event_get"
     EVENT_PAGE = "event_page"
 
+    """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
+    ARTIFACT_METADATA = "artifact_metadata"
+    ARTIFACT_READ = "artifact_read"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
