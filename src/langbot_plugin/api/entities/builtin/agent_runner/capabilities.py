@@ -24,8 +24,8 @@ class AgentRunnerCapabilities(pydantic.BaseModel):
     multimodal_input: bool = False
     """Runner can process image/file/audio non-text input."""
 
-    event_context: bool = False
-    """Runner will read ctx.event/actor/subject."""
+    event_context: bool = True
+    """Runner will read ctx.event/actor/subject. Defaults True for Protocol v1."""
 
     platform_api: bool = False
     """Runner may request platform actions (future feature, not executed this phase)."""
@@ -35,3 +35,6 @@ class AgentRunnerCapabilities(pydantic.BaseModel):
 
     stateful_session: bool = False
     """Runner maintains external conversation/session state."""
+
+    self_managed_context: bool = True
+    """Runner manages its own working context; Host should not inline full history by default."""

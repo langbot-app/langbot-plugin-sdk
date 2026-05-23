@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 import pydantic
 
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
+from langbot_plugin.api.entities.builtin.agent_runner.context import (
+    AgentRunContext,
+    CompatibilityContext,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
     AgentRunResultType,
@@ -35,6 +38,19 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import (
     ActorContext,
     SubjectContext,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+    ContextAccess,
+    InlineContextPolicy,
+    ContextAPICapabilities,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
+from langbot_plugin.api.entities.builtin.agent_runner.context_policy import (
+    AgentRunnerContextPolicy,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
+    AgentRunnerManifest,
+)
 from langbot_plugin.api.entities.builtin.provider.message import (
     Message,
     MessageChunk,
@@ -47,15 +63,23 @@ class TestAgentRunContextV1:
 
     def test_minimal_context_validate(self):
         """Test minimal required fields validation."""
-        trigger = AgentTrigger(type="message.received", source="pipeline")
+        trigger = AgentTrigger(type="message.received", source="pipeline_compat")
+        event = AgentEventContext(
+            event_id="evt_1",
+            event_type="message.received",
+            source="platform",
+        )
         input = AgentInput(text="Hello")
         resources = AgentResources()
         runtime = AgentRuntimeContext()
+        delivery = DeliveryContext(surface="platform")
 
         ctx = AgentRunContext(
             run_id="run_123",
             trigger=trigger,
+            event=event,
             input=input,
+            delivery=delivery,
             resources=resources,
             runtime=runtime,
         )
@@ -63,96 +87,99 @@ class TestAgentRunContextV1:
         assert ctx.run_id == "run_123"
         assert ctx.trigger.type == "message.received"
         assert ctx.input.text == "Hello"
-        assert ctx.messages == []
-        assert ctx.prompt == []
+        assert ctx.bootstrap is None  # Optional, not required
         assert ctx.config == {}
-        # New fields: params and state have defaults
-        assert ctx.params == {}
-        assert ctx.state.conversation == {}
-        assert ctx.state.actor == {}
-        assert ctx.state.subject == {}
-        assert ctx.state.runner == {}
+        assert ctx.context is not None  # Has default
 
-    def test_params_default_empty_dict(self):
-        """Test params defaults to empty dict."""
+    def test_event_is_required(self):
+        """Test that event is required for Protocol v1."""
         trigger = AgentTrigger(type="message.received")
         input = AgentInput(text="Hello")
         resources = AgentResources()
         runtime = AgentRuntimeContext()
+        delivery = DeliveryContext(surface="platform")
 
-        ctx = AgentRunContext(
-            run_id="run_params",
-            trigger=trigger,
-            input=input,
-            resources=resources,
-            runtime=runtime,
-        )
+        # Missing event should raise validation error
+        with pytest.raises(pydantic.ValidationError):
+            AgentRunContext(
+                run_id="run_123",
+                trigger=trigger,
+                # event missing - should fail
+                input=input,
+                delivery=delivery,
+                resources=resources,
+                runtime=runtime,
+            )
 
-        assert ctx.params == {}
-        assert isinstance(ctx.params, dict)
-
-    def test_state_default_all_scopes_empty(self):
-        """Test state defaults with all scopes empty."""
+    def test_messages_in_bootstrap_not_top_level(self):
+        """Test that messages are in bootstrap, not top-level context."""
         trigger = AgentTrigger(type="message.received")
+        event = AgentEventContext(
+            event_id="evt_1",
+            event_type="message.received",
+            source="platform",
+        )
         input = AgentInput(text="Hello")
         resources = AgentResources()
         runtime = AgentRuntimeContext()
-
-        ctx = AgentRunContext(
-            run_id="run_state",
-            trigger=trigger,
-            input=input,
-            resources=resources,
-            runtime=runtime,
+        delivery = DeliveryContext(surface="platform")
+        bootstrap = BootstrapContext(
+            messages=[Message(role="user", content="Hi")],
         )
 
-        assert ctx.state.conversation == {}
-        assert ctx.state.actor == {}
-        assert ctx.state.subject == {}
-        assert ctx.state.runner == {}
+        ctx = AgentRunContext(
+            run_id="run_123",
+            trigger=trigger,
+            event=event,
+            input=input,
+            delivery=delivery,
+            resources=resources,
+            runtime=runtime,
+            bootstrap=bootstrap,
+        )
 
-    def test_params_and_state_from_dict(self):
-        """Test constructing params and state from dict."""
-        data = {
-            "run_id": "run_dict",
-            "trigger": {"type": "message.received", "source": "pipeline"},
-            "input": {"text": "Hello"},
-            "resources": {},
-            "runtime": {},
-            "params": {"workflow_input": "value1", "prompt_var": "value2"},
-            "state": {
-                "conversation": {"external.conversation_id": "conv_abc"},
-                "actor": {"preferred_language": "en"},
-                "subject": {},
-                "runner": {},
-            },
-        }
+        # messages are in bootstrap
+        assert ctx.bootstrap is not None
+        assert len(ctx.bootstrap.messages) == 1
 
-        ctx = AgentRunContext.model_validate(data)
+    def test_context_access_default(self):
+        """Test ContextAccess default values."""
+        context_access = ContextAccess()
 
-        assert ctx.params["workflow_input"] == "value1"
-        assert ctx.params["prompt_var"] == "value2"
-        assert ctx.state.conversation["external.conversation_id"] == "conv_abc"
-        assert ctx.state.actor["preferred_language"] == "en"
+        assert context_access.conversation_id is None
+        assert context_access.has_history_before is False
+        assert context_access.inline_policy.mode == "current_event"
+
+    def test_compatibility_context(self):
+        """Test CompatibilityContext for legacy fields."""
+        compat = CompatibilityContext(
+            query_id=123,
+            pipeline_uuid="pipe-123",
+            max_round=10,
+        )
+
+        assert compat.query_id == 123
+        assert compat.max_round == 10
 
     def test_full_context_validate(self):
         """Test full context with all optional fields."""
         trigger = AgentTrigger(
-            type="message.received", source="pipeline", timestamp=1234567890
+            type="message.received", source="pipeline_compat", timestamp=1234567890
         )
         conversation = ConversationContext(
-            session_id="sess_1",
             conversation_id="conv_1",
+            thread_id="thread_1",
             launcher_type="person",
             launcher_id="12345",
             sender_id="user_1",
-            bot_uuid="bot_123",
-            pipeline_uuid="pipe_123",
+            bot_id="bot_123",
+            workspace_id="ws_1",
         )
         event = AgentEventContext(
-            event_type="message",
             event_id="evt_1",
-            event_timestamp=1234567890,
+            event_type="message.received",
+            event_time=1234567890,
+            source="platform",
         )
         actor = ActorContext(
             actor_type="user",
@@ -163,21 +190,16 @@ class TestAgentRunContextV1:
             subject_type="message",
             subject_id="msg_1",
         )
-        messages = [
-            Message(role="user", content="Hi"),
-            Message(role="assistant", content="Hello"),
-        ]
-        prompt = [
-            Message(role="system", content="You are helpful."),
-        ]
+        bootstrap = BootstrapContext(
+            messages=[
+                Message(role="user", content="Hi"),
+                Message(role="assistant", content="Hello"),
+            ],
+        )
         input = AgentInput(
             text="What's up?",
             contents=[ContentElement(type="text", text="What's up?")],
         )
-        params = {
-            "workflow_input": "test_workflow",
-            "custom_var": 42,
-        }
         resources = AgentResources(
             models=[ModelResource(model_id="gpt-4", model_type="chat")],
             tools=[ToolResource(tool_name="search", tool_type="function")],
@@ -189,9 +211,16 @@ class TestAgentRunContextV1:
         )
         runtime = AgentRuntimeContext(
             langbot_version="1.0.0",
-            query_id=123,
             trace_id="trace_abc",
             deadline_at=1234568000,
+        )
+        delivery = DeliveryContext(
+            surface="platform",
+            supports_streaming=True,
+        )
+        context_access = ContextAccess(
+            conversation_id="conv_1",
+            has_history_before=True,
         )
 
         ctx = AgentRunContext(
@@ -201,46 +230,51 @@ class TestAgentRunContextV1:
             event=event,
             actor=actor,
             subject=subject,
-            messages=messages,
-            prompt=prompt,
             input=input,
-            params=params,
+            delivery=delivery,
             resources=resources,
+            context=context_access,
             state=state,
             runtime=runtime,
             config={"model": "gpt-4"},
+            bootstrap=bootstrap,
         )
 
         assert ctx.run_id == "run_full"
         assert ctx.conversation.launcher_type == "person"
         assert ctx.resources.models[0].model_id == "gpt-4"
-        assert ctx.prompt[0].content == "You are helpful."
-        assert len(ctx.messages) == 2
+        assert ctx.bootstrap is not None
+        assert len(ctx.bootstrap.messages) == 2
         assert ctx.config["model"] == "gpt-4"
-        assert ctx.params["workflow_input"] == "test_workflow"
-        assert ctx.state.conversation["external.conversation_id"] == "conv_xyz"
-        assert ctx.state.actor["memory.summary"] == "User likes coffee"
+        assert ctx.context.has_history_before is True
 
     def test_context_missing_required_field(self):
         """Test that missing required fields raise validation error."""
         with pytest.raises(pydantic.ValidationError):
             AgentRunContext(
-                # Missing run_id, trigger, input, resources, runtime
+                # Missing run_id, trigger, event, input, delivery, resources, runtime
             )
 
     def test_context_model_validate_from_dict(self):
         """Test model_validate from dict (as LangBot will send)."""
         data = {
             "run_id": "run_dict",
-            "trigger": {"type": "message.received", "source": "pipeline"},
+            "trigger": {"type": "message.received", "source": "pipeline_compat"},
+            "event": {
+                "event_id": "evt_1",
+                "event_type": "message.received",
+                "source": "platform",
+            },
             "input": {"text": "Hello from dict"},
+            "delivery": {"surface": "platform"},
             "resources": {},
-            "runtime": {"sdk_protocol_version": "1"},
+            "runtime": {},
         }
 
         ctx = AgentRunContext.model_validate(data)
         assert ctx.run_id == "run_dict"
         assert ctx.input.text == "Hello from dict"
+        assert ctx.event.event_type == "message.received"
 
 
 class TestAgentRunState:
@@ -292,8 +326,9 @@ class TestAgentRunResultV1:
     def test_message_delta_validate(self):
         """Test message.delta result."""
         chunk = MessageChunk(role="assistant", content="Hello")
-        result = AgentRunResult.message_delta(chunk)
+        result = AgentRunResult.message_delta("run_1", chunk)
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.MESSAGE_DELTA
         assert "chunk" in result.data
         assert result.data["chunk"]["role"] == "assistant"
@@ -301,20 +336,36 @@ class TestAgentRunResultV1:
     def test_message_completed_validate(self):
         """Test message.completed result."""
         message = Message(role="assistant", content="Complete response")
-        result = AgentRunResult.message_completed(message)
+        result = AgentRunResult.message_completed("run_1", message)
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.MESSAGE_COMPLETED
         assert "message" in result.data
         assert result.data["message"]["role"] == "assistant"
 
+    def test_artifact_created_validate(self):
+        """Test artifact.created result."""
+        result = AgentRunResult.artifact_created(
+            run_id="run_1",
+            artifact_id="artifact_1",
+            artifact_type="image",
+            mime_type="image/png",
+        )
+
+        assert result.run_id == "run_1"
+        assert result.type == AgentRunResultType.ARTIFACT_CREATED
+        assert result.data["artifact_id"] == "artifact_1"
+
     def test_tool_call_started_validate(self):
         """Test tool.call.started result."""
         result = AgentRunResult.tool_call_started(
+            run_id="run_1",
             tool_call_id="call_1",
             tool_name="weather",
             parameters={"city": "Tokyo"},
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.TOOL_CALL_STARTED
         assert result.data["tool_call_id"] == "call_1"
         assert result.data["tool_name"] == "weather"
@@ -323,34 +374,40 @@ class TestAgentRunResultV1:
     def test_tool_call_completed_validate(self):
         """Test tool.call.completed result."""
         result = AgentRunResult.tool_call_completed(
+            run_id="run_1",
             tool_call_id="call_1",
             tool_name="weather",
             result={"temp": 25, "condition": "sunny"},
             error=None,
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.TOOL_CALL_COMPLETED
         assert result.data["result"]["temp"] == 25
 
     def test_tool_call_completed_with_error(self):
         """Test tool.call.completed with error."""
         result = AgentRunResult.tool_call_completed(
+            run_id="run_1",
             tool_call_id="call_2",
             tool_name="weather",
             result=None,
             error="API timeout",
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.TOOL_CALL_COMPLETED
         assert result.data["error"] == "API timeout"
 
     def test_state_updated_backward_compatible(self):
         """Test state.updated backward compatible (default scope=conversation)."""
         result = AgentRunResult.state_updated(
+            run_id="run_1",
             key="external.conversation_id",
             value="abc123",
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.STATE_UPDATED
         assert result.data["scope"] == "conversation"
         assert result.data["key"] == "external.conversation_id"
@@ -359,11 +416,13 @@ class TestAgentRunResultV1:
     def test_state_updated_with_scope(self):
         """Test state.updated with explicit scope."""
         result = AgentRunResult.state_updated(
+            run_id="run_1",
             key="preferred_language",
             value="en",
             scope="actor",
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.STATE_UPDATED
         assert result.data["scope"] == "actor"
         assert result.data["key"] == "preferred_language"
@@ -373,6 +432,7 @@ class TestAgentRunResultV1:
         """Test state.updated with all valid scopes."""
         for scope in VALID_STATE_SCOPES:
             result = AgentRunResult.state_updated(
+                run_id="run_1",
                 key="test_key",
                 value="test_value",
                 scope=scope,
@@ -383,6 +443,7 @@ class TestAgentRunResultV1:
         """Test state.updated with invalid scope raises ValueError."""
         with pytest.raises(ValueError, match="Invalid scope"):
             AgentRunResult.state_updated(
+                run_id="run_1",
                 key="test_key",
                 value="test_value",
                 scope="invalid_scope",
@@ -391,16 +452,18 @@ class TestAgentRunResultV1:
     def test_run_completed_validate(self):
         """Test run.completed result."""
         message = Message(role="assistant", content="Done")
-        result = AgentRunResult.run_completed(message=message, finish_reason="stop")
+        result = AgentRunResult.run_completed(run_id="run_1", message=message, finish_reason="stop")
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.RUN_COMPLETED
         assert result.data["finish_reason"] == "stop"
         assert result.data["message"]["role"] == "assistant"
 
     def test_run_completed_without_message(self):
         """Test run.completed without message (when message.completed already sent)."""
-        result = AgentRunResult.run_completed(finish_reason="stop")
+        result = AgentRunResult.run_completed(run_id="run_1", finish_reason="stop")
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.RUN_COMPLETED
         assert result.data["finish_reason"] == "stop"
         assert "message" not in result.data
@@ -408,11 +471,13 @@ class TestAgentRunResultV1:
     def test_run_failed_validate(self):
         """Test run.failed result."""
         result = AgentRunResult.run_failed(
+            run_id="run_1",
             error="Upstream timeout",
             code="upstream.timeout",
             retryable=True,
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.RUN_FAILED
         assert result.data["error"] == "Upstream timeout"
         assert result.data["code"] == "upstream.timeout"
@@ -420,24 +485,27 @@ class TestAgentRunResultV1:
 
     def test_run_failed_default_code(self):
         """Test run.failed with default code."""
-        result = AgentRunResult.run_failed(error="Something went wrong")
+        result = AgentRunResult.run_failed(run_id="run_1", error="Something went wrong")
 
         assert result.data["code"] == "runner.error"
 
     def test_action_requested_validate(self):
         """Test action.requested result."""
         result = AgentRunResult.action_requested(
+            run_id="run_1",
             action="platform.message.edit",
-            parameters={"message_id": "msg_1", "new_text": "Updated"},
+            target={"message_id": "msg_1"},
+            payload={"new_text": "Updated"},
         )
 
+        assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.ACTION_REQUESTED
         assert result.data["action"] == "platform.message.edit"
 
     def test_result_model_dump_json(self):
         """Test model_dump(mode='json') for serialization."""
         message = Message(role="assistant", content="Test")
-        result = AgentRunResult.message_completed(message)
+        result = AgentRunResult.message_completed("run_1", message)
 
         dumped = result.model_dump(mode="json")
         assert dumped["type"] == "message.completed"
@@ -478,16 +546,18 @@ class TestCapabilitiesAndPermissions:
     """Test AgentRunnerCapabilities and AgentRunnerPermissions."""
 
     def test_capabilities_defaults(self):
-        """Test all capabilities default to False."""
+        """Test capabilities defaults."""
         caps = AgentRunnerCapabilities()
         assert not caps.streaming
         assert not caps.tool_calling
         assert not caps.knowledge_retrieval
         assert not caps.multimodal_input
-        assert not caps.event_context
+        # Protocol v1 defaults
+        assert caps.event_context is True  # Default True for Protocol v1
         assert not caps.platform_api
         assert not caps.interrupt
         assert not caps.stateful_session
+        assert caps.self_managed_context is True  # Default True for Protocol v1
 
     def test_permissions_defaults(self):
         """Test all permissions default to empty lists."""
@@ -495,6 +565,9 @@ class TestCapabilitiesAndPermissions:
         assert perms.models == []
         assert perms.tools == []
         assert perms.knowledge_bases == []
+        assert perms.history == []  # New field
+        assert perms.events == []  # New field
+        assert perms.artifacts == []  # New field
         assert perms.storage == []
         assert perms.files == []
         assert perms.platform_api == []
@@ -513,10 +586,118 @@ class TestCapabilitiesAndPermissions:
     def test_permissions_from_dict(self):
         """Test permissions from manifest data."""
         perms = AgentRunnerPermissions(
-            models=["list", "invoke", "stream"],
-            tools=["list", "detail", "call"],
-            storage=["plugin", "workspace"],
+            models=["invoke", "stream", "rerank"],
+            tools=["detail", "call"],
+            storage=["plugin", "workspace", "binding"],
         )
-        assert perms.models == ["list", "invoke", "stream"]
-        assert perms.tools == ["list", "detail", "call"]
-        assert perms.storage == ["plugin", "workspace"]
+        assert perms.models == ["invoke", "stream", "rerank"]
+        assert perms.tools == ["detail", "call"]
+        assert perms.storage == ["plugin", "workspace", "binding"]
+
+
+class TestContextPolicy:
+    """Test AgentRunnerContextPolicy."""
+
+    def test_context_policy_defaults(self):
+        """Test context policy defaults for Protocol v1."""
+        policy = AgentRunnerContextPolicy()
+
+        assert policy.ownership == "self_managed"
+        assert policy.bootstrap == "current_event"
+        assert policy.max_inline_events == 0
+        assert policy.supports_history_pull is True
+        assert policy.owns_compaction is True
+
+    def test_context_policy_host_bootstrap(self):
+        """Test context policy for host_bootstrap mode."""
+        policy = AgentRunnerContextPolicy(
+            ownership="host_bootstrap",
+            bootstrap="recent_tail",
+            max_inline_events=10,
+        )
+
+        assert policy.ownership == "host_bootstrap"
+        assert policy.bootstrap == "recent_tail"
+        assert policy.max_inline_events == 10
+
+
+class TestAgentRunnerManifest:
+    """Test AgentRunnerManifest."""
+
+    def test_manifest_minimal(self):
+        """Test minimal manifest."""
+        manifest = AgentRunnerManifest(
+            id="plugin:author/plugin/runner",
+            name="default",
+            label={"en_US": "Default Runner"},
+        )
+
+        assert manifest.id == "plugin:author/plugin/runner"
+        assert manifest.name == "default"
+        assert manifest.capabilities is not None
+        assert manifest.permissions is not None
+        assert manifest.context is not None
+
+    def test_manifest_full(self):
+        """Test full manifest."""
+        manifest = AgentRunnerManifest(
+            id="plugin:author/plugin/runner",
+            name="default",
+            label={"en_US": "Runner"},
+            description={"en_US": "A runner"},
+            capabilities=AgentRunnerCapabilities(streaming=True),
+            permissions=AgentRunnerPermissions(models=["invoke", "stream"]),
+            context=AgentRunnerContextPolicy(ownership="host_bootstrap"),
+        )
+
+        assert manifest.capabilities.streaming is True
+        assert manifest.permissions.models == ["invoke", "stream"]
+        assert manifest.context.ownership == "host_bootstrap"
+
+
+class TestEventContextProtocolV1:
+    """Test event context for Protocol v1."""
+
+    def test_event_context_required_fields(self):
+        """Test event context required fields."""
+        event = AgentEventContext(
+            event_id="evt_1",
+            event_type="message.received",
+            source="platform",
+        )
+
+        assert event.event_id == "evt_1"
+        assert event.event_type == "message.received"
+        assert event.source == "platform"
+
+    def test_event_context_missing_required(self):
+        """Test event context with missing required fields."""
+        with pytest.raises(pydantic.ValidationError):
+            AgentEventContext(
+                # Missing event_id, event_type, source
+            )
+
+
+class TestDeliveryContext:
+    """Test DeliveryContext."""
+
+    def test_delivery_context_required(self):
+        """Test delivery context required field."""
+        delivery = DeliveryContext(surface="platform")
+
+        assert delivery.surface == "platform"
+        assert delivery.supports_streaming is False
+        assert delivery.reply_target is None
+
+    def test_delivery_context_full(self):
+        """Test full delivery context."""
+        delivery = DeliveryContext(
+            surface="webui",
+            supports_streaming=True,
+            supports_edit=True,
+            max_message_size=4096,
+        )
+
+        assert delivery.surface == "webui"
+        assert delivery.supports_streaming is True
+        assert delivery.max_message_size == 4096

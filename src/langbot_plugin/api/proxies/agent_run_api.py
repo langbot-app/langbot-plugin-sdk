@@ -504,3 +504,142 @@ class AgentRunAPIProxy:
             timeout=effective_timeout,
         )
         return resp.get("results", [])
+
+    # ================= History APIs (run-scoped, conversation-scoped) =================
+
+    async def history_page(
+        self,
+        conversation_id: str | None = None,
+        before_cursor: str | None = None,
+        after_cursor: str | None = None,
+        limit: int = 50,
+        direction: str = "backward",
+        include_artifacts: bool = False,
+    ) -> dict[str, Any]:
+        """Page through transcript history for a conversation.
+
+        Args:
+            conversation_id: Conversation ID to query. Must match current run's
+                conversation. If None, uses current run's conversation.
+            before_cursor: Get items before this cursor (backward direction).
+            after_cursor: Get items after this cursor (forward direction).
+            limit: Maximum items to return. Has a hard cap on host side.
+            direction: 'backward' (older items) or 'forward' (newer items).
+            include_artifacts: Whether to include artifact refs in items.
+
+        Returns:
+            HistoryPage as dict with items, next_cursor, prev_cursor, has_more.
+
+        Raises:
+            PermissionDeniedError: If not authorized for this conversation.
+        """
+        timeout = self._bounded_timeout(default=30.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.HISTORY_PAGE,
+            {
+                "run_id": self.run_id,
+                "conversation_id": conversation_id,
+                "before_cursor": before_cursor,
+                "after_cursor": after_cursor,
+                "limit": limit,
+                "direction": direction,
+                "include_artifacts": include_artifacts,
+            },
+            timeout,
+        )
+        return resp
+
+    async def history_search(
+        self,
+        query: str,
+        filters: dict[str, Any] | None = None,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """Search transcript history for matching items.
+
+        This is a basic search capability. Host implementation may use
+        simple LIKE filtering initially.
+
+        Args:
+            query: Search query string.
+            filters: Optional filters (conversation_id, event_types, etc.).
+            top_k: Maximum results to return.
+
+        Returns:
+            HistorySearchResult as dict with items, total_count, query.
+
+        Note:
+            Basic implementation may return unsupported error or limited results.
+        """
+        timeout = self._bounded_timeout(default=30.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.HISTORY_SEARCH,
+            {
+                "run_id": self.run_id,
+                "query": query,
+                "filters": filters or {},
+                "top_k": top_k,
+            },
+            timeout,
+        )
+        return resp
+
+    # ================= Event APIs (run-scoped) =================
+
+    async def event_get(self, event_id: str) -> dict[str, Any]:
+        """Get a single event record by ID.
+
+        Args:
+            event_id: The event ID to retrieve.
+
+        Returns:
+            AgentEventRecord as dict.
+
+        Raises:
+            PermissionDeniedError: If event not accessible by current run.
+        """
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.EVENT_GET,
+            {
+                "run_id": self.run_id,
+                "event_id": event_id,
+            },
+            timeout,
+        )
+        return resp
+
+    async def event_page(
+        self,
+        conversation_id: str | None = None,
+        event_types: list[str] | None = None,
+        before_cursor: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Page through event records.
+
+        Args:
+            conversation_id: Conversation ID to query. Must match current run.
+            event_types: Filter by event types if specified.
+            before_cursor: Get items before this cursor.
+            limit: Maximum items to return. Has a hard cap on host side.
+
+        Returns:
+            EventPage as dict with items, next_cursor, prev_cursor, has_more.
+
+        Raises:
+            PermissionDeniedError: If not authorized for this conversation.
+        """
+        timeout = self._bounded_timeout(default=30.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.EVENT_PAGE,
+            {
+                "run_id": self.run_id,
+                "conversation_id": conversation_id,
+                "event_types": event_types,
+                "before_cursor": before_cursor,
+                "limit": limit,
+            },
+            timeout,
+        )
+        return resp
