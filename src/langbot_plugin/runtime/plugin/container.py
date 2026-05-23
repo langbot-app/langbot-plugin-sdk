@@ -6,10 +6,15 @@ import typing
 import enum
 import pydantic
 
+from typing import TYPE_CHECKING
+
 from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.definition.plugin import BasePlugin
 from langbot_plugin.api.definition.components.base import BaseComponent, NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
+
+if TYPE_CHECKING:
+    from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
 
 
 class RuntimeContainerStatus(enum.Enum):

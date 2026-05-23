@@ -745,3 +745,163 @@ class TestAgentRunAPIProxyFieldConsistency:
         assert 'query_text' in data
         assert 'top_k' in data
         assert 'filters' in data
+
+
+class TestAgentRunAPIProxyStateAPI:
+    """Tests for State API proxy methods."""
+
+    @pytest.mark.anyio
+    async def test_state_get_sends_correct_fields(self):
+        """STATE_GET: SDK fields match Host handler expectations."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'value': {'key': 'value'}}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_get('conversation', 'external.session_id')
+
+        call_args = mock_handler.call_action_mock.call_args
+        data = call_args[0][1]
+
+        assert 'run_id' in data
+        assert data['run_id'] == 'test_run'
+        assert 'scope' in data
+        assert data['scope'] == 'conversation'
+        assert 'key' in data
+        assert data['key'] == 'external.session_id'
+
+    @pytest.mark.anyio
+    async def test_state_set_sends_correct_fields(self):
+        """STATE_SET: SDK fields match Host handler expectations."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'success': True}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_set('conversation', 'external.session_id', 'sess_123')
+
+        call_args = mock_handler.call_action_mock.call_args
+        data = call_args[0][1]
+
+        assert 'run_id' in data
+        assert data['run_id'] == 'test_run'
+        assert 'scope' in data
+        assert data['scope'] == 'conversation'
+        assert 'key' in data
+        assert data['key'] == 'external.session_id'
+        assert 'value' in data
+        assert data['value'] == 'sess_123'
+
+    @pytest.mark.anyio
+    async def test_state_delete_sends_correct_fields(self):
+        """STATE_DELETE: SDK fields match Host handler expectations."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'success': True}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_delete('conversation', 'external.session_id')
+
+        call_args = mock_handler.call_action_mock.call_args
+        data = call_args[0][1]
+
+        assert 'run_id' in data
+        assert data['run_id'] == 'test_run'
+        assert 'scope' in data
+        assert data['scope'] == 'conversation'
+        assert 'key' in data
+        assert data['key'] == 'external.session_id'
+
+    @pytest.mark.anyio
+    async def test_state_list_sends_correct_fields(self):
+        """STATE_LIST: SDK fields match Host handler expectations."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'keys': ['key1', 'key2'], 'has_more': False}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_list('conversation', prefix='external.', limit=50)
+
+        call_args = mock_handler.call_action_mock.call_args
+        data = call_args[0][1]
+
+        assert 'run_id' in data
+        assert data['run_id'] == 'test_run'
+        assert 'scope' in data
+        assert data['scope'] == 'conversation'
+        assert 'prefix' in data
+        assert data['prefix'] == 'external.'
+        assert 'limit' in data
+        assert data['limit'] == 50
+
+    @pytest.mark.anyio
+    async def test_state_get_returns_value(self):
+        """STATE_GET returns value from response."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'value': {'nested': 'data'}}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_get('conversation', 'test_key')
+
+        assert result['value'] == {'nested': 'data'}
+
+    @pytest.mark.anyio
+    async def test_state_set_returns_success(self):
+        """STATE_SET returns success status."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'success': True}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_set('conversation', 'test_key', 'test_value')
+
+        assert result['success'] is True
+
+    @pytest.mark.anyio
+    async def test_state_list_returns_keys_and_has_more(self):
+        """STATE_LIST returns keys and has_more flag."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'keys': ['k1', 'k2', 'k3'], 'has_more': True}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.state_list('runner', limit=100)
+
+        assert result['keys'] == ['k1', 'k2', 'k3']
+        assert result['has_more'] is True
+
+    @pytest.mark.anyio
+    async def test_state_methods_use_correct_action_enum(self):
+        """State methods should use correct PluginToRuntimeAction enum values."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {'value': None}
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        # Test each method uses correct action
+        await proxy.state_get('conversation', 'key')
+        call_args = mock_handler.call_action_mock.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.STATE_GET
+
+        mock_handler.call_action_mock.return_value = {'success': True}
+        await proxy.state_set('conversation', 'key', 'value')
+        call_args = mock_handler.call_action_mock.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.STATE_SET
+
+        await proxy.state_delete('conversation', 'key')
+        call_args = mock_handler.call_action_mock.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.STATE_DELETE
+
+        mock_handler.call_action_mock.return_value = {'keys': [], 'has_more': False}
+        await proxy.state_list('conversation')
+        call_args = mock_handler.call_action_mock.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.STATE_LIST
