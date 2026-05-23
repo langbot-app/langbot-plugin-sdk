@@ -8,10 +8,33 @@ import pydantic
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 
 
+class ArtifactRef(pydantic.BaseModel):
+    """Reference to an artifact (file, image, tool result, etc.).
+
+    Large content should be stored as artifacts and referenced here.
+    """
+
+    artifact_id: str
+    """Artifact identifier."""
+
+    artifact_type: str | None = None
+    """Artifact type (image, file, voice, tool_result, etc.)."""
+
+    mime_type: str | None = None
+    """MIME type."""
+
+    size: int | None = None
+    """Size in bytes."""
+
+    name: str | None = None
+    """File name (if applicable)."""
+
+
 class AgentInput(pydantic.BaseModel):
     """Input for an agent run.
 
     Contains the user's input in multiple formats for convenience.
+    Protocol v1: input is required; attachments use ArtifactRef.
     """
 
     text: str | None = None
@@ -21,10 +44,10 @@ class AgentInput(pydantic.BaseModel):
     """Structured content elements (text, images, files, etc.)."""
 
     message_chain: list[dict[str, typing.Any]] | dict[str, typing.Any] | None = None
-    """Raw platform message chain (list of message components or dict representation)."""
+    """Raw platform message chain (compatibility field, not stable dependency)."""
 
-    attachments: list[dict[str, typing.Any]] = pydantic.Field(default_factory=list)
-    """File attachments metadata."""
+    attachments: list[ArtifactRef] = pydantic.Field(default_factory=list)
+    """Artifact references for files/images/attachments."""
 
     def to_text(self) -> str:
         """Extract plain text from input.

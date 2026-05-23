@@ -17,26 +17,42 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import (
     ActorContext,
     SubjectContext,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import ContextAccess
+from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
+
+
+class CompatibilityContext(pydantic.BaseModel):
+    """Compatibility context for legacy Query/Pipeline migration.
+
+    This context holds legacy fields during migration from Query-first to event-first.
+    Runners SHOULD NOT depend on this for long-term capabilities.
+    """
+
+    query_id: int | None = None
+    """Legacy query ID."""
+
+    pipeline_uuid: str | None = None
+    """Legacy pipeline UUID."""
+
+    max_round: int | None = None
+    """Legacy max-round (for reference only, should NOT be used by new runners)."""
+
+    legacy_messages: list[Message] = pydantic.Field(default_factory=list)
+    """Legacy messages field (prefer using bootstrap.messages or history API)."""
+
+    extra: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """Other legacy fields."""
 
 
 class AgentRunContext(pydantic.BaseModel):
     """Agent run context passed to AgentRunner.run().
 
-    Protocol v1 context structure. Contains:
-    - run_id: unique identifier for this run
-    - trigger: what triggered this run
-    - conversation: launcher/sender/bot/pipeline info
-    - event: event envelope subset (for future EBA)
-    - actor: who triggered the event
-    - subject: what the event is about
-    - prompt: effective prompt/instruction messages prepared by the host
-    - messages: historical conversation messages
-    - input: user input
-    - params: single-run public business parameters (read-only, non-persistent)
-    - resources: authorized resources
-    - state: host-managed scoped state snapshot (durable)
-    - runtime: host/environment info
-    - config: runner instance configuration
+    Protocol v1 context structure. This is event-first:
+    - event is REQUIRED (not optional)
+    - input is REQUIRED (current event input, not history)
+    - messages is DEMOTED to bootstrap (optional convenience)
+    - compatibility holds legacy Query/Pipeline fields
 
     Field boundaries:
     - config: Static runner configuration from pipeline/runner config.
@@ -51,11 +67,11 @@ class AgentRunContext(pydantic.BaseModel):
     trigger: AgentTrigger
     """Trigger information."""
 
+    event: AgentEventContext
+    """Event context (REQUIRED for Protocol v1)."""
+
     conversation: ConversationContext | None = None
     """Conversation context."""
-
-    event: AgentEventContext | None = None
-    """Event context (for EBA)."""
 
     actor: ActorContext | None = None
     """Actor context."""
@@ -63,38 +79,17 @@ class AgentRunContext(pydantic.BaseModel):
     subject: SubjectContext | None = None
     """Subject context."""
 
-    messages: list[Message] = pydantic.Field(default_factory=list)
-    """Historical messages in the conversation."""
-
-    prompt: list[Message] = pydantic.Field(default_factory=list)
-    """Effective prompt/instruction messages prepared by the host.
-
-    This is the prompt after host-side preprocessing and prompt-related plugin
-    events have run. Runners should prefer this over static prompt data in
-    config when they need to call a model directly.
-    """
-
     input: AgentInput
-    """User input."""
+    """User input (current event input, not history)."""
 
-    params: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Single-run public business parameters.
-
-    Semantics:
-    - JSON-safe, read-only for runner
-    - Non-persistent (not carried to next run)
-    - Not equivalent to LangBot query.variables
-    - Host should filter internal variables, secrets, permission control variables
-
-    Use cases:
-    - Workflow inputs
-    - Prompt variables
-    - Pipeline pre-stage generated public business variables
-    - User-defined variables
-    """
+    delivery: DeliveryContext
+    """Delivery context (output surface capabilities)."""
 
     resources: AgentResources
     """Authorized resources."""
+
+    context: ContextAccess = pydantic.Field(default_factory=ContextAccess)
+    """Context access descriptor (what's inlined, what APIs are available)."""
 
     state: AgentRunState = pydantic.Field(default_factory=AgentRunState)
     """Host-managed scoped state snapshot.
@@ -115,7 +110,19 @@ class AgentRunContext(pydantic.BaseModel):
     """Runtime context."""
 
     config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Runner instance configuration."""
+    """Runner instance configuration (binding config from Host)."""
+
+    bootstrap: BootstrapContext | None = None
+    """Optional bootstrap context (small convenience window, NOT full history)."""
+
+    compatibility: CompatibilityContext | None = None
+    """Compatibility context for legacy Query/Pipeline fields.
+
+    Runners SHOULD NOT depend on this for long-term capabilities.
+    """
+
+    metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """Additional metadata."""
 
     class Config:
         arbitrary_types_allowed = True

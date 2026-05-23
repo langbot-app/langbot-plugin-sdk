@@ -47,16 +47,23 @@ class AgentRunner(BaseComponent):
                 # Get API proxy with run_id for LLM/tool/KB calls
                 api = self.get_run_api(ctx)
 
+                # Get bootstrap messages if available (NOT core history)
+                # For full history, use ctx.context.available_apis.history_page
+                messages = ctx.bootstrap.messages if ctx.bootstrap else []
+
+                # Or build messages from current input
+                if not messages:
+                    messages = [Message(role="user", content=ctx.input.to_text() or "")]
+
                 # Stream response from LLM (with run_id tracking)
                 model_uuid = ctx.resources.models[0].model_id
-                messages = ctx.messages
 
                 async for chunk in api.invoke_llm_stream(model_uuid, messages):
-                    yield AgentRunResult.message_delta(chunk)
+                    yield AgentRunResult.message_delta(ctx.run_id, chunk)
 
                 # Final message
                 final_message = Message(role="assistant", content="Hello world")
-                yield AgentRunResult.run_completed(message=final_message)
+                yield AgentRunResult.run_completed(ctx.run_id, message=final_message)
         ```
     """
 
@@ -115,27 +122,31 @@ class AgentRunner(BaseComponent):
 
         Args:
             ctx: Agent run context containing:
-                - run_id: Unique ID for this run
+                - run_id: Unique ID for this run (REQUIRED for all AgentRunResult factories)
                 - trigger: What triggered this run
                 - conversation: Launcher/sender/bot/pipeline info
-                - event: Event envelope subset (for EBA)
+                - event: Event envelope subset (REQUIRED for Protocol v1)
                 - actor: Who triggered the event
                 - subject: What the event is about
-                - messages: Historical conversation messages
                 - input: User input (text, contents, message_chain, attachments)
+                - delivery: Output surface capabilities (REQUIRED for Protocol v1)
                 - resources: Authorized resources (models, tools, KBs, files, storage)
+                - context: ContextAccess - what's inlined, what APIs are available
+                - state: Host-managed scoped state snapshot
                 - runtime: Host/environment info (version, query_id, trace_id, deadline)
                 - config: Runner instance configuration
+                - bootstrap: Optional bootstrap messages (NOT core history)
+                - compatibility: Legacy compatibility fields
 
         Yields:
             AgentRunResult: Progress and final result events:
-                - message.delta: Streaming text chunk
-                - message.completed: Complete message
-                - tool.call.started: Tool call initiated
-                - tool.call.completed: Tool call finished
-                - state.updated: State change notification
-                - run.completed: Run finished successfully
-                - run.failed: Run failed with error
+                - message.delta: Streaming text chunk (use ctx.run_id)
+                - message.completed: Complete message (use ctx.run_id)
+                - tool.call.started: Tool call initiated (use ctx.run_id)
+                - tool.call.completed: Tool call finished (use ctx.run_id)
+                - state.updated: State change notification (use ctx.run_id)
+                - run.completed: Run finished successfully (use ctx.run_id)
+                - run.failed: Run failed with error (use ctx.run_id)
                 - action.requested: Platform action request (future)
 
         Example:
@@ -149,12 +160,12 @@ class AgentRunner(BaseComponent):
                     model = ctx.resources.models[0]
                     # Call LLM via plugin API...
 
-                # Stream response
+                # Stream response - NOTE: ctx.run_id is REQUIRED
                 chunk = MessageChunk(role="assistant", content="Response")
-                yield AgentRunResult.message_delta(chunk)
+                yield AgentRunResult.message_delta(ctx.run_id, chunk)
 
-                # Complete
-                yield AgentRunResult.run_completed(finish_reason="stop")
+                # Complete - NOTE: ctx.run_id is REQUIRED
+                yield AgentRunResult.run_completed(ctx.run_id, finish_reason="stop")
             ```
         """
         pass
