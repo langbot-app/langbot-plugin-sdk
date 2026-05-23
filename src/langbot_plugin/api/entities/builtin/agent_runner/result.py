@@ -140,21 +140,65 @@ class AgentRunResult(pydantic.BaseModel):
         mime_type: str | None = None,
         size: int | None = None,
         name: str | None = None,
+        *,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        metadata: dict[str, typing.Any] | None = None,
+        content_base64: str | None = None,
     ) -> "AgentRunResult":
         """Create an artifact.created result.
 
-        Runner created an artifact.
+        Runner created an artifact that should be persisted by Host.
+
+        Args:
+            run_id: Run identifier (must match current run)
+            artifact_id: Unique artifact identifier (recommended: UUID v4)
+            artifact_type: Type of artifact ('image', 'file', 'voice', 'tool_result', etc.)
+            mime_type: MIME type of the content
+            size: (Deprecated) Use size_bytes instead
+            name: Original file name
+            size_bytes: Size in bytes
+            sha256: SHA256 hash of content
+            metadata: Additional metadata (platform-specific info, etc.)
+            content_base64: Base64-encoded content for small artifacts.
+                For large artifacts, use external storage and omit this field.
+                Host will decode and store in BinaryStorage.
+
+        Returns:
+            AgentRunResult with type="artifact.created"
+
+        Note:
+            - Host sets conversation_id, run_id, runner_id from current context.
+            - Do NOT pass conversation_id/run_id in data; Host ignores them for security.
+            - For large artifacts (>1MB), consider using external storage and omitting content_base64.
         """
+        # Handle backward compatibility: size -> size_bytes
+        if size_bytes is None and size is not None:
+            size_bytes = size
+
+        data: dict[str, typing.Any] = {
+            "artifact_id": artifact_id,
+            "artifact_type": artifact_type,
+        }
+
+        # Optional fields
+        if mime_type is not None:
+            data["mime_type"] = mime_type
+        if name is not None:
+            data["name"] = name
+        if size_bytes is not None:
+            data["size_bytes"] = size_bytes
+        if sha256 is not None:
+            data["sha256"] = sha256
+        if metadata is not None:
+            data["metadata"] = metadata
+        if content_base64 is not None:
+            data["content_base64"] = content_base64
+
         return cls(
             run_id=run_id,
             type=AgentRunResultType.ARTIFACT_CREATED,
-            data={
-                "artifact_id": artifact_id,
-                "artifact_type": artifact_type,
-                "mime_type": mime_type,
-                "size": size,
-                "name": name,
-            },
+            data=data,
         )
 
     @classmethod
