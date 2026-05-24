@@ -21,8 +21,8 @@ class AgentTrigger(pydantic.BaseModel):
         "api",
         "scheduler",
         "system",
-        "pipeline_compat",
-    ] = "pipeline_compat"
+        "pipeline_adapter",
+    ] = "pipeline_adapter"
     """Source of the trigger.
 
     - platform: Direct platform event
@@ -30,7 +30,7 @@ class AgentTrigger(pydantic.BaseModel):
     - api: API trigger
     - scheduler: Scheduled trigger
     - system: System event
-    - pipeline_compat: Pipeline compatibility adapter
+    - pipeline_adapter: Pipeline adapter
     """
 
     timestamp: int | None = None
