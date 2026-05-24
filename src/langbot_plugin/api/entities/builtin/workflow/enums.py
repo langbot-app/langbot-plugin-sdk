@@ -1,5 +1,3 @@
-"""Workflow 通信协议枚举类型定义"""
-
 from __future__ import annotations
 
 from enum import Enum

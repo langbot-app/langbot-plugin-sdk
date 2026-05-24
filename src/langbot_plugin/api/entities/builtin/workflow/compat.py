@@ -1,9 +1,3 @@
-"""Workflow 与 Pipeline 兼容性转换函数
-
-本模块提供 MessageEnvelope 与 Pipeline Query 之间的双向转换，
-确保 Workflow 可以无缝调用 Pipeline，同时保持完整的上下文信息。
-"""
-
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 

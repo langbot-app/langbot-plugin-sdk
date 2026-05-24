@@ -1,5 +1,3 @@
-"""Workflow 通信协议核心实体类定义"""
-
 from __future__ import annotations
 
 import typing

@@ -1,8 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-此模块提供事件模型。
-"""
-
 import typing
 
 import pydantic
