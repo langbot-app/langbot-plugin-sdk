@@ -172,7 +172,7 @@ class AgentRunResult(pydantic.BaseModel):
             - Do NOT pass conversation_id/run_id in data; Host ignores them for security.
             - For large artifacts (>1MB), consider using external storage and omitting content_base64.
         """
-        # Handle backward compatibility: size -> size_bytes
+        # Accept the concise size alias and normalize it to protocol field name.
         if size_bytes is None and size is not None:
             size_bytes = size
 
@@ -219,7 +219,7 @@ class AgentRunResult(pydantic.BaseModel):
             key: State key, should use namespace prefix (e.g., external.conversation_id)
             value: State value, must be JSON-serializable
             scope: State scope - one of: conversation, actor, subject, runner.
-                Defaults to "conversation" for backward compatibility.
+                Defaults to "conversation" when omitted.
 
         Returns:
             AgentRunResult with type="state.updated" and data containing scope/key/value.

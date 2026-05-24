@@ -48,7 +48,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryCo
 from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
 from langbot_plugin.api.entities.builtin.agent_runner.context import (
     AgentRunContext,
-    CompatibilityContext,
+    AdapterContext,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
@@ -102,7 +102,7 @@ __all__ = [
     "ContextAPICapabilities",
     "DeliveryContext",
     "BootstrapContext",
-    "CompatibilityContext",
+    "AdapterContext",
     # Main context and result
     "AgentRunContext",
     "AgentRunResult",
