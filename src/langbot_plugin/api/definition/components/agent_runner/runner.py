@@ -136,7 +136,7 @@ class AgentRunner(BaseComponent):
                 - runtime: Host/environment info (version, query_id, trace_id, deadline)
                 - config: Runner instance configuration
                 - bootstrap: Optional bootstrap messages (NOT core history)
-                - compatibility: Legacy compatibility fields
+                - adapter: Pipeline adapter / host adapter metadata
 
         Yields:
             AgentRunResult: Progress and final result events:

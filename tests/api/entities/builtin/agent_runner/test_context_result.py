@@ -7,7 +7,7 @@ import pydantic
 
 from langbot_plugin.api.entities.builtin.agent_runner.context import (
     AgentRunContext,
-    CompatibilityContext,
+    AdapterContext,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
@@ -63,7 +63,7 @@ class TestAgentRunContextV1:
 
     def test_minimal_context_validate(self):
         """Test minimal required fields validation."""
-        trigger = AgentTrigger(type="message.received", source="pipeline_compat")
+        trigger = AgentTrigger(type="message.received", source="pipeline_adapter")
         event = AgentEventContext(
             event_id="evt_1",
             event_type="message.received",
@@ -150,21 +150,21 @@ class TestAgentRunContextV1:
         assert context_access.has_history_before is False
         assert context_access.inline_policy.mode == "current_event"
 
-    def test_compatibility_context(self):
-        """Test CompatibilityContext for legacy fields."""
-        compat = CompatibilityContext(
+    def test_adapter_context(self):
+        """Test AdapterContext for Pipeline adapter fields."""
+        adapter = AdapterContext(
             query_id=123,
             pipeline_uuid="pipe-123",
             max_round=10,
         )
 
-        assert compat.query_id == 123
-        assert compat.max_round == 10
+        assert adapter.query_id == 123
+        assert adapter.max_round == 10
 
     def test_full_context_validate(self):
         """Test full context with all optional fields."""
         trigger = AgentTrigger(
-            type="message.received", source="pipeline_compat", timestamp=1234567890
+            type="message.received", source="pipeline_adapter", timestamp=1234567890
         )
         conversation = ConversationContext(
             conversation_id="conv_1",
@@ -259,7 +259,7 @@ class TestAgentRunContextV1:
         """Test model_validate from dict (as LangBot will send)."""
         data = {
             "run_id": "run_dict",
-            "trigger": {"type": "message.received", "source": "pipeline_compat"},
+            "trigger": {"type": "message.received", "source": "pipeline_adapter"},
             "event": {
                 "event_id": "evt_1",
                 "event_type": "message.received",
@@ -384,8 +384,8 @@ class TestAgentRunResultV1:
         assert result.data["metadata"] == {"source": "generated"}
         assert result.data["content_base64"] == base64.b64encode(content).decode("utf-8")
 
-    def test_artifact_created_backward_compat_size(self):
-        """Test artifact.created backward compatibility: size -> size_bytes."""
+    def test_artifact_created_size_alias(self):
+        """Test artifact.created size alias: size -> size_bytes."""
         result = AgentRunResult.artifact_created(
             run_id="run_1",
             artifact_id="artifact_1",

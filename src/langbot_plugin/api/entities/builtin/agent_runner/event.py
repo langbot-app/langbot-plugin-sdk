@@ -46,12 +46,12 @@ class ConversationContext(pydantic.BaseModel):
     workspace_id: str | None = None
     """Workspace ID (for multi-tenant scenarios)."""
 
-    # Legacy fields for backward compatibility
+    # Pipeline adapter fields
     session_id: str | None = None
-    """Session identifier (legacy, prefer conversation_id)."""
+    """Pipeline session identifier (prefer conversation_id for stable identity)."""
 
     pipeline_uuid: str | None = None
-    """Pipeline UUID (legacy)."""
+    """Pipeline UUID."""
 
 
 class AgentEventContext(pydantic.BaseModel):
@@ -70,7 +70,7 @@ class AgentEventContext(pydantic.BaseModel):
     """Event timestamp (epoch seconds)."""
 
     source: str
-    """Event source (platform, webui, api, scheduler, system, pipeline_compat)."""
+    """Event source (platform, webui, api, scheduler, system, pipeline_adapter)."""
 
     source_event_type: str | None = None
     """Original platform event type (for debugging/logging)."""

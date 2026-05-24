@@ -44,7 +44,7 @@ class AgentInput(pydantic.BaseModel):
     """Structured content elements (text, images, files, etc.)."""
 
     message_chain: list[dict[str, typing.Any]] | dict[str, typing.Any] | None = None
-    """Raw platform message chain (compatibility field, not stable dependency)."""
+    """Raw platform message chain reference (adapter field, not stable dependency)."""
 
     attachments: list[ArtifactRef] = pydantic.Field(default_factory=list)
     """Artifact references for files/images/attachments."""

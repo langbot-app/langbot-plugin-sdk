@@ -65,7 +65,7 @@ class AgentRunReturn(pydantic.BaseModel):
         WARNING: This is a migration helper only.
 
         Args:
-            run_id: Run identifier (defaults to "legacy" for backward compatibility).
+            run_id: Run identifier (defaults to "legacy" for migration helpers).
                 Callers should pass the actual run_id from context if available.
         """
         warnings.warn(
@@ -303,6 +303,6 @@ def create_legacy_context(
         runtime=runtime,
         config=extra_config,
         bootstrap=bootstrap,  # Historical messages go here
-        compatibility=None,
+        adapter=None,
         metadata={},
     )
