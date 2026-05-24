@@ -22,10 +22,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryCo
 from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
 
 
-class CompatibilityContext(pydantic.BaseModel):
-    """Compatibility context for legacy Query/Pipeline migration.
+class AdapterContext(pydantic.BaseModel):
+    """Context for Pipeline adapter / host adapter metadata.
 
-    This context holds legacy fields during migration from Query-first to event-first.
+    This context holds adapter-specific fields for transition from Query/Pipeline.
     Runners SHOULD NOT depend on this for long-term capabilities.
     """
 
@@ -36,13 +36,13 @@ class CompatibilityContext(pydantic.BaseModel):
     """Legacy pipeline UUID."""
 
     max_round: int | None = None
-    """Legacy max-round (for reference only, should NOT be used by new runners)."""
+    """Pipeline adapter max-round (for reference only, should NOT be used by new runners)."""
 
-    legacy_messages: list[Message] = pydantic.Field(default_factory=list)
-    """Legacy messages field (prefer using bootstrap.messages or history API)."""
+    adapter_messages: list[Message] = pydantic.Field(default_factory=list)
+    """Messages from Pipeline adapter / bootstrap (prefer using bootstrap.messages or history API)."""
 
     extra: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Other legacy fields."""
+    """Other adapter-specific fields."""
 
 
 class AgentRunContext(pydantic.BaseModel):
@@ -52,7 +52,7 @@ class AgentRunContext(pydantic.BaseModel):
     - event is REQUIRED (not optional)
     - input is REQUIRED (current event input, not history)
     - messages is DEMOTED to bootstrap (optional convenience)
-    - compatibility holds legacy Query/Pipeline fields
+    - adapter holds Pipeline adapter / host adapter metadata
 
     Field boundaries:
     - config: Static runner configuration from pipeline/runner config.
@@ -115,8 +115,8 @@ class AgentRunContext(pydantic.BaseModel):
     bootstrap: BootstrapContext | None = None
     """Optional bootstrap context (small convenience window, NOT full history)."""
 
-    compatibility: CompatibilityContext | None = None
-    """Compatibility context for legacy Query/Pipeline fields.
+    adapter: AdapterContext | None = None
+    """Adapter context for Pipeline adapter / host adapter metadata.
 
     Runners SHOULD NOT depend on this for long-term capabilities.
     """
