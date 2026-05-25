@@ -25,15 +25,15 @@ from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import Bootstrap
 class AdapterContext(pydantic.BaseModel):
     """Context for Pipeline adapter / host adapter metadata.
 
-    This context holds adapter-specific fields for transition from Query/Pipeline.
-    Runners SHOULD NOT depend on this for long-term capabilities.
+    This context holds adapter-specific fields that are not part of the stable
+    event/input/resource contract.
     """
 
     query_id: int | None = None
-    """Legacy query ID."""
+    """Pipeline query ID when the run enters through Pipeline adapter."""
 
     pipeline_uuid: str | None = None
-    """Legacy pipeline UUID."""
+    """Pipeline UUID when available."""
 
     max_round: int | None = None
     """Pipeline adapter max-round (for reference only, should NOT be used by new runners)."""
@@ -56,7 +56,7 @@ class AgentRunContext(pydantic.BaseModel):
 
     Field boundaries:
     - config: Static runner configuration from pipeline/runner config.
-    - params: Single-run business parameters, read-only, non-persistent.
+    - adapter.extra: Adapter-specific fields such as Pipeline params/prompt.
     - state: Host-managed runner-scoped persistent state snapshot.
     - runtime.metadata: Host/runtime observability info, not a business input contract.
     """
@@ -118,7 +118,7 @@ class AgentRunContext(pydantic.BaseModel):
     adapter: AdapterContext | None = None
     """Adapter context for Pipeline adapter / host adapter metadata.
 
-    Runners SHOULD NOT depend on this for long-term capabilities.
+    Runners should prefer stable protocol fields and pull APIs when possible.
     """
 
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
