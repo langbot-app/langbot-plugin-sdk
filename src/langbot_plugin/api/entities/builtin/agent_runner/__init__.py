@@ -54,10 +54,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
     AgentRunResultType,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.legacy import (
-    AgentRunReturn,
-    create_legacy_context,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.transcript import TranscriptItem
 from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
     HistoryPage,
@@ -107,9 +103,6 @@ __all__ = [
     "AgentRunContext",
     "AgentRunResult",
     "AgentRunResultType",
-    # Legacy (deprecated)
-    "AgentRunReturn",
-    "create_legacy_context",
     # History and Event APIs
     "TranscriptItem",
     "HistoryPage",
