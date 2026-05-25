@@ -384,31 +384,6 @@ class TestAgentRunResultV1:
         assert result.data["metadata"] == {"source": "generated"}
         assert result.data["content_base64"] == base64.b64encode(content).decode("utf-8")
 
-    def test_artifact_created_size_alias(self):
-        """Test artifact.created size alias: size -> size_bytes."""
-        result = AgentRunResult.artifact_created(
-            run_id="run_1",
-            artifact_id="artifact_1",
-            artifact_type="file",
-            size=1024,  # Deprecated parameter
-        )
-
-        # size should be mapped to size_bytes
-        assert result.data["size_bytes"] == 1024
-
-    def test_artifact_created_size_bytes_preferred(self):
-        """Test artifact.created prefers size_bytes over deprecated size."""
-        result = AgentRunResult.artifact_created(
-            run_id="run_1",
-            artifact_id="artifact_1",
-            artifact_type="file",
-            size=2048,  # Deprecated
-            size_bytes=1024,  # Preferred
-        )
-
-        # size_bytes should take precedence
-        assert result.data["size_bytes"] == 1024
-
     def test_artifact_created_metadata_only(self):
         """Test artifact.created without content (metadata-only)."""
         result = AgentRunResult.artifact_created(
@@ -469,12 +444,13 @@ class TestAgentRunResultV1:
         assert result.type == AgentRunResultType.TOOL_CALL_COMPLETED
         assert result.data["error"] == "API timeout"
 
-    def test_state_updated_backward_compatible(self):
-        """Test state.updated backward compatible (default scope=conversation)."""
+    def test_state_updated_validate(self):
+        """Test state.updated result."""
         result = AgentRunResult.state_updated(
             run_id="run_1",
             key="external.conversation_id",
             value="abc123",
+            scope="conversation",
         )
 
         assert result.run_id == "run_1"

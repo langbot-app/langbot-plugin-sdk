@@ -88,7 +88,7 @@ class AgentRunAPIProxy:
 
     @property
     def query_id(self) -> int:
-        """Query ID from runtime context (for legacy compatibility)."""
+        """Pipeline query ID from runtime context, if present."""
         return self.ctx.runtime.query_id or 0
 
     def _remaining_deadline_seconds(self) -> float | None:

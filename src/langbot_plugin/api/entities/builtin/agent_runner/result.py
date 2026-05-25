@@ -138,7 +138,6 @@ class AgentRunResult(pydantic.BaseModel):
         artifact_id: str,
         artifact_type: str,
         mime_type: str | None = None,
-        size: int | None = None,
         name: str | None = None,
         *,
         size_bytes: int | None = None,
@@ -155,7 +154,6 @@ class AgentRunResult(pydantic.BaseModel):
             artifact_id: Unique artifact identifier (recommended: UUID v4)
             artifact_type: Type of artifact ('image', 'file', 'voice', 'tool_result', etc.)
             mime_type: MIME type of the content
-            size: (Deprecated) Use size_bytes instead
             name: Original file name
             size_bytes: Size in bytes
             sha256: SHA256 hash of content
@@ -172,10 +170,6 @@ class AgentRunResult(pydantic.BaseModel):
             - Do NOT pass conversation_id/run_id in data; Host ignores them for security.
             - For large artifacts (>1MB), consider using external storage and omitting content_base64.
         """
-        # Accept the concise size alias and normalize it to protocol field name.
-        if size_bytes is None and size is not None:
-            size_bytes = size
-
         data: dict[str, typing.Any] = {
             "artifact_id": artifact_id,
             "artifact_type": artifact_type,
@@ -207,7 +201,7 @@ class AgentRunResult(pydantic.BaseModel):
         run_id: str,
         key: str,
         value: typing.Any,
-        scope: STATE_SCOPE_LITERAL = "conversation",
+        scope: STATE_SCOPE_LITERAL,
     ) -> "AgentRunResult":
         """Create a state.updated result.
 
@@ -219,7 +213,6 @@ class AgentRunResult(pydantic.BaseModel):
             key: State key, should use namespace prefix (e.g., external.conversation_id)
             value: State value, must be JSON-serializable
             scope: State scope - one of: conversation, actor, subject, runner.
-                Defaults to "conversation" when omitted.
 
         Returns:
             AgentRunResult with type="state.updated" and data containing scope/key/value.
@@ -236,8 +229,13 @@ class AgentRunResult(pydantic.BaseModel):
                 scope="conversation"
             )
 
-            # Store user preference (backward compatible)
-            yield AgentRunResult.state_updated(run_id, "preferred_language", "en")
+            # Store user preference
+            yield AgentRunResult.state_updated(
+                run_id,
+                "preferred_language",
+                "en",
+                scope="actor",
+            )
         """
         if scope not in VALID_STATE_SCOPES:
             raise ValueError(
