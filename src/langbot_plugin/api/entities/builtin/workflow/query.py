@@ -8,6 +8,8 @@ import langbot_plugin.api.entities.builtin.platform.events as platform_events
 import langbot_plugin.api.entities.builtin.platform.message as platform_message
 import langbot_plugin.api.entities.builtin.provider.message as provider_message
 import langbot_plugin.api.entities.builtin.provider.session as provider_session
+import langbot_plugin.api.entities.builtin.provider.prompt as provider_prompt
+import langbot_plugin.api.entities.builtin.resource.tool as resource_tool
 import langbot_plugin.api.definition.abstract.platform.adapter as abstract_platform_adapter
 
 from .entities import MessageContext, NodeState
@@ -62,8 +64,27 @@ class WorkflowQuery(pydantic.BaseModel):
     session: typing.Optional[provider_session.Session] = None
     """会话对象，由前置处理器阶段设置"""
 
+    messages: typing.Optional[
+        list[typing.Union[provider_message.Message, provider_message.MessageChunk]]
+    ] = []
+    """历史消息列表，由前置处理器阶段设置"""
+
+    prompt: typing.Optional[provider_prompt.Prompt] = None
+    """情景预设内容，由前置处理器阶段设置"""
+
+    user_message: typing.Optional[
+        typing.Union[provider_message.Message, provider_message.MessageChunk]
+    ] = None
+    """此次请求的用户消息对象，由前置处理器阶段设置"""
+
     variables: typing.Optional[dict[str, typing.Any]] = None
     """变量字典，由前置处理器或节点设置和读取"""
+
+    use_llm_model_uuid: typing.Optional[str] = None
+    """使用的对话模型，由前置处理器阶段设置"""
+
+    use_funcs: typing.Optional[list[resource_tool.LLMTool]] = None
+    """使用的函数，由前置处理器阶段设置"""
 
     trigger_type: typing.Optional[TriggerType] = None
     """触发类型，标识本次 Workflow 的触发方式（如手动、定时、事件等）"""
@@ -98,9 +119,17 @@ class WorkflowQuery(pydantic.BaseModel):
             "launcher_id": self.launcher_id,
             "sender_id": self.sender_id,
             "sender_name": self.sender_name,
+            "message_event": self.message_event.model_dump() if self.message_event else None,
+            "message_chain": self.message_chain.model_dump() if self.message_chain else None,
             "message_context": self.message_context.model_dump() if self.message_context else None,
             "bot_uuid": self.bot_uuid,
+            "session": self.session.model_dump() if self.session else None,
+            "messages": [msg.model_dump() for msg in self.messages] if self.messages else [],
+            "prompt": self.prompt.model_dump() if self.prompt else None,
+            "user_message": self.user_message.model_dump() if self.user_message else None,
             "variables": self.variables,
+            "use_llm_model_uuid": self.use_llm_model_uuid,
+            "use_funcs": [func.model_dump() for func in self.use_funcs] if self.use_funcs else [],
             "trigger_type": self.trigger_type.value if self.trigger_type else None,
             "trigger_data": self.trigger_data,
             "status": self.status.value if self.status else None,
