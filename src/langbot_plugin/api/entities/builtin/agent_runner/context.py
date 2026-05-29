@@ -110,7 +110,7 @@ class AgentRunContext(pydantic.BaseModel):
     """Runtime context."""
 
     config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Runner instance configuration (binding config from Host)."""
+    """Runner binding configuration from Host."""
 
     bootstrap: BootstrapContext | None = None
     """Optional bootstrap context (small convenience window, NOT full history)."""
