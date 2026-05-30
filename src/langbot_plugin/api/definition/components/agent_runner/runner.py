@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from langbot_plugin.api.definition.components.base import BaseComponent
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
@@ -14,6 +14,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
 from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
     AgentRunnerPermissions,
 )
+
+if TYPE_CHECKING:
+    from langbot_plugin.api.agent_tools import AgentRunMCPBridge
+    from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 
 
 class AgentRunner(BaseComponent):
@@ -87,6 +91,19 @@ class AgentRunner(BaseComponent):
         return AgentRunAPIProxy(
             ctx=ctx,
             plugin_runtime_handler=self.plugin.plugin_runtime_handler,
+        )
+
+    def create_external_mcp_bridge(self, ctx: AgentRunContext) -> "AgentRunMCPBridge":
+        """Create a run-scoped MCP bridge for external harnesses.
+
+        The bridge exposes the SDK-owned AgentRunExternalTools surface and
+        delegates all LangBot asset access through AgentRunAPIProxy.
+        """
+        from langbot_plugin.api.agent_tools import AgentRunMCPBridge
+
+        return AgentRunMCPBridge.from_run_api(
+            api=self.get_run_api(ctx),
+            ctx=ctx,
         )
 
     @classmethod
