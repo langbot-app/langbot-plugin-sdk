@@ -1,6 +1,8 @@
 # AgentRunContext params 和 scoped state 语义
 
-本文档详细说明 AgentRunner Protocol v1 中 `params` 和 `state` 的语义、边界和使用方式。
+> 状态：历史设计记录。当前 SDK `AgentRunContext` 已不再包含顶层 `params` 字段；当前事件输入使用 `ctx.input`，Pipeline adapter 等入口的非稳定单次元数据放在 `ctx.adapter.extra`，持久状态仍使用 `ctx.state`。
+
+本文档保留最初关于单次参数和 scoped state 的设计背景；实现现状以 `PROTOCOL_V1.md` 和 SDK 实体为准。
 
 ## 概述
 

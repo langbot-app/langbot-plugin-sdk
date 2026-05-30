@@ -18,6 +18,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
 if TYPE_CHECKING:
     from langbot_plugin.api.agent_tools import AgentRunMCPBridge
     from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+    from langbot_plugin.runtime.io.handler import Handler
 
 
 class AgentRunner(BaseComponent):
@@ -74,6 +75,49 @@ class AgentRunner(BaseComponent):
     __kind__ = "AgentRunner"
     __protocol_version__ = "1"
 
+    _plugin_runtime_handler: "Handler | None"
+    _plugin_config: dict[str, Any]
+    _plugin_identity: str | None
+
+    def __init__(self):
+        super().__init__()
+        self._plugin_runtime_handler = None
+        self._plugin_config = {}
+        self._plugin_identity = None
+
+    @property
+    def plugin(self) -> Any:
+        """AgentRunner components do not expose the legacy BasePlugin proxy."""
+        raise RuntimeError(
+            "AgentRunner.plugin is not available. Use self.get_run_api(ctx) for "
+            "run-scoped Host APIs, ctx.config for runner binding config, and "
+            "self.get_plugin_config() only for plugin-level config."
+        )
+
+    def bind_runtime(
+        self,
+        *,
+        plugin_runtime_handler: "Handler",
+        plugin_config: dict[str, Any] | None = None,
+        plugin_identity: str | None = None,
+    ) -> None:
+        """Bind runtime-only dependencies without exposing the legacy plugin API surface."""
+        self._plugin_runtime_handler = plugin_runtime_handler
+        self._plugin_config = dict(plugin_config or {})
+        self._plugin_identity = plugin_identity
+
+    def get_plugin_config(self) -> dict[str, Any]:
+        """Return the plugin-level config for rare runner use cases.
+
+        Runner binding config should normally come from ``ctx.config``.
+        """
+        return dict(self._plugin_config)
+
+    @property
+    def plugin_identity(self) -> str | None:
+        """Plugin identity in ``author/name`` form."""
+        return self._plugin_identity
+
     def get_run_api(self, ctx: AgentRunContext) -> "AgentRunAPIProxy":
         """Get an API proxy configured with the run context.
 
@@ -88,9 +132,12 @@ class AgentRunner(BaseComponent):
         """
         from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 
+        if self._plugin_runtime_handler is None:
+            raise RuntimeError("AgentRunner runtime is not bound")
+
         return AgentRunAPIProxy(
             ctx=ctx,
-            plugin_runtime_handler=self.plugin.plugin_runtime_handler,
+            plugin_runtime_handler=self._plugin_runtime_handler,
         )
 
     def create_external_mcp_bridge(self, ctx: AgentRunContext) -> "AgentRunMCPBridge":

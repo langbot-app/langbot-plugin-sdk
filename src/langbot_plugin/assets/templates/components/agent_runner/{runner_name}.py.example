@@ -40,10 +40,13 @@ class {{ runner_attr }}(AgentRunner):
         Override to request access to models, tools, knowledge bases, etc.
         """
         return AgentRunnerPermissions(
-            models=[],  # ["list", "invoke", "stream", "embedding"]
-            tools=[],   # ["list", "detail", "call"]
+            models=[],  # ["invoke", "stream", "rerank"]
+            tools=[],   # ["detail", "call"]
             knowledge_bases=[],  # ["list", "retrieve"]
-            storage=[],  # ["plugin", "workspace"]
+            history=[],  # ["page", "search"]
+            events=[],  # ["get", "page"]
+            artifacts=[],  # ["metadata", "read"]
+            storage=[],  # ["plugin", "workspace", "binding"]
             files=[],  # ["config", "knowledge"]
             platform_api=[],
         )
@@ -69,8 +72,8 @@ class {{ runner_attr }}(AgentRunner):
         user_text = ctx.input.to_text()
 
         # Example: return a simple response
-        # For streaming, use AgentRunResult.message_delta(chunk)
-        # For final response, use AgentRunResult.run_completed(message)
+        # For streaming, use AgentRunResult.message_delta(ctx.run_id, chunk)
+        # For final response, use AgentRunResult.run_completed(ctx.run_id, message)
 
         final_message = Message(
             role="assistant",
@@ -78,6 +81,7 @@ class {{ runner_attr }}(AgentRunner):
         )
 
         yield AgentRunResult.run_completed(
+            run_id=ctx.run_id,
             message=final_message,
             finish_reason="stop",
         )

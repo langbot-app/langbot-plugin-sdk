@@ -43,7 +43,7 @@ class StreamingAgentRunner(AgentRunner):
         """Mock run that streams chunks using MessageChunk."""
         for word in ["Hello", " ", "world"]:
             chunk = MessageChunk(role="assistant", content=word)
-            yield AgentRunResult.message_delta(run_id=ctx.run_id, delta=chunk)
+            yield AgentRunResult.message_delta(run_id=ctx.run_id, chunk=chunk)
         yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
 
 
@@ -56,7 +56,7 @@ class FailingAgentRunner(AgentRunner):
         """Mock run that raises an exception after yielding."""
         # Must have at least one yield to be an async generator
         chunk = MessageChunk(role="assistant", content="Starting...")
-        yield AgentRunResult.message_delta(run_id=ctx.run_id, delta=chunk)
+        yield AgentRunResult.message_delta(run_id=ctx.run_id, chunk=chunk)
         raise RuntimeError("Intentional test failure")
 
 
@@ -550,3 +550,33 @@ async def test_plugin_runtime_runner_deadline_cancels_runner_coroutine():
     assert results[0].type.value == "run.failed"
     assert results[0].data["code"] == "runner.timeout"
     assert results[0].data["retryable"] is True
+
+
+@pytest.mark.anyio
+async def test_plugin_runtime_runner_exception_includes_run_id():
+    """The plugin-process RUN_AGENT handler must convert runner exceptions to run.failed."""
+    from langbot_plugin.cli.run.handler import PluginRuntimeHandler
+    from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+
+    async def initialize_plugin(_settings):
+        return None
+
+    handler = PluginRuntimeHandler(Mock(), initialize_plugin)
+    component = Mock()
+    component.manifest = create_mock_component_manifest("failing")
+    component.component_instance = FailingAgentRunner()
+    handler.plugin_container = Mock(components=[component])
+
+    run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
+    results = [
+        response.data
+        async for response in run_agent({
+            "runner_name": "failing",
+            "context": create_run_context().model_dump(mode="json"),
+        })
+    ]
+
+    assert results[-1]["type"] == "run.failed"
+    assert results[-1]["run_id"] == "test_run"
+    assert results[-1]["data"]["code"] == "runner.exception"
+    assert "Intentional test failure" in results[-1]["data"]["error"]

@@ -62,10 +62,11 @@ class AgentRunnerCapabilities(BaseModel):
     tool_calling: bool = False
     knowledge_retrieval: bool = False
     multimodal_input: bool = False
-    event_context: bool = False
+    event_context: bool = True
     platform_api: bool = False
     interrupt: bool = False
     stateful_session: bool = False
+    self_managed_context: bool = True
 ```
 
 含义：
@@ -78,6 +79,7 @@ class AgentRunnerCapabilities(BaseModel):
 - `platform_api`: runner 未来可能请求平台动作，本阶段不执行
 - `interrupt`: runner 支持取消或中断
 - `stateful_session`: runner 会维护外部 conversation/session state
+- `self_managed_context`: runner 自己管理工作上下文，Host 不默认 inline 完整历史
 
 ## 4. Permissions
 
@@ -85,10 +87,13 @@ class AgentRunnerCapabilities(BaseModel):
 
 ```python
 class AgentRunnerPermissions(BaseModel):
-    models: list[Literal["list", "invoke", "stream", "embedding"]] = []
-    tools: list[Literal["list", "detail", "call"]] = []
+    models: list[Literal["invoke", "stream", "rerank"]] = []
+    tools: list[Literal["detail", "call"]] = []
     knowledge_bases: list[Literal["list", "retrieve"]] = []
-    storage: list[Literal["plugin", "workspace"]] = []
+    history: list[Literal["page", "search"]] = []
+    events: list[Literal["get", "page"]] = []
+    artifacts: list[Literal["metadata", "read"]] = []
+    storage: list[Literal["plugin", "workspace", "binding"]] = []
     files: list[Literal["config", "knowledge"]] = []
     platform_api: list[str] = []
 ```
@@ -102,41 +107,32 @@ class AgentRunContext(BaseModel):
     run_id: str
     trigger: AgentTrigger
     conversation: ConversationContext | None = None
-    event: AgentEventContext | None = None
+    event: AgentEventContext
     actor: ActorContext | None = None
     subject: SubjectContext | None = None
-    messages: list[Message] = []
     input: AgentInput
-    params: dict[str, Any] = {}
+    delivery: DeliveryContext
     resources: AgentResources
+    context: ContextAccess = ContextAccess()
     state: AgentRunState = AgentRunState()
     runtime: AgentRuntimeContext
     config: dict[str, Any] = {}
+    bootstrap: BootstrapContext | None = None
+    adapter: AdapterContext | None = None
+    metadata: dict[str, Any] = {}
 ```
 
 字段边界：
-- `config`: 静态 runner 配置，来自 pipeline/runner config。
-- `params`: 单次运行业务参数，只读，非持久化。
+- `event`: 当前事件 envelope，Protocol v1 必选。
+- `input`: 当前事件输入，不等同于完整历史。
+- `config`: Host binding config，不是插件实例状态。
+- `context`: Host inline 了什么、哪些 pull API 可用。
 - `state`: Host 管理的 scoped 状态快照，持久化。
+- `bootstrap`: 可选的小窗口便利上下文，不是完整历史。
+- `adapter`: Pipeline adapter 等兼容入口的元数据。
 - `runtime.metadata`: Host/runtime 可观测性信息，非业务输入契约。
 
-### 5.0.1 params
-
-单次运行公开业务参数。
-
-语义：
-- JSON-safe，runner 只读
-- 非持久化（不带到下一次 run）
-- 不等同于 LangBot query.variables
-- Host 应过滤内部变量、secrets、权限控制变量
-
-用途：
-- Workflow inputs
-- Prompt variables
-- Pipeline 前序 stage 生成的公开业务变量
-- 用户定义变量
-
-### 5.0.2 AgentRunState
+### 5.0.1 AgentRunState
 
 ```python
 class AgentRunState(BaseModel):
@@ -203,8 +199,8 @@ class ConversationContext(BaseModel):
 class AgentInput(BaseModel):
     text: str | None = None
     contents: list[ContentElement] = []
-    message_chain: dict[str, Any] | None = None
-    attachments: list[dict[str, Any]] = []
+    message_chain: list[dict[str, Any]] | dict[str, Any] | None = None
+    attachments: list[ArtifactRef] = []
 
     def to_text(self) -> str: ...
 ```
@@ -223,7 +219,21 @@ class AgentResources(BaseModel):
 
 Resource 只表示“可见和可请求”。真正调用时 LangBot host 仍必须校验。
 
-### 5.5 AgentRuntimeContext
+### 5.5 AgentRunner Runtime API
+
+AgentRunner 组件不暴露 legacy `self.plugin` proxy。Runner 访问 Host 能力必须走当前 run 绑定的受限 API：
+
+```python
+api = self.get_run_api(ctx)
+```
+
+边界：
+- 当前 run 的模型、工具、知识库、文件、历史、事件、artifact、state/storage 访问都必须经过 `AgentRunAPIProxy` 和 `ctx.resources`。
+- runner binding 配置来自 `ctx.config`。
+- 插件级配置只有少数场景需要读取，使用 `self.get_plugin_config()`，不应作为 runner binding 状态。
+- 普通非 AgentRunner 组件仍使用 `self.plugin`。
+
+### 5.6 AgentRuntimeContext
 
 ```python
 class AgentRuntimeContext(BaseModel):
@@ -231,7 +241,7 @@ class AgentRuntimeContext(BaseModel):
     sdk_protocol_version: str = "1"
     query_id: int | None = None
     trace_id: str | None = None
-    deadline_at: int | None = None
+    deadline_at: float | None = None
     metadata: dict[str, Any] = {}
 ```
 
@@ -239,23 +249,28 @@ class AgentRuntimeContext(BaseModel):
 
 ```python
 class AgentRunResult(BaseModel):
+    run_id: str
     type: Literal[
         "message.delta",
         "message.completed",
         "tool.call.started",
         "tool.call.completed",
         "state.updated",
+        "artifact.created",
+        "action.requested",
         "run.completed",
         "run.failed",
-        "action.requested",
     ]
     data: dict[str, Any] = {}
+    sequence: int | None = None
+    timestamp: int | None = None
 ```
 
 ### 6.1 message.delta
 
 ```json
 {
+  "run_id": "run_1",
   "type": "message.delta",
   "data": {
     "chunk": {
@@ -272,6 +287,7 @@ LangBot 映射为 `MessageChunk`。
 
 ```json
 {
+  "run_id": "run_1",
   "type": "message.completed",
   "data": {
     "message": {
@@ -288,6 +304,7 @@ LangBot 映射为 `Message`。
 
 ```json
 {
+  "run_id": "run_1",
   "type": "tool.call.started",
   "data": {
     "tool_call_id": "call_1",
@@ -303,6 +320,7 @@ LangBot 映射为 `Message`。
 
 ```json
 {
+  "run_id": "run_1",
   "type": "tool.call.completed",
   "data": {
     "tool_call_id": "call_1",
@@ -319,6 +337,7 @@ LangBot 映射为 `Message`。
 
 ```json
 {
+  "run_id": "run_1",
   "type": "state.updated",
   "data": {
     "scope": "conversation",
@@ -341,6 +360,7 @@ SDK 定义协议；LangBot host 处理实际持久化。本阶段 Host 应支持
 
 ```json
 {
+  "run_id": "run_1",
   "type": "run.completed",
   "data": {
     "message": {
@@ -358,6 +378,7 @@ SDK 定义协议；LangBot host 处理实际持久化。本阶段 Host 应支持
 
 ```json
 {
+  "run_id": "run_1",
   "type": "run.failed",
   "data": {
     "error": "upstream timeout",
@@ -373,6 +394,7 @@ LangBot 按当前 Pipeline 错误策略返回用户提示。
 
 ```json
 {
+  "run_id": "run_1",
   "type": "action.requested",
   "data": {
     "action": "platform.message.edit",
