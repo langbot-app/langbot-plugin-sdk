@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from unittest.mock import MagicMock
+
+import pytest
 
 from langbot_plugin.api.agent_tools import AgentRunExternalTools, AgentRunMCPBridge, LANGBOT_AGENT_MCP_SERVER_NAME
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
@@ -14,6 +17,10 @@ from langbot_plugin.api.entities.builtin.agent_runner import (
     AgentRuntimeContext,
     AgentTrigger,
     DeliveryContext,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+    ContextAccess,
+    ContextAPICapabilities,
 )
 
 
@@ -32,6 +39,18 @@ def _ctx() -> AgentRunContext:
         runtime=AgentRuntimeContext(),
         config={},
     )
+
+
+def _authorized_ctx() -> AgentRunContext:
+    ctx = _ctx()
+    ctx.resources = AgentResources.model_validate({
+        "knowledge_bases": [{"kb_id": "kb_1"}],
+        "tools": [{"tool_name": "weather"}],
+    })
+    ctx.context = ContextAccess(
+        available_apis=ContextAPICapabilities(history_page=True)
+    )
+    return ctx
 
 
 class FakeRunAPI:
@@ -53,7 +72,7 @@ class FakeRunAPI:
 
 def test_agent_run_external_tools_are_annotation_backed() -> None:
     api = FakeRunAPI()
-    tools = AgentRunExternalTools(api, _ctx())
+    tools = AgentRunExternalTools(api, _authorized_ctx())
 
     mcp_tools = {tool["name"]: tool for tool in tools.mcp_tools()}
 
@@ -67,9 +86,19 @@ def test_agent_run_external_tools_are_annotation_backed() -> None:
     assert mcp_tools["langbot_get_current_event"]["annotations"]["readOnlyHint"] is True
 
 
-def test_agent_run_external_tools_call_agent_run_api() -> None:
+def test_agent_run_external_tools_are_run_authorization_filtered() -> None:
     api = FakeRunAPI()
     tools = AgentRunExternalTools(api, _ctx())
+
+    assert {tool["name"] for tool in tools.mcp_tools()} == {"langbot_get_current_event"}
+
+    with pytest.raises(ValueError, match="Unknown LangBot external tool"):
+        asyncio.run(tools.call_tool("langbot_history_page", {"limit": 1}))
+
+
+def test_agent_run_external_tools_call_agent_run_api() -> None:
+    api = FakeRunAPI()
+    tools = AgentRunExternalTools(api, _authorized_ctx())
 
     event = asyncio.run(tools.call_tool("langbot_get_current_event"))
     retrieved = asyncio.run(
@@ -123,10 +152,37 @@ def test_agent_runner_parent_creates_external_mcp_bridge(monkeypatch) -> None:
     assert bridge.server_name == LANGBOT_AGENT_MCP_SERVER_NAME
 
 
+def test_agent_runner_runtime_binding_is_scoped() -> None:
+    class DummyRunner(AgentRunner):
+        async def run(self, ctx):
+            if False:
+                yield None
+
+    runner = DummyRunner()
+    handler = MagicMock()
+
+    with pytest.raises(RuntimeError, match="runtime is not bound"):
+        runner.get_run_api(_ctx())
+
+    runner.bind_runtime(
+        plugin_runtime_handler=handler,
+        plugin_config={"plugin_key": "value"},
+        plugin_identity="test/plugin",
+    )
+
+    api = runner.get_run_api(_ctx())
+    assert api._api.plugin_runtime_handler is handler
+    assert runner.get_plugin_config() == {"plugin_key": "value"}
+    assert runner.plugin_identity == "test/plugin"
+
+    with pytest.raises(RuntimeError, match="AgentRunner.plugin is not available"):
+        _ = runner.plugin
+
+
 def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
     async def run_probe() -> FakeRunAPI:
         api = FakeRunAPI()
-        bridge = AgentRunMCPBridge.from_run_api(api, _ctx())
+        bridge = AgentRunMCPBridge.from_run_api(api, _authorized_ctx())
         bridge.start()
         try:
             config = bridge.mcp_server_config()

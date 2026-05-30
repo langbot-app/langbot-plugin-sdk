@@ -68,11 +68,29 @@ class AgentRunExternalTools:
         self.ctx = ctx
         self._tools = collect_agent_tools(self)
 
+    def _available_tool_names(self) -> set[str]:
+        names = {"langbot_get_current_event"}
+
+        available_apis = self.ctx.context.available_apis
+        if available_apis.history_page:
+            names.add("langbot_history_page")
+        if self.ctx.resources.knowledge_bases:
+            names.add("langbot_retrieve_knowledge")
+        if self.ctx.resources.tools:
+            names.add("langbot_call_tool")
+
+        return names
+
     def mcp_tools(self) -> list[dict[str, typing.Any]]:
-        return [tool.spec.to_mcp_tool() for tool in self._tools.values()]
+        available_names = self._available_tool_names()
+        return [
+            tool.spec.to_mcp_tool()
+            for name, tool in self._tools.items()
+            if name in available_names
+        ]
 
     async def call_tool(self, name: str, arguments: dict[str, typing.Any] | None = None) -> typing.Any:
-        tool = self._tools.get(name)
+        tool = self._tools.get(name) if name in self._available_tool_names() else None
         if tool is None:
             raise ValueError(f"Unknown LangBot external tool: {name}")
         args = tool.spec.args_model.model_validate(arguments or {})
