@@ -417,6 +417,7 @@ class PluginRuntimeHandler(Handler):
                 traceback.print_exc()
                 yield ActionResponse.success(
                     AgentRunResult.run_failed(
+                        run_id=run_context.run_id,
                         error=f"Error running agent: {e}",
                         code="runner.exception",
                     ).model_dump(mode="json")
