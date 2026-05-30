@@ -289,9 +289,19 @@ class PluginRuntimeController:
                     )
                     assert issubclass(component_impl_cls, component_cls)
                     component_container.component_instance = component_impl_cls()
-                    component_container.component_instance.plugin = (
-                        self.plugin_container.plugin_instance
-                    )
+                    if issubclass(component_impl_cls, AgentRunner):
+                        component_container.component_instance.bind_runtime(
+                            plugin_runtime_handler=self.handler,
+                            plugin_config=self.plugin_container.plugin_config,
+                            plugin_identity=(
+                                f"{self.plugin_container.manifest.metadata.author}/"
+                                f"{self.plugin_container.manifest.metadata.name}"
+                            ),
+                        )
+                    else:
+                        component_container.component_instance.plugin = (
+                            self.plugin_container.plugin_instance
+                        )
                     await component_container.component_instance.initialize()
                     logger.info(
                         f"Component {component_container.manifest.metadata.name} initialized, "

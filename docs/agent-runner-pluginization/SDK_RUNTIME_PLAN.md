@@ -123,10 +123,13 @@ spec:
     interrupt: false
     stateful_session: true
   permissions:
-    models: ["list", "invoke", "stream", "embedding"]
-    tools: ["list", "detail", "call"]
+    models: ["invoke", "stream", "rerank"]
+    tools: ["detail", "call"]
     knowledge_bases: ["list", "retrieve"]
-    storage: ["plugin", "workspace"]
+    history: ["page", "search"]
+    events: ["get", "page"]
+    artifacts: ["metadata", "read"]
+    storage: ["plugin", "workspace", "binding"]
     files: ["config", "knowledge"]
     platform_api: []
 ```
@@ -194,6 +197,7 @@ AgentRunResult.type in [
 
 ```python
 class AgentRunResult(BaseModel):
+    run_id: str
     type: AgentRunResultType
     data: dict[str, Any] = Field(default_factory=dict)
 ```
@@ -201,13 +205,13 @@ class AgentRunResult(BaseModel):
 便捷构造器：
 
 ```python
-AgentRunResult.message_delta(chunk: MessageChunk)
-AgentRunResult.message_completed(message: Message)
+AgentRunResult.message_delta(run_id: str, chunk: MessageChunk)
+AgentRunResult.message_completed(run_id: str, message: Message)
 AgentRunResult.tool_call_started(...)
 AgentRunResult.tool_call_completed(...)
 AgentRunResult.state_updated(...)
-AgentRunResult.run_completed(message: Message | None = None)
-AgentRunResult.run_failed(error: str, code: str | None = None)
+AgentRunResult.run_completed(run_id: str, message: Message | None = None)
+AgentRunResult.run_failed(run_id: str, error: str, code: str | None = None)
 ```
 
 兼容策略：

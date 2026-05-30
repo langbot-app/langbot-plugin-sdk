@@ -29,6 +29,18 @@ class ArtifactRef(pydantic.BaseModel):
     name: str | None = None
     """File name (if applicable)."""
 
+    source: str | None = None
+    """Attachment source, such as url, base64, or platform message-chain."""
+
+    url: str | None = None
+    """External URL when the artifact is backed by a URL."""
+
+    content: str | None = None
+    """Base64 or data URL content for small current-event attachments."""
+
+    id: str | None = None
+    """Platform-native attachment identifier when available."""
+
 
 class AgentInput(pydantic.BaseModel):
     """Input for an agent run.
