@@ -33,6 +33,9 @@ jobs:
       - name: Install lbp CLI
         run: pip install langbot-plugin
 
+      - name: Install yq
+        run: sudo snap install yq
+
       - name: Get metadata
         id: meta
         run: |
@@ -57,11 +60,11 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
 
       - name: Build plugin
-        if: ${{ steps.check.outputs.exists == 'false' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release == true)) }}
+        if: steps.check.outputs.exists == 'false'
         run: lbp build -o dist
 
       - name: Create release
-        if: ${{ steps.check.outputs.exists == 'false' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release == true)) }}
+        if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
@@ -74,6 +77,4 @@ jobs:
           files: dist/${{ steps.meta.outputs.artifact }}.lbpkg
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 {% endraw %}
