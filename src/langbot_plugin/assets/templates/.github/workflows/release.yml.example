@@ -33,15 +33,12 @@ jobs:
       - name: Install lbp CLI
         run: pip install langbot-plugin
 
-      - name: Install yq
-        run: sudo snap install yq
-
       - name: Get metadata
         id: meta
         run: |
-          PLUGIN_NAME=$(yq '.metadata.name' manifest.yaml)
-          VERSION=$(yq '.metadata.version' manifest.yaml)
-          AUTHOR=$(yq '.metadata.author' manifest.yaml)
+          PLUGIN_NAME=$(grep -m1 'name:' manifest.yaml | awk '{print $2}' | tr -d '"'"'"'')
+          VERSION=$(grep -m1 'version:' manifest.yaml | awk '{print $2}' | tr -d '"'"'"'')
+          AUTHOR=$(grep -m1 'author:' manifest.yaml | awk '{print $2}' | tr -d '"'"'"'')
           echo "name=$PLUGIN_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
