@@ -24,15 +24,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lbp CLI
+        run: pip install langbot-plugin
+
       - name: Get metadata
         id: meta
         run: |
           PLUGIN_NAME=$(yq '.metadata.name' manifest.yaml)
           VERSION=$(yq '.metadata.version' manifest.yaml)
+          AUTHOR=$(yq '.metadata.author' manifest.yaml)
           echo "name=$PLUGIN_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          echo "artifact=${PLUGIN_NAME}-${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "artifact=${AUTHOR}-${PLUGIN_NAME}-${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check release exists
         id: check
@@ -46,17 +55,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
 
-      - name: Package plugin
+      - name: Build plugin
         if: ${{ steps.check.outputs.exists == 'false' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release == true)) }}
-        run: |
-          zip -r "${{ steps.meta.outputs.artifact }}.zip" . \
-            -x ".git/*" \
-            -x ".github/*" \
-            -x ".vscode/*" \
-            -x "__pycache__/*" \
-            -x "*.pyc" \
-            -x ".env" \
-            -x ".env.example"
+        run: lbp build -o dist
 
       - name: Create release
         if: ${{ steps.check.outputs.exists == 'false' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release == true)) }}
@@ -68,8 +69,8 @@ jobs:
             ## ${{ steps.meta.outputs.artifact }}
 
             ### Installation
-            Download `${{ steps.meta.outputs.artifact }}.zip` and install via LangBot plugin marketplace.
-          files: ${{ steps.meta.outputs.artifact }}.zip
+            Download `${{ steps.meta.outputs.artifact }}.lbpkg` and install via LangBot plugin marketplace.
+          files: dist/${{ steps.meta.outputs.artifact }}.lbpkg
           draft: false
           prerelease: false
         env:
