@@ -48,6 +48,7 @@ init_plugin_files = [
     ".gitignore",
     "assets/icon.svg",
     ".vscode/launch.json",
+    ".github/workflows/release.yml",
 ]
 
 
