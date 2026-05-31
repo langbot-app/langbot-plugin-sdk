@@ -24,12 +24,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get version
-        id: version
+      - name: Get metadata
+        id: meta
         run: |
-          VERSION=$(grep -m1 'version:' manifest.yaml | awk '{print $2}' | tr -d '"'"'"'')
+          PLUGIN_NAME=$(yq '.metadata.name' manifest.yaml)
+          VERSION=$(yq '.metadata.version' manifest.yaml)
+          echo "name=$PLUGIN_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact=${PLUGIN_NAME}-${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check release exists
         id: check
@@ -41,12 +44,12 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ steps.meta.outputs.tag }}
 
       - name: Package plugin
         if: ${{ steps.check.outputs.exists == 'false' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release == true)) }}
         run: |
-          zip -r "${{ github.event.repository.name }}.zip" . \
+          zip -r "${{ steps.meta.outputs.artifact }}.zip" . \
             -x ".git/*" \
             -x ".github/*" \
             -x ".vscode/*" \
@@ -59,14 +62,14 @@ jobs:
         if: ${{ steps.check.outputs.exists == 'false' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release == true)) }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.tag }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.artifact }}
           body: |
-            ## ${{ steps.version.outputs.tag }}
+            ## ${{ steps.meta.outputs.artifact }}
 
             ### Installation
-            Download `${{ github.event.repository.name }}.zip` and install via LangBot plugin marketplace.
-          files: ${{ github.event.repository.name }}.zip
+            Download `${{ steps.meta.outputs.artifact }}.zip` and install via LangBot plugin marketplace.
+          files: ${{ steps.meta.outputs.artifact }}.zip
           draft: false
           prerelease: false
         env:
