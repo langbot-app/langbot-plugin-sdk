@@ -167,6 +167,9 @@ class ExecutionContext(pydantic.BaseModel):
     message_context: typing.Optional[MessageContext] = None
     """消息触发时的上下文"""
 
+    query: typing.Optional[str] = None
+    """用户查询文本（用于日志记录）"""
+
     trigger_type: typing.Optional[str] = None
     """触发类型：message | cron | webhook | event"""
 
