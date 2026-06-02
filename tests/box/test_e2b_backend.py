@@ -199,7 +199,7 @@ async def test_start_session_with_envs(backend, mock_e2b_module):
         env={'FOO': 'bar', 'DEBUG': '1'},
     )
 
-    info = await backend.start_session(spec)
+    await backend.start_session(spec)
 
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     assert call_kwargs.get('envs') == {'FOO': 'bar', 'DEBUG': '1'}
@@ -212,7 +212,7 @@ async def test_start_session_with_api_url(backend, mock_e2b_module):
     backend._api_url = 'http://127.0.0.1:3000'
     spec = BoxSpec(session_id='sess4', cmd='ls')
 
-    info = await backend.start_session(spec)
+    await backend.start_session(spec)
 
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     assert call_kwargs.get('domain') == 'http://127.0.0.1:3000'
@@ -249,7 +249,7 @@ async def test_start_session_host_mount_rw(backend, mock_e2b_module):
         mount_path='/workspace',
     )
 
-    info = await backend.start_session(spec)
+    await backend.start_session(spec)
 
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     metadata = call_kwargs.get('metadata', {})
@@ -275,7 +275,7 @@ async def test_start_session_host_mount_ro(backend, mock_e2b_module):
         mount_path='/src',  # Non-workspace path stays unchanged
     )
 
-    info = await backend.start_session(spec)
+    await backend.start_session(spec)
 
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     metadata = call_kwargs.get('metadata', {})
@@ -297,7 +297,7 @@ async def test_start_session_no_host_mount_when_none(backend, mock_e2b_module):
         host_path_mode=BoxHostMountMode.NONE,
     )
 
-    info = await backend.start_session(spec)
+    await backend.start_session(spec)
 
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     assert 'host-mount' not in call_kwargs.get('metadata', {})
@@ -309,7 +309,7 @@ async def test_start_session_no_host_mount_when_empty(backend, mock_e2b_module):
     backend._api_key = 'test-api-key'
     spec = BoxSpec(session_id='sess-no-hp', cmd='ls')
 
-    info = await backend.start_session(spec)
+    await backend.start_session(spec)
 
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     assert 'metadata' not in call_kwargs or 'host-mount' not in call_kwargs.get('metadata', {})

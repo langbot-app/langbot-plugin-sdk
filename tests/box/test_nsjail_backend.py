@@ -7,7 +7,6 @@ directory management, and cgroup detection logic.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import pathlib
 from unittest import mock
@@ -16,8 +15,6 @@ import pytest
 
 from langbot_plugin.box.nsjail_backend import (
     NsjailBackend,
-    _READONLY_ETC_ENTRIES,
-    _READONLY_SYSTEM_MOUNTS,
 )
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
@@ -380,8 +377,6 @@ def test_detect_cgroup_v2_no_mount():
 
 
 def test_detect_cgroup_v2_root_user():
-    orig_exists = pathlib.Path.exists
-
     def always_exists(self):
         return True
 
@@ -393,8 +388,6 @@ def test_detect_cgroup_v2_root_user():
 
 
 def test_detect_cgroup_v2_user_slice_must_be_writable():
-    orig_exists = pathlib.Path.exists
-
     def fake_exists(self):
         path = str(self)
         return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers') or 'user.slice' in path
