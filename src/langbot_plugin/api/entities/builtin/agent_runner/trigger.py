@@ -30,7 +30,7 @@ class AgentTrigger(pydantic.BaseModel):
     - api: API trigger
     - scheduler: Scheduled trigger
     - system: System event
-    - pipeline_adapter: Pipeline adapter
+    - pipeline_adapter: transitional Host entry adapter
     """
 
     timestamp: int | None = None

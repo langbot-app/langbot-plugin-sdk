@@ -20,7 +20,6 @@ class BootstrapContext(pydantic.BaseModel):
     - bootstrap.messages is Host convenience, NOT protocol core.
     - Self-managed context runners should receive empty bootstrap or only current event.
     - Host MUST NOT inline full transcript just to "help" the agent.
-    - Pipeline adapter max-round only affects adapter bootstrap, NOT Protocol v1 fields.
     """
 
     messages: list[Message] = pydantic.Field(default_factory=list)

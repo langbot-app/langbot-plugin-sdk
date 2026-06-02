@@ -98,7 +98,7 @@ class AgentRunnerPermissions(BaseModel):
     platform_api: list[str] = []
 ```
 
-权限只是 runner 请求的上限。LangBot 执行时还要结合 Pipeline/Bot 绑定范围和用户配置裁剪成 `ctx.resources`。
+权限只是 runner 请求的上限。LangBot 执行时还要结合 Agent/Bot 绑定范围和用户配置裁剪成 `ctx.resources`。
 
 ## 5. AgentRunContext
 
@@ -125,11 +125,11 @@ class AgentRunContext(BaseModel):
 字段边界：
 - `event`: 当前事件 envelope，Protocol v1 必选。
 - `input`: 当前事件输入，不等同于完整历史。
-- `config`: Host binding config，不是插件实例状态。
+- `config`: 当前 Agent/runner 配置，不是插件实例状态。
 - `context`: Host inline 了什么、哪些 pull API 可用。
 - `state`: Host 管理的 scoped 状态快照，持久化。
 - `bootstrap`: 可选的小窗口便利上下文，不是完整历史。
-- `adapter`: Pipeline adapter 等兼容入口的元数据。
+- `adapter`: Host entry adapter 元数据；不承载核心 Agent 语义。
 - `runtime.metadata`: Host/runtime 可观测性信息，非业务输入契约。
 
 ### 5.0.1 AgentRunState
@@ -170,14 +170,8 @@ Key 命名约定：
 ```python
 class AgentTrigger(BaseModel):
     type: str
-    source: Literal["pipeline", "event_router"] = "pipeline"
+    source: str
     timestamp: int | None = None
-```
-
-当前 Pipeline 使用：
-
-```json
-{"type": "message.received", "source": "pipeline"}
 ```
 
 ### 5.2 ConversationContext
@@ -186,11 +180,12 @@ class AgentTrigger(BaseModel):
 class ConversationContext(BaseModel):
     session_id: str | None = None
     conversation_id: str | None = None
+    thread_id: str | None = None
     launcher_type: str | None = None
     launcher_id: str | None = None
     sender_id: str | None = None
-    bot_uuid: str | None = None
-    pipeline_uuid: str | None = None
+    bot_id: str | None = None
+    workspace_id: str | None = None
 ```
 
 ### 5.3 AgentInput
@@ -229,8 +224,8 @@ api = self.get_run_api(ctx)
 
 边界：
 - 当前 run 的模型、工具、知识库、文件、历史、事件、artifact、state/storage 访问都必须经过 `AgentRunAPIProxy` 和 `ctx.resources`。
-- runner binding 配置来自 `ctx.config`。
-- 插件级配置只有少数场景需要读取，使用 `self.get_plugin_config()`，不应作为 runner binding 状态。
+- Agent/runner 配置来自 `ctx.config`。
+- 插件级配置只有少数场景需要读取，使用 `self.get_plugin_config()`，不应作为 Agent/runner 状态。
 - 普通非 AgentRunner 组件仍使用 `self.plugin`。
 
 ### 5.6 AgentRuntimeContext

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import typing
-import pydantic
 
-from langbot_plugin.api.entities.builtin.provider.message import Message
+import pydantic
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
 from langbot_plugin.api.entities.builtin.agent_runner.resources import AgentResources
@@ -23,23 +22,14 @@ from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import Bootstrap
 
 
 class AdapterContext(pydantic.BaseModel):
-    """Context for Pipeline adapter / host adapter metadata.
+    """Context for host entry-adapter metadata.
 
     This context holds adapter-specific fields that are not part of the stable
     event/input/resource contract.
     """
 
     query_id: int | None = None
-    """Pipeline query ID when the run enters through Pipeline adapter."""
-
-    pipeline_uuid: str | None = None
-    """Pipeline UUID when available."""
-
-    max_round: int | None = None
-    """Pipeline adapter max-round (for reference only, should NOT be used by new runners)."""
-
-    adapter_messages: list[Message] = pydantic.Field(default_factory=list)
-    """Messages from Pipeline adapter / bootstrap (prefer using bootstrap.messages or history API)."""
+    """Host query/request ID when the entry adapter has one."""
 
     extra: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Other adapter-specific fields."""
@@ -52,11 +42,11 @@ class AgentRunContext(pydantic.BaseModel):
     - event is REQUIRED (not optional)
     - input is REQUIRED (current event input, not history)
     - messages is DEMOTED to bootstrap (optional convenience)
-    - adapter holds Pipeline adapter / host adapter metadata
+    - adapter holds non-core Host entry-adapter metadata
 
     Field boundaries:
-    - config: Static runner configuration from pipeline/runner config.
-    - adapter.extra: Adapter-specific fields such as Pipeline params/prompt.
+    - config: Current agent/runner configuration from Host.
+    - adapter.extra: Adapter-specific fields such as entry params/prompt.
     - state: Host-managed runner-scoped persistent state snapshot.
     - runtime.metadata: Host/runtime observability info, not a business input contract.
     """
@@ -110,13 +100,13 @@ class AgentRunContext(pydantic.BaseModel):
     """Runtime context."""
 
     config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Runner binding configuration from Host."""
+    """Current agent/runner configuration from Host."""
 
     bootstrap: BootstrapContext | None = None
     """Optional bootstrap context (small convenience window, NOT full history)."""
 
     adapter: AdapterContext | None = None
-    """Adapter context for Pipeline adapter / host adapter metadata.
+    """Adapter context for host entry-adapter metadata.
 
     Runners should prefer stable protocol fields and pull APIs when possible.
     """
