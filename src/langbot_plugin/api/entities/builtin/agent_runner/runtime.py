@@ -19,7 +19,7 @@ class AgentRuntimeContext(pydantic.BaseModel):
     """SDK protocol version."""
 
     query_id: int | None = None
-    """Pipeline query ID when the run enters through Pipeline adapter."""
+    """Host query/request ID when the entry adapter has one."""
 
     trace_id: str | None = None
     """Trace ID for observability."""
