@@ -1,7 +1,10 @@
 # handle connection from LangBot
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncGenerator
+
+logger = logging.getLogger(__name__)
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
@@ -29,6 +32,21 @@ class ControlConnectionHandler(handler.Handler):
         @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "pong"})
+
+        @self.action(LangBotToRuntimeAction.SET_RUNTIME_CONFIG)
+        async def set_runtime_config(data: dict[str, Any]) -> handler.ActionResponse:
+            # LangBot pushes its configured marketplace (Space) URL so the
+            # runtime downloads plugins from the same place LangBot is bound to,
+            # instead of relying on the runtime's own env/default.
+            from langbot_plugin.runtime.settings import settings as runtime_settings
+
+            cloud_service_url = data.get("cloud_service_url")
+            if cloud_service_url:
+                runtime_settings.cloud_service_url = cloud_service_url.rstrip("/")
+                logger.info(
+                    f"Runtime cloud_service_url set by LangBot: {runtime_settings.cloud_service_url}"
+                )
+            return handler.ActionResponse.success({})
 
         @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
         async def list_plugins(data: dict[str, Any]) -> handler.ActionResponse:
