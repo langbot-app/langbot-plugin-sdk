@@ -13,7 +13,9 @@ import pydantic
 class InlineContextPolicy(pydantic.BaseModel):
     """Describes what context Host has inlined."""
 
-    mode: typing.Literal["none", "current_event", "recent_tail", "summary_tail"] = "current_event"
+    mode: typing.Literal["none", "current_event", "recent_tail", "summary_tail"] = (
+        "current_event"
+    )
     """Inline mode used."""
 
     delivered_count: int = 0
@@ -55,6 +57,9 @@ class ContextAPICapabilities(pydantic.BaseModel):
 
     storage: bool = False
     """Whether storage API is available."""
+
+    prompt_get: bool = False
+    """Whether a Host effective prompt/instruction package pull API is available."""
 
 
 class ContextAccess(pydantic.BaseModel):
