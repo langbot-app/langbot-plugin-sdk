@@ -90,7 +90,7 @@ class AgentRunnerManifest(pydantic.BaseModel):
     """Context policy."""
 
     config_schema: list[DynamicFormItemSchema] = pydantic.Field(default_factory=list)
-    """Configuration form schema for binding config."""
+    """Configuration form schema for Agent/runner config."""
 
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata for display, diagnostics, non-stable extensions."""

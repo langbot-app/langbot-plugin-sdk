@@ -40,8 +40,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import (
 )
 from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
     ContextAccess,
-    InlineContextPolicy,
-    ContextAPICapabilities,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
 from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
@@ -151,15 +149,15 @@ class TestAgentRunContextV1:
         assert context_access.inline_policy.mode == "current_event"
 
     def test_adapter_context(self):
-        """Test AdapterContext for Pipeline adapter fields."""
+        """Test AdapterContext for non-core entry adapter fields."""
         adapter = AdapterContext(
             query_id=123,
-            pipeline_uuid="pipe-123",
-            max_round=10,
+            extra={"entrypoint": "pipeline_adapter"},
         )
 
         assert adapter.query_id == 123
-        assert adapter.max_round == 10
+        assert adapter.extra["entrypoint"] == "pipeline_adapter"
+        assert set(AdapterContext.model_fields) == {"query_id", "extra"}
 
     def test_full_context_validate(self):
         """Test full context with all optional fields."""

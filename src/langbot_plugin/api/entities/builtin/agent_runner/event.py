@@ -22,7 +22,7 @@ class RawEventRef(pydantic.BaseModel):
 class ConversationContext(pydantic.BaseModel):
     """Conversation context for an agent run.
 
-    Carries launcher/sender/bot/pipeline/history semantics.
+    Carries launcher, sender, bot, and history identity semantics.
     """
 
     conversation_id: str | None = None
@@ -46,12 +46,8 @@ class ConversationContext(pydantic.BaseModel):
     workspace_id: str | None = None
     """Workspace ID (for multi-tenant scenarios)."""
 
-    # Pipeline adapter fields
     session_id: str | None = None
-    """Pipeline session identifier (prefer conversation_id for stable identity)."""
-
-    pipeline_uuid: str | None = None
-    """Pipeline UUID."""
+    """Entry-adapter session identifier (prefer conversation_id for stable identity)."""
 
 
 class AgentEventContext(pydantic.BaseModel):

@@ -90,7 +90,7 @@ class AgentRunner(BaseComponent):
         """AgentRunner components do not expose the legacy BasePlugin proxy."""
         raise RuntimeError(
             "AgentRunner.plugin is not available. Use self.get_run_api(ctx) for "
-            "run-scoped Host APIs, ctx.config for runner binding config, and "
+            "run-scoped Host APIs, ctx.config for agent/runner config, and "
             "self.get_plugin_config() only for plugin-level config."
         )
 
@@ -109,7 +109,7 @@ class AgentRunner(BaseComponent):
     def get_plugin_config(self) -> dict[str, Any]:
         """Return the plugin-level config for rare runner use cases.
 
-        Runner binding config should normally come from ``ctx.config``.
+        Agent/runner config should normally come from ``ctx.config``.
         """
         return dict(self._plugin_config)
 
@@ -200,7 +200,7 @@ class AgentRunner(BaseComponent):
                 - runtime: Host/environment info (version, query_id, trace_id, deadline)
                 - config: Runner instance configuration
                 - bootstrap: Optional bootstrap messages (NOT core history)
-                - adapter: Pipeline adapter / host adapter metadata
+                - adapter: Host entry-adapter metadata
 
         Yields:
             AgentRunResult: Progress and final result events:
