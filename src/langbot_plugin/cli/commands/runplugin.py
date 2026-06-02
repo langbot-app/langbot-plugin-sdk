@@ -1,17 +1,25 @@
 from __future__ import annotations
 
-import os
 import asyncio
 import dotenv
+import os
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 from langbot_plugin.utils.log import configure_process_logging
 from langbot_plugin.cli.run.controller import PluginRuntimeController
 from langbot_plugin.cli.i18n import cli_print
+from langbot_plugin.cli.utils.page_components import (
+    discover_plugin_components,
+    populate_plugin_pages,
+)
 
 
 async def arun_plugin_process(
-    stdio: bool = False, prod_mode: bool = False, plugin_debug_key: str = ""
+    stdio: bool = False,
+    prod_mode: bool = False,
+    plugin_debug_key: str = "",
+    pypi_index_url: str = "",
+    pypi_trusted_host: str = "",
 ) -> None:
     # read .env file
     dotenv.load_dotenv(".env")
@@ -19,6 +27,10 @@ async def arun_plugin_process(
     # Set plugin debug key from command line argument if provided
     if plugin_debug_key:
         os.environ["PLUGIN_DEBUG_KEY"] = plugin_debug_key
+    if pypi_index_url:
+        os.environ["LANGBOT_PLUGIN_PYPI_INDEX_URL"] = pypi_index_url
+    if pypi_trusted_host:
+        os.environ["LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"] = pypi_trusted_host
 
     discovery_engine = ComponentDiscoveryEngine()
 
@@ -46,14 +58,8 @@ async def arun_plugin_process(
             cli_print("debug_url_not_set")
             return
 
-    # discover components
-    component_manifests = []
-
-    for comp_group in plugin_manifest.spec["components"].values():
-        manifests = discovery_engine.load_blueprint_comp_group(
-            comp_group, owner="builtin", no_save=True
-        )
-        component_manifests.extend(manifests)
+    component_manifests = discover_plugin_components(plugin_manifest, discovery_engine)
+    populate_plugin_pages(plugin_manifest, component_manifests)
 
     controller = PluginRuntimeController(
         plugin_manifest,
@@ -70,12 +76,24 @@ async def arun_plugin_process(
 
 
 def run_plugin_process(
-    stdio: bool = False, prod_mode: bool = False, plugin_debug_key: str = ""
+    stdio: bool = False,
+    prod_mode: bool = False,
+    plugin_debug_key: str = "",
+    pypi_index_url: str = "",
+    pypi_trusted_host: str = "",
 ) -> None:
     configure_process_logging()
 
     try:
-        asyncio.run(arun_plugin_process(stdio, prod_mode, plugin_debug_key))
+        asyncio.run(
+            arun_plugin_process(
+                stdio,
+                prod_mode,
+                plugin_debug_key,
+                pypi_index_url,
+                pypi_trusted_host,
+            )
+        )
     except asyncio.CancelledError:
         cli_print("plugin_process_cancelled")
         return

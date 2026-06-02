@@ -179,6 +179,8 @@ class Handler(abc.ABC):
             return response.data
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
+        except ActionCallError:
+            raise
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:
@@ -217,6 +219,8 @@ class Handler(abc.ABC):
                     raise ActionCallTimeoutError(
                         f"Action {action.value} call timed out"
                     )
+                except ActionCallError:
+                    raise
                 except Exception as e:
                     raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:

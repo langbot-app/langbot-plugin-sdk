@@ -37,8 +37,8 @@ class CommandReturn(pydantic.BaseModel):
     """错误，保留供系统使用，插件逻辑报错请自行使用 text 传递
     """
 
-    @classmethod
     @pydantic.field_validator("error", mode="before")
+    @classmethod
     def _validate_error(
         cls, v: Optional[errors.CommandError]
     ) -> Optional[errors.CommandError]:
@@ -46,9 +46,8 @@ class CommandReturn(pydantic.BaseModel):
             return errors.CommandError(message=v.message)
         return v
 
-    @classmethod
     @pydantic.field_serializer("error")
-    def _serialize_error(cls, v: Optional[errors.CommandError]) -> Optional[str]:
+    def _serialize_error(self, v: Optional[errors.CommandError]) -> Optional[str]:
         if v is not None:
             return v.message
         return v

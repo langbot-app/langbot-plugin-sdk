@@ -6,6 +6,7 @@ import mimetypes
 import typing
 import aiofiles
 from copy import deepcopy
+from pathlib import Path
 
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
@@ -22,6 +23,7 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
+from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -30,6 +32,35 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 )
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
+
+
+def _resolve_asset_path(file_key: str) -> Path | None:
+    plugin_root = Path.cwd().resolve()
+    requested = Path(file_key)
+
+    if requested.is_absolute():
+        return None
+
+    if requested.parts and requested.parts[0] in {"assets", "components"}:
+        candidates = [plugin_root / requested]
+    else:
+        candidates = [plugin_root / "assets" / requested]
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not resolved.is_file():
+            continue
+        try:
+            relative = resolved.relative_to(plugin_root)
+        except ValueError:
+            continue
+        if relative.parts[:1] == ("assets",) or relative.parts[:2] == (
+            "components",
+            "pages",
+        ):
+            return resolved
+
+    return None
 
 
 class PluginRuntimeHandler(Handler):
@@ -104,17 +135,55 @@ class PluginRuntimeHandler(Handler):
         @self.action(RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE)
         async def get_plugin_assets_file(data: dict[str, typing.Any]) -> ActionResponse:
             file_key = data["file_key"]
-            file_path = os.path.join("assets", file_key)
-            if not os.path.exists(file_path):
-                return ActionResponse.success({"file_file_key": "", "mime_type": ""})
+            file_path = _resolve_asset_path(file_key)
+            if file_path is None:
+                return ActionResponse.success({"file_file_key": None, "mime_type": None})
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
 
-            mime_type = mimetypes.guess_type(file_path)[0]
+            mime_type = (
+                mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+            )
             file_file_key = await self.send_file(file_bytes, "")
             return ActionResponse.success(
                 {"file_file_key": file_file_key, "mime_type": mime_type}
+            )
+
+        @self.action(RuntimeToPluginAction.PAGE_API)
+        async def page_api(data: dict[str, typing.Any]) -> ActionResponse:
+            """Handle a page API call from the frontend."""
+            page_id = data.get("page_id", "")
+            if not page_id:
+                return ActionResponse.success(
+                    PageResponse.fail("page_id is required").model_dump()
+                )
+
+            for component in self.plugin_container.components:
+                if component.manifest.kind != Page.__kind__:
+                    continue
+                if component.manifest.metadata.name != page_id:
+                    continue
+                if isinstance(component.component_instance, NoneComponent):
+                    return ActionResponse.success(
+                        PageResponse.fail("Page component is not initialized").model_dump()
+                    )
+                if not isinstance(component.component_instance, Page):
+                    return ActionResponse.success(
+                        PageResponse.fail("Page component type mismatch").model_dump()
+                    )
+                request = PageRequest(
+                    endpoint=data.get("endpoint", ""),
+                    method=data.get("method", "POST"),
+                    body=data.get("body"),
+                )
+                response = await component.component_instance.handle_api(request)
+                if not isinstance(response, PageResponse):
+                    response = PageResponse(data=response)
+                return ActionResponse.success(response.model_dump())
+
+            return ActionResponse.success(
+                PageResponse.fail(f"Page '{page_id}' not found").model_dump()
             )
 
         @self.action(RuntimeToPluginAction.EMIT_EVENT)

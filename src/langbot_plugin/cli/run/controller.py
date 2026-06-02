@@ -28,6 +28,7 @@ from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
+from langbot_plugin.api.definition.components.page import Page
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
@@ -267,6 +268,7 @@ class PluginRuntimeController:
             Command,
             KnowledgeEngine,
             Parser,
+            Page,
         ]
 
         for component_cls in preinitialize_component_classes:

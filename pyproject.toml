@@ -29,6 +29,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=1.16.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
     "ruff>=0.11.12",
 ]
 
@@ -45,4 +47,18 @@ Repository = "https://github.com/langbot-app/langbot-plugin-sdk"
 Issues = "https://github.com/langbot-app/langbot-plugin-sdk/issues"
 
 [tool.setuptools]
-package-data = { "langbot_plugin" = ["assets/templates/*"] }
+package-data = { "langbot_plugin" = ["assets/templates/*", "assets/*.js"] }
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.coverage.run]
+branch = true
+source = ["langbot_plugin"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

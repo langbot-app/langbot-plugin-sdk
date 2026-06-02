@@ -84,6 +84,7 @@ class LangBotAPIProxy:
         timeout: float | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model"""
+        effective_timeout = timeout if timeout is not None else 120.0
         resp = (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.INVOKE_LLM,
@@ -92,8 +93,9 @@ class LangBotAPIProxy:
                     "messages": [m.model_dump() for m in messages],
                     "funcs": [f.model_dump() for f in funcs],
                     "extra_args": extra_args,
+                    "timeout": effective_timeout,
                 },
-                timeout=timeout if timeout is not None else 15.0,
+                timeout=effective_timeout,
             )
         )["message"]
 

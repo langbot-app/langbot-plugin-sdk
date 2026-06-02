@@ -133,6 +133,19 @@ def parser_component_input_post_process(values: dict[str, Any]) -> dict[str, Any
     return result
 
 
+def page_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "page_name": values["page_name"],
+        "page_label": values["page_name"],
+    }
+
+    python_attr_valid_name = "".join(
+        word.capitalize() for word in values["page_name"].split("_")
+    )
+    result["page_label"] = python_attr_valid_name
+    return result
+
+
 component_types = [
     ComponentType(
         type_name="EventListener",
@@ -338,5 +351,41 @@ component_types = [
             },
         ],
         input_post_process=parser_component_input_post_process,
+    ),
+    ComponentType(
+        type_name="Page",
+        target_dir="components/pages",
+        template_files=[
+            "{page_name}.yaml",
+            "{page_name}.html",
+        ],
+        form_fields=[
+            {
+                "name": "page_name",
+                "label": {
+                    "en_US": "Page name",
+                    "zh_Hans": "页面名称",
+                    "zh_Hant": "頁面名稱",
+                    "ja_JP": "ページ名",
+                    "th_TH": "ชื่อหน้า",
+                    "vi_VN": "Tên trang",
+                    "es_ES": "Nombre de página",
+                },
+                "required": True,
+                "format": {
+                    "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
+                    "error": {
+                        "en_US": "Invalid Page name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_Hans": "无效的页面名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的頁面名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効なページ名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
+                        "th_TH": "ชื่อหน้าไม่ถูกต้อง กรุณาใช้ชื่อที่ถูกต้อง ซึ่งประกอบด้วยตัวอักษรพิมพ์เล็ก ตัวเลข ขีดล่าง และขีดกลาง และขึ้นต้นด้วยตัวอักษร",
+                        "vi_VN": "Tên trang không hợp lệ, vui lòng sử dụng tên hợp lệ, chỉ chứa chữ thường, số, dấu gạch dưới và dấu gạch ngang, bắt đầu bằng chữ cái.",
+                        "es_ES": "Nombre de página no válido, por favor use un nombre válido que solo contenga letras minúsculas, números, guiones bajos y guiones, comenzando con una letra.",
+                    },
+                },
+            },
+        ],
+        input_post_process=page_component_input_post_process,
     ),
 ]

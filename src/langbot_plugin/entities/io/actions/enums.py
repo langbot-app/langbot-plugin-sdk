@@ -101,6 +101,8 @@ class RuntimeToPluginAction(ActionType):
 
     PARSE_DOCUMENT = "parse_document"
 
+    PAGE_API = "page_api"
+
 
 class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
@@ -143,6 +145,9 @@ class LangBotToRuntimeAction(ActionType):
     # marketplace / cloud service URL), so the runtime does not rely on its own
     # env/default.
     SET_RUNTIME_CONFIG = "set_runtime_config"
+
+    # Page API
+    PAGE_API = "page_api"
 
 
 class RuntimeToLangBotAction(ActionType):

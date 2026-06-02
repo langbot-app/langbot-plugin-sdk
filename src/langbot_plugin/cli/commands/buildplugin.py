@@ -5,9 +5,14 @@ import zipfile
 import fnmatch
 from pathlib import Path
 from typing import List
+import yaml
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 from langbot_plugin.cli.i18n import cli_print
+from langbot_plugin.cli.utils.page_components import (
+    discover_plugin_components,
+    populate_plugin_pages,
+)
 
 
 def parse_gitignore(gitignore_path: str) -> List[str]:
@@ -87,6 +92,12 @@ def build_plugin_process(output_dir: str) -> str:
         owner="builtin",
         no_save=True,
     )
+    if plugin_manifest is None:
+        cli_print("manifest_not_found")
+        return
+
+    component_manifests = discover_plugin_components(plugin_manifest, discovery_engine)
+    populate_plugin_pages(plugin_manifest, component_manifests)
 
     plugin_author = plugin_manifest.metadata.author
     plugin_name = plugin_manifest.metadata.name
@@ -114,6 +125,15 @@ def build_plugin_process(output_dir: str) -> str:
 
     # copy all files to zip, except files listed in .gitignore
     with zipfile.ZipFile(zipfile_path, "w") as zipf:
+        zipf.writestr(
+            "manifest.yaml",
+            yaml.safe_dump(
+                plugin_manifest.manifest,
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+        )
+
         for root, dirs, files in os.walk("."):
             # Remove ignored directories from dirs list to prevent walking into them
             dirs_to_remove = []
@@ -133,6 +153,9 @@ def build_plugin_process(output_dir: str) -> str:
             for file in files:
                 file_path = os.path.join(root, file)
                 relative_path = os.path.relpath(file_path, ".")
+
+                if relative_path == "manifest.yaml":
+                    continue
 
                 # Skip if file should be ignored
                 if should_ignore(relative_path, gitignore_patterns):

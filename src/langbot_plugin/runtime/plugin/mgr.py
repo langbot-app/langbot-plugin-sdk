@@ -67,6 +67,8 @@ class PluginManager:
 
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
+        self.plugin_handlers = []
+        self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
 
@@ -329,13 +331,17 @@ class PluginManager:
                     },
                 }
 
-                returncode, downloaded_bytes = await pkgmgr_helper.install_single_async(
-                    dep
+                returncode, downloaded_bytes, output = (
+                    await pkgmgr_helper.install_single_async(dep)
                 )
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
-                    logger.error(f"Failed to install dependency: {dep}")
+                    error_message = f"Failed to install dependency: {dep}"
+                    if output:
+                        error_message = f"{error_message}\n{output.strip()}"
+                    logger.error(error_message)
+                    raise RuntimeError(error_message)
 
             elapsed = time.time() - start_time
             yield {
@@ -410,25 +416,23 @@ class PluginManager:
                 "Failed to get plugin settings, is LangBot connected?"
             ) from e
 
+        # Register the plugin container BEFORE calling initialize_plugin so
+        # that storage API calls during initialize() can resolve the owner.
+        plugin_container._runtime_plugin_handler = handler
+        plugin_container.debug = bool(handler.debug_plugin)
+        plugin_container.install_source = plugin_settings["install_source"]
+        plugin_container.install_info = plugin_settings["install_info"]
+        self.plugins.append(plugin_container)
+
         # initialize plugin
         await handler.initialize_plugin(plugin_settings)
 
-        # get plugin container from plugin
-        plugin_container = runtime_plugin_container.PluginContainer.from_dict(
-            await handler.get_plugin_container()
-        )
-
-        if handler.debug_plugin:  # due to python's fucking typing system, we need to explicitly set the debug flag
-            plugin_container.debug = True
-        else:
-            plugin_container.debug = False
-
-        plugin_container.install_source = plugin_settings["install_source"]
-        plugin_container.install_info = plugin_settings["install_info"]
-
-        plugin_container._runtime_plugin_handler = handler
-
-        self.plugins.append(plugin_container)
+        # refresh plugin container from plugin (components may have changed)
+        plugin_container_data = await handler.get_plugin_container()
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
+        plugin_container.components = refreshed.components
+        plugin_container.manifest = refreshed.manifest
+        plugin_container.status = refreshed.status
 
     async def remove_plugin_container(
         self,
@@ -463,6 +467,18 @@ class PluginManager:
                     )
                     asyncio_task = asyncio.create_task(task)
                     self.plugin_run_tasks.append(asyncio_task)
+
+                    # Poll until the plugin appears in self.plugins (with timeout)
+                    plugin_key = f"{plugin_author}/{plugin_name}"
+                    for _ in range(30):
+                        if self.find_plugin(plugin_author, plugin_name) is not None:
+                            logger.info(f"Plugin {plugin_key} restarted and registered")
+                            break
+                        await asyncio.sleep(1)
+                    else:
+                        logger.warning(
+                            f"Plugin {plugin_key} restart timed out waiting for registration"
+                        )
 
                 yield {"current_action": "plugin restarted"}
                 break
@@ -607,8 +623,6 @@ class PluginManager:
             if resp["emitted"]:
                 emitted_plugins.append(plugin)
 
-            emitted_plugins.append(plugin)
-
             event_context = EventContext.model_validate(resp["event_context"])
 
             if event_context.is_prevented_postorder():
@@ -658,12 +672,35 @@ class PluginManager:
                 file_key=file_key
             )
             file_file_key = resp["file_file_key"]
+            if not file_file_key:
+                return b"", ""
             file_bytes = await plugin._runtime_plugin_handler.read_local_file(
                 file_file_key
             )
             await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
             return file_bytes, resp["mime_type"]
         return b"", ""
+
+    async def handle_page_api(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        page_id: str,
+        endpoint: str,
+        method: str,
+        body: typing.Any = None,
+    ) -> dict[str, typing.Any]:
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            return {"data": None, "error": "Plugin not found"}
+        if plugin._runtime_plugin_handler is None:
+            return {"data": None, "error": "Plugin is not connected"}
+        return await plugin._runtime_plugin_handler.call_page_api(
+            page_id=page_id,
+            endpoint=endpoint,
+            method=method,
+            body=body,
+        )
 
     async def list_tools(
         self, include_plugins: list[str] | None = None

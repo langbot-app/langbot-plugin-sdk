@@ -208,9 +208,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.INVOKE_LLM)
         async def invoke_llm(data: dict[str, Any]) -> handler.ActionResponse:
-            timeout = data.pop("timeout", 15.0)
+            timeout = data.pop("timeout", 120.0)
             if not isinstance(timeout, (int, float)) or timeout <= 0:
-                timeout = 15.0
+                timeout = 120.0
 
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.INVOKE_LLM,
@@ -588,6 +588,25 @@ class PluginConnectionHandler(handler.Handler):
     async def get_plugin_assets_file(self, file_key: str) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.GET_PLUGIN_ASSETS_FILE, {"file_key": file_key}
+        )
+        return resp
+
+    async def call_page_api(
+        self,
+        page_id: str,
+        endpoint: str,
+        method: str,
+        body: Any = None,
+    ) -> dict[str, Any]:
+        resp = await self.call_action(
+            RuntimeToPluginAction.PAGE_API,
+            {
+                "page_id": page_id,
+                "endpoint": endpoint,
+                "method": method,
+                "body": body,
+            },
+            timeout=30,
         )
         return resp
 
