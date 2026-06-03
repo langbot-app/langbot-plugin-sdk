@@ -45,7 +45,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
     ContextAPICapabilities,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
 from langbot_plugin.api.entities.builtin.agent_runner.context import (
     AgentRunContext,
     AdapterContext,
@@ -97,7 +96,6 @@ __all__ = [
     "InlineContextPolicy",
     "ContextAPICapabilities",
     "DeliveryContext",
-    "BootstrapContext",
     "AdapterContext",
     # Main context and result
     "AgentRunContext",

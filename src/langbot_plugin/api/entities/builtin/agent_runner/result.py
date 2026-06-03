@@ -35,7 +35,7 @@ class AgentRunResult(pydantic.BaseModel):
     - timestamp: Optional timestamp
 
     Each yield from the runner's run() method produces one AgentRunResult.
-    LangBot maps these to appropriate pipeline events.
+    LangBot maps these to appropriate host delivery events.
     """
 
     run_id: str
@@ -275,7 +275,7 @@ class AgentRunResult(pydantic.BaseModel):
     ) -> "AgentRunResult":
         """Create a run.failed result.
 
-        LangBot returns user-friendly error message per pipeline error strategy.
+        LangBot returns a user-friendly error message per host delivery strategy.
         """
         return cls(
             run_id=run_id,
