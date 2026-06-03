@@ -18,9 +18,6 @@ class AgentRuntimeContext(pydantic.BaseModel):
     sdk_protocol_version: str = "1"
     """SDK protocol version."""
 
-    query_id: int | None = None
-    """Host query/request ID when the entry adapter has one."""
-
     trace_id: str | None = None
     """Trace ID for observability."""
 

@@ -31,10 +31,10 @@ def _ctx() -> AgentRunContext:
         event=AgentEventContext(
             event_id="evt_1",
             event_type="message.received",
-            source="pipeline_adapter",
+            source="host_adapter",
         ),
         input=AgentInput(text="hello from im"),
-        delivery=DeliveryContext(surface="pipeline"),
+        delivery=DeliveryContext(surface="platform"),
         resources=AgentResources(),
         runtime=AgentRuntimeContext(),
         config={},

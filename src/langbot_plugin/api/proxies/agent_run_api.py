@@ -86,11 +86,6 @@ class AgentRunAPIProxy:
         """Unique identifier for this agent run."""
         return self.ctx.run_id
 
-    @property
-    def query_id(self) -> int:
-        """Pipeline query ID from runtime context, if present."""
-        return self.ctx.runtime.query_id or 0
-
     def _remaining_deadline_seconds(self) -> float | None:
         deadline_at = self.ctx.runtime.deadline_at
         if deadline_at is None:
@@ -264,13 +259,8 @@ class AgentRunAPIProxy:
         self,
         tool_name: str,
         parameters: dict[str, Any],
-        session: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Call a tool with permission validation.
-
-        Note: Simplified signature without session/query_id (obtained from ctx).
-        Returns 'result' key instead of 'tool_response'.
-        """
+        """Call a tool with permission validation."""
         self._validate_tool_access(tool_name)
         timeout = self._bounded_timeout(default=180.0)
         resp = await self._api.plugin_runtime_handler.call_action(
@@ -279,8 +269,6 @@ class AgentRunAPIProxy:
                 "run_id": self.run_id,
                 "tool_name": tool_name,
                 "parameters": parameters,
-                "session": session or {},
-                "query_id": self.query_id,
             },
             timeout,
         )
@@ -303,7 +291,6 @@ class AgentRunAPIProxy:
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
                 {
                     "run_id": self.run_id,
-                    "query_id": self.query_id,
                     "kb_id": kb_id,
                     "query_text": query_text,
                     "top_k": top_k,
