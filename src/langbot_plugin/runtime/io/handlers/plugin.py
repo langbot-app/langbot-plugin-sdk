@@ -651,58 +651,58 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
         async def get_tool_detail(data: dict[str, Any]) -> handler.ActionResponse:
-            if "run_id" in data:
-                caller_identity = _get_caller_plugin_identity(self)
-                if caller_identity:
-                    data["caller_plugin_identity"] = caller_identity
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
 
-                result = await self.context.control_handler.call_action(
-                    PluginToRuntimeAction.GET_TOOL_DETAIL,
-                    data,
-                    timeout=30,
-                )
-                return handler.ActionResponse.success(result)
-
-            tool_name = data["tool_name"]
-            tools = await self.context.plugin_mgr.list_tools()
-            for tool in tools:
-                if tool.metadata.name == tool_name:
-                    return handler.ActionResponse.success(
-                        {"tool": tool.to_plain_dict()}
-                    )
-            return handler.ActionResponse.error(message=f"Tool not found: {tool_name}")
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_TOOL_DETAIL,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
             """Call a tool from plugin code or an AgentRunner run.
 
-            AgentRunner calls carry run-scoped fields and must be forwarded to
-            the Host for resource validation. Legacy LangBotAPIProxy calls keep
-            the local runtime dispatch path introduced on main.
+            AgentRunner calls use parameters/result. Legacy plugin calls use
+            tool_parameters/tool_response through LangBotAPIProxy.
             """
-            if "parameters" in data and "tool_parameters" not in data:
-                data["tool_parameters"] = data["parameters"]
-
-            if "run_id" in data or "parameters" in data:
-                caller_identity = _get_caller_plugin_identity(self)
-                if caller_identity:
-                    data["caller_plugin_identity"] = caller_identity
-
-                result = await self.context.control_handler.call_action(
-                    PluginToRuntimeAction.CALL_TOOL,
-                    data,
-                    timeout=LONG_RUNNING_OPERATION_TIMEOUT,
+            if data.get("run_id"):
+                if "parameters" not in data:
+                    return handler.ActionResponse.error(
+                        "parameters is required for AgentRunner tool calls"
+                    )
+            elif "tool_parameters" not in data:
+                return handler.ActionResponse.error(
+                    "tool_parameters is required for legacy tool calls"
                 )
-                return handler.ActionResponse.success(result)
 
-            tool_name = data["tool_name"]
-            tool_parameters = data["tool_parameters"]
-            session = data["session"]
-            query_id = data["query_id"]
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.CALL_TOOL,
+                data,
+                timeout=LONG_RUNNING_OPERATION_TIMEOUT,
             )
-            return handler.ActionResponse.success({"tool_response": resp})
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.PROMPT_GET)
+        async def prompt_get(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward prompt_get requests to LangBot Host."""
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.PROMPT_GET,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:

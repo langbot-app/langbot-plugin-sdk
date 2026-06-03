@@ -16,6 +16,8 @@ spec:
     tool_calling: false
     knowledge_retrieval: false
     multimodal_input: false
+    skill_authoring: false
+    skill_injection: false
     event_context: false
     platform_api: false
     interrupt: false
