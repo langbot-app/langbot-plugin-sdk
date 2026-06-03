@@ -29,6 +29,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigge
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
 from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+    ContextAccess,
+    ContextAPICapabilities,
+)
 
 
 class MockHandler:
@@ -55,6 +59,7 @@ def create_mock_context(
     knowledge_bases: list[dict] | None = None,
     storage: dict | None = None,
     files: list[dict] | None = None,
+    prompt_get: bool = False,
 ) -> AgentRunContext:
     """Create a mock AgentRunContext for testing."""
     return AgentRunContext(
@@ -67,6 +72,9 @@ def create_mock_context(
         ),
         input=AgentInput(content='test input'),
         delivery=DeliveryContext(surface='test'),
+        context=ContextAccess(
+            available_apis=ContextAPICapabilities(prompt_get=prompt_get),
+        ),
         runtime=AgentRuntimeContext(deadline_at=deadline_at),
         resources=AgentResources(
             models=[ModelResource.model_validate(m) for m in (models or [])],
@@ -198,6 +206,13 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
 
         assert hasattr(proxy, 'get_langbot_version')
 
+    def test_exposes_prompt_api_with_availability_validation(self):
+        """AgentRunAPIProxy exposes run-scoped prompt access."""
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+
+        assert hasattr(proxy, 'get_prompt')
+
 
 class TestAgentRunAPIProxyResourceValidation:
     """Tests for resource validation in AgentRunAPIProxy."""
@@ -281,6 +296,33 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert 'image_gen' in str(exc_info.value)
         assert 'not authorized' in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_get_prompt_requires_available_api(self):
+        """get_prompt is rejected unless Host exposed prompt_get for this run."""
+        proxy = AgentRunAPIProxy(ctx=create_mock_context(), plugin_runtime_handler=MockHandler())
+
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await proxy.get_prompt()
+
+        assert 'prompt_get' in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_get_prompt_with_available_api(self):
+        """get_prompt calls the run-scoped Host prompt API."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            'prompt': [{'role': 'system', 'content': 'Host prompt'}],
+        }
+        ctx = create_mock_context(run_id='run_prompt_test', prompt_get=True)
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        prompt = await proxy.get_prompt()
+
+        assert prompt == [{'role': 'system', 'content': 'Host prompt'}]
+        action, data, _timeout = mock_handler.call_action_mock.call_args[0]
+        assert action == PluginToRuntimeAction.PROMPT_GET
+        assert data == {'run_id': 'run_prompt_test'}
 
     @pytest.mark.anyio
     async def test_retrieve_knowledge_with_authorized_kb(self):

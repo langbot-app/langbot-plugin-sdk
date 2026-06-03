@@ -579,6 +579,8 @@ class TestCapabilitiesAndPermissions:
         assert not caps.tool_calling
         assert not caps.knowledge_retrieval
         assert not caps.multimodal_input
+        assert not caps.skill_authoring
+        assert not caps.skill_injection
         # Protocol v1 defaults
         assert caps.event_context is True  # Default True for Protocol v1
         assert not caps.platform_api
@@ -604,10 +606,14 @@ class TestCapabilitiesAndPermissions:
         caps = AgentRunnerCapabilities(
             streaming=True,
             tool_calling=True,
+            skill_authoring=True,
+            skill_injection=True,
             stateful_session=True,
         )
         assert caps.streaming
         assert caps.tool_calling
+        assert caps.skill_authoring
+        assert caps.skill_injection
         assert caps.stateful_session
 
     def test_permissions_from_dict(self):
