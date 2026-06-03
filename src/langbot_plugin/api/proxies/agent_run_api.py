@@ -111,6 +111,10 @@ class AgentRunAPIProxy:
             return 0.001
         return max(min(float(base_timeout), remaining), 0.001)
 
+    def _context_api_enabled(self, name: str) -> bool:
+        available_apis = getattr(getattr(self.ctx, "context", None), "available_apis", None)
+        return bool(getattr(available_apis, name, False))
+
     # ================= Resource Helper Methods =================
 
     def get_allowed_models(self) -> list[Any]:
@@ -253,7 +257,7 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp.get("tool", resp)
+        return resp["tool"]
 
     async def call_tool(
         self,
@@ -272,7 +276,27 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp.get("result", resp.get("tool_response", resp))
+        return resp["result"]
+
+    # ================= Prompt API =================
+
+    async def get_prompt(self) -> list[dict[str, Any]]:
+        """Get the Host effective prompt for this run when available."""
+        if not self._context_api_enabled("prompt_get"):
+            raise PermissionDeniedError("prompt_get is not available for this run")
+
+        timeout = self._bounded_timeout(default=30.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.PROMPT_GET,
+            {
+                "run_id": self.run_id,
+            },
+            timeout,
+        )
+        prompt = resp["prompt"]
+        if not isinstance(prompt, list):
+            raise TypeError("prompt_get response must contain a prompt list")
+        return prompt
 
     # ================= Knowledge Base API (delegated with validation) =================
 

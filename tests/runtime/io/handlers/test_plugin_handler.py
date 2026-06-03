@@ -174,14 +174,15 @@ async def test_plugin_handler_adds_plugin_owner_for_binary_storage():
     assert control.calls == [
         (
             RuntimeToLangBotAction.SET_BINARY_STORAGE,
-            {
-                "key": "cache",
-                "value_base64": "dmFsdWU=",
-                "owner_type": "plugin",
-                "owner": "tester/demo",
-            },
-            15.0,
-        )
+                {
+                    "key": "cache",
+                    "value_base64": "dmFsdWU=",
+                    "owner_type": "plugin",
+                    "owner": "tester/demo",
+                    "caller_plugin_identity": "tester/demo",
+                },
+                15.0,
+            )
     ]
 
 
@@ -216,18 +217,22 @@ async def test_plugin_handler_forwards_config_file_requests_to_langbot():
 
     assert response["data"] == {"file_base64": "Y29uZmln"}
     assert control.calls == [
-        (
-            RuntimeToLangBotAction.GET_CONFIG_FILE,
-            {"file_key": "settings.yaml"},
-            15.0,
-        )
-    ]
+            (
+                RuntimeToLangBotAction.GET_CONFIG_FILE,
+                {
+                    "file_key": "settings.yaml",
+                    "run_id": None,
+                    "caller_plugin_identity": None,
+                },
+                15.0,
+            )
+        ]
 
 
 async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypatch):
     handler, _manager, control = _handler()
     file_ops = []
-    control.results[PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM] = {
+    control.results[PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM] = {
         "file_key": "host-file"
     }
 
@@ -247,10 +252,10 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
     monkeypatch.setattr(handler, "send_file", fake_send_file)
 
     async with ProtocolSession(handler) as session:
-        response = await session.request(
-            PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM.value,
-            {"storage_path": "kb/doc"},
-        )
+            response = await session.request(
+                PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM.value,
+                {"storage_path": "kb/doc"},
+            )
 
     assert file_ops == [
         ("read", "host-file"),
@@ -261,8 +266,11 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
 
 
 async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
-    handler, manager, _control = _handler()
+    handler, manager, control = _handler()
     manager.tools = [FakeTool("weather")]
+    control.results[PluginToRuntimeAction.GET_TOOL_DETAIL] = {
+        "tool": {"name": "missing"},
+    }
 
     async with ProtocolSession(handler) as session:
         listed = await session.request(PluginToRuntimeAction.LIST_TOOLS.value, seq_id=1)
@@ -273,12 +281,21 @@ async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
         )
 
     assert listed["data"] == {"tools": [{"name": "weather"}]}
-    assert missing["code"] == 1
-    assert missing["message"] == "Tool not found: missing"
+    assert missing["data"] == {"tool": {"name": "missing"}}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.GET_TOOL_DETAIL,
+            {"tool_name": "missing"},
+            30,
+        )
+    ]
 
 
 async def test_plugin_handler_calls_registered_runtime_tool():
-    handler, manager, _control = _handler()
+    handler, _manager, control = _handler()
+    control.results[PluginToRuntimeAction.CALL_TOOL] = {
+        "tool_response": {"text": "tool response"}
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -292,13 +309,70 @@ async def test_plugin_handler_calls_registered_runtime_tool():
         )
 
     assert response["data"] == {"tool_response": {"text": "tool response"}}
-    assert manager.calls == [
+    assert control.calls == [
         (
-            "call_tool",
-            "weather",
-            {"city": "Shanghai"},
-            {"id": "s"},
-            7,
+            PluginToRuntimeAction.CALL_TOOL,
+            {
+                "tool_name": "weather",
+                "tool_parameters": {"city": "Shanghai"},
+                "session": {"id": "s"},
+                "query_id": 7,
+            },
+            180.0,
+        )
+    ]
+
+
+async def test_plugin_handler_forwards_agent_runner_tool_envelope():
+    handler, _manager, control = _handler()
+    control.results[PluginToRuntimeAction.CALL_TOOL] = {
+        "result": {"text": "tool response"}
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.CALL_TOOL.value,
+            {
+                "run_id": "run-1",
+                "tool_name": "weather",
+                "parameters": {"city": "Shanghai"},
+            },
+        )
+
+    assert response["data"] == {"result": {"text": "tool response"}}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.CALL_TOOL,
+            {
+                "run_id": "run-1",
+                "tool_name": "weather",
+                "parameters": {"city": "Shanghai"},
+            },
+            180.0,
+        )
+    ]
+
+
+async def test_plugin_handler_forwards_prompt_get():
+    handler, _manager, control = _handler()
+    control.results[PluginToRuntimeAction.PROMPT_GET] = {
+        "prompt": [{"role": "system", "content": "Host prompt"}],
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.PROMPT_GET.value,
+            {"run_id": "run-1"},
+        )
+
+    assert response["data"] == {
+        "prompt": [{"role": "system", "content": "Host prompt"}],
+    }
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.PROMPT_GET,
+            {"run_id": "run-1"},
+            30,
         )
     ]
 

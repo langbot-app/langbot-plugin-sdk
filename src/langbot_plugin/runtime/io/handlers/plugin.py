@@ -641,15 +641,18 @@ class PluginConnectionHandler(handler.Handler):
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
             """Forward tool call to LangBot Host with caller_plugin_identity injection.
 
-            Supports both 'parameters' (AgentRunAPIProxy) and 'tool_parameters' (LangBotAPIProxy).
+            AgentRunner calls use parameters/result. Legacy plugin calls use
+            tool_parameters/tool_response through LangBotAPIProxy.
             """
-            # Support both 'parameters' (new) and 'tool_parameters' (old) for backward compatibility
-            if "parameters" in data and "tool_parameters" not in data:
-                # New AgentRunAPIProxy format - use 'parameters' as 'tool_parameters' for Host
-                data["tool_parameters"] = data["parameters"]
-            elif "tool_parameters" in data:
-                # Old LangBotAPIProxy format - already has 'tool_parameters'
-                pass
+            if data.get("run_id"):
+                if "parameters" not in data:
+                    return handler.ActionResponse.error(
+                        "parameters is required for AgentRunner tool calls"
+                    )
+            elif "tool_parameters" not in data:
+                return handler.ActionResponse.error(
+                    "tool_parameters is required for legacy tool calls"
+                )
 
             # Inject caller_plugin_identity for Host-side AgentRunner validation
             caller_identity = _get_caller_plugin_identity(self)
@@ -661,6 +664,20 @@ class PluginConnectionHandler(handler.Handler):
                 PluginToRuntimeAction.CALL_TOOL,
                 data,
                 timeout=LONG_RUNNING_OPERATION_TIMEOUT,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.PROMPT_GET)
+        async def prompt_get(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward prompt_get requests to LangBot Host."""
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.PROMPT_GET,
+                data,
+                timeout=30,
             )
             return handler.ActionResponse.success(result)
 
