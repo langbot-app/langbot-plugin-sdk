@@ -18,7 +18,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import (
 )
 from langbot_plugin.api.entities.builtin.agent_runner.context_access import ContextAccess
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
 
 
 class AdapterContext(pydantic.BaseModel):
@@ -27,9 +26,6 @@ class AdapterContext(pydantic.BaseModel):
     This context holds adapter-specific fields that are not part of the stable
     event/input/resource contract.
     """
-
-    query_id: int | None = None
-    """Host query/request ID when the entry adapter has one."""
 
     extra: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Other adapter-specific fields."""
@@ -41,12 +37,12 @@ class AgentRunContext(pydantic.BaseModel):
     Protocol v1 context structure. This is event-first:
     - event is REQUIRED (not optional)
     - input is REQUIRED (current event input, not history)
-    - messages is DEMOTED to bootstrap (optional convenience)
+    - messages is not part of the context; runners pull history through APIs
     - adapter holds non-core Host entry-adapter metadata
 
     Field boundaries:
     - config: Current agent/runner configuration from Host.
-    - adapter.extra: Adapter-specific fields such as entry params/prompt.
+    - adapter.extra: Adapter-specific fields such as entry params.
     - state: Host-managed runner-scoped persistent state snapshot.
     - runtime.metadata: Host/runtime observability info, not a business input contract.
     """
@@ -101,9 +97,6 @@ class AgentRunContext(pydantic.BaseModel):
 
     config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Current agent/runner configuration from Host."""
-
-    bootstrap: BootstrapContext | None = None
-    """Optional bootstrap context (small convenience window, NOT full history)."""
 
     adapter: AdapterContext | None = None
     """Adapter context for host entry-adapter metadata.

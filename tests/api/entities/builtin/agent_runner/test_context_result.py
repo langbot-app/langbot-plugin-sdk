@@ -42,7 +42,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
     ContextAccess,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.bootstrap import BootstrapContext
 from langbot_plugin.api.entities.builtin.agent_runner.context_policy import (
     AgentRunnerContextPolicy,
 )
@@ -61,7 +60,7 @@ class TestAgentRunContextV1:
 
     def test_minimal_context_validate(self):
         """Test minimal required fields validation."""
-        trigger = AgentTrigger(type="message.received", source="pipeline_adapter")
+        trigger = AgentTrigger(type="message.received", source="host_adapter")
         event = AgentEventContext(
             event_id="evt_1",
             event_type="message.received",
@@ -85,7 +84,6 @@ class TestAgentRunContextV1:
         assert ctx.run_id == "run_123"
         assert ctx.trigger.type == "message.received"
         assert ctx.input.text == "Hello"
-        assert ctx.bootstrap is None  # Optional, not required
         assert ctx.config == {}
         assert ctx.context is not None  # Has default
 
@@ -109,8 +107,8 @@ class TestAgentRunContextV1:
                 runtime=runtime,
             )
 
-    def test_messages_in_bootstrap_not_top_level(self):
-        """Test that messages are in bootstrap, not top-level context."""
+    def test_history_messages_are_not_context_fields(self):
+        """History messages are pulled through APIs, not embedded in context."""
         trigger = AgentTrigger(type="message.received")
         event = AgentEventContext(
             event_id="evt_1",
@@ -121,9 +119,6 @@ class TestAgentRunContextV1:
         resources = AgentResources()
         runtime = AgentRuntimeContext()
         delivery = DeliveryContext(surface="platform")
-        bootstrap = BootstrapContext(
-            messages=[Message(role="user", content="Hi")],
-        )
 
         ctx = AgentRunContext(
             run_id="run_123",
@@ -133,12 +128,11 @@ class TestAgentRunContextV1:
             delivery=delivery,
             resources=resources,
             runtime=runtime,
-            bootstrap=bootstrap,
         )
 
-        # messages are in bootstrap
-        assert ctx.bootstrap is not None
-        assert len(ctx.bootstrap.messages) == 1
+        assert "messages" not in AgentRunContext.model_fields
+        assert "bootstrap" not in AgentRunContext.model_fields
+        assert not hasattr(ctx, "bootstrap")
 
     def test_context_access_default(self):
         """Test ContextAccess default values."""
@@ -151,18 +145,16 @@ class TestAgentRunContextV1:
     def test_adapter_context(self):
         """Test AdapterContext for non-core entry adapter fields."""
         adapter = AdapterContext(
-            query_id=123,
-            extra={"entrypoint": "pipeline_adapter"},
+            extra={"entrypoint": "host_adapter"},
         )
 
-        assert adapter.query_id == 123
-        assert adapter.extra["entrypoint"] == "pipeline_adapter"
-        assert set(AdapterContext.model_fields) == {"query_id", "extra"}
+        assert adapter.extra["entrypoint"] == "host_adapter"
+        assert set(AdapterContext.model_fields) == {"extra"}
 
     def test_full_context_validate(self):
         """Test full context with all optional fields."""
         trigger = AgentTrigger(
-            type="message.received", source="pipeline_adapter", timestamp=1234567890
+            type="message.received", source="host_adapter", timestamp=1234567890
         )
         conversation = ConversationContext(
             conversation_id="conv_1",
@@ -187,12 +179,6 @@ class TestAgentRunContextV1:
         subject = SubjectContext(
             subject_type="message",
             subject_id="msg_1",
-        )
-        bootstrap = BootstrapContext(
-            messages=[
-                Message(role="user", content="Hi"),
-                Message(role="assistant", content="Hello"),
-            ],
         )
         input = AgentInput(
             text="What's up?",
@@ -235,14 +221,11 @@ class TestAgentRunContextV1:
             state=state,
             runtime=runtime,
             config={"model": "gpt-4"},
-            bootstrap=bootstrap,
         )
 
         assert ctx.run_id == "run_full"
         assert ctx.conversation.launcher_type == "person"
         assert ctx.resources.models[0].model_id == "gpt-4"
-        assert ctx.bootstrap is not None
-        assert len(ctx.bootstrap.messages) == 2
         assert ctx.config["model"] == "gpt-4"
         assert ctx.context.has_history_before is True
 
@@ -257,7 +240,7 @@ class TestAgentRunContextV1:
         """Test model_validate from dict (as LangBot will send)."""
         data = {
             "run_id": "run_dict",
-            "trigger": {"type": "message.received", "source": "pipeline_adapter"},
+            "trigger": {"type": "message.received", "source": "host_adapter"},
             "event": {
                 "event_id": "evt_1",
                 "event_type": "message.received",
@@ -646,23 +629,20 @@ class TestContextPolicy:
         """Test context policy defaults for Protocol v1."""
         policy = AgentRunnerContextPolicy()
 
-        assert policy.ownership == "self_managed"
-        assert policy.bootstrap == "current_event"
-        assert policy.max_inline_events == 0
         assert policy.supports_history_pull is True
         assert policy.owns_compaction is True
 
-    def test_context_policy_host_bootstrap(self):
-        """Test context policy for host_bootstrap mode."""
+    def test_context_policy_capabilities(self):
+        """Test context capability declaration."""
         policy = AgentRunnerContextPolicy(
-            ownership="host_bootstrap",
-            bootstrap="recent_tail",
-            max_inline_events=10,
+            supports_history_pull=False,
+            supports_history_search=True,
+            owns_compaction=True,
         )
 
-        assert policy.ownership == "host_bootstrap"
-        assert policy.bootstrap == "recent_tail"
-        assert policy.max_inline_events == 10
+        assert policy.supports_history_pull is False
+        assert policy.supports_history_search is True
+        assert policy.owns_compaction is True
 
 
 class TestAgentRunnerManifest:
@@ -691,12 +671,12 @@ class TestAgentRunnerManifest:
             description={"en_US": "A runner"},
             capabilities=AgentRunnerCapabilities(streaming=True),
             permissions=AgentRunnerPermissions(models=["invoke", "stream"]),
-            context=AgentRunnerContextPolicy(ownership="host_bootstrap"),
+            context=AgentRunnerContextPolicy(supports_history_pull=False),
         )
 
         assert manifest.capabilities.streaming is True
         assert manifest.permissions.models == ["invoke", "stream"]
-        assert manifest.context.ownership == "host_bootstrap"
+        assert manifest.context.supports_history_pull is False
 
 
 class TestEventContextProtocolV1:

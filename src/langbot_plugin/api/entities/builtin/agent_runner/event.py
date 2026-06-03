@@ -66,7 +66,7 @@ class AgentEventContext(pydantic.BaseModel):
     """Event timestamp (epoch seconds)."""
 
     source: str
-    """Event source (platform, webui, api, scheduler, system, pipeline_adapter)."""
+    """Event source (platform, webui, api, scheduler, system, host_adapter)."""
 
     source_event_type: str | None = None
     """Original platform event type (for debugging/logging)."""

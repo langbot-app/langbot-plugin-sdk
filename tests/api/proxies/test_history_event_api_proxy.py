@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy, PermissionDeniedError
+from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     AgentResources,
@@ -37,7 +37,7 @@ def create_mock_context(
         ),
         input=AgentInput(text='test input'),
         delivery=DeliveryContext(surface='test'),
-        runtime=AgentRuntimeContext(query_id=1, deadline_at=None),
+        runtime=AgentRuntimeContext(deadline_at=None),
         resources=AgentResources(
             models=[ModelResource(model_id='model_001')],
             tools=[ToolResource(tool_name='tool_001')],
@@ -64,7 +64,7 @@ class TestHistoryPageMethod:
         ctx = create_mock_context(run_id='run_123')
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.history_page()
+        await proxy.history_page()
 
         mock_handler.call_action.assert_called_once()
         call_args = mock_handler.call_action.call_args
@@ -118,7 +118,7 @@ class TestHistorySearchMethod:
         ctx = create_mock_context(run_id='run_456')
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.history_search(query='test query')
+        await proxy.history_search(query='test query')
 
         call_args = mock_handler.call_action.call_args
         assert call_args[0][0] == PluginToRuntimeAction.HISTORY_SEARCH
@@ -166,7 +166,7 @@ class TestEventGetMethod:
         ctx = create_mock_context(run_id='run_789')
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.event_get(event_id='event_1')
+        await proxy.event_get(event_id='event_1')
 
         call_args = mock_handler.call_action.call_args
         assert call_args[0][0] == PluginToRuntimeAction.EVENT_GET
@@ -190,7 +190,7 @@ class TestEventPageMethod:
         ctx = create_mock_context(run_id='run_abc')
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.event_page()
+        await proxy.event_page()
 
         call_args = mock_handler.call_action.call_args
         assert call_args[0][0] == PluginToRuntimeAction.EVENT_PAGE

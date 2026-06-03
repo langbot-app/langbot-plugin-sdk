@@ -49,7 +49,6 @@ class MockHandler:
 
 def create_mock_context(
     run_id: str = 'test_run',
-    query_id: int | None = None,
     deadline_at: float | None = None,
     models: list[dict] | None = None,
     tools: list[dict] | None = None,
@@ -68,7 +67,7 @@ def create_mock_context(
         ),
         input=AgentInput(content='test input'),
         delivery=DeliveryContext(surface='test'),
-        runtime=AgentRuntimeContext(query_id=query_id, deadline_at=deadline_at),
+        runtime=AgentRuntimeContext(deadline_at=deadline_at),
         resources=AgentResources(
             models=[ModelResource.model_validate(m) for m in (models or [])],
             tools=[ToolResource.model_validate(t) for t in (tools or [])],
@@ -253,7 +252,6 @@ class TestAgentRunAPIProxyResourceValidation:
 
         ctx = create_mock_context(
             run_id='run_tool_test',
-            query_id=123,
             tools=[{'tool_name': 'web_search'}]
         )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
@@ -265,7 +263,7 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert data['run_id'] == 'run_tool_test'
         assert data['tool_name'] == 'web_search'
-        assert data['query_id'] == 123  # Auto-filled from ctx
+        assert 'query_id' not in data
 
     @pytest.mark.anyio
     async def test_call_tool_with_unauthorized_tool_raises_error(self):
@@ -292,12 +290,10 @@ class TestAgentRunAPIProxyResourceValidation:
 
         ctx = create_mock_context(
             run_id='run_kb_test',
-            query_id=456,
             knowledge_bases=[{'kb_id': 'kb_001'}]
         )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        # Note: query_id is NOT passed - auto-filled from ctx
         await proxy.retrieve_knowledge('kb_001', 'search query')
 
         call_args = mock_handler.call_action_mock.call_args
@@ -305,7 +301,7 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert data['run_id'] == 'run_kb_test'
         assert data['kb_id'] == 'kb_001'
-        assert data['query_id'] == 456  # Auto-filled from ctx.runtime.query_id
+        assert 'query_id' not in data
 
     @pytest.mark.anyio
     async def test_retrieve_knowledge_with_unauthorized_kb_raises_error(self):
@@ -325,66 +321,50 @@ class TestAgentRunAPIProxyResourceValidation:
         assert 'not authorized' in str(exc_info.value)
 
 
-class TestRetrieveKnowledgeAutoQueryId:
-    """Tests for retrieve_knowledge auto-using query_id from AgentRunContext."""
+class TestAgentRunAPIProxyNoQueryId:
+    """AgentRunAPIProxy does not expose or forward query_id."""
 
-    def test_query_id_property_from_runtime_context(self):
-        """query_id property returns ctx.runtime.query_id."""
-        ctx = create_mock_context(run_id='test_run', query_id=789)
+    def test_query_id_property_is_not_exposed(self):
+        ctx = create_mock_context(run_id='test_run')
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert proxy.query_id == 789
-
-    def test_query_id_defaults_to_zero_when_none(self):
-        """query_id defaults to 0 when ctx.runtime.query_id is None."""
-        ctx = create_mock_context(run_id='test_run', query_id=None)
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
-
-        assert proxy.query_id == 0
+        assert not hasattr(proxy, 'query_id')
 
     @pytest.mark.anyio
-    async def test_retrieve_knowledge_auto_uses_ctx_query_id(self):
-        """retrieve_knowledge() auto-uses query_id from ctx.runtime.query_id."""
+    async def test_retrieve_knowledge_does_not_send_query_id(self):
         mock_handler = MockHandler()
         mock_handler.call_action_mock.return_value = {'results': []}
 
         ctx = create_mock_context(
-            run_id='run_auto_query',
-            query_id=100,  # This should be auto-used
-            knowledge_bases=[{'kb_id': 'kb_001'}]
+            run_id='run_no_query',
+            knowledge_bases=[{'kb_id': 'kb_001'}],
         )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        # Call retrieve_knowledge without explicit query_id parameter
         await proxy.retrieve_knowledge('kb_001', 'search query')
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
 
-        # query_id should be auto-filled from ctx.runtime.query_id
-        assert data['query_id'] == 100
+        assert 'query_id' not in data
 
     @pytest.mark.anyio
-    async def test_call_tool_auto_uses_ctx_query_id(self):
-        """call_tool() auto-uses query_id from ctx.runtime.query_id."""
+    async def test_call_tool_does_not_send_query_id(self):
         mock_handler = MockHandler()
         mock_handler.call_action_mock.return_value = {'result': {}}
 
         ctx = create_mock_context(
-            run_id='run_auto_query',
-            query_id=200,  # This should be auto-used
-            tools=[{'tool_name': 'test_tool'}]
+            run_id='run_no_query',
+            tools=[{'tool_name': 'test_tool'}],
         )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        # Call call_tool without explicit query_id parameter (new signature)
         await proxy.call_tool('test_tool', {'param': 'value'})
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
 
-        # query_id should be auto-filled from ctx.runtime.query_id
-        assert data['query_id'] == 200
+        assert 'query_id' not in data
 
 
 class TestAgentRunAPIProxyStoragePermission:
@@ -712,7 +692,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler = MockHandler()
         mock_handler.call_action_mock.return_value = {'result': {}}
 
-        ctx = create_mock_context(query_id=123, tools=[{'tool_name': 'test_tool'}])
+        ctx = create_mock_context(tools=[{'tool_name': 'test_tool'}])
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.call_tool('test_tool', {'param': 'value'})
@@ -723,7 +703,8 @@ class TestAgentRunAPIProxyFieldConsistency:
         assert 'run_id' in data
         assert 'tool_name' in data
         assert 'parameters' in data
-        assert 'query_id' in data
+        assert 'query_id' not in data
+        assert 'session' not in data
 
     @pytest.mark.anyio
     async def test_retrieve_knowledge_sends_correct_fields(self):
@@ -731,7 +712,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler = MockHandler()
         mock_handler.call_action_mock.return_value = {'results': []}
 
-        ctx = create_mock_context(query_id=456, knowledge_bases=[{'kb_id': 'kb_001'}])
+        ctx = create_mock_context(knowledge_bases=[{'kb_id': 'kb_001'}])
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.retrieve_knowledge('kb_001', 'search query', top_k=5, filters={'cat': 'tech'})
@@ -740,7 +721,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         data = call_args[0][1]
 
         assert 'run_id' in data
-        assert 'query_id' in data
+        assert 'query_id' not in data
         assert 'kb_id' in data
         assert 'query_text' in data
         assert 'top_k' in data
@@ -759,7 +740,7 @@ class TestAgentRunAPIProxyStateAPI:
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.state_get('conversation', 'external.session_id')
+        await proxy.state_get('conversation', 'external.session_id')
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
@@ -780,7 +761,7 @@ class TestAgentRunAPIProxyStateAPI:
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.state_set('conversation', 'external.session_id', 'sess_123')
+        await proxy.state_set('conversation', 'external.session_id', 'sess_123')
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
@@ -803,7 +784,7 @@ class TestAgentRunAPIProxyStateAPI:
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.state_delete('conversation', 'external.session_id')
+        await proxy.state_delete('conversation', 'external.session_id')
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]
@@ -824,7 +805,7 @@ class TestAgentRunAPIProxyStateAPI:
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
-        result = await proxy.state_list('conversation', prefix='external.', limit=50)
+        await proxy.state_list('conversation', prefix='external.', limit=50)
 
         call_args = mock_handler.call_action_mock.call_args
         data = call_args[0][1]

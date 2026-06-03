@@ -52,13 +52,9 @@ class AgentRunner(BaseComponent):
                 # Get API proxy with run_id for LLM/tool/KB calls
                 api = self.get_run_api(ctx)
 
-                # Get bootstrap messages if available (NOT core history)
-                # For full history, use ctx.context.available_apis.history_page
-                messages = ctx.bootstrap.messages if ctx.bootstrap else []
-
-                # Or build messages from current input
-                if not messages:
-                    messages = [Message(role="user", content=ctx.input.to_text() or "")]
+                # Build messages from current input. Runners that need history
+                # should pull it through the history APIs.
+                messages = [Message(role="user", content=ctx.input.to_text() or "")]
 
                 # Stream response from LLM (with run_id tracking)
                 model_uuid = ctx.resources.models[0].model_id
@@ -87,7 +83,7 @@ class AgentRunner(BaseComponent):
 
     @property
     def plugin(self) -> Any:
-        """AgentRunner components do not expose the legacy BasePlugin proxy."""
+        """AgentRunner components do not expose the BasePlugin proxy."""
         raise RuntimeError(
             "AgentRunner.plugin is not available. Use self.get_run_api(ctx) for "
             "run-scoped Host APIs, ctx.config for agent/runner config, and "
@@ -101,7 +97,7 @@ class AgentRunner(BaseComponent):
         plugin_config: dict[str, Any] | None = None,
         plugin_identity: str | None = None,
     ) -> None:
-        """Bind runtime-only dependencies without exposing the legacy plugin API surface."""
+        """Bind runtime-only dependencies without exposing the plugin API surface."""
         self._plugin_runtime_handler = plugin_runtime_handler
         self._plugin_config = dict(plugin_config or {})
         self._plugin_identity = plugin_identity
@@ -125,7 +121,7 @@ class AgentRunner(BaseComponent):
         to ensure proper context tracking and resource authorization.
 
         Args:
-            ctx: The agent run context containing run_id, runtime.query_id, and resources.
+            ctx: The agent run context containing run_id, runtime info, and resources.
 
         Returns:
             AgentRunAPIProxy: API proxy with context for Host API calls.
@@ -188,7 +184,7 @@ class AgentRunner(BaseComponent):
             ctx: Agent run context containing:
                 - run_id: Unique ID for this run (REQUIRED for all AgentRunResult factories)
                 - trigger: What triggered this run
-                - conversation: Launcher/sender/bot/pipeline info
+                - conversation: Launcher/sender/bot info
                 - event: Event envelope subset (REQUIRED for Protocol v1)
                 - actor: Who triggered the event
                 - subject: What the event is about
@@ -197,9 +193,8 @@ class AgentRunner(BaseComponent):
                 - resources: Authorized resources (models, tools, KBs, files, storage)
                 - context: ContextAccess - what's inlined, what APIs are available
                 - state: Host-managed scoped state snapshot
-                - runtime: Host/environment info (version, query_id, trace_id, deadline)
+                - runtime: Host/environment info (version, trace_id, deadline)
                 - config: Runner instance configuration
-                - bootstrap: Optional bootstrap messages (NOT core history)
                 - adapter: Host entry-adapter metadata
 
         Yields:

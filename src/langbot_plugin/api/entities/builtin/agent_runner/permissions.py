@@ -11,7 +11,7 @@ class AgentRunnerPermissions(pydantic.BaseModel):
 
     All fields default to empty list. These represent the upper limit
     of what a runner can request. LangBot execution must further filter
-    based on Pipeline/Bot binding scope and user configuration to
+    based on Agent/Bot binding scope and user configuration to
     produce ctx.resources.
     """
 
