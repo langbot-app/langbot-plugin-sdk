@@ -14,7 +14,7 @@ These tests instantiate real PluginConnectionHandler and verify:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
@@ -447,7 +447,7 @@ class TestAgentRunAPIProxyPullAPIPayloads:
             event=AgentEventContext(event_id="e1", event_type="test", source="test"),
             input=AgentInput(content="test"),
             delivery=DeliveryContext(surface="test"),
-            runtime=AgentRuntimeContext(query_id=1),
+            runtime=AgentRuntimeContext(),
             resources=AgentResources(),
         )
 
