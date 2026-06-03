@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import typing
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pydantic
 
 from .enums import ExecutionStatus, NodeStatus
+
+if TYPE_CHECKING:
+    from .query import WorkflowQuery
 
 
 class MessageContext(pydantic.BaseModel):
@@ -167,8 +171,8 @@ class ExecutionContext(pydantic.BaseModel):
     message_context: typing.Optional[MessageContext] = None
     """消息触发时的上下文"""
 
-    query: typing.Optional[str] = None
-    """用户查询文本（用于日志记录）"""
+    query: typing.Optional[typing.Union[str, WorkflowQuery]] = None
+    """用户查询文本或 WorkflowQuery 对象（用于日志记录和获取 launcher_type 等信息）"""
 
     trigger_type: typing.Optional[str] = None
     """触发类型：message | cron | webhook | event"""

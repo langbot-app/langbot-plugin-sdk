@@ -95,6 +95,9 @@ class Message(pydantic.BaseModel):
 
     tool_call_id: typing.Optional[str] = None
 
+    usage: typing.Optional[dict[str, typing.Any]] = None
+    """Token usage info from LLM call (input_tokens, output_tokens, total_tokens)"""
+
     def readable_str(self) -> str:
         if self.content is not None:
             return (
