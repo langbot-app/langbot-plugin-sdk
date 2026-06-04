@@ -111,9 +111,10 @@ async def test_websocket_client_controller_invokes_connection_callback(monkeypat
     captured = {}
     websocket = FakeWebSocket()
 
-    def fake_connect(url, open_timeout):
+    def fake_connect(url, open_timeout, proxy="__unset__"):
         captured["url"] = url
         captured["open_timeout"] = open_timeout
+        captured["proxy"] = proxy
         return FakeWebSocketConnectContext(websocket)
 
     async def callback(connection):
@@ -129,6 +130,8 @@ async def test_websocket_client_controller_invokes_connection_callback(monkeypat
 
     assert captured["url"] == "ws://localhost:9000"
     assert captured["open_timeout"] == 10
+    # Internal control-plane connections must bypass proxy auto-detection.
+    assert captured["proxy"] is None
     assert isinstance(captured["connection"], WebSocketConnection)
     assert "failure" not in captured
 
@@ -137,7 +140,7 @@ async def test_websocket_client_controller_reports_connection_failure(monkeypatc
     captured = {}
     error = OSError("network down")
 
-    def fake_connect(url, open_timeout):
+    def fake_connect(url, open_timeout, proxy=None):
         raise error
 
     async def callback(connection):
