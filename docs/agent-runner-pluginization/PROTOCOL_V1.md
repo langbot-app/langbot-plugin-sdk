@@ -121,7 +121,6 @@ class AgentRunContext(BaseModel):
     state: AgentRunState = AgentRunState()
     runtime: AgentRuntimeContext
     config: dict[str, Any] = {}
-    bootstrap: BootstrapContext | None = None
     adapter: AdapterContext | None = None
     metadata: dict[str, Any] = {}
 ```
@@ -132,9 +131,11 @@ class AgentRunContext(BaseModel):
 - `config`: 当前 Agent/runner 配置，不是插件实例状态。
 - `context`: Host inline 了什么、哪些 pull API 可用。
 - `state`: Host 管理的 scoped 状态快照，持久化。
-- `bootstrap`: 可选的小窗口便利上下文，不是完整历史。
 - `adapter`: Host entry adapter 元数据；不承载核心 Agent 语义。
 - `runtime.metadata`: Host/runtime 可观测性信息，非业务输入契约。
+
+`messages` / `bootstrap` 不是 Protocol v1 字段。runner 如需历史，应根据
+`ctx.context.available_apis` 通过 History pull API 拉取。
 
 ### 5.0.1 AgentRunState
 
@@ -448,9 +449,10 @@ LangBot 按当前 Pipeline 错误策略返回用户提示。
 
 Runtime 必须把异常转换为 `run.failed`，不得让 generator 异常直接泄漏给 LangBot。
 
-## 8. 兼容和废弃
+## 8. 已移除的 PoC 字段
 
-废弃：
+本分支未发布，不保留 PoC 阶段的运行时兼容路径。以下旧概念不属于
+Protocol v1：
 
 - `AgentRunReturn`
 - `type == chunk`
@@ -458,5 +460,3 @@ Runtime 必须把异常转换为 `run.failed`，不得让 generator 异常直接
 - `type == tool_call`
 - `type == finish`
 - query 视角 context 作为主协议
-
-允许 SDK 提供 legacy helper，但 LangBot 新实现只发送和接收 v1。
