@@ -115,6 +115,10 @@ class AgentRunAPIProxy:
         available_apis = getattr(getattr(self.ctx, "context", None), "available_apis", None)
         return bool(getattr(available_apis, name, False))
 
+    def _require_context_api(self, name: str) -> None:
+        if not self._context_api_enabled(name):
+            raise PermissionDeniedError(f"{name} is not available for this run")
+
     # ================= Resource Helper Methods =================
 
     def get_allowed_models(self) -> list[Any]:
@@ -177,14 +181,16 @@ class AgentRunAPIProxy:
         self,
         llm_model_uuid: str,
         messages: list[provider_message.Message],
-        funcs: list[resource_tool.LLMTool] = [],
-        extra_args: dict[str, Any] = {},
+        funcs: list[resource_tool.LLMTool] | None = None,
+        extra_args: dict[str, Any] | None = None,
         timeout: float | None = None,
         remove_think: bool | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
         self._validate_model_access(llm_model_uuid)
         effective_timeout = self._bounded_timeout(default=120.0, requested=timeout)
+        funcs = funcs or []
+        extra_args = extra_args or {}
         payload = {
             "run_id": self.run_id,
             "llm_model_uuid": llm_model_uuid,
@@ -206,13 +212,15 @@ class AgentRunAPIProxy:
         self,
         llm_model_uuid: str,
         messages: list[provider_message.Message],
-        funcs: list[resource_tool.LLMTool] = [],
-        extra_args: dict[str, Any] = {},
+        funcs: list[resource_tool.LLMTool] | None = None,
+        extra_args: dict[str, Any] | None = None,
         remove_think: bool | None = None,
     ):
         """Invoke an LLM model with streaming, permission validation."""
         self._validate_model_access(llm_model_uuid)
         effective_timeout = self._bounded_timeout(default=120.0)
+        funcs = funcs or []
+        extra_args = extra_args or {}
         payload = {
             "run_id": self.run_id,
             "llm_model_uuid": llm_model_uuid,
@@ -282,8 +290,7 @@ class AgentRunAPIProxy:
 
     async def get_prompt(self) -> list[dict[str, Any]]:
         """Get the Host effective prompt for this run when available."""
-        if not self._context_api_enabled("prompt_get"):
-            raise PermissionDeniedError("prompt_get is not available for this run")
+        self._require_context_api("prompt_get")
 
         timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
@@ -544,6 +551,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If not authorized for this conversation.
         """
+        self._require_context_api("history_page")
         timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.HISTORY_PAGE,
@@ -582,6 +590,7 @@ class AgentRunAPIProxy:
         Note:
             Basic implementation may return unsupported error or limited results.
         """
+        self._require_context_api("history_search")
         timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.HISTORY_SEARCH,
@@ -609,6 +618,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If event not accessible by current run.
         """
+        self._require_context_api("event_get")
         timeout = self._bounded_timeout(default=15.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.EVENT_GET,
@@ -641,6 +651,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If not authorized for this conversation.
         """
+        self._require_context_api("event_page")
         timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.EVENT_PAGE,
@@ -670,6 +681,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If artifact not accessible by current run.
         """
+        self._require_context_api("artifact_metadata")
         timeout = self._bounded_timeout(default=15.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.ARTIFACT_METADATA,
@@ -715,6 +727,7 @@ class AgentRunAPIProxy:
             Host may enforce max read size limits to prevent memory exhaustion.
             For large artifacts, prefer using file_key and chunked transfer.
         """
+        self._require_context_api("artifact_read")
         timeout = self._bounded_timeout(default=60.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.ARTIFACT_READ,
@@ -765,6 +778,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If scope not enabled by state_policy.
         """
+        self._require_context_api("state")
         timeout = self._bounded_timeout(default=15.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.STATE_GET,
@@ -791,6 +805,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If scope not enabled by state_policy.
         """
+        self._require_context_api("state")
         timeout = self._bounded_timeout(default=15.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.STATE_SET,
@@ -817,6 +832,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If scope not enabled by state_policy.
         """
+        self._require_context_api("state")
         timeout = self._bounded_timeout(default=15.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.STATE_DELETE,
@@ -849,6 +865,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: If scope not enabled by state_policy.
         """
+        self._require_context_api("state")
         timeout = self._bounded_timeout(default=15.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.STATE_LIST,
