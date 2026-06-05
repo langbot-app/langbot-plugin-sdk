@@ -870,6 +870,15 @@ class PluginManager:
         runners: list[dict[str, typing.Any]] = []
 
         for plugin in self.plugins:
+            if (
+                plugin.status
+                != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+            ):
+                continue
+
+            if not plugin.enabled:
+                continue
+
             # Filter by include_plugins if specified
             if include_plugins is not None:
                 plugin_id = (
@@ -882,17 +891,26 @@ class PluginManager:
                 if component.manifest.kind == AgentRunner.__kind__:
                     # Get spec from manifest, with defaults
                     spec = component.manifest.spec or {}
+                    runner_cls = (
+                        type(component.component_instance)
+                        if isinstance(component.component_instance, AgentRunner)
+                        else AgentRunner
+                    )
 
                     # Parse capabilities from manifest or use class defaults
-                    capabilities_data = spec.get("capabilities", {})
+                    capabilities_data = spec.get("capabilities") or (
+                        runner_cls.get_capabilities().model_dump(mode="json")
+                    )
                     capabilities = AgentRunnerCapabilities(**capabilities_data)
 
                     # Parse permissions from manifest or use class defaults
-                    permissions_data = spec.get("permissions", {})
+                    permissions_data = spec.get("permissions") or (
+                        runner_cls.get_permissions().model_dump(mode="json")
+                    )
                     permissions = AgentRunnerPermissions(**permissions_data)
 
                     # Get config schema
-                    config_schema = spec.get("config", [])
+                    config_schema = spec.get("config") or runner_cls.get_config_schema()
 
                     # Get protocol version
                     protocol_version = spec.get("protocol_version", "1")
@@ -953,6 +971,25 @@ class PluginManager:
             ).model_dump(mode="json")
             return
 
+        if not target_plugin.enabled:
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Plugin {plugin_author}/{plugin_name} is disabled",
+                code="runner.plugin_disabled",
+            ).model_dump(mode="json")
+            return
+
+        if (
+            target_plugin.status
+            != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+        ):
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Plugin {plugin_author}/{plugin_name} is not initialized",
+                code="runner.plugin_not_initialized",
+            ).model_dump(mode="json")
+            return
+
         # Find the component (supports multiple runners per plugin)
         target_component = None
         for component in target_plugin.components:
@@ -1008,8 +1045,12 @@ class PluginManager:
                 retryable=True,
             ).model_dump(mode="json")
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.exception(
+                "Error forwarding AgentRunner %s/%s:%s",
+                plugin_author,
+                plugin_name,
+                runner_name,
+            )
             yield AgentRunResult.run_failed(
                 run_id=run_id,
                 error=f"Error forwarding to plugin: {e}",

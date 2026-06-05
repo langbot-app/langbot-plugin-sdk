@@ -18,6 +18,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigge
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
 from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+    ContextAccess,
+    ContextAPICapabilities,
+)
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 
 
@@ -37,6 +41,14 @@ def create_mock_context(
         ),
         input=AgentInput(text='test input'),
         delivery=DeliveryContext(surface='test'),
+        context=ContextAccess(
+            available_apis=ContextAPICapabilities(
+                history_page=True,
+                history_search=True,
+                event_get=True,
+                event_page=True,
+            ),
+        ),
         runtime=AgentRuntimeContext(deadline_at=None),
         resources=AgentResources(
             models=[ModelResource(model_id='model_001')],
