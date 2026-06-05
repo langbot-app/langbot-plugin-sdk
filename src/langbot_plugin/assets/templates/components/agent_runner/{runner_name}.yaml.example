@@ -18,7 +18,7 @@ spec:
     multimodal_input: false
     skill_authoring: false
     skill_injection: false
-    event_context: false
+    event_context: true
     platform_api: false
     interrupt: false
     stateful_session: false
