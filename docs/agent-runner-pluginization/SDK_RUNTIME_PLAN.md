@@ -59,7 +59,6 @@ src/langbot_plugin/api/entities/builtin/agent_runner/
   resources.py
   result.py
   runtime.py
-  legacy.py
 ```
 
 必要修改：
@@ -144,37 +143,36 @@ Runtime discovery 输出时必须包含原始 component manifest，并保证 `sp
 class AgentRunContext(BaseModel):
     run_id: str
     trigger: AgentTrigger
+    event: AgentEventContext
     conversation: ConversationContext | None = None
-    event: AgentEventContext | None = None
     actor: ActorContext | None = None
     subject: SubjectContext | None = None
-    messages: list[provider_message.Message] = Field(default_factory=list)
     input: AgentInput
+    delivery: DeliveryContext
     resources: AgentResources
+    context: ContextAccess = Field(default_factory=ContextAccess)
+    state: AgentRunState = Field(default_factory=AgentRunState)
     runtime: AgentRuntimeContext
     config: dict[str, Any] = Field(default_factory=dict)
+    adapter: AdapterContext | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 ```
 
 约束：
 
 - `run_id` 是本次 runner 调用 id。
 - `trigger.type` 当前消息 Pipeline 使用 `message.received`。
-- `conversation` 承载 launcher/sender/bot/pipeline/history 语义。
-- `event` 是事件 envelope 子集，用于未来 EBA。
+- `event` 是必选事件 envelope 子集。
+- `conversation` 承载会话标识和入口上下文，不承载完整历史窗口。
 - `input` 是主输入，支持 text、content elements、attachments、raw message chain。
+- `delivery` 描述输出 surface 与能力。
 - `resources` 是 LangBot 已授权资源列表。
+- `context` 描述 Host inline policy 和可用 pull API。
+- `state` 是 Host 管理的 scoped 状态快照。
 - `runtime` 提供 host、workspace、bot、pipeline、query、trace、deadline。
 - `config` 是当前 runner 实例配置。
 
-Legacy helper：
-
-```python
-ctx.input.to_text()
-ctx.conversation.to_legacy_session()
-ctx.to_legacy_query_context()
-```
-
-helper 只能用于官方插件迁移，不能作为 LangBot 构造 context 的目标模型。
+`messages` 不是 context 字段；runner 通过 history pull API 拉取历史。
 
 ## 7. AgentRunResult v1
 
@@ -214,10 +212,7 @@ AgentRunResult.run_completed(run_id: str, message: Message | None = None)
 AgentRunResult.run_failed(run_id: str, error: str, code: str | None = None)
 ```
 
-兼容策略：
-
-- 不再推荐 `chunk/text/tool_call/finish`。
-- 如果必须短期兼容旧插件，可在 runtime 内部增加 legacy normalizer，但必须标记 deprecated，并在 LangBot 侧只接收 v1。
+旧 `chunk/text/tool_call/finish` 不属于 Protocol v1。
 
 ## 8. Runtime discovery
 
@@ -315,7 +310,6 @@ SDK 单测：
 
 - `AgentRunContext` 最小字段 validate
 - `AgentRunResult` 每个类型 validate
-- legacy helper 行为
 - capabilities / permissions 默认值
 - AgentRunner manifest 多组件 discovery
 - `run_agent` 成功流式输出
