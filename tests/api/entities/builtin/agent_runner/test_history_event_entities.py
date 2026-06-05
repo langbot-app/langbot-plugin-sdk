@@ -1,8 +1,6 @@
 """Tests for TranscriptItem, HistoryPage, EventPage, AgentEventRecord entities."""
 from __future__ import annotations
 
-import pytest
-
 from langbot_plugin.api.entities.builtin.agent_runner.transcript import TranscriptItem
 from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
     HistoryPage,

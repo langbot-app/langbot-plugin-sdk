@@ -1,7 +1,7 @@
 """Tests for artifact API proxy methods."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
