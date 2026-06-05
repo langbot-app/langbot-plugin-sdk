@@ -37,6 +37,32 @@ from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 logger = logging.getLogger(__name__)
 
 
+def _apply_agent_runner_class_defaults(
+    component_manifest: ComponentManifest,
+    component_impl_cls: type[AgentRunner],
+) -> None:
+    """Fill empty AgentRunner manifest declarations from class overrides."""
+    spec = component_manifest.spec
+    if not isinstance(spec, dict):
+        return
+
+    spec.setdefault("protocol_version", AgentRunner.__protocol_version__)
+
+    capabilities = component_impl_cls.get_capabilities()
+    if not spec.get("capabilities") and capabilities != AgentRunner.get_capabilities():
+        spec["capabilities"] = capabilities.model_dump(mode="json")
+
+    permissions = component_impl_cls.get_permissions()
+    if not spec.get("permissions") and permissions != AgentRunner.get_permissions():
+        spec["permissions"] = permissions.model_dump(mode="json")
+
+    config_schema = component_impl_cls.get_config_schema()
+    if not spec.get("config") and config_schema != AgentRunner.get_config_schema():
+        spec["config"] = config_schema
+
+    component_manifest.manifest["spec"] = spec
+
+
 class PluginRuntimeController:
     """The controller for running plugins."""
 
@@ -290,6 +316,10 @@ class PluginRuntimeController:
                     assert issubclass(component_impl_cls, component_cls)
                     component_container.component_instance = component_impl_cls()
                     if issubclass(component_impl_cls, AgentRunner):
+                        _apply_agent_runner_class_defaults(
+                            component_container.manifest,
+                            component_impl_cls,
+                        )
                         component_container.component_instance.bind_runtime(
                             plugin_runtime_handler=self.handler,
                             plugin_config=self.plugin_container.plugin_config,
