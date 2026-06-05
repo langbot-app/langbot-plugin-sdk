@@ -133,7 +133,13 @@ def test_agent_run_external_tools_call_agent_run_api() -> None:
             "filters": {},
         },
     )
-    assert api.calls[1][0] == "call_tool"
+    assert api.calls[1] == (
+        "call_tool",
+        {
+            "tool_name": "weather",
+            "parameters": {"city": "Shanghai"},
+        },
+    )
 
 
 def test_agent_runner_parent_creates_external_mcp_bridge(monkeypatch) -> None:
@@ -277,7 +283,6 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
             {
                 "tool_name": "weather",
                 "parameters": {"city": "Shanghai"},
-                "session": {},
             },
         ),
     ]

@@ -42,7 +42,6 @@ class CallToolArgs(pydantic.BaseModel):
 
     tool_name: str
     parameters: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    session: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
 
 def _dump_jsonable(value: typing.Any) -> typing.Any:
@@ -197,5 +196,4 @@ class AgentRunExternalTools:
         return await self.api.call_tool(
             tool_name=args.tool_name,
             parameters=args.parameters,
-            session=args.session,
         )
