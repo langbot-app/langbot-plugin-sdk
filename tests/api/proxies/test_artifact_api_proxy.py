@@ -20,6 +20,12 @@ def make_context() -> AgentRunContext:
         },
         input={"text": "Hello"},
         delivery={"surface": "test"},
+        context={
+            "available_apis": {
+                "artifact_metadata": True,
+                "artifact_read": True,
+            },
+        },
         resources={"models": [], "tools": [], "knowledge_bases": [], "files": [], "storage": {}},
         runtime={"langbot_version": "1.0", "sdk_protocol_version": "1", "deadline_at": None, "metadata": {}},
         state={},

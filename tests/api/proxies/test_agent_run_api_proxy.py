@@ -60,8 +60,22 @@ def create_mock_context(
     storage: dict | None = None,
     files: list[dict] | None = None,
     prompt_get: bool = False,
+    available_apis: ContextAPICapabilities | None = None,
 ) -> AgentRunContext:
     """Create a mock AgentRunContext for testing."""
+    if available_apis is None:
+        available_apis = ContextAPICapabilities(
+            history_page=True,
+            history_search=True,
+            event_get=True,
+            event_page=True,
+            artifact_metadata=True,
+            artifact_read=True,
+            state=True,
+            storage=True,
+            prompt_get=prompt_get,
+        )
+
     return AgentRunContext(
         run_id=run_id,
         trigger=AgentTrigger(type='user_message'),
@@ -73,7 +87,7 @@ def create_mock_context(
         input=AgentInput(content='test input'),
         delivery=DeliveryContext(surface='test'),
         context=ContextAccess(
-            available_apis=ContextAPICapabilities(prompt_get=prompt_get),
+            available_apis=available_apis,
         ),
         runtime=AgentRuntimeContext(deadline_at=deadline_at),
         resources=AgentResources(
@@ -300,7 +314,10 @@ class TestAgentRunAPIProxyResourceValidation:
     @pytest.mark.anyio
     async def test_get_prompt_requires_available_api(self):
         """get_prompt is rejected unless Host exposed prompt_get for this run."""
-        proxy = AgentRunAPIProxy(ctx=create_mock_context(), plugin_runtime_handler=MockHandler())
+        proxy = AgentRunAPIProxy(
+            ctx=create_mock_context(available_apis=ContextAPICapabilities()),
+            plugin_runtime_handler=MockHandler(),
+        )
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.get_prompt()
@@ -361,6 +378,45 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert 'kb_999' in str(exc_info.value)
         assert 'not authorized' in str(exc_info.value)
+
+
+class TestAgentRunAPIProxyAvailableAPIGate:
+    """Run-scoped pull APIs must fail locally when Host did not expose them."""
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("method_name", "capability_name", "args"),
+        [
+            ("history_page", "history_page", ()),
+            ("history_search", "history_search", ("query",)),
+            ("event_get", "event_get", ("event_1",)),
+            ("event_page", "event_page", ()),
+            ("artifact_metadata", "artifact_metadata", ("artifact_1",)),
+            ("artifact_read", "artifact_read", ("artifact_1",)),
+            ("state_get", "state", ("conversation", "external.key")),
+            ("state_set", "state", ("conversation", "external.key", {"v": 1})),
+            ("state_delete", "state", ("conversation", "external.key")),
+            ("state_list", "state", ("conversation",)),
+        ],
+    )
+    async def test_pull_api_requires_available_api_before_forwarding(
+        self,
+        method_name: str,
+        capability_name: str,
+        args: tuple,
+    ):
+        mock_handler = MockHandler()
+        proxy = AgentRunAPIProxy(
+            ctx=create_mock_context(available_apis=ContextAPICapabilities()),
+            plugin_runtime_handler=mock_handler,
+        )
+
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await getattr(proxy, method_name)(*args)
+
+        assert capability_name in str(exc_info.value)
+        mock_handler.call_action_mock.assert_not_called()
+        mock_handler.call_action_generator_mock.assert_not_called()
 
 
 class TestAgentRunAPIProxyNoQueryId:

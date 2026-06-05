@@ -8,7 +8,14 @@ from unittest.mock import Mock
 
 import pytest
 
+from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
+from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
+    AgentRunnerCapabilities,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
+    AgentRunnerPermissions,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
@@ -18,6 +25,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventCon
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+from langbot_plugin.runtime.plugin.container import RuntimeContainerStatus
 
 
 class MockAgentRunner(AgentRunner):
@@ -72,6 +80,27 @@ class SlowAgentRunner(AgentRunner):
         yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
 
 
+class ClassDeclaredAgentRunner(AgentRunner):
+    """AgentRunner that declares runner metadata in Python class defaults."""
+
+    @classmethod
+    def get_capabilities(cls) -> AgentRunnerCapabilities:
+        return AgentRunnerCapabilities(streaming=True, tool_calling=True)
+
+    @classmethod
+    def get_config_schema(cls) -> list[dict[str, typing.Any]]:
+        return [{"type": "llm-model-selector", "name": "model"}]
+
+    @classmethod
+    def get_permissions(cls) -> AgentRunnerPermissions:
+        return AgentRunnerPermissions(models=["invoke"], tools=["call"])
+
+    async def run(
+        self, ctx: AgentRunContext
+    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+        yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
+
+
 def create_mock_component_manifest(
     runner_name: str,
     spec: dict | None = None,
@@ -108,6 +137,8 @@ def create_mock_plugin(
     capabilities: dict | None = None,
     permissions: dict | None = None,
     mock_handler_responses: list[list[dict]] | None = None,
+    status: RuntimeContainerStatus = RuntimeContainerStatus.INITIALIZED,
+    enabled: bool = True,
 ):
     """Create a mock plugin container with AgentRunner components.
 
@@ -140,9 +171,8 @@ def create_mock_plugin(
         components.append(component)
 
     plugin.components = components
-    plugin.status = Mock()
-    plugin.status.value = "INITIALIZED"
-    plugin.enabled = True
+    plugin.status = status
+    plugin.enabled = enabled
 
     # Mock runtime plugin handler for forwarding
     if mock_handler_responses:
@@ -165,6 +195,21 @@ def create_mock_plugin(
         plugin._runtime_plugin_handler = None
 
     return plugin
+
+
+class RecordingRuntimeHandler:
+    """Minimal runtime handler that records whether runner forwarding happens."""
+
+    def __init__(self, responses: list[dict] | None = None):
+        self.calls: list[tuple[typing.Any, dict, float]] = []
+        self.responses = responses or [
+            {"type": "run.completed", "data": {"finish_reason": "stop"}}
+        ]
+
+    async def call_action_generator(self, action, data, timeout=300):
+        self.calls.append((action, data, timeout))
+        for response in self.responses:
+            yield response
 
 
 def create_run_context() -> AgentRunContext:
@@ -272,6 +317,68 @@ class TestListAgentRunners:
         # Empty filter returns all
         runners = await mgr.list_agent_runners()
         assert len(runners) == 2
+
+    @pytest.mark.anyio
+    async def test_skips_disabled_and_uninitialized_plugins(self):
+        """Runner listing uses the same plugin lifecycle gate as event dispatch."""
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mock_context = Mock(spec=RuntimeContext)
+        mgr = PluginManager(mock_context)
+        mgr.plugins = [
+            create_mock_plugin(
+                "author",
+                "ready",
+                [("ready_runner", MockAgentRunner())],
+            ),
+            create_mock_plugin(
+                "author",
+                "disabled",
+                [("disabled_runner", MockAgentRunner())],
+                enabled=False,
+            ),
+            create_mock_plugin(
+                "author",
+                "mounted",
+                [("mounted_runner", MockAgentRunner())],
+                status=RuntimeContainerStatus.MOUNTED,
+            ),
+        ]
+
+        runners = await mgr.list_agent_runners()
+
+        assert [runner["plugin_name"] for runner in runners] == ["ready"]
+
+    @pytest.mark.anyio
+    async def test_uses_runner_class_defaults_when_manifest_omits_spec_details(self):
+        """Python AgentRunner declarations are reflected in LIST_AGENT_RUNNERS."""
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mock_context = Mock(spec=RuntimeContext)
+        mgr = PluginManager(mock_context)
+        plugin = create_mock_plugin(
+            "test-author",
+            "class-declared-plugin",
+            [("default", ClassDeclaredAgentRunner())],
+        )
+        plugin.components[0].manifest = create_mock_component_manifest(
+            "default",
+            spec={"protocol_version": "1"},
+        )
+        mgr.plugins = [plugin]
+
+        runners = await mgr.list_agent_runners()
+
+        assert len(runners) == 1
+        assert runners[0]["capabilities"]["streaming"] is True
+        assert runners[0]["capabilities"]["tool_calling"] is True
+        assert runners[0]["permissions"]["models"] == ["invoke"]
+        assert runners[0]["permissions"]["tools"] == ["call"]
+        assert runners[0]["config"] == [
+            {"type": "llm-model-selector", "name": "model"}
+        ]
 
 
 class TestRunAgent:
@@ -467,6 +574,52 @@ class TestRunAgent:
         assert results[0]["data"]["code"] == "runner.handler_not_found"
 
     @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("enabled", "status", "expected_code"),
+        [
+            (False, RuntimeContainerStatus.INITIALIZED, "runner.plugin_disabled"),
+            (True, RuntimeContainerStatus.MOUNTED, "runner.plugin_not_initialized"),
+        ],
+    )
+    async def test_run_agent_rejects_plugins_outside_ready_gate(
+        self,
+        enabled: bool,
+        status: RuntimeContainerStatus,
+        expected_code: str,
+    ):
+        """Disabled or uninitialized plugins are denied before handler forwarding."""
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mock_context = Mock(spec=RuntimeContext)
+        mgr = PluginManager(mock_context)
+        plugin = create_mock_plugin(
+            "test-author",
+            "test-plugin",
+            [("default", MockAgentRunner())],
+            enabled=enabled,
+            status=status,
+        )
+        runtime_handler = RecordingRuntimeHandler()
+        plugin._runtime_plugin_handler = runtime_handler
+        mgr.plugins = [plugin]
+
+        ctx = create_run_context()
+        results = []
+        async for result in mgr.run_agent(
+            "test-author",
+            "test-plugin",
+            "default",
+            ctx.model_dump(mode="json"),
+        ):
+            results.append(result)
+
+        assert runtime_handler.calls == []
+        assert len(results) == 1
+        assert results[0]["type"] == "run.failed"
+        assert results[0]["data"]["code"] == expected_code
+
+    @pytest.mark.anyio
     async def test_run_agent_runner_not_initialized_forwarded(self):
         """Test run_agent when plugin handler returns not_initialized error."""
         from langbot_plugin.runtime.plugin.mgr import PluginManager
@@ -580,3 +733,93 @@ async def test_plugin_runtime_runner_exception_includes_run_id():
     assert results[-1]["run_id"] == "test_run"
     assert results[-1]["data"]["code"] == "runner.exception"
     assert "Intentional test failure" in results[-1]["data"]["error"]
+
+
+@pytest.mark.anyio
+async def test_plugin_runtime_context_validation_returns_structured_run_failed():
+    """RUN_AGENT context validation failure must stay inside the runner stream."""
+    from langbot_plugin.cli.run.handler import PluginRuntimeHandler
+    from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+
+    async def initialize_plugin(_settings):
+        return None
+
+    handler = PluginRuntimeHandler(Mock(), initialize_plugin)
+    handler.plugin_container = Mock(components=[])
+
+    run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
+    responses = [
+        response
+        async for response in run_agent({
+            "runner_name": "default",
+            "context": {"run_id": "bad_run", "invalid": "data"},
+        })
+    ]
+
+    assert len(responses) == 1
+    assert responses[0].code == 0
+    assert responses[0].data["type"] == "run.failed"
+    assert responses[0].data["run_id"] == "bad_run"
+    assert responses[0].data["data"]["code"] == "runner.context_invalid"
+
+
+@pytest.mark.anyio
+async def test_plugin_runtime_runner_not_found_returns_structured_run_failed():
+    """RUN_AGENT not-found must be a stream payload, not an ActionResponse signature error."""
+    from langbot_plugin.cli.run.handler import PluginRuntimeHandler
+    from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+
+    async def initialize_plugin(_settings):
+        return None
+
+    handler = PluginRuntimeHandler(Mock(), initialize_plugin)
+    component = Mock()
+    component.manifest = create_mock_component_manifest("other")
+    component.component_instance = MockAgentRunner()
+    handler.plugin_container = Mock(components=[component])
+
+    run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
+    responses = [
+        response
+        async for response in run_agent({
+            "runner_name": "missing",
+            "context": create_run_context().model_dump(mode="json"),
+        })
+    ]
+
+    assert len(responses) == 1
+    assert responses[0].code == 0
+    assert responses[0].data["type"] == "run.failed"
+    assert responses[0].data["run_id"] == "test_run"
+    assert responses[0].data["data"]["code"] == "runner.not_found"
+
+
+@pytest.mark.anyio
+async def test_plugin_runtime_uninitialized_runner_returns_structured_run_failed():
+    """RUN_AGENT uninitialized branch must preserve runner.not_initialized."""
+    from langbot_plugin.cli.run.handler import PluginRuntimeHandler
+    from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+
+    async def initialize_plugin(_settings):
+        return None
+
+    handler = PluginRuntimeHandler(Mock(), initialize_plugin)
+    component = Mock()
+    component.manifest = create_mock_component_manifest("default")
+    component.component_instance = NoneComponent()
+    handler.plugin_container = Mock(components=[component])
+
+    run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
+    responses = [
+        response
+        async for response in run_agent({
+            "runner_name": "default",
+            "context": create_run_context().model_dump(mode="json"),
+        })
+    ]
+
+    assert len(responses) == 1
+    assert responses[0].code == 0
+    assert responses[0].data["type"] == "run.failed"
+    assert responses[0].data["run_id"] == "test_run"
+    assert responses[0].data["data"]["code"] == "runner.not_initialized"

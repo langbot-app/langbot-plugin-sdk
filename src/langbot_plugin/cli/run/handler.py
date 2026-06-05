@@ -387,12 +387,23 @@ class PluginRuntimeHandler(Handler):
 
             runner_name = data["runner_name"]
             context_data = data["context"]
+            run_id = (
+                context_data.get("run_id", "unknown")
+                if isinstance(context_data, dict)
+                else "unknown"
+            )
 
             # Validate context
             try:
                 run_context = AgentRunContext.model_validate(context_data)
             except Exception as e:
-                yield ActionResponse.error(f"Context validation failed: {e}")
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_id,
+                        error=f"Context validation failed: {e}",
+                        code="runner.context_invalid",
+                    ).model_dump(mode="json")
+                )
                 return
 
             # Find the AgentRunner component
@@ -404,17 +415,23 @@ class PluginRuntimeHandler(Handler):
                         break
 
             if runner_component is None:
-                yield ActionResponse.error(
-                    f"AgentRunner {runner_name} not found",
-                    data={"type": "run.failed", "data": {"error": f"AgentRunner {runner_name} not found", "code": "runner.not_found"}}
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"AgentRunner {runner_name} not found",
+                        code="runner.not_found",
+                    ).model_dump(mode="json")
                 )
                 return
 
             # Check if initialized
             if isinstance(runner_component.component_instance, NoneComponent):
-                yield ActionResponse.error(
-                    f"AgentRunner {runner_name} not initialized",
-                    data={"type": "run.failed", "data": {"error": f"AgentRunner {runner_name} not initialized", "code": "runner.not_initialized"}}
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"AgentRunner {runner_name} not initialized",
+                        code="runner.not_initialized",
+                    ).model_dump(mode="json")
                 )
                 return
 
@@ -429,8 +446,7 @@ class PluginRuntimeHandler(Handler):
                 ):
                     yield ActionResponse.success(result.model_dump(mode="json"))
             except Exception as e:
-                import traceback
-                traceback.print_exc()
+                logger.exception("AgentRunner %s failed", runner_name)
                 yield ActionResponse.success(
                     AgentRunResult.run_failed(
                         run_id=run_context.run_id,

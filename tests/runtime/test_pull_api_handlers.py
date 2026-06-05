@@ -447,6 +447,7 @@ class TestAgentRunAPIProxyPullAPIPayloads:
             event=AgentEventContext(event_id="e1", event_type="test", source="test"),
             input=AgentInput(content="test"),
             delivery=DeliveryContext(surface="test"),
+            context={"available_apis": {"state": True}},
             runtime=AgentRuntimeContext(),
             resources=AgentResources(),
         )
