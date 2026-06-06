@@ -104,7 +104,9 @@ class BoxServerHandler(Handler):
         self._runtime = runtime
         self._register_actions()
 
-    async def _call_skill_store(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    async def _call_skill_store(
+        self, method_name: str, *args: Any, **kwargs: Any
+    ) -> Any:
         method = getattr(self._runtime.skill_store, method_name)
         return await asyncio.to_thread(method, *args, **kwargs)
 
@@ -210,8 +212,7 @@ class BoxServerHandler(Handler):
         async def update_skill(data: dict[str, Any]) -> ActionResponse:
             try:
                 skill = await self._call_skill_store(
-                    "update_skill",
-                    data["name"], data["skill"]
+                    "update_skill", data["name"], data["skill"]
                 )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
@@ -251,8 +252,7 @@ class BoxServerHandler(Handler):
         async def read_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
                 result = await self._call_skill_store(
-                    "read_skill_file",
-                    data["name"], data["path"]
+                    "read_skill_file", data["name"], data["path"]
                 )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
@@ -263,7 +263,9 @@ class BoxServerHandler(Handler):
             try:
                 result = await self._call_skill_store(
                     "write_skill_file",
-                    data["name"], data["path"], data.get("content", "")
+                    data["name"],
+                    data["path"],
+                    data.get("content", ""),
                 )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")

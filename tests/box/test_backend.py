@@ -34,26 +34,26 @@ from langbot_plugin.box.models import (
 
 @pytest.fixture
 def logger():
-    return logging.getLogger('test.docker')
+    return logging.getLogger("test.docker")
 
 
 @pytest.fixture
 def backend(logger):
     b = DockerBackend(logger=logger)
-    b.instance_id = 'inst-test'
+    b.instance_id = "inst-test"
     return b
 
 
 @pytest.fixture
 def session():
     return BoxSessionInfo(
-        session_id='sess1',
-        backend_name='docker',
-        backend_session_id='langbot-box-sess1-abcd1234',
-        image='rockchin/langbot-sandbox:latest',
+        session_id="sess1",
+        backend_name="docker",
+        backend_session_id="langbot-box-sess1-abcd1234",
+        image="rockchin/langbot-sandbox:latest",
         network=BoxNetworkMode.OFF,
-        created_at='2024-01-01T00:00:00+00:00',
-        last_used_at='2024-01-01T00:00:00+00:00',
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
     )
 
 
@@ -64,12 +64,14 @@ class _FakeStream:
         if chunk_size is None:
             self._chunks = [data] if data else []
         else:
-            self._chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+            self._chunks = [
+                data[i : i + chunk_size] for i in range(0, len(data), chunk_size)
+            ]
         self._index = 0
 
     async def read(self, _n: int = -1) -> bytes:
         if self._index >= len(self._chunks):
-            return b''
+            return b""
         chunk = self._chunks[self._index]
         self._index += 1
         return chunk
@@ -78,7 +80,13 @@ class _FakeStream:
 class _FakeProcess:
     """Fake asyncio subprocess used by ``_run_command`` / managed processes."""
 
-    def __init__(self, returncode: int = 0, stdout: bytes = b'', stderr: bytes = b'', hang: bool = False):
+    def __init__(
+        self,
+        returncode: int = 0,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+        hang: bool = False,
+    ):
         self.returncode = returncode
         self.stdout = _FakeStream(stdout)
         self.stderr = _FakeStream(stderr)
@@ -97,13 +105,13 @@ class _FakeProcess:
         self._hang = False
 
     async def communicate(self, _input=None):
-        return (b'', b'')
+        return (b"", b"")
 
 
 def _patch_exec(proc: _FakeProcess):
     """Patch ``asyncio.create_subprocess_exec`` to return *proc* and capture argv."""
     mock_exec = mock.AsyncMock(return_value=proc)
-    return mock.patch('asyncio.create_subprocess_exec', mock_exec), mock_exec
+    return mock.patch("asyncio.create_subprocess_exec", mock_exec), mock_exec
 
 
 def _argv_of(mock_exec: mock.AsyncMock, call_index: int = 0) -> list[str]:
@@ -122,8 +130,8 @@ def _all_values_after(argv: list[str], flag: str) -> list[str]:
 
 
 def test_backend_name_and_command(backend):
-    assert backend.name == 'docker'
-    assert backend.command == 'docker'
+    assert backend.name == "docker"
+    assert backend.command == "docker"
 
 
 # ── is_available ──────────────────────────────────────────────────────
@@ -131,26 +139,26 @@ def test_backend_name_and_command(backend):
 
 @pytest.mark.anyio
 async def test_is_available_no_binary(backend):
-    with mock.patch('shutil.which', return_value=None):
+    with mock.patch("shutil.which", return_value=None):
         assert await backend.is_available() is False
 
 
 @pytest.mark.anyio
 async def test_is_available_binary_ok(backend):
-    proc = _FakeProcess(returncode=0, stdout=b'docker info ok')
+    proc = _FakeProcess(returncode=0, stdout=b"docker info ok")
     patcher, mock_exec = _patch_exec(proc)
-    with mock.patch('shutil.which', return_value='/usr/bin/docker'), patcher:
+    with mock.patch("shutil.which", return_value="/usr/bin/docker"), patcher:
         assert await backend.is_available() is True
 
     argv = _argv_of(mock_exec)
-    assert argv == ['docker', 'info']
+    assert argv == ["docker", "info"]
 
 
 @pytest.mark.anyio
 async def test_is_available_info_nonzero(backend):
-    proc = _FakeProcess(returncode=1, stderr=b'cannot connect')
+    proc = _FakeProcess(returncode=1, stderr=b"cannot connect")
     patcher, _ = _patch_exec(proc)
-    with mock.patch('shutil.which', return_value='/usr/bin/docker'), patcher:
+    with mock.patch("shutil.which", return_value="/usr/bin/docker"), patcher:
         assert await backend.is_available() is False
 
 
@@ -159,9 +167,9 @@ async def test_is_available_info_nonzero(backend):
 
 @pytest.mark.anyio
 async def test_start_session_basic_argv_and_info(backend):
-    proc = _FakeProcess(returncode=0, stdout=b'containerid\n')
+    proc = _FakeProcess(returncode=0, stdout=b"containerid\n")
     patcher, mock_exec = _patch_exec(proc)
-    spec = BoxSpec(session_id='My Session!', cmd='echo hi')
+    spec = BoxSpec(session_id="My Session!", cmd="echo hi")
 
     with patcher:
         info = await backend.start_session(spec)
@@ -169,36 +177,36 @@ async def test_start_session_basic_argv_and_info(backend):
     argv = _argv_of(mock_exec)
 
     # Base command.
-    assert argv[:3] == ['docker', 'run', '-d']
+    assert argv[:3] == ["docker", "run", "-d"]
     # Non-persistent -> --rm.
-    assert '--rm' in argv
+    assert "--rm" in argv
 
     # Name + labels.
-    container_name = _value_after(argv, '--name')
-    assert container_name.startswith('langbot-box-')
-    labels = _all_values_after(argv, '--label')
-    assert 'langbot.box=true' in labels
-    assert f'langbot.session_id={spec.session_id}' in labels
-    assert 'langbot.box.instance_id=inst-test' in labels
+    container_name = _value_after(argv, "--name")
+    assert container_name.startswith("langbot-box-")
+    labels = _all_values_after(argv, "--label")
+    assert "langbot.box=true" in labels
+    assert f"langbot.session_id={spec.session_id}" in labels
+    assert "langbot.box.instance_id=inst-test" in labels
 
     # Network OFF -> --network none.
-    assert _value_after(argv, '--network') == 'none'
+    assert _value_after(argv, "--network") == "none"
 
     # Resource limits.
-    assert _value_after(argv, '--cpus') == '1.0'
-    assert _value_after(argv, '--memory') == '512m'
-    assert _value_after(argv, '--pids-limit') == '128'
+    assert _value_after(argv, "--cpus") == "1.0"
+    assert _value_after(argv, "--memory") == "512m"
+    assert _value_after(argv, "--pids-limit") == "128"
 
     # read_only_rootfs default True -> --read-only + tmpfs.
-    assert '--read-only' in argv
-    assert _value_after(argv, '--tmpfs') == '/tmp:size=64m'
+    assert "--read-only" in argv
+    assert _value_after(argv, "--tmpfs") == "/tmp:size=64m"
 
     # Tail: image then the long-running shell.
-    assert argv[-4:] == [spec.image, 'sh', '-lc', 'while true; do sleep 3600; done']
+    assert argv[-4:] == [spec.image, "sh", "-lc", "while true; do sleep 3600; done"]
 
     # Returned session info.
     assert info.session_id == spec.session_id
-    assert info.backend_name == 'docker'
+    assert info.backend_name == "docker"
     assert info.backend_session_id == container_name
     assert info.image == spec.image
     assert info.network == BoxNetworkMode.OFF
@@ -211,13 +219,13 @@ async def test_start_session_basic_argv_and_info(backend):
 async def test_start_session_persistent_no_rm(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
-    spec = BoxSpec(session_id='persist', cmd='x', persistent=True)
+    spec = BoxSpec(session_id="persist", cmd="x", persistent=True)
 
     with patcher:
         info = await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    assert '--rm' not in argv
+    assert "--rm" not in argv
     assert info.persistent is True
 
 
@@ -225,14 +233,14 @@ async def test_start_session_persistent_no_rm(backend):
 async def test_start_session_network_on_omits_network_flag(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
-    spec = BoxSpec(session_id='net', cmd='x', network=BoxNetworkMode.ON)
+    spec = BoxSpec(session_id="net", cmd="x", network=BoxNetworkMode.ON)
 
     with patcher:
         info = await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
     # ON mode leaves Docker's default network in place: no --network none.
-    assert '--network' not in argv
+    assert "--network" not in argv
     assert info.network == BoxNetworkMode.ON
 
 
@@ -240,14 +248,14 @@ async def test_start_session_network_on_omits_network_flag(backend):
 async def test_start_session_writable_rootfs_no_readonly(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
-    spec = BoxSpec(session_id='rw-root', cmd='x', read_only_rootfs=False)
+    spec = BoxSpec(session_id="rw-root", cmd="x", read_only_rootfs=False)
 
     with patcher:
         info = await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    assert '--read-only' not in argv
-    assert '--tmpfs' not in argv
+    assert "--read-only" not in argv
+    assert "--tmpfs" not in argv
     assert info.read_only_rootfs is False
 
 
@@ -256,8 +264,8 @@ async def test_start_session_custom_resource_limits(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='res',
-        cmd='x',
+        session_id="res",
+        cmd="x",
         cpus=2.5,
         memory_mb=1024,
         pids_limit=256,
@@ -267,9 +275,9 @@ async def test_start_session_custom_resource_limits(backend):
         info = await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    assert _value_after(argv, '--cpus') == '2.5'
-    assert _value_after(argv, '--memory') == '1024m'
-    assert _value_after(argv, '--pids-limit') == '256'
+    assert _value_after(argv, "--cpus") == "2.5"
+    assert _value_after(argv, "--memory") == "1024m"
+    assert _value_after(argv, "--pids-limit") == "256"
     assert info.cpus == 2.5
     assert info.memory_mb == 1024
     assert info.pids_limit == 256
@@ -280,23 +288,23 @@ async def test_start_session_host_path_mount(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='hp',
-        cmd='ls',
-        host_path='/data/project',
+        session_id="hp",
+        cmd="ls",
+        host_path="/data/project",
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/project',
-        workdir='/project',
+        mount_path="/project",
+        workdir="/project",
     )
 
     with patcher:
         info = await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    binds = _all_values_after(argv, '-v')
-    assert '/data/project:/project:rw' in binds
-    assert info.host_path == '/data/project'
+    binds = _all_values_after(argv, "-v")
+    assert "/data/project:/project:rw" in binds
+    assert info.host_path == "/data/project"
     assert info.host_path_mode == BoxHostMountMode.READ_WRITE
-    assert info.mount_path == '/project'
+    assert info.mount_path == "/project"
 
 
 @pytest.mark.anyio
@@ -304,9 +312,9 @@ async def test_start_session_host_path_readonly_mount(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='hp-ro',
-        cmd='cat f',
-        host_path='/data/source',
+        session_id="hp-ro",
+        cmd="cat f",
+        host_path="/data/source",
         host_path_mode=BoxHostMountMode.READ_ONLY,
     )
 
@@ -314,8 +322,8 @@ async def test_start_session_host_path_readonly_mount(backend):
         await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    binds = _all_values_after(argv, '-v')
-    assert '/data/source:/workspace:ro' in binds
+    binds = _all_values_after(argv, "-v")
+    assert "/data/source:/workspace:ro" in binds
 
 
 @pytest.mark.anyio
@@ -323,9 +331,9 @@ async def test_start_session_host_path_none_skips_mount(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='hp-none',
-        cmd='ls',
-        host_path='/data',
+        session_id="hp-none",
+        cmd="ls",
+        host_path="/data",
         host_path_mode=BoxHostMountMode.NONE,
     )
 
@@ -333,7 +341,7 @@ async def test_start_session_host_path_none_skips_mount(backend):
         await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    assert '-v' not in argv
+    assert "-v" not in argv
 
 
 @pytest.mark.anyio
@@ -341,17 +349,17 @@ async def test_start_session_extra_mounts(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='extra',
-        cmd='ls',
+        session_id="extra",
+        cmd="ls",
         extra_mounts=[
             BoxMountSpec(
-                host_path='/data/skills/demo',
-                mount_path='/workspace/.skills/demo',
+                host_path="/data/skills/demo",
+                mount_path="/workspace/.skills/demo",
                 mode=BoxHostMountMode.READ_WRITE,
             ),
             BoxMountSpec(
-                host_path='/data/config',
-                mount_path='/etc/app',
+                host_path="/data/config",
+                mount_path="/etc/app",
                 mode=BoxHostMountMode.READ_ONLY,
             ),
         ],
@@ -361,9 +369,9 @@ async def test_start_session_extra_mounts(backend):
         await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    binds = _all_values_after(argv, '-v')
-    assert '/data/skills/demo:/workspace/.skills/demo:rw' in binds
-    assert '/data/config:/etc/app:ro' in binds
+    binds = _all_values_after(argv, "-v")
+    assert "/data/skills/demo:/workspace/.skills/demo:rw" in binds
+    assert "/data/config:/etc/app:ro" in binds
 
 
 @pytest.mark.anyio
@@ -371,12 +379,12 @@ async def test_start_session_extra_mount_none_mode_skipped(backend):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='extra-none',
-        cmd='ls',
+        session_id="extra-none",
+        cmd="ls",
         extra_mounts=[
             BoxMountSpec(
-                host_path='/data/skip',
-                mount_path='/mnt/skip',
+                host_path="/data/skip",
+                mount_path="/mnt/skip",
                 mode=BoxHostMountMode.NONE,
             ),
         ],
@@ -386,14 +394,14 @@ async def test_start_session_extra_mount_none_mode_skipped(backend):
         await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    assert '/data/skip:/mnt/skip:none' not in _all_values_after(argv, '-v')
+    assert "/data/skip:/mnt/skip:none" not in _all_values_after(argv, "-v")
 
 
 @pytest.mark.anyio
 async def test_start_session_workspace_quota_passthrough(backend):
     proc = _FakeProcess(returncode=0)
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='quota', cmd='x', workspace_quota_mb=2048)
+    spec = BoxSpec(session_id="quota", cmd="x", workspace_quota_mb=2048)
 
     with patcher:
         info = await backend.start_session(spec)
@@ -407,11 +415,14 @@ async def test_start_session_workspace_quota_passthrough(backend):
 async def test_start_session_calls_security_validation(backend):
     proc = _FakeProcess(returncode=0)
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='sec', cmd='x')
+    spec = BoxSpec(session_id="sec", cmd="x")
 
-    with patcher, mock.patch(
-        'langbot_plugin.box.backend.validate_sandbox_security'
-    ) as mock_validate:
+    with (
+        patcher,
+        mock.patch(
+            "langbot_plugin.box.backend.validate_sandbox_security"
+        ) as mock_validate,
+    ):
         await backend.start_session(spec)
 
     mock_validate.assert_called_once_with(spec)
@@ -426,18 +437,23 @@ async def test_start_session_blocked_host_path_raises(backend):
     directly to assert ``start_session`` propagates the rejection.
     """
     spec = BoxSpec(
-        session_id='blocked',
-        cmd='x',
-        host_path='/data/safe',
+        session_id="blocked",
+        cmd="x",
+        host_path="/data/safe",
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/data/safe',
+        mount_path="/data/safe",
     )
 
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
-    with patcher, mock.patch(
-        'langbot_plugin.box.backend.validate_sandbox_security',
-        side_effect=BoxValidationError('host_path /data/safe is blocked for security'),
+    with (
+        patcher,
+        mock.patch(
+            "langbot_plugin.box.backend.validate_sandbox_security",
+            side_effect=BoxValidationError(
+                "host_path /data/safe is blocked for security"
+            ),
+        ),
     ):
         with pytest.raises(BoxValidationError):
             await backend.start_session(spec)
@@ -453,13 +469,13 @@ def test_validate_sandbox_security_rejects_blocked_path():
     # Use a path that realpath leaves untouched on every platform by mocking
     # realpath so the test is OS-independent.
     spec = BoxSpec(
-        session_id='sec-real',
-        cmd='x',
-        host_path='/proc',
+        session_id="sec-real",
+        cmd="x",
+        host_path="/proc",
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/proc',
+        mount_path="/proc",
     )
-    with mock.patch('os.path.realpath', return_value='/proc'):
+    with mock.patch("os.path.realpath", return_value="/proc"):
         with pytest.raises(BoxValidationError):
             validate_sandbox_security(spec)
 
@@ -469,21 +485,21 @@ def test_validate_sandbox_security_rejects_blocked_extra_mount_path():
     from langbot_plugin.box.security import validate_sandbox_security
 
     spec = BoxSpec(
-        session_id='sec-extra',
-        cmd='x',
+        session_id="sec-extra",
+        cmd="x",
         extra_mounts=[
             BoxMountSpec(
-                host_path='/etc',
-                mount_path='/workspace/etc',
+                host_path="/etc",
+                mount_path="/workspace/etc",
                 mode=BoxHostMountMode.READ_ONLY,
             )
         ],
     )
-    with mock.patch('os.path.realpath', return_value='/etc'):
+    with mock.patch("os.path.realpath", return_value="/etc"):
         with pytest.raises(BoxValidationError) as exc:
             validate_sandbox_security(spec)
 
-    assert 'extra_mounts.host_path /etc is blocked for security' in str(exc.value)
+    assert "extra_mounts.host_path /etc is blocked for security" in str(exc.value)
 
 
 def test_validate_sandbox_security_allows_safe_path():
@@ -491,28 +507,28 @@ def test_validate_sandbox_security_allows_safe_path():
     from langbot_plugin.box.security import validate_sandbox_security
 
     spec = BoxSpec(
-        session_id='sec-ok',
-        cmd='x',
-        host_path='/data/project',
+        session_id="sec-ok",
+        cmd="x",
+        host_path="/data/project",
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/data/project',
+        mount_path="/data/project",
     )
-    with mock.patch('os.path.realpath', return_value='/data/project'):
+    with mock.patch("os.path.realpath", return_value="/data/project"):
         validate_sandbox_security(spec)  # should not raise
 
 
 @pytest.mark.anyio
 async def test_start_session_check_failure_raises_boxerror(backend):
-    proc = _FakeProcess(returncode=125, stderr=b'docker: image not found')
+    proc = _FakeProcess(returncode=125, stderr=b"docker: image not found")
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='fail', cmd='x')
+    spec = BoxSpec(session_id="fail", cmd="x")
 
     with patcher:
         with pytest.raises(BoxError) as exc:
             await backend.start_session(spec)
 
-    assert 'docker backend error' in str(exc.value)
-    assert 'image not found' in str(exc.value)
+    assert "docker backend error" in str(exc.value)
+    assert "image not found" in str(exc.value)
 
 
 # ── exec ──────────────────────────────────────────────────────────────
@@ -520,13 +536,13 @@ async def test_start_session_check_failure_raises_boxerror(backend):
 
 @pytest.mark.anyio
 async def test_exec_argv_and_completed(backend, session):
-    proc = _FakeProcess(returncode=0, stdout=b'hello\n', stderr=b'')
+    proc = _FakeProcess(returncode=0, stdout=b"hello\n", stderr=b"")
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxSpec(
-        session_id='sess1',
-        cmd='echo hello',
-        workdir='/workspace',
-        env={'FOO': 'bar', 'BAZ': 'qux'},
+        session_id="sess1",
+        cmd="echo hello",
+        workdir="/workspace",
+        env={"FOO": "bar", "BAZ": "qux"},
         timeout_sec=15,
     )
 
@@ -534,24 +550,24 @@ async def test_exec_argv_and_completed(backend, session):
         result = await backend.exec(session, spec)
 
     argv = _argv_of(mock_exec)
-    assert argv[:2] == ['docker', 'exec']
+    assert argv[:2] == ["docker", "exec"]
 
     # Env flags.
-    env_values = _all_values_after(argv, '-e')
-    assert 'FOO=bar' in env_values
-    assert 'BAZ=qux' in env_values
+    env_values = _all_values_after(argv, "-e")
+    assert "FOO=bar" in env_values
+    assert "BAZ=qux" in env_values
 
     # Container id then shell invocation.
     assert argv[-4] == session.backend_session_id
-    assert argv[-3:-1] == ['sh', '-lc']
-    assert argv[-1] == backend._build_exec_command('/workspace', 'echo hello')
+    assert argv[-3:-1] == ["sh", "-lc"]
+    assert argv[-1] == backend._build_exec_command("/workspace", "echo hello")
 
     assert result.status == BoxExecutionStatus.COMPLETED
     assert result.exit_code == 0
-    assert result.stdout == 'hello'
-    assert result.stderr == ''
-    assert result.backend_name == 'docker'
-    assert result.session_id == 'sess1'
+    assert result.stdout == "hello"
+    assert result.stderr == ""
+    assert result.backend_name == "docker"
+    assert result.session_id == "sess1"
     assert result.ok is True
     assert result.duration_ms >= 0
 
@@ -559,10 +575,10 @@ async def test_exec_argv_and_completed(backend, session):
 @pytest.mark.anyio
 async def test_exec_truncates_long_cmd_preview_in_log(backend, session):
     # A very long command exercises the >400 char preview-truncation branch.
-    long_cmd = 'echo ' + ('a' * 500)
-    proc = _FakeProcess(returncode=0, stdout=b'ok')
+    long_cmd = "echo " + ("a" * 500)
+    proc = _FakeProcess(returncode=0, stdout=b"ok")
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='sess1', cmd=long_cmd)
+    spec = BoxSpec(session_id="sess1", cmd=long_cmd)
 
     with patcher:
         result = await backend.exec(session, spec)
@@ -577,28 +593,28 @@ async def test_exec_handles_none_streams(backend, session):
     proc.stdout = None
     proc.stderr = None
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='sess1', cmd='echo hi')
+    spec = BoxSpec(session_id="sess1", cmd="echo hi")
 
     with patcher:
         result = await backend.exec(session, spec)
 
-    assert result.stdout == ''
-    assert result.stderr == ''
+    assert result.stdout == ""
+    assert result.stderr == ""
     assert result.exit_code == 0
 
 
 @pytest.mark.anyio
 async def test_exec_nonzero_exit(backend, session):
-    proc = _FakeProcess(returncode=2, stdout=b'', stderr=b'boom')
+    proc = _FakeProcess(returncode=2, stdout=b"", stderr=b"boom")
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='sess1', cmd='false')
+    spec = BoxSpec(session_id="sess1", cmd="false")
 
     with patcher:
         result = await backend.exec(session, spec)
 
     assert result.status == BoxExecutionStatus.COMPLETED
     assert result.exit_code == 2
-    assert result.stderr == 'boom'
+    assert result.stderr == "boom"
     assert result.ok is False
 
 
@@ -606,7 +622,7 @@ async def test_exec_nonzero_exit(backend, session):
 async def test_exec_timeout(backend, session):
     proc = _FakeProcess(returncode=0, hang=True)
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='sess1', cmd='sleep 100', timeout_sec=1)
+    spec = BoxSpec(session_id="sess1", cmd="sleep 100", timeout_sec=1)
 
     # Make wait_for time out immediately rather than waiting 1s.
     async def fake_wait_for(awaitable, timeout):
@@ -615,12 +631,12 @@ async def test_exec_timeout(backend, session):
             awaitable.close()
         raise asyncio.TimeoutError
 
-    with patcher, mock.patch('asyncio.wait_for', side_effect=fake_wait_for):
+    with patcher, mock.patch("asyncio.wait_for", side_effect=fake_wait_for):
         result = await backend.exec(session, spec)
 
     assert result.status == BoxExecutionStatus.TIMED_OUT
     assert result.exit_code is None
-    assert 'timed out' in result.stderr.lower()
+    assert "timed out" in result.stderr.lower()
     assert proc.killed is True
 
 
@@ -628,38 +644,38 @@ async def test_exec_timeout(backend, session):
 
 
 def test_build_exec_command(backend):
-    cmd = backend._build_exec_command('/workspace/sub', 'python run.py')
+    cmd = backend._build_exec_command("/workspace/sub", "python run.py")
     assert cmd == "mkdir -p /workspace/sub && cd /workspace/sub && python run.py"
 
 
 def test_build_exec_command_quotes_workdir_with_spaces(backend):
-    cmd = backend._build_exec_command('/work space', 'ls')
+    cmd = backend._build_exec_command("/work space", "ls")
     assert "'/work space'" in cmd
-    assert cmd.endswith('&& ls')
+    assert cmd.endswith("&& ls")
 
 
 def test_build_spawn_command_quotes_args(backend):
-    cmd = backend._build_spawn_command('/workspace', 'python', ['-c', 'print(1)'])
-    assert cmd.startswith('mkdir -p /workspace && cd /workspace && exec ')
+    cmd = backend._build_spawn_command("/workspace", "python", ["-c", "print(1)"])
+    assert cmd.startswith("mkdir -p /workspace && cd /workspace && exec ")
     assert "python -c 'print(1)'" in cmd
 
 
 def test_build_container_name_normalizes(backend):
-    name = backend._build_container_name('My Session!@#')
-    assert name.startswith('langbot-box-')
+    name = backend._build_container_name("My Session!@#")
+    assert name.startswith("langbot-box-")
     # Illegal chars collapsed to hyphens, lowercased; suffix is 8 hex chars.
-    body = name[len('langbot-box-'):]
-    stem, _, suffix = body.rpartition('-')
+    body = name[len("langbot-box-") :]
+    stem, _, suffix = body.rpartition("-")
     assert len(suffix) == 8
-    assert all(c in '0123456789abcdef' for c in suffix)
-    assert stem == 'my-session'
+    assert all(c in "0123456789abcdef" for c in suffix)
+    assert stem == "my-session"
 
 
 def test_build_container_name_empty_fallback(backend):
-    name = backend._build_container_name('!!!')
-    body = name[len('langbot-box-'):]
-    stem, _, _ = body.rpartition('-')
-    assert stem == 'session'
+    name = backend._build_container_name("!!!")
+    body = name[len("langbot-box-") :]
+    stem, _, _ = body.rpartition("-")
+    assert stem == "session"
 
 
 # ── stop_session ──────────────────────────────────────────────────────
@@ -674,7 +690,7 @@ async def test_stop_session_argv(backend, session):
         await backend.stop_session(session)
 
     argv = _argv_of(mock_exec)
-    assert argv == ['docker', 'rm', '-f', session.backend_session_id]
+    assert argv == ["docker", "rm", "-f", session.backend_session_id]
 
 
 # ── is_session_alive ──────────────────────────────────────────────────
@@ -682,7 +698,7 @@ async def test_stop_session_argv(backend, session):
 
 @pytest.mark.anyio
 async def test_is_session_alive_true(backend, session):
-    proc = _FakeProcess(returncode=0, stdout=b'true\n')
+    proc = _FakeProcess(returncode=0, stdout=b"true\n")
     patcher, mock_exec = _patch_exec(proc)
 
     with patcher:
@@ -690,10 +706,10 @@ async def test_is_session_alive_true(backend, session):
 
     argv = _argv_of(mock_exec)
     assert argv == [
-        'docker',
-        'inspect',
-        '-f',
-        '{{.State.Running}}',
+        "docker",
+        "inspect",
+        "-f",
+        "{{.State.Running}}",
         session.backend_session_id,
     ]
     assert alive is True
@@ -701,7 +717,7 @@ async def test_is_session_alive_true(backend, session):
 
 @pytest.mark.anyio
 async def test_is_session_alive_false_when_stopped(backend, session):
-    proc = _FakeProcess(returncode=0, stdout=b'false\n')
+    proc = _FakeProcess(returncode=0, stdout=b"false\n")
     patcher, _ = _patch_exec(proc)
     with patcher:
         assert await backend.is_session_alive(session) is False
@@ -709,7 +725,7 @@ async def test_is_session_alive_false_when_stopped(backend, session):
 
 @pytest.mark.anyio
 async def test_is_session_alive_false_when_missing(backend, session):
-    proc = _FakeProcess(returncode=1, stderr=b'No such object')
+    proc = _FakeProcess(returncode=1, stderr=b"No such object")
     patcher, _ = _patch_exec(proc)
     with patcher:
         assert await backend.is_session_alive(session) is False
@@ -723,47 +739,47 @@ async def test_cleanup_orphaned_removes_other_instances(backend):
     ps_proc = _FakeProcess(
         returncode=0,
         # Includes a blank line (skipped) plus an unlabeled container ('ccc').
-        stdout=b'aaa\tother-instance\n\nbbb\tinst-test\nccc\t\n',
+        stdout=b"aaa\tother-instance\n\nbbb\tinst-test\nccc\t\n",
     )
     rm_proc = _FakeProcess(returncode=0)
     mock_exec = mock.AsyncMock(side_effect=[ps_proc, rm_proc])
 
-    with mock.patch('asyncio.create_subprocess_exec', mock_exec):
-        await backend.cleanup_orphaned_containers('inst-test')
+    with mock.patch("asyncio.create_subprocess_exec", mock_exec):
+        await backend.cleanup_orphaned_containers("inst-test")
 
     # First call lists containers.
     ps_argv = _argv_of(mock_exec, 0)
-    assert ps_argv[:4] == ['docker', 'ps', '-a', '--filter']
-    assert 'label=langbot.box=true' in ps_argv
+    assert ps_argv[:4] == ["docker", "ps", "-a", "--filter"]
+    assert "label=langbot.box=true" in ps_argv
 
     # Second call removes only the non-matching / unlabeled containers.
     rm_argv = _argv_of(mock_exec, 1)
-    assert rm_argv[:3] == ['docker', 'rm', '-f']
-    assert set(rm_argv[3:]) == {'aaa', 'ccc'}
-    assert 'bbb' not in rm_argv
+    assert rm_argv[:3] == ["docker", "rm", "-f"]
+    assert set(rm_argv[3:]) == {"aaa", "ccc"}
+    assert "bbb" not in rm_argv
 
 
 @pytest.mark.anyio
 async def test_cleanup_orphaned_handles_line_without_label_field(backend):
     # 'ddd' has no tab separator at all -> empty label, treated as orphan.
-    ps_proc = _FakeProcess(returncode=0, stdout=b'ddd\n')
+    ps_proc = _FakeProcess(returncode=0, stdout=b"ddd\n")
     rm_proc = _FakeProcess(returncode=0)
     mock_exec = mock.AsyncMock(side_effect=[ps_proc, rm_proc])
 
-    with mock.patch('asyncio.create_subprocess_exec', mock_exec):
-        await backend.cleanup_orphaned_containers('inst-test')
+    with mock.patch("asyncio.create_subprocess_exec", mock_exec):
+        await backend.cleanup_orphaned_containers("inst-test")
 
     rm_argv = _argv_of(mock_exec, 1)
-    assert rm_argv == ['docker', 'rm', '-f', 'ddd']
+    assert rm_argv == ["docker", "rm", "-f", "ddd"]
 
 
 @pytest.mark.anyio
 async def test_cleanup_orphaned_noop_when_nothing_listed(backend):
-    ps_proc = _FakeProcess(returncode=0, stdout=b'')
+    ps_proc = _FakeProcess(returncode=0, stdout=b"")
     mock_exec = mock.AsyncMock(return_value=ps_proc)
 
-    with mock.patch('asyncio.create_subprocess_exec', mock_exec):
-        await backend.cleanup_orphaned_containers('inst-test')
+    with mock.patch("asyncio.create_subprocess_exec", mock_exec):
+        await backend.cleanup_orphaned_containers("inst-test")
 
     # Only the listing call happened; no rm.
     assert mock_exec.call_count == 1
@@ -771,22 +787,22 @@ async def test_cleanup_orphaned_noop_when_nothing_listed(backend):
 
 @pytest.mark.anyio
 async def test_cleanup_orphaned_noop_when_all_current(backend):
-    ps_proc = _FakeProcess(returncode=0, stdout=b'bbb\tinst-test\n')
+    ps_proc = _FakeProcess(returncode=0, stdout=b"bbb\tinst-test\n")
     mock_exec = mock.AsyncMock(return_value=ps_proc)
 
-    with mock.patch('asyncio.create_subprocess_exec', mock_exec):
-        await backend.cleanup_orphaned_containers('inst-test')
+    with mock.patch("asyncio.create_subprocess_exec", mock_exec):
+        await backend.cleanup_orphaned_containers("inst-test")
 
     assert mock_exec.call_count == 1
 
 
 @pytest.mark.anyio
 async def test_cleanup_orphaned_ps_failure_is_noop(backend):
-    ps_proc = _FakeProcess(returncode=1, stderr=b'daemon down')
+    ps_proc = _FakeProcess(returncode=1, stderr=b"daemon down")
     mock_exec = mock.AsyncMock(return_value=ps_proc)
 
-    with mock.patch('asyncio.create_subprocess_exec', mock_exec):
-        await backend.cleanup_orphaned_containers('inst-test')
+    with mock.patch("asyncio.create_subprocess_exec", mock_exec):
+        await backend.cleanup_orphaned_containers("inst-test")
 
     assert mock_exec.call_count == 1
 
@@ -799,10 +815,10 @@ async def test_start_managed_process_argv(backend, session):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
     spec = BoxManagedProcessSpec(
-        command='python',
-        args=['-m', 'http.server'],
-        env={'PORT': '8000'},
-        cwd='/workspace',
+        command="python",
+        args=["-m", "http.server"],
+        env={"PORT": "8000"},
+        cwd="/workspace",
     )
 
     with patcher:
@@ -810,78 +826,80 @@ async def test_start_managed_process_argv(backend, session):
 
     assert returned is proc
     argv = _argv_of(mock_exec)
-    assert argv[:3] == ['docker', 'exec', '-i']
-    assert 'PORT=8000' in _all_values_after(argv, '-e')
+    assert argv[:3] == ["docker", "exec", "-i"]
+    assert "PORT=8000" in _all_values_after(argv, "-e")
     assert argv[-4] == session.backend_session_id
-    assert argv[-3:-1] == ['sh', '-lc']
-    assert argv[-1] == backend._build_spawn_command('/workspace', 'python', ['-m', 'http.server'])
+    assert argv[-3:-1] == ["sh", "-lc"]
+    assert argv[-1] == backend._build_spawn_command(
+        "/workspace", "python", ["-m", "http.server"]
+    )
 
     # Managed processes wire up stdio pipes.
     kwargs = mock_exec.call_args.kwargs
-    assert kwargs['stdin'] == asyncio.subprocess.PIPE
-    assert kwargs['stdout'] == asyncio.subprocess.PIPE
-    assert kwargs['stderr'] == asyncio.subprocess.PIPE
+    assert kwargs["stdin"] == asyncio.subprocess.PIPE
+    assert kwargs["stdout"] == asyncio.subprocess.PIPE
+    assert kwargs["stderr"] == asyncio.subprocess.PIPE
 
 
 # ── output clipping ───────────────────────────────────────────────────
 
 
 def test_clip_captured_bytes_within_limit():
-    data = b'  hello world  '
-    assert DockerBackend._clip_captured_bytes(data, len(data)) == 'hello world'
+    data = b"  hello world  "
+    assert DockerBackend._clip_captured_bytes(data, len(data)) == "hello world"
 
 
 def test_clip_captured_bytes_exceeds_limit():
-    result = DockerBackend._clip_captured_bytes(b'hello', 2_000_000, limit=1_000_000)
-    assert 'clipped' in result
-    assert '1000000' in result
+    result = DockerBackend._clip_captured_bytes(b"hello", 2_000_000, limit=1_000_000)
+    assert "clipped" in result
+    assert "1000000" in result
 
 
 @pytest.mark.anyio
 async def test_read_stream_none_returns_empty():
-    assert await DockerBackend._read_stream(None) == (b'', 0)
+    assert await DockerBackend._read_stream(None) == (b"", 0)
 
 
 @pytest.mark.anyio
 async def test_read_stream_caps_at_limit_across_chunks():
     # Two 4-byte chunks with a 5-byte limit: the second chunk arrives after
     # the cap is already reached, exercising the 'remaining <= 0' branch.
-    stream = _FakeStream(b'aaaabbbb', chunk_size=4)
+    stream = _FakeStream(b"aaaabbbb", chunk_size=4)
     data, total = await DockerBackend._read_stream(stream, limit=5)
     assert total == 8
     assert len(data) == 5
-    assert data == b'aaaab'
+    assert data == b"aaaab"
 
 
 @pytest.mark.anyio
 async def test_exec_clips_large_stdout(backend, session):
-    big = b'x' * (2 * 1024 * 1024)  # 2 MB, over the 1 MB cap
+    big = b"x" * (2 * 1024 * 1024)  # 2 MB, over the 1 MB cap
     proc = _FakeProcess(returncode=0, stdout=big)
     patcher, _ = _patch_exec(proc)
-    spec = BoxSpec(session_id='sess1', cmd='cat big')
+    spec = BoxSpec(session_id="sess1", cmd="cat big")
 
     with patcher:
         result = await backend.exec(session, spec)
 
-    assert 'clipped' in result.stdout
+    assert "clipped" in result.stdout
 
 
 # ── error formatting ──────────────────────────────────────────────────
 
 
 def test_format_cli_error_collapses_and_truncates(backend):
-    msg = backend._format_cli_error('  some   long\n\nerror  ')
-    assert msg == 'docker backend error: some long error'
+    msg = backend._format_cli_error("  some   long\n\nerror  ")
+    assert msg == "docker backend error: some long error"
 
-    long = 'e' * 400
+    long = "e" * 400
     truncated = backend._format_cli_error(long)
-    assert truncated.endswith('...')
-    assert len(truncated) <= len('docker backend error: ') + 300
+    assert truncated.endswith("...")
+    assert len(truncated) <= len("docker backend error: ") + 300
 
 
 # ── _CommandResult dataclass ──────────────────────────────────────────
 
 
 def test_command_result_defaults():
-    r = _CommandResult(return_code=0, stdout='out', stderr='err')
+    r = _CommandResult(return_code=0, stdout="out", stderr="err")
     assert r.timed_out is False

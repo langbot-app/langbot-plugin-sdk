@@ -11,6 +11,7 @@ These tests instantiate real PluginConnectionHandler and verify:
 - Forwarding calls context.control_handler.call_action with correct action and payload
 - caller_plugin_identity is injected from plugin container when available
 """
+
 from __future__ import annotations
 
 import pytest
@@ -73,7 +74,9 @@ class TestPluginConnectionHandlerPullAPIRegistration:
         ]
 
         for action in expected_actions:
-            assert action.value in handler.actions, f"Action {action.value} not registered"
+            assert action.value in handler.actions, (
+                f"Action {action.value} not registered"
+            )
 
 
 class TestPluginConnectionHandlerPullAPIForwarding:
@@ -85,7 +88,11 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         fake_context = make_fake_context()
         handler = PluginConnectionHandler(FakeConnection(), fake_context)
 
-        payload = {"run_id": "run_001", "scope": "conversation", "key": "external.test_key"}
+        payload = {
+            "run_id": "run_001",
+            "scope": "conversation",
+            "key": "external.test_key",
+        }
         resp = await handler.actions[PluginToRuntimeAction.STATE_GET.value](payload)
 
         assert resp.code == 0
@@ -138,7 +145,11 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         fake_context = make_fake_context()
         handler = PluginConnectionHandler(FakeConnection(), fake_context)
 
-        payload = {"run_id": "run_001", "scope": "conversation", "key": "external.test_key"}
+        payload = {
+            "run_id": "run_001",
+            "scope": "conversation",
+            "key": "external.test_key",
+        }
         resp = await handler.actions[PluginToRuntimeAction.STATE_DELETE.value](payload)
 
         assert resp.code == 0
@@ -154,7 +165,12 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         fake_context = make_fake_context()
         handler = PluginConnectionHandler(FakeConnection(), fake_context)
 
-        payload = {"run_id": "run_001", "scope": "conversation", "prefix": "external.", "limit": 50}
+        payload = {
+            "run_id": "run_001",
+            "scope": "conversation",
+            "prefix": "external.",
+            "limit": 50,
+        }
         resp = await handler.actions[PluginToRuntimeAction.STATE_LIST.value](payload)
 
         assert resp.code == 0
@@ -199,7 +215,9 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         handler = PluginConnectionHandler(FakeConnection(), fake_context)
 
         payload = {"run_id": "run_001", "query": "test query", "top_k": 10}
-        resp = await handler.actions[PluginToRuntimeAction.HISTORY_SEARCH.value](payload)
+        resp = await handler.actions[PluginToRuntimeAction.HISTORY_SEARCH.value](
+            payload
+        )
 
         assert resp.code == 0
         fake_context.control_handler.call_action.assert_called_once()
@@ -253,7 +271,9 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         handler = PluginConnectionHandler(FakeConnection(), fake_context)
 
         payload = {"run_id": "run_001", "artifact_id": "artifact_001"}
-        resp = await handler.actions[PluginToRuntimeAction.ARTIFACT_METADATA.value](payload)
+        resp = await handler.actions[PluginToRuntimeAction.ARTIFACT_METADATA.value](
+            payload
+        )
 
         assert resp.code == 0
         fake_context.control_handler.call_action.assert_called_once()
@@ -395,16 +415,34 @@ class TestPluginConnectionHandlerCallerIdentity:
 
         # Test all pull API actions
         pull_actions = [
-            (PluginToRuntimeAction.STATE_GET, {"run_id": "r", "scope": "conversation", "key": "k"}),
-            (PluginToRuntimeAction.STATE_SET, {"run_id": "r", "scope": "conversation", "key": "k", "value": {}}),
-            (PluginToRuntimeAction.STATE_DELETE, {"run_id": "r", "scope": "conversation", "key": "k"}),
-            (PluginToRuntimeAction.STATE_LIST, {"run_id": "r", "scope": "conversation"}),
+            (
+                PluginToRuntimeAction.STATE_GET,
+                {"run_id": "r", "scope": "conversation", "key": "k"},
+            ),
+            (
+                PluginToRuntimeAction.STATE_SET,
+                {"run_id": "r", "scope": "conversation", "key": "k", "value": {}},
+            ),
+            (
+                PluginToRuntimeAction.STATE_DELETE,
+                {"run_id": "r", "scope": "conversation", "key": "k"},
+            ),
+            (
+                PluginToRuntimeAction.STATE_LIST,
+                {"run_id": "r", "scope": "conversation"},
+            ),
             (PluginToRuntimeAction.HISTORY_PAGE, {"run_id": "r", "limit": 10}),
             (PluginToRuntimeAction.HISTORY_SEARCH, {"run_id": "r", "query": "q"}),
             (PluginToRuntimeAction.EVENT_GET, {"run_id": "r", "event_id": "e"}),
             (PluginToRuntimeAction.EVENT_PAGE, {"run_id": "r", "limit": 10}),
-            (PluginToRuntimeAction.ARTIFACT_METADATA, {"run_id": "r", "artifact_id": "a"}),
-            (PluginToRuntimeAction.ARTIFACT_READ, {"run_id": "r", "artifact_id": "a", "offset": 0, "limit": 100}),
+            (
+                PluginToRuntimeAction.ARTIFACT_METADATA,
+                {"run_id": "r", "artifact_id": "a"},
+            ),
+            (
+                PluginToRuntimeAction.ARTIFACT_READ,
+                {"run_id": "r", "artifact_id": "a", "offset": 0, "limit": 100},
+            ),
         ]
 
         for action, payload in pull_actions:
@@ -416,8 +454,9 @@ class TestPluginConnectionHandlerCallerIdentity:
 
             call_args = fake_context.control_handler.call_action.call_args
             forwarded_payload = call_args[0][1]
-            assert forwarded_payload.get("caller_plugin_identity") == "my-author/my-plugin", \
-                f"caller_plugin_identity not injected for {action.value}"
+            assert (
+                forwarded_payload.get("caller_plugin_identity") == "my-author/my-plugin"
+            ), f"caller_plugin_identity not injected for {action.value}"
 
 
 class TestAgentRunAPIProxyPullAPIPayloads:
@@ -430,16 +469,30 @@ class TestAgentRunAPIProxyPullAPIPayloads:
     async def test_state_api_payloads_via_proxy(self):
         """State API payloads are correctly forwarded via proxy."""
         from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
-        from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-        from langbot_plugin.api.entities.builtin.agent_runner.resources import AgentResources
-        from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
+        from langbot_plugin.api.entities.builtin.agent_runner.context import (
+            AgentRunContext,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.resources import (
+            AgentResources,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.trigger import (
+            AgentTrigger,
+        )
         from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
-        from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
-        from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-        from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
+        from langbot_plugin.api.entities.builtin.agent_runner.event import (
+            AgentEventContext,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.delivery import (
+            DeliveryContext,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.runtime import (
+            AgentRuntimeContext,
+        )
 
         mock_handler = SimpleNamespace()
-        mock_handler.call_action = AsyncMock(return_value={"value": None, "success": True})
+        mock_handler.call_action = AsyncMock(
+            return_value={"value": None, "success": True}
+        )
 
         ctx = AgentRunContext(
             run_id="proxy_run",

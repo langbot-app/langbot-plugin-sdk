@@ -9,7 +9,7 @@ import logging
 from copy import deepcopy
 from pathlib import Path
 
-from langbot_plugin.utils.deadline import remaining_deadline_seconds
+from langbot_plugin.utils.deadline import anext_with_deadline
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
@@ -25,7 +25,11 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
-from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
+from langbot_plugin.api.definition.components.page import (
+    Page,
+    PageRequest,
+    PageResponse,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -67,10 +71,6 @@ def _resolve_asset_path(file_key: str) -> Path | None:
     return None
 
 
-def _remaining_deadline_seconds(deadline_at: typing.Any) -> float | None:
-    return remaining_deadline_seconds(deadline_at)
-
-
 async def _iter_runner_results_with_deadline(
     runner_instance: typing.Any,
     run_context: typing.Any,
@@ -81,15 +81,11 @@ async def _iter_runner_results_with_deadline(
     result_gen = runner_instance.run(run_context)
     try:
         while True:
-            remaining = _remaining_deadline_seconds(run_context.runtime.deadline_at)
-            if remaining is not None and remaining <= 0:
-                raise asyncio.TimeoutError
-
             try:
-                if remaining is None:
-                    result = await anext(result_gen)
-                else:
-                    result = await asyncio.wait_for(anext(result_gen), timeout=remaining)
+                result = await anext_with_deadline(
+                    result_gen,
+                    run_context.runtime.deadline_at,
+                )
             except StopAsyncIteration:
                 break
 
@@ -182,7 +178,9 @@ class PluginRuntimeHandler(Handler):
             file_key = data["file_key"]
             file_path = _resolve_asset_path(file_key)
             if file_path is None:
-                return ActionResponse.success({"file_file_key": None, "mime_type": None})
+                return ActionResponse.success(
+                    {"file_file_key": None, "mime_type": None}
+                )
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
@@ -211,7 +209,9 @@ class PluginRuntimeHandler(Handler):
                     continue
                 if isinstance(component.component_instance, NoneComponent):
                     return ActionResponse.success(
-                        PageResponse.fail("Page component is not initialized").model_dump()
+                        PageResponse.fail(
+                            "Page component is not initialized"
+                        ).model_dump()
                     )
                 if not isinstance(component.component_instance, Page):
                     return ActionResponse.success(
@@ -363,9 +363,15 @@ class PluginRuntimeHandler(Handler):
             data: dict[str, typing.Any],
         ) -> typing.AsyncGenerator[ActionResponse, None]:
             """Run an AgentRunner component."""
-            from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-            from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-            from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+            from langbot_plugin.api.definition.components.agent_runner.runner import (
+                AgentRunner,
+            )
+            from langbot_plugin.api.entities.builtin.agent_runner.context import (
+                AgentRunContext,
+            )
+            from langbot_plugin.api.entities.builtin.agent_runner.result import (
+                AgentRunResult,
+            )
 
             runner_name = data["runner_name"]
             context_data = data["context"]

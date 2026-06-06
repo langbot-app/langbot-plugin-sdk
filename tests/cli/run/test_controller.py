@@ -124,7 +124,9 @@ def test_controller_builds_unmounted_placeholder_container():
     assert controller.ws_debug_url == "ws://runtime/plugin/ws"
     assert controller.plugin_container.status is RuntimeContainerStatus.UNMOUNTED
     assert isinstance(controller.plugin_container.plugin_instance, NonePlugin)
-    assert [component.manifest.kind for component in controller.plugin_container.components] == [
+    assert [
+        component.manifest.kind for component in controller.plugin_container.components
+    ] == [
         "Tool",
         "EventListener",
         "UnknownKind",
@@ -182,7 +184,9 @@ async def test_initialize_creates_plugin_and_supported_component_instances(monke
 
 
 @pytest.mark.asyncio
-async def test_initialize_writes_agent_runner_class_declarations_to_manifest(monkeypatch):
+async def test_initialize_writes_agent_runner_class_declarations_to_manifest(
+    monkeypatch,
+):
     controller = _agent_runner_controller()
     controller.handler = object()
     component_classes = {
@@ -215,9 +219,7 @@ async def test_initialize_writes_agent_runner_class_declarations_to_manifest(mon
     assert spec["capabilities"]["tool_calling"] is True
     assert spec["permissions"]["models"] == ["stream"]
     assert spec["permissions"]["tools"] == ["call"]
-    assert spec["config"] == [
-        {"type": "string", "name": "mode", "default": "chat"}
-    ]
+    assert spec["config"] == [{"type": "string", "name": "mode", "default": "chat"}]
     assert runner.manifest.manifest["spec"] is spec
 
 
@@ -241,9 +243,7 @@ async def test_cleanup_instances_resets_runtime_objects(monkeypatch):
         fake_component_class,
     )
 
-    await controller.initialize(
-        {"enabled": True, "priority": 0, "plugin_config": {}}
-    )
+    await controller.initialize({"enabled": True, "priority": 0, "plugin_config": {}})
     await controller.cleanup_instances()
 
     assert isinstance(controller.plugin_container.plugin_instance, NonePlugin)

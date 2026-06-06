@@ -8,32 +8,32 @@ from .models import BoxSpec
 
 _BLOCKED_HOST_PATHS_POSIX = frozenset(
     {
-        '/etc',
-        '/proc',
-        '/sys',
-        '/dev',
-        '/root',
-        '/boot',
-        '/run',
-        '/var/run',
-        '/run/docker.sock',
-        '/var/run/docker.sock',
+        "/etc",
+        "/proc",
+        "/sys",
+        "/dev",
+        "/root",
+        "/boot",
+        "/run",
+        "/var/run",
+        "/run/docker.sock",
+        "/var/run/docker.sock",
     }
 )
 
 _BLOCKED_HOST_PATHS_WINDOWS = frozenset(
     {
-        r'C:\Windows',
-        r'C:\Program Files',
-        r'C:\Program Files (x86)',
-        r'C:\ProgramData',
-        r'\\.\pipe\docker_engine',
+        r"C:\Windows",
+        r"C:\Program Files",
+        r"C:\Program Files (x86)",
+        r"C:\ProgramData",
+        r"\\.\pipe\docker_engine",
     }
 )
 
 BLOCKED_HOST_PATHS = (
     _BLOCKED_HOST_PATHS_POSIX | _BLOCKED_HOST_PATHS_WINDOWS
-    if sys.platform == 'win32'
+    if sys.platform == "win32"
     else _BLOCKED_HOST_PATHS_POSIX
 )
 
@@ -43,8 +43,12 @@ def _validate_host_path(host_path: str, field_name: str) -> None:
     sep = os.sep
     _norm = os.path.normcase
     for blocked in BLOCKED_HOST_PATHS:
-        if _norm(real) == _norm(blocked) or _norm(real).startswith(_norm(blocked) + sep):
-            raise BoxValidationError(f'{field_name} {host_path} is blocked for security')
+        if _norm(real) == _norm(blocked) or _norm(real).startswith(
+            _norm(blocked) + sep
+        ):
+            raise BoxValidationError(
+                f"{field_name} {host_path} is blocked for security"
+            )
 
 
 def validate_sandbox_security(spec: BoxSpec) -> None:
@@ -53,7 +57,7 @@ def validate_sandbox_security(spec: BoxSpec) -> None:
     Raises BoxValidationError when the spec contains a blocked host_path.
     """
     if spec.host_path:
-        _validate_host_path(spec.host_path, 'host_path')
+        _validate_host_path(spec.host_path, "host_path")
 
     for mount in spec.extra_mounts:
-        _validate_host_path(mount.host_path, 'extra_mounts.host_path')
+        _validate_host_path(mount.host_path, "extra_mounts.host_path")

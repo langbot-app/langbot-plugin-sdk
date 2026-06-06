@@ -21,8 +21,8 @@ from .security import validate_sandbox_security
 
 # E2B sandbox uses /home/user as the default writable directory
 # We map /workspace to /home/user/workspace for compatibility
-E2B_DEFAULT_WORKDIR = '/home/user'
-E2B_WORKSPACE_DIR = '/home/user/workspace'
+E2B_DEFAULT_WORKDIR = "/home/user"
+E2B_WORKSPACE_DIR = "/home/user/workspace"
 
 # Lazy imports for e2b - only imported when actually needed
 _e2b_available: bool | None = None
@@ -66,14 +66,14 @@ def _adapt_path_for_e2b(path: str) -> str:
     E2B sandbox doesn't have /workspace by default, so we map it to
     /home/user/workspace which is writable.
     """
-    if path == '/workspace' or path.startswith('/workspace/'):
-        return path.replace('/workspace', E2B_WORKSPACE_DIR, 1)
+    if path == "/workspace" or path.startswith("/workspace/"):
+        return path.replace("/workspace", E2B_WORKSPACE_DIR, 1)
     return path
 
 
 def _rewrite_command_paths_for_e2b(command: str) -> str:
     """Rewrite LangBot's logical /workspace paths for E2B's real writable path."""
-    return re.sub(r'(?<![\w.-])/workspace(?=$|/|[^\w.-])', E2B_WORKSPACE_DIR, command)
+    return re.sub(r"(?<![\w.-])/workspace(?=$|/|[^\w.-])", E2B_WORKSPACE_DIR, command)
 
 
 class E2BSandboxBackend(BaseSandboxBackend):
@@ -85,7 +85,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
     2. Configuration passed via configure() method (from LangBot config.yaml)
     """
 
-    name = 'e2b'
+    name = "e2b"
 
     def __init__(self, logger: logging.Logger):
         super().__init__(logger)
@@ -106,9 +106,13 @@ class E2BSandboxBackend(BaseSandboxBackend):
     async def initialize(self):
         """Load configuration from environment variables (priority) or config.yaml."""
         # Environment variables take precedence
-        self._api_key = os.getenv('E2B_API_KEY') or self._config_from_langbot.get('api_key')
-        self._api_url = os.getenv('E2B_API_URL') or self._config_from_langbot.get('api_url')
-        self._template = self._config_from_langbot.get('template')
+        self._api_key = os.getenv("E2B_API_KEY") or self._config_from_langbot.get(
+            "api_key"
+        )
+        self._api_url = os.getenv("E2B_API_URL") or self._config_from_langbot.get(
+            "api_url"
+        )
+        self._template = self._config_from_langbot.get("template")
 
     async def is_available(self) -> bool:
         """Check if E2B backend is available.
@@ -118,11 +122,11 @@ class E2BSandboxBackend(BaseSandboxBackend):
         2. E2B_API_KEY environment variable is set
         """
         if not _check_e2b_available():
-            self.logger.info('e2b package not installed')
+            self.logger.info("e2b package not installed")
             return False
 
         if not self._api_key:
-            self.logger.info('E2B_API_KEY not set')
+            self.logger.info("E2B_API_KEY not set")
             return False
 
         return True
@@ -139,7 +143,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
         validate_sandbox_security(spec)
 
         if not _check_e2b_available():
-            raise BoxError('e2b package not installed')
+            raise BoxError("e2b package not installed")
 
         now = dt.datetime.now(dt.timezone.utc)
 
@@ -150,50 +154,54 @@ class E2BSandboxBackend(BaseSandboxBackend):
         create_kwargs = {}
 
         # Template - use spec.image if provided, otherwise configured template, otherwise E2B default
-        if spec.image and spec.image != 'rockchin/langbot-sandbox:latest':
-            create_kwargs['template'] = spec.image
+        if spec.image and spec.image != "rockchin/langbot-sandbox:latest":
+            create_kwargs["template"] = spec.image
         elif self._template:
-            create_kwargs['template'] = self._template
+            create_kwargs["template"] = self._template
 
         # Environment variables
         if spec.env:
-            create_kwargs['envs'] = spec.env
+            create_kwargs["envs"] = spec.env
 
         # API key and domain (for CubeSandbox self-deployment)
         if self._api_key:
-            create_kwargs['api_key'] = self._api_key
+            create_kwargs["api_key"] = self._api_key
         if self._api_url:
             # E2B SDK uses 'domain' for self-hosted API URL
-            create_kwargs['domain'] = self._api_url
+            create_kwargs["domain"] = self._api_url
 
         # Build metadata for CubeSandbox host-mount
         metadata = {}
         if spec.host_path and spec.host_path_mode != BoxHostMountMode.NONE:
-            metadata['host-mount'] = json.dumps([{
-                'hostPath': spec.host_path,
-                'mountPath': mount_path,
-                'readOnly': spec.host_path_mode == BoxHostMountMode.READ_ONLY,
-            }])
+            metadata["host-mount"] = json.dumps(
+                [
+                    {
+                        "hostPath": spec.host_path,
+                        "mountPath": mount_path,
+                        "readOnly": spec.host_path_mode == BoxHostMountMode.READ_ONLY,
+                    }
+                ]
+            )
         if metadata:
-            create_kwargs['metadata'] = metadata
+            create_kwargs["metadata"] = metadata
 
         # Network mode - E2B uses allow_internet_access parameter
         # Note: E2B SDK doesn't have this directly in create(), but CubeSandbox may support it
         # For now, we rely on template configuration for network access
 
         self.logger.info(
-            f'LangBot Box backend start_session: backend=e2b '
-            f'session_id={spec.session_id} '
-            f'template={create_kwargs.get("template", "default")} '
-            f'network={spec.network.value} '
-            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={mount_path} '
-            f'env_keys={sorted(spec.env.keys())}'
+            f"LangBot Box backend start_session: backend=e2b "
+            f"session_id={spec.session_id} "
+            f"template={create_kwargs.get('template', 'default')} "
+            f"network={spec.network.value} "
+            f"host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={mount_path} "
+            f"env_keys={sorted(spec.env.keys())}"
         )
 
         try:
             sandbox = await _AsyncSandbox.create(**create_kwargs)
         except Exception as exc:
-            raise BoxError(f'Failed to create E2B sandbox: {exc}')
+            raise BoxError(f"Failed to create E2B sandbox: {exc}")
 
         return BoxSessionInfo(
             session_id=spec.session_id,
@@ -224,16 +232,16 @@ class E2BSandboxBackend(BaseSandboxBackend):
         Reconnects to existing sandbox via AsyncSandbox.connect() and runs command.
         """
         if not _check_e2b_available():
-            raise BoxError('e2b package not installed')
+            raise BoxError("e2b package not installed")
 
         start = dt.datetime.now(dt.timezone.utc)
 
         # Connect kwargs
         connect_kwargs = {}
         if self._api_key:
-            connect_kwargs['api_key'] = self._api_key
+            connect_kwargs["api_key"] = self._api_key
         if self._api_url:
-            connect_kwargs['domain'] = self._api_url
+            connect_kwargs["domain"] = self._api_url
 
         # Adapt workdir and logical /workspace command paths for E2B.
         workdir = _adapt_path_for_e2b(spec.workdir)
@@ -241,21 +249,20 @@ class E2BSandboxBackend(BaseSandboxBackend):
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
-            cmd_preview = f'{cmd_preview[:397]}...'
+            cmd_preview = f"{cmd_preview[:397]}..."
         self.logger.info(
-            f'LangBot Box backend exec: backend=e2b '
-            f'session_id={session.session_id} sandbox_id={session.backend_session_id} '
-            f'workdir={workdir} timeout_sec={spec.timeout_sec} '
-            f'env_keys={sorted(spec.env.keys())} cmd={cmd_preview}'
+            f"LangBot Box backend exec: backend=e2b "
+            f"session_id={session.session_id} sandbox_id={session.backend_session_id} "
+            f"workdir={workdir} timeout_sec={spec.timeout_sec} "
+            f"env_keys={sorted(spec.env.keys())} cmd={cmd_preview}"
         )
 
         try:
             sandbox = await _AsyncSandbox.connect(
-                sandbox_id=session.backend_session_id,
-                **connect_kwargs
+                sandbox_id=session.backend_session_id, **connect_kwargs
             )
         except Exception as exc:
-            raise BoxError(f'Failed to connect to E2B sandbox: {exc}')
+            raise BoxError(f"Failed to connect to E2B sandbox: {exc}")
 
         await self._sync_mounts_to_e2b(sandbox, spec)
 
@@ -263,37 +270,41 @@ class E2BSandboxBackend(BaseSandboxBackend):
         # Note: E2B requires cwd to exist before running command. We create it
         # as part of the command and then run from that directory.
         run_kwargs = {
-            'cmd': f'mkdir -p {shlex.quote(workdir)} && cd {shlex.quote(workdir)} && {command}',
-            'timeout': spec.timeout_sec,
+            "cmd": f"mkdir -p {shlex.quote(workdir)} && cd {shlex.quote(workdir)} && {command}",
+            "timeout": spec.timeout_sec,
         }
         if spec.env:
-            run_kwargs['envs'] = spec.env
+            run_kwargs["envs"] = spec.env
 
         try:
             result = await sandbox.commands.run(**run_kwargs)
         except Exception as exc:
             # Check if it's a timeout
-            duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
+            duration_ms = int(
+                (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
+            )
             error_msg = str(exc)
-            if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
                 return BoxExecutionResult(
                     session_id=session.session_id,
                     backend_name=self.name,
                     status=BoxExecutionStatus.TIMED_OUT,
                     exit_code=None,
-                    stdout='',
-                    stderr=f'Command timed out after {spec.timeout_sec} seconds.',
+                    stdout="",
+                    stderr=f"Command timed out after {spec.timeout_sec} seconds.",
                     duration_ms=duration_ms,
                 )
-            raise BoxError(f'E2B command execution failed: {exc}')
+            raise BoxError(f"E2B command execution failed: {exc}")
 
         await self._sync_mounts_from_e2b(sandbox, spec)
 
-        duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
+        duration_ms = int(
+            (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
+        )
 
         # Process output - apply truncation if needed
-        stdout = self._truncate_output(result.stdout or '')
-        stderr = self._truncate_output(result.stderr or '')
+        stdout = self._truncate_output(result.stdout or "")
+        stderr = self._truncate_output(result.stderr or "")
 
         return BoxExecutionResult(
             session_id=session.session_id,
@@ -325,7 +336,10 @@ class E2BSandboxBackend(BaseSandboxBackend):
 
     async def _sync_mounts_from_e2b(self, sandbox, spec: BoxSpec) -> None:
         """Best-effort download of writable E2B mounts into host paths."""
-        if spec.host_path is not None and spec.host_path_mode == BoxHostMountMode.READ_WRITE:
+        if (
+            spec.host_path is not None
+            and spec.host_path_mode == BoxHostMountMode.READ_WRITE
+        ):
             await self._sync_e2b_tree_to_host(
                 sandbox,
                 remote_root=_adapt_path_for_e2b(spec.mount_path),
@@ -341,19 +355,31 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 host_root=mount.host_path,
             )
 
-    async def _sync_host_tree_to_e2b(self, sandbox, *, host_root: str, remote_root: str) -> None:
+    async def _sync_host_tree_to_e2b(
+        self, sandbox, *, host_root: str, remote_root: str
+    ) -> None:
         """Best-effort sync for public E2B, which has no local bind mounts."""
         if not os.path.isdir(host_root):
             return
 
         for root, dirs, files in os.walk(host_root):
-            dirs[:] = [d for d in dirs if d not in {'.git', '__pycache__', '.venv', 'node_modules'}]
+            dirs[:] = [
+                d
+                for d in dirs
+                if d not in {".git", "__pycache__", ".venv", "node_modules"}
+            ]
             rel_dir = os.path.relpath(root, host_root)
-            remote_dir = remote_root if rel_dir == '.' else posixpath.join(remote_root, rel_dir.replace(os.sep, '/'))
+            remote_dir = (
+                remote_root
+                if rel_dir == "."
+                else posixpath.join(remote_root, rel_dir.replace(os.sep, "/"))
+            )
             try:
-                await sandbox.commands.run(f'mkdir -p {shlex.quote(remote_dir)}', timeout=10)
+                await sandbox.commands.run(
+                    f"mkdir -p {shlex.quote(remote_dir)}", timeout=10
+                )
             except Exception as exc:
-                self.logger.debug(f'Failed to create E2B sync dir {remote_dir}: {exc}')
+                self.logger.debug(f"Failed to create E2B sync dir {remote_dir}: {exc}")
                 continue
 
             for filename in files:
@@ -361,49 +387,64 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 try:
                     if os.path.getsize(host_file) > _MAX_RAW_OUTPUT_BYTES:
                         continue
-                    with open(host_file, 'rb') as f:
+                    with open(host_file, "rb") as f:
                         data = f.read()
                     remote_file = posixpath.join(remote_dir, filename)
                     await sandbox.files.write(remote_file, data)
                 except Exception as exc:
-                    self.logger.debug(f'Failed to sync host file to E2B {host_file}: {exc}')
+                    self.logger.debug(
+                        f"Failed to sync host file to E2B {host_file}: {exc}"
+                    )
 
-    async def _sync_e2b_tree_to_host(self, sandbox, *, remote_root: str, host_root: str) -> None:
+    async def _sync_e2b_tree_to_host(
+        self, sandbox, *, remote_root: str, host_root: str
+    ) -> None:
         """Best-effort download of an E2B mount into the matching host path."""
         os.makedirs(host_root, exist_ok=True)
         try:
             entries = await sandbox.files.list(remote_root, depth=16)
         except Exception as exc:
-            self.logger.debug(f'Failed to list E2B mount for sync {remote_root}: {exc}')
+            self.logger.debug(f"Failed to list E2B mount for sync {remote_root}: {exc}")
             return
 
         for entry in entries:
-            remote_path = str(getattr(entry, 'path', '') or '')
-            if not remote_path or remote_path == remote_root or not remote_path.startswith(remote_root + '/'):
+            remote_path = str(getattr(entry, "path", "") or "")
+            if (
+                not remote_path
+                or remote_path == remote_root
+                or not remote_path.startswith(remote_root + "/")
+            ):
                 continue
-            rel_path = remote_path[len(remote_root) :].lstrip('/')
+            rel_path = remote_path[len(remote_root) :].lstrip("/")
             real_host_root = os.path.realpath(host_root)
-            host_path = os.path.realpath(os.path.join(real_host_root, *rel_path.split('/')))
-            if not (host_path == real_host_root or host_path.startswith(real_host_root + os.sep)):
+            host_path = os.path.realpath(
+                os.path.join(real_host_root, *rel_path.split("/"))
+            )
+            if not (
+                host_path == real_host_root
+                or host_path.startswith(real_host_root + os.sep)
+            ):
                 continue
 
-            entry_type = getattr(getattr(entry, 'type', None), 'value', '')
+            entry_type = getattr(getattr(entry, "type", None), "value", "")
             try:
-                if entry_type == 'dir':
+                if entry_type == "dir":
                     os.makedirs(host_path, exist_ok=True)
-                elif entry_type == 'file':
+                elif entry_type == "file":
                     os.makedirs(os.path.dirname(host_path), exist_ok=True)
-                    data = await sandbox.files.read(remote_path, format='bytes')
-                    with open(host_path, 'wb') as f:
+                    data = await sandbox.files.read(remote_path, format="bytes")
+                    with open(host_path, "wb") as f:
                         f.write(bytes(data))
             except Exception as exc:
-                self.logger.debug(f'Failed to sync E2B file to host {remote_path}: {exc}')
+                self.logger.debug(
+                    f"Failed to sync E2B file to host {remote_path}: {exc}"
+                )
 
     async def stop_session(self, session: BoxSessionInfo):
         """Kill the E2B sandbox."""
         self.logger.info(
-            f'LangBot Box backend stop_session: backend=e2b '
-            f'session_id={session.session_id} sandbox_id={session.backend_session_id}'
+            f"LangBot Box backend stop_session: backend=e2b "
+            f"session_id={session.session_id} sandbox_id={session.backend_session_id}"
         )
 
         if not _check_e2b_available():
@@ -416,13 +457,13 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 domain=self._api_url,
             )
         except Exception as exc:
-            self.logger.warning(f'Failed to kill E2B sandbox: {exc}')
+            self.logger.warning(f"Failed to kill E2B sandbox: {exc}")
 
     def _truncate_output(self, output: str, limit: int = _MAX_RAW_OUTPUT_BYTES) -> str:
         """Truncate output if exceeds the limit."""
-        if len(output.encode('utf-8', errors='replace')) > limit:
+        if len(output.encode("utf-8", errors="replace")) > limit:
             # Truncate to approximately the limit
             truncated = output[:limit]
-            truncated += f'\n... [output clipped at {limit} bytes]'
+            truncated += f"\n... [output clipped at {limit} bytes]"
             return truncated
         return output

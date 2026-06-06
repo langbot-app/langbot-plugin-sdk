@@ -116,7 +116,9 @@ class AgentRunAPIProxy:
         return max(min(float(base_timeout), remaining), 0.001)
 
     def _context_api_enabled(self, name: str) -> bool:
-        available_apis = getattr(getattr(self.ctx, "context", None), "available_apis", None)
+        available_apis = getattr(
+            getattr(self.ctx, "context", None), "available_apis", None
+        )
         return bool(getattr(available_apis, name, False))
 
     def _require_context_api(self, name: str) -> None:
@@ -275,7 +277,7 @@ class AgentRunAPIProxy:
         self,
         tool_name: str,
         parameters: dict[str, Any],
-    ) -> HistoryPage:
+    ) -> dict[str, Any]:
         """Call a tool with permission validation."""
         self._validate_tool_access(tool_name)
         timeout = self._bounded_timeout(default=180.0)

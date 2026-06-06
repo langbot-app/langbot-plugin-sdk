@@ -241,9 +241,7 @@ async def test_runtime_application_run_can_skip_deps_and_plugin_launch(monkeypat
         "PluginConnectionHandler",
         FakePluginHandler,
     )
-    app = runtime_app.RuntimeApplication(
-        _args(skip_deps_check=True, debug_only=True)
-    )
+    app = runtime_app.RuntimeApplication(_args(skip_deps_check=True, debug_only=True))
 
     await app.run()
 
