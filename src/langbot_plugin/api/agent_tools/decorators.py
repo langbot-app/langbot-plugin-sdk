@@ -44,10 +44,14 @@ def agent_tool(
     description: str,
     args_model: type[pydantic.BaseModel],
     read_only: bool = False,
-) -> typing.Callable[[typing.Callable[..., typing.Any]], typing.Callable[..., typing.Any]]:
+) -> typing.Callable[
+    [typing.Callable[..., typing.Any]], typing.Callable[..., typing.Any]
+]:
     """Mark a method as safe to expose through external AgentRunner adapters."""
 
-    def decorator(func: typing.Callable[..., typing.Any]) -> typing.Callable[..., typing.Any]:
+    def decorator(
+        func: typing.Callable[..., typing.Any],
+    ) -> typing.Callable[..., typing.Any]:
         setattr(
             func,
             "__langbot_agent_tool__",

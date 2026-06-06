@@ -322,7 +322,9 @@ async def test_initialize_creates_plugin_and_supported_component_instances(monke
 
 
 @pytest.mark.asyncio
-async def test_initialize_writes_agent_runner_class_declarations_to_manifest(monkeypatch):
+async def test_initialize_writes_agent_runner_class_declarations_to_manifest(
+    monkeypatch,
+):
     controller = _agent_runner_controller()
     controller.handler = object()
     component_classes = {
@@ -355,9 +357,7 @@ async def test_initialize_writes_agent_runner_class_declarations_to_manifest(mon
     assert spec["capabilities"]["tool_calling"] is True
     assert spec["permissions"]["models"] == ["stream"]
     assert spec["permissions"]["tools"] == ["call"]
-    assert spec["config"] == [
-        {"type": "string", "name": "mode", "default": "chat"}
-    ]
+    assert spec["config"] == [{"type": "string", "name": "mode", "default": "chat"}]
     assert runner.manifest.manifest["spec"] is spec
 
 

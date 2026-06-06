@@ -3,6 +3,7 @@
 State is managed by LangBot host, readable/writable by runner,
 isolated by scope, and durable across runs.
 """
+
 from __future__ import annotations
 
 import typing

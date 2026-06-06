@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 LONG_RUNNING_OPERATION_TIMEOUT = 180.0
 
 
-def _get_caller_plugin_identity(handler_instance: "PluginConnectionHandler") -> str | None:
+def _get_caller_plugin_identity(
+    handler_instance: "PluginConnectionHandler",
+) -> str | None:
     """Get the caller plugin identity (author/name) from the handler instance.
 
     Returns None if the handler is not associated with a registered plugin.
@@ -562,7 +564,9 @@ class PluginConnectionHandler(handler.Handler):
                 RuntimeToLangBotAction.GET_CONFIG_FILE,
                 {
                     "file_key": data["file_key"],
-                    "run_id": data.get("run_id"),  # Pass run_id for AgentRunner validation
+                    "run_id": data.get(
+                        "run_id"
+                    ),  # Pass run_id for AgentRunner validation
                     "caller_plugin_identity": data.get("caller_plugin_identity"),
                 },
             )

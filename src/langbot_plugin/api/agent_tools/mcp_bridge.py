@@ -121,7 +121,9 @@ class AgentRunMCPBridge:
                     self._write_json(400, {"ok": False, "error": f"invalid JSON: {e}"})
                     return
                 if not isinstance(payload, dict):
-                    self._write_json(400, {"ok": False, "error": "request must be an object"})
+                    self._write_json(
+                        400, {"ok": False, "error": "request must be an object"}
+                    )
                     return
 
                 assert bridge._loop is not None
@@ -178,14 +180,18 @@ class AgentRunMCPBridge:
             },
         }
 
-    def merged_mcp_config(self, base_config: dict[str, typing.Any] | None = None) -> dict[str, typing.Any]:
+    def merged_mcp_config(
+        self, base_config: dict[str, typing.Any] | None = None
+    ) -> dict[str, typing.Any]:
         return merge_mcp_server_config(
             base_config,
             self.mcp_server_config(),
             server_name=self.server_name,
         )
 
-    async def handle_mcp_method(self, method: str, params: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    async def handle_mcp_method(
+        self, method: str, params: dict[str, typing.Any]
+    ) -> dict[str, typing.Any]:
         if method == "tools/list":
             return {"tools": self.tools.mcp_tools()}
         if method == "tools/call":

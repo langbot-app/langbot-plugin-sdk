@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import time
-from typing import Any
+from typing import Any, AsyncGenerator, TypeVar
+
+_T = TypeVar("_T")
 
 
 def remaining_deadline_seconds(deadline_at: Any) -> float | None:
@@ -12,3 +15,27 @@ def remaining_deadline_seconds(deadline_at: Any) -> float | None:
         return float(deadline_at) - time.time()
     except (TypeError, ValueError):
         return None
+
+
+async def anext_with_deadline(
+    gen: AsyncGenerator[_T, None],
+    deadline_at: Any,
+) -> _T:
+    """Return the next item from an async generator before the deadline expires."""
+    remaining = remaining_deadline_seconds(deadline_at)
+    if remaining is not None and remaining <= 0:
+        await gen.aclose()
+        raise asyncio.TimeoutError
+
+    try:
+        if remaining is None:
+            return await anext(gen)
+        return await asyncio.wait_for(anext(gen), timeout=remaining)
+    except StopAsyncIteration:
+        exhausted = remaining_deadline_seconds(deadline_at)
+        if exhausted is not None and exhausted <= 0:
+            raise asyncio.TimeoutError
+        raise
+    except asyncio.TimeoutError:
+        await gen.aclose()
+        raise

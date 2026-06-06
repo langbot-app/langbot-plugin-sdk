@@ -176,6 +176,7 @@ def create_mock_plugin(
 
     # Mock runtime plugin handler for forwarding
     if mock_handler_responses:
+
         async def mock_call_action_generator(action, data, timeout=300):
             runner_name = data.get("runner_name")
             # Find matching responses for this runner
@@ -185,7 +186,13 @@ def create_mock_plugin(
                         yield resp  # Yield response data directly (matches real call_action_generator)
                     return
             # No matching responses found
-            yield {"type": "run.failed", "data": {"error": f"No mock responses for {runner_name}", "code": "runner.mock_error"}}
+            yield {
+                "type": "run.failed",
+                "data": {
+                    "error": f"No mock responses for {runner_name}",
+                    "code": "runner.mock_error",
+                },
+            }
 
         mock_handler = Mock()
         mock_handler.call_action_generator = mock_call_action_generator
@@ -376,9 +383,7 @@ class TestListAgentRunners:
         assert runners[0]["capabilities"]["tool_calling"] is True
         assert runners[0]["permissions"]["models"] == ["invoke"]
         assert runners[0]["permissions"]["tools"] == ["call"]
-        assert runners[0]["config"] == [
-            {"type": "llm-model-selector", "name": "model"}
-        ]
+        assert runners[0]["config"] == [{"type": "llm-model-selector", "name": "model"}]
 
 
 class TestRunAgent:
@@ -395,14 +400,22 @@ class TestRunAgent:
 
         # Create mock responses for streaming
         mock_responses = [
-            {"type": "message.delta", "data": {"chunk": {"role": "assistant", "content": "Hello"}}},
-            {"type": "message.delta", "data": {"chunk": {"role": "assistant", "content": " world"}}},
+            {
+                "type": "message.delta",
+                "data": {"chunk": {"role": "assistant", "content": "Hello"}},
+            },
+            {
+                "type": "message.delta",
+                "data": {"chunk": {"role": "assistant", "content": " world"}},
+            },
             {"type": "run.completed", "data": {"finish_reason": "stop"}},
         ]
 
         plugin = create_mock_plugin(
-            "test-author", "test-plugin", [("streaming", None)],
-            mock_handler_responses=[mock_responses]
+            "test-author",
+            "test-plugin",
+            [("streaming", None)],
+            mock_handler_responses=[mock_responses],
         )
         mgr.plugins = [plugin]
 
@@ -484,13 +497,24 @@ class TestRunAgent:
 
         # Create mock responses simulating an exception
         mock_responses = [
-            {"type": "message.delta", "data": {"chunk": {"role": "assistant", "content": "Starting..."}}},
-            {"type": "run.failed", "data": {"error": "Intentional test failure", "code": "runner.exception"}},
+            {
+                "type": "message.delta",
+                "data": {"chunk": {"role": "assistant", "content": "Starting..."}},
+            },
+            {
+                "type": "run.failed",
+                "data": {
+                    "error": "Intentional test failure",
+                    "code": "runner.exception",
+                },
+            },
         ]
 
         plugin = create_mock_plugin(
-            "test-author", "test-plugin", [("failing", None)],
-            mock_handler_responses=[mock_responses]
+            "test-author",
+            "test-plugin",
+            [("failing", None)],
+            mock_handler_responses=[mock_responses],
         )
         mgr.plugins = [plugin]
 
@@ -521,12 +545,20 @@ class TestRunAgent:
 
         # Create mock responses for context validation failure
         mock_responses = [
-            {"type": "run.failed", "data": {"error": "Context validation failed", "code": "runner.context_invalid"}},
+            {
+                "type": "run.failed",
+                "data": {
+                    "error": "Context validation failed",
+                    "code": "runner.context_invalid",
+                },
+            },
         ]
 
         plugin = create_mock_plugin(
-            "test-author", "test-plugin", [("default", None)],
-            mock_handler_responses=[mock_responses]
+            "test-author",
+            "test-plugin",
+            [("default", None)],
+            mock_handler_responses=[mock_responses],
         )
         mgr.plugins = [plugin]
 
@@ -630,12 +662,20 @@ class TestRunAgent:
 
         # Mock responses for not initialized error
         mock_responses = [
-            {"type": "run.failed", "data": {"error": "AgentRunner default not initialized", "code": "runner.not_initialized"}},
+            {
+                "type": "run.failed",
+                "data": {
+                    "error": "AgentRunner default not initialized",
+                    "code": "runner.not_initialized",
+                },
+            },
         ]
 
         plugin = create_mock_plugin(
-            "test-author", "test-plugin", [("default", None)],
-            mock_handler_responses=[mock_responses]
+            "test-author",
+            "test-plugin",
+            [("default", None)],
+            mock_handler_responses=[mock_responses],
         )
         mgr.plugins = [plugin]
 
@@ -666,7 +706,9 @@ class TestRunAgent:
             {"type": "run.completed", "data": {"finish_reason": "stop"}},
         ]
         plugin = create_mock_plugin(
-            "test-author", "test-plugin", [("default", None)],
+            "test-author",
+            "test-plugin",
+            [("default", None)],
             mock_handler_responses=[mock_responses],
         )
         mgr.plugins = [plugin]
@@ -697,7 +739,10 @@ async def test_plugin_runtime_runner_deadline_cancels_runner_coroutine():
     ctx = create_run_context()
     ctx.runtime.deadline_at = time.time() + 0.01
 
-    results = [result async for result in _iter_runner_results_with_deadline(SlowAgentRunner(), ctx)]
+    results = [
+        result
+        async for result in _iter_runner_results_with_deadline(SlowAgentRunner(), ctx)
+    ]
 
     assert len(results) == 1
     assert results[0].type.value == "run.failed"
@@ -723,10 +768,12 @@ async def test_plugin_runtime_runner_exception_includes_run_id():
     run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
     results = [
         response.data
-        async for response in run_agent({
-            "runner_name": "failing",
-            "context": create_run_context().model_dump(mode="json"),
-        })
+        async for response in run_agent(
+            {
+                "runner_name": "failing",
+                "context": create_run_context().model_dump(mode="json"),
+            }
+        )
     ]
 
     assert results[-1]["type"] == "run.failed"
@@ -750,10 +797,12 @@ async def test_plugin_runtime_context_validation_returns_structured_run_failed()
     run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
     responses = [
         response
-        async for response in run_agent({
-            "runner_name": "default",
-            "context": {"run_id": "bad_run", "invalid": "data"},
-        })
+        async for response in run_agent(
+            {
+                "runner_name": "default",
+                "context": {"run_id": "bad_run", "invalid": "data"},
+            }
+        )
     ]
 
     assert len(responses) == 1
@@ -781,10 +830,12 @@ async def test_plugin_runtime_runner_not_found_returns_structured_run_failed():
     run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
     responses = [
         response
-        async for response in run_agent({
-            "runner_name": "missing",
-            "context": create_run_context().model_dump(mode="json"),
-        })
+        async for response in run_agent(
+            {
+                "runner_name": "missing",
+                "context": create_run_context().model_dump(mode="json"),
+            }
+        )
     ]
 
     assert len(responses) == 1
@@ -812,10 +863,12 @@ async def test_plugin_runtime_uninitialized_runner_returns_structured_run_failed
     run_agent = handler.actions[RuntimeToPluginAction.RUN_AGENT.value]
     responses = [
         response
-        async for response in run_agent({
-            "runner_name": "default",
-            "context": create_run_context().model_dump(mode="json"),
-        })
+        async for response in run_agent(
+            {
+                "runner_name": "default",
+                "context": create_run_context().model_dump(mode="json"),
+            }
+        )
     ]
 
     assert len(responses) == 1
