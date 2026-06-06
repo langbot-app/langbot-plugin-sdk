@@ -15,8 +15,8 @@ class AgentRuntimeContext(pydantic.BaseModel):
     langbot_version: str | None = None
     """LangBot host version."""
 
-    sdk_protocol_version: str = "1"
-    """SDK protocol version."""
+    protocol_version: str = "1"
+    """AgentRunner protocol version."""
 
     trace_id: str | None = None
     """Trace ID for observability."""
