@@ -6,10 +6,10 @@ import mimetypes
 import typing
 import aiofiles
 import logging
-import time
 from copy import deepcopy
 from pathlib import Path
 
+from langbot_plugin.utils.deadline import remaining_deadline_seconds
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
@@ -68,12 +68,7 @@ def _resolve_asset_path(file_key: str) -> Path | None:
 
 
 def _remaining_deadline_seconds(deadline_at: typing.Any) -> float | None:
-    if deadline_at is None:
-        return None
-    try:
-        return float(deadline_at) - time.time()
-    except (TypeError, ValueError):
-        return None
+    return remaining_deadline_seconds(deadline_at)
 
 
 async def _iter_runner_results_with_deadline(

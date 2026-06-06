@@ -72,6 +72,34 @@ class BaseSandboxBackend(abc.ABC):
         """Remove lingering containers from previous runs. No-op by default."""
         pass
 
+    @staticmethod
+    def _clip_captured_bytes(data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES) -> str:
+        text = data.decode('utf-8', errors='replace').strip()
+        if total_size > limit:
+            text += f'\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]'
+        return text
+
+    @staticmethod
+    async def _read_stream(
+        stream: asyncio.StreamReader | None,
+        limit: int = _MAX_RAW_OUTPUT_BYTES,
+    ) -> tuple[bytes, int]:
+        if stream is None:
+            return b'', 0
+
+        chunks = bytearray()
+        total_size = 0
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            remaining = limit - len(chunks)
+            if remaining > 0:
+                chunks.extend(chunk[:remaining])
+
+        return bytes(chunks), total_size
+
 
 class CLISandboxBackend(BaseSandboxBackend):
     command: str
@@ -370,34 +398,6 @@ class CLISandboxBackend(BaseSandboxBackend):
             stderr=stderr,
             timed_out=False,
         )
-
-    @staticmethod
-    def _clip_captured_bytes(data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES) -> str:
-        text = data.decode('utf-8', errors='replace').strip()
-        if total_size > limit:
-            text += f'\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]'
-        return text
-
-    @staticmethod
-    async def _read_stream(
-        stream: asyncio.StreamReader | None,
-        limit: int = _MAX_RAW_OUTPUT_BYTES,
-    ) -> tuple[bytes, int]:
-        if stream is None:
-            return b'', 0
-
-        chunks = bytearray()
-        total_size = 0
-        while True:
-            chunk = await stream.read(65536)
-            if not chunk:
-                break
-            total_size += len(chunk)
-            remaining = limit - len(chunks)
-            if remaining > 0:
-                chunks.extend(chunk[:remaining])
-
-        return bytes(chunks), total_size
 
     def _format_cli_error(self, message: str) -> str:
         message = ' '.join(message.split())

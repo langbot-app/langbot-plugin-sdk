@@ -104,6 +104,10 @@ class BoxServerHandler(Handler):
         self._runtime = runtime
         self._register_actions()
 
+    async def _call_skill_store(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        method = getattr(self._runtime.skill_store, method_name)
+        return await asyncio.to_thread(method, *args, **kwargs)
+
     def _register_actions(self) -> None:
         @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> ActionResponse:
@@ -186,18 +190,18 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.LIST_SKILLS)
         async def list_skills(data: dict[str, Any]) -> ActionResponse:
             return ActionResponse.success(
-                {"skills": self._runtime.skill_store.list_skills()}
+                {"skills": await self._call_skill_store("list_skills")}
             )
 
         @self.action(LangBotToBoxAction.GET_SKILL)
         async def get_skill(data: dict[str, Any]) -> ActionResponse:
-            skill = self._runtime.skill_store.get_skill(data["name"])
+            skill = await self._call_skill_store("get_skill", data["name"])
             return ActionResponse.success({"skill": skill})
 
         @self.action(LangBotToBoxAction.CREATE_SKILL)
         async def create_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._runtime.skill_store.create_skill(data["skill"])
+                skill = await self._call_skill_store("create_skill", data["skill"])
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success({"skill": skill})
@@ -205,7 +209,8 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.UPDATE_SKILL)
         async def update_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._runtime.skill_store.update_skill(
+                skill = await self._call_skill_store(
+                    "update_skill",
                     data["name"], data["skill"]
                 )
             except Exception as exc:
@@ -215,7 +220,7 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.DELETE_SKILL)
         async def delete_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.delete_skill(data["name"])
+                result = await self._call_skill_store("delete_skill", data["name"])
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
@@ -223,7 +228,7 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.SCAN_SKILL_DIRECTORY)
         async def scan_skill_directory(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._runtime.skill_store.scan_directory(data["path"])
+                skill = await self._call_skill_store("scan_directory", data["path"])
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(skill)
@@ -231,7 +236,8 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.LIST_SKILL_FILES)
         async def list_skill_files(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.list_skill_files(
+                result = await self._call_skill_store(
+                    "list_skill_files",
                     data["name"],
                     data.get("path", "."),
                     include_hidden=bool(data.get("include_hidden", False)),
@@ -244,7 +250,8 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.READ_SKILL_FILE)
         async def read_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.read_skill_file(
+                result = await self._call_skill_store(
+                    "read_skill_file",
                     data["name"], data["path"]
                 )
             except Exception as exc:
@@ -254,7 +261,8 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.WRITE_SKILL_FILE)
         async def write_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._runtime.skill_store.write_skill_file(
+                result = await self._call_skill_store(
+                    "write_skill_file",
                     data["name"], data["path"], data.get("content", "")
                 )
             except Exception as exc:
@@ -266,7 +274,8 @@ class BoxServerHandler(Handler):
             try:
                 file_bytes = await self.read_local_file(data["file_key"])
                 await self.delete_local_file(data["file_key"])
-                result = self._runtime.skill_store.preview_zip_upload(
+                result = await self._call_skill_store(
+                    "preview_zip_upload",
                     file_bytes=file_bytes,
                     filename=data.get("filename", "skill.zip"),
                     source_subdir=data.get("source_subdir") or "",
@@ -281,7 +290,8 @@ class BoxServerHandler(Handler):
             try:
                 file_bytes = await self.read_local_file(data["file_key"])
                 await self.delete_local_file(data["file_key"])
-                result = self._runtime.skill_store.install_zip_upload(
+                result = await self._call_skill_store(
+                    "install_zip_upload",
                     file_bytes=file_bytes,
                     filename=data.get("filename", "skill.zip"),
                     source_paths=data.get("source_paths") or [],
