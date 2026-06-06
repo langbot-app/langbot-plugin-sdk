@@ -96,14 +96,16 @@ def test_adapt_path_other_paths_unchanged():
 
 def test_rewrite_command_paths_for_e2b_respects_path_boundaries():
     """Command path rewrite only maps the logical /workspace path segment."""
-    command = 'ls /workspace && echo /workspace/a && echo /workspaces && echo x/workspace'
+    command = (
+        "ls /workspace && echo /workspace/a && echo /workspaces && echo x/workspace"
+    )
 
     rewritten = _rewrite_command_paths_for_e2b(command)
 
-    assert '/home/user/workspace' in rewritten
-    assert '/home/user/workspace/a' in rewritten
-    assert '/workspaces' in rewritten
-    assert 'x/workspace' in rewritten
+    assert "/home/user/workspace" in rewritten
+    assert "/home/user/workspace/a" in rewritten
+    assert "/workspaces" in rewritten
+    assert "x/workspace" in rewritten
 
 
 # ── is_available ──────────────────────────────────────────────────────

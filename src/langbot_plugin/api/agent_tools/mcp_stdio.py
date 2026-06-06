@@ -13,11 +13,15 @@ SERVER_INFO = {"name": "langbot-agent", "version": "0.1.0"}
 
 
 def _write_message(message: dict[str, typing.Any]) -> None:
-    sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+    sys.stdout.write(
+        json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+    )
     sys.stdout.flush()
 
 
-def _result(message_id: typing.Any, result: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def _result(
+    message_id: typing.Any, result: dict[str, typing.Any]
+) -> dict[str, typing.Any]:
     return {"jsonrpc": "2.0", "id": message_id, "result": result}
 
 
@@ -40,7 +44,9 @@ def _bridge_request(
     params: dict[str, typing.Any],
     timeout: float,
 ) -> dict[str, typing.Any]:
-    payload = json.dumps({"method": method, "params": params}, ensure_ascii=False).encode("utf-8")
+    payload = json.dumps(
+        {"method": method, "params": params}, ensure_ascii=False
+    ).encode("utf-8")
     request = urllib.request.Request(
         endpoint.rstrip("/") + "/mcp",
         data=payload,
@@ -110,8 +116,12 @@ def handle_message(
         )
         if response.get("ok"):
             result = response.get("result")
-            return _result(message_id, result if isinstance(result, dict) else {"result": result})
-        return _error(message_id, -32000, str(response.get("error") or "LangBot MCP bridge error"))
+            return _result(
+                message_id, result if isinstance(result, dict) else {"result": result}
+            )
+        return _error(
+            message_id, -32000, str(response.get("error") or "LangBot MCP bridge error")
+        )
 
     return _error(message_id, -32601, f"Method not found: {method}")
 
@@ -125,7 +135,9 @@ def main() -> int:
         timeout = 60.0
 
     if not endpoint or not token:
-        sys.stderr.write("LANGBOT_AGENT_MCP_ENDPOINT and LANGBOT_AGENT_MCP_TOKEN are required\n")
+        sys.stderr.write(
+            "LANGBOT_AGENT_MCP_ENDPOINT and LANGBOT_AGENT_MCP_TOKEN are required\n"
+        )
         sys.stderr.flush()
         return 2
 
@@ -142,7 +154,9 @@ def main() -> int:
             _write_message(_error(None, -32600, "Invalid request"))
             continue
 
-        response = handle_message(message, endpoint=endpoint, token=token, timeout=timeout)
+        response = handle_message(
+            message, endpoint=endpoint, token=token, timeout=timeout
+        )
         if response is not None:
             _write_message(response)
 

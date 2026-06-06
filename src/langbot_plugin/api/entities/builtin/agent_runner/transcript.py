@@ -1,4 +1,5 @@
 """Transcript item entity for history projection."""
+
 from __future__ import annotations
 
 import typing
@@ -52,4 +53,4 @@ class TranscriptItem(pydantic.BaseModel):
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata (sender_id, platform, etc.)."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")

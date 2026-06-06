@@ -1,4 +1,5 @@
 """History and Event page result entities."""
+
 from __future__ import annotations
 
 import typing
@@ -29,7 +30,7 @@ class HistoryPage(pydantic.BaseModel):
     total_count: int | None = None
     """Total count if available (may be None for large conversations)."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")
 
 
 class HistorySearchResult(pydantic.BaseModel):
@@ -48,7 +49,7 @@ class HistorySearchResult(pydantic.BaseModel):
     query: str
     """The search query that was executed."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")
 
 
 class AgentEventRecord(pydantic.BaseModel):
@@ -118,7 +119,7 @@ class AgentEventRecord(pydantic.BaseModel):
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")
 
 
 class EventPage(pydantic.BaseModel):
@@ -143,4 +144,4 @@ class EventPage(pydantic.BaseModel):
     total_count: int | None = None
     """Total count if available."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")

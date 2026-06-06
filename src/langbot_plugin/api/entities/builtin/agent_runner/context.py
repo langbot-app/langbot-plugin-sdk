@@ -16,7 +16,9 @@ from langbot_plugin.api.entities.builtin.agent_runner.event import (
     ActorContext,
     SubjectContext,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context_access import ContextAccess
+from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+    ContextAccess,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
 
 

@@ -88,14 +88,18 @@ class AgentRunExternalTools:
             if name in available_names
         ]
 
-    async def call_tool(self, name: str, arguments: dict[str, typing.Any] | None = None) -> typing.Any:
+    async def call_tool(
+        self, name: str, arguments: dict[str, typing.Any] | None = None
+    ) -> typing.Any:
         tool = self._tools.get(name) if name in self._available_tool_names() else None
         if tool is None:
             raise ValueError(f"Unknown LangBot external tool: {name}")
         args = tool.spec.args_model.model_validate(arguments or {})
         return await tool.handler(args)
 
-    async def call_mcp_tool(self, name: str, arguments: dict[str, typing.Any] | None = None) -> dict[str, typing.Any]:
+    async def call_mcp_tool(
+        self, name: str, arguments: dict[str, typing.Any] | None = None
+    ) -> dict[str, typing.Any]:
         try:
             result = await self.call_tool(name, arguments)
         except Exception as e:
@@ -176,7 +180,9 @@ class AgentRunExternalTools:
         args_model=RetrieveKnowledgeArgs,
         read_only=True,
     )
-    async def retrieve_knowledge(self, args: RetrieveKnowledgeArgs) -> list[dict[str, typing.Any]]:
+    async def retrieve_knowledge(
+        self, args: RetrieveKnowledgeArgs
+    ) -> list[dict[str, typing.Any]]:
         query_text = (args.query_text or args.query or "").strip()
         if not query_text:
             raise ValueError("query_text is required")

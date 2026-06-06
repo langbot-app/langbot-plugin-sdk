@@ -1,4 +1,5 @@
 """Tests for artifact API proxy methods."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, AsyncMock
@@ -30,8 +31,19 @@ def make_context() -> AgentRunContext:
                 "artifact_read": True,
             },
         },
-        resources={"models": [], "tools": [], "knowledge_bases": [], "files": [], "storage": {}},
-        runtime={"langbot_version": "1.0", "protocol_version": "1", "deadline_at": None, "metadata": {}},
+        resources={
+            "models": [],
+            "tools": [],
+            "knowledge_bases": [],
+            "files": [],
+            "storage": {},
+        },
+        runtime={
+            "langbot_version": "1.0",
+            "protocol_version": "1",
+            "deadline_at": None,
+            "metadata": {},
+        },
         state={},
         config={},
     )
@@ -45,24 +57,27 @@ class TestArtifactAPIProxy:
         ctx = make_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert hasattr(proxy, 'artifact_metadata'), \
+        assert hasattr(proxy, "artifact_metadata"), (
             "AgentRunAPIProxy should expose artifact_metadata() method"
+        )
 
     def test_exposes_artifact_read_method(self):
         """AgentRunAPIProxy exposes artifact_read method."""
         ctx = make_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert hasattr(proxy, 'artifact_read'), \
+        assert hasattr(proxy, "artifact_read"), (
             "AgentRunAPIProxy should expose artifact_read() method"
+        )
 
     def test_exposes_artifact_read_range_method(self):
         """AgentRunAPIProxy exposes artifact_read_range method."""
         ctx = make_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert hasattr(proxy, 'artifact_read_range'), \
+        assert hasattr(proxy, "artifact_read_range"), (
             "AgentRunAPIProxy should expose artifact_read_range() method"
+        )
 
 
 class TestArtifactAPIProxyPayloads:
@@ -81,7 +96,9 @@ class TestArtifactAPIProxyPayloads:
         }
 
     @staticmethod
-    def _read_response(artifact_id: str = "art_001", offset: int = 0, limit: int | None = None) -> dict:
+    def _read_response(
+        artifact_id: str = "art_001", offset: int = 0, limit: int | None = None
+    ) -> dict:
         return {
             "artifact_id": artifact_id,
             "mime_type": "text/plain",
@@ -105,6 +122,7 @@ class TestArtifactAPIProxyPayloads:
 
         # Get the coroutine to inspect what it would call
         import inspect
+
         coro = original_method(artifact_id="art_001")
 
         # The coroutine is created; we can close it without running
@@ -130,7 +148,9 @@ class TestArtifactAPIProxyPayloads:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(proxy.artifact_metadata(artifact_id="art_001"))
+            result = loop.run_until_complete(
+                proxy.artifact_metadata(artifact_id="art_001")
+            )
         finally:
             loop.close()
 
@@ -150,7 +170,9 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value=self._read_response("art_002", offset=100, limit=1024))
+        mock_handler.call_action = AsyncMock(
+            return_value=self._read_response("art_002", offset=100, limit=1024)
+        )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
@@ -180,7 +202,9 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value=self._read_response("art_003"))
+        mock_handler.call_action = AsyncMock(
+            return_value=self._read_response("art_003")
+        )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
@@ -202,14 +226,18 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value=self._read_response("art_004", offset=500, limit=2048))
+        mock_handler.call_action = AsyncMock(
+            return_value=self._read_response("art_004", offset=500, limit=2048)
+        )
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(
-                proxy.artifact_read_range(artifact_id="art_004", offset=500, length=2048)
+                proxy.artifact_read_range(
+                    artifact_id="art_004", offset=500, length=2048
+                )
             )
         finally:
             loop.close()
@@ -254,10 +282,10 @@ class TestArtifactActionEnums:
 
     def test_artifact_metadata_enum_exists(self):
         """ARTIFACT_METADATA action enum exists."""
-        assert hasattr(PluginToRuntimeAction, 'ARTIFACT_METADATA')
+        assert hasattr(PluginToRuntimeAction, "ARTIFACT_METADATA")
         assert PluginToRuntimeAction.ARTIFACT_METADATA.value == "artifact_metadata"
 
     def test_artifact_read_enum_exists(self):
         """ARTIFACT_READ action enum exists."""
-        assert hasattr(PluginToRuntimeAction, 'ARTIFACT_READ')
+        assert hasattr(PluginToRuntimeAction, "ARTIFACT_READ")
         assert PluginToRuntimeAction.ARTIFACT_READ.value == "artifact_read"

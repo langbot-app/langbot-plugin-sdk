@@ -1,4 +1,5 @@
 """Artifact entities for Host-owned artifact store."""
+
 from __future__ import annotations
 
 import typing
@@ -52,7 +53,7 @@ class ArtifactMetadata(pydantic.BaseModel):
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata (platform-specific info, etc.)."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")
 
 
 class ArtifactReadResult(pydantic.BaseModel):
@@ -89,4 +90,4 @@ class ArtifactReadResult(pydantic.BaseModel):
     has_more: bool = False
     """Whether more data is available (for range reads)."""
 
-    model_config = pydantic.ConfigDict(extra='forbid')
+    model_config = pydantic.ConfigDict(extra="forbid")

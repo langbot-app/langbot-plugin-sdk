@@ -7,7 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from langbot_plugin.api.agent_tools import AgentRunExternalTools, AgentRunMCPBridge, LANGBOT_AGENT_MCP_SERVER_NAME
+from langbot_plugin.api.agent_tools import (
+    AgentRunExternalTools,
+    AgentRunMCPBridge,
+    LANGBOT_AGENT_MCP_SERVER_NAME,
+)
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
 from langbot_plugin.api.entities.builtin.agent_runner import (
     AgentEventContext,
@@ -43,10 +47,12 @@ def _ctx() -> AgentRunContext:
 
 def _authorized_ctx() -> AgentRunContext:
     ctx = _ctx()
-    ctx.resources = AgentResources.model_validate({
-        "knowledge_bases": [{"kb_id": "kb_1"}],
-        "tools": [{"tool_name": "weather"}],
-    })
+    ctx.resources = AgentResources.model_validate(
+        {
+            "knowledge_bases": [{"kb_id": "kb_1"}],
+            "tools": [{"tool_name": "weather"}],
+        }
+    )
     ctx.context = ContextAccess(
         available_apis=ContextAPICapabilities(history_page=True)
     )
@@ -82,7 +88,12 @@ def test_agent_run_external_tools_are_annotation_backed() -> None:
         "langbot_retrieve_knowledge",
         "langbot_call_tool",
     }
-    assert mcp_tools["langbot_retrieve_knowledge"]["inputSchema"]["properties"]["kb_id"]["type"] == "string"
+    assert (
+        mcp_tools["langbot_retrieve_knowledge"]["inputSchema"]["properties"]["kb_id"][
+            "type"
+        ]
+        == "string"
+    )
     assert mcp_tools["langbot_get_current_event"]["annotations"]["readOnlyHint"] is True
 
 
@@ -220,7 +231,11 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
                     "method": "tools/call",
                     "params": {
                         "name": "langbot_retrieve_knowledge",
-                        "arguments": {"kb_id": "kb_1", "query_text": "stdio", "top_k": 2},
+                        "arguments": {
+                            "kb_id": "kb_1",
+                            "query_text": "stdio",
+                            "top_k": 2,
+                        },
                     },
                 },
                 {
@@ -229,11 +244,17 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
                     "method": "tools/call",
                     "params": {
                         "name": "langbot_call_tool",
-                        "arguments": {"tool_name": "weather", "parameters": {"city": "Shanghai"}},
+                        "arguments": {
+                            "tool_name": "weather",
+                            "parameters": {"city": "Shanghai"},
+                        },
                     },
                 },
             ]
-            stdin = "\n".join(json.dumps(item, ensure_ascii=False) for item in messages) + "\n"
+            stdin = (
+                "\n".join(json.dumps(item, ensure_ascii=False) for item in messages)
+                + "\n"
+            )
             process = await asyncio.create_subprocess_exec(
                 config["command"],
                 *config["args"],
@@ -242,15 +263,28 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
                 stderr=asyncio.subprocess.PIPE,
                 env={**os.environ, **config["env"]},
             )
-            stdout, stderr = await asyncio.wait_for(process.communicate(stdin.encode("utf-8")), timeout=20)
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(stdin.encode("utf-8")), timeout=20
+            )
             assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
 
-            responses = [json.loads(line) for line in stdout.decode("utf-8").splitlines() if line.strip()]
+            responses = [
+                json.loads(line)
+                for line in stdout.decode("utf-8").splitlines()
+                if line.strip()
+            ]
             listed_tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
             assert "langbot_history_page" in listed_tools
-            assert responses[2]["result"]["structuredContent"]["items"] == [{"text": "older"}]
-            assert responses[3]["result"]["structuredContent"]["result"] == [{"content": "kb:stdio"}]
-            assert responses[4]["result"]["structuredContent"] == {"ok": True, "tool_name": "weather"}
+            assert responses[2]["result"]["structuredContent"]["items"] == [
+                {"text": "older"}
+            ]
+            assert responses[3]["result"]["structuredContent"]["result"] == [
+                {"content": "kb:stdio"}
+            ]
+            assert responses[4]["result"]["structuredContent"] == {
+                "ok": True,
+                "tool_name": "weather",
+            }
             return api
         finally:
             bridge.stop()
