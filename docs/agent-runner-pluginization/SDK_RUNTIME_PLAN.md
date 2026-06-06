@@ -32,6 +32,18 @@ schema；协议字段、结果类型、权限字面量和 Host API 语义以 Lan
 4. SDK Runtime 把插件异常转换为 `run.failed`，不能把 generator 异常直接暴露给 Host。
 5. 一个插件可以暴露多个 AgentRunner component，Runtime discovery 不得限制为单 runner。
 
+## Host action 兼容
+
+`GET_TOOL_DETAIL` / `CALL_TOOL` 现在由 SDK Runtime 转发给 LangBot Host 处理，
+不再只在 SDK Runtime 本地解析。Host 必须同时支持两种调用 envelope：
+
+- 普通插件调用不带 `run_id`，继续使用 `tool_parameters` / `tool_response`。
+- AgentRunner 调用带 `run_id`，使用 `parameters` / `result`，并由 Host 按
+  `caller_plugin_identity` 和 run resources 做权限校验。
+
+发布 SDK Runtime 变更时必须确认配套 LangBot Host 已实现上述两个 shape；如果
+SDK 与 Host 独立发版，先验证 Host action handler，再升级会转发 tool action 的 SDK。
+
 ## 高价值测试
 
 - `AgentRunContext` 最小字段 validate。
