@@ -174,15 +174,15 @@ async def test_plugin_handler_adds_plugin_owner_for_binary_storage():
     assert control.calls == [
         (
             RuntimeToLangBotAction.SET_BINARY_STORAGE,
-                {
-                    "key": "cache",
-                    "value_base64": "dmFsdWU=",
-                    "owner_type": "plugin",
-                    "owner": "tester/demo",
-                    "caller_plugin_identity": "tester/demo",
-                },
-                15.0,
-            )
+            {
+                "key": "cache",
+                "value_base64": "dmFsdWU=",
+                "owner_type": "plugin",
+                "owner": "tester/demo",
+                "caller_plugin_identity": "tester/demo",
+            },
+            15.0,
+        )
     ]
 
 
@@ -219,16 +219,16 @@ async def test_plugin_handler_forwards_config_file_requests_to_langbot():
 
     assert response["data"] == {"file_base64": "Y29uZmln"}
     assert control.calls == [
-            (
-                RuntimeToLangBotAction.GET_CONFIG_FILE,
-                {
-                    "file_key": "settings.yaml",
-                    "run_id": None,
-                    "caller_plugin_identity": None,
-                },
-                15.0,
-            )
-        ]
+        (
+            RuntimeToLangBotAction.GET_CONFIG_FILE,
+            {
+                "file_key": "settings.yaml",
+                "run_id": None,
+                "caller_plugin_identity": None,
+            },
+            15.0,
+        )
+    ]
 
 
 async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypatch):
@@ -254,10 +254,10 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
     monkeypatch.setattr(handler, "send_file", fake_send_file)
 
     async with ProtocolSession(handler) as session:
-            response = await session.request(
-                PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM.value,
-                {"storage_path": "kb/doc"},
-            )
+        response = await session.request(
+            PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM.value,
+            {"storage_path": "kb/doc"},
+        )
 
     assert file_ops == [
         ("read", "host-file"),

@@ -13,7 +13,10 @@ import time
 import zipfile
 import yaml
 import logging
-from langbot_plugin.utils.deadline import remaining_deadline_seconds
+from langbot_plugin.utils.deadline import (
+    anext_with_deadline,
+    remaining_deadline_seconds,
+)
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -62,29 +65,6 @@ def _runner_action_timeout(context: dict[str, typing.Any]) -> float:
     return max(remaining + 1.0, 0.001)
 
 
-async def _anext_with_deadline(
-    gen: AsyncGenerator[dict[str, typing.Any], None],
-    context: dict[str, typing.Any],
-) -> dict[str, typing.Any]:
-    remaining = _remaining_deadline_seconds(context)
-    if remaining is not None and remaining <= 0:
-        await gen.aclose()
-        raise asyncio.TimeoutError
-
-    try:
-        if remaining is None:
-            return await anext(gen)
-        return await asyncio.wait_for(anext(gen), timeout=remaining)
-    except StopAsyncIteration:
-        exhausted = _remaining_deadline_seconds(context)
-        if exhausted is not None and exhausted <= 0:
-            raise asyncio.TimeoutError
-        raise
-    except asyncio.TimeoutError:
-        await gen.aclose()
-        raise
-
-
 class PluginInstallSource(enum.Enum):
     """The source of plugin installation."""
 
@@ -100,13 +80,13 @@ class PluginManager:
 
     context: context_module.RuntimeContext
 
-    plugin_handlers: list[runtime_plugin_handler_cls.PluginConnectionHandler] = []
+    plugin_handlers: list[runtime_plugin_handler_cls.PluginConnectionHandler]
 
-    plugins: list[runtime_plugin_container.PluginContainer] = []
+    plugins: list[runtime_plugin_container.PluginContainer]
 
-    plugin_run_tasks: list[asyncio.Task] = []
+    plugin_run_tasks: list[asyncio.Task]
 
-    wait_for_control_connection: asyncio.Future[None] | None = None
+    wait_for_control_connection: asyncio.Future[None] | None
 
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
@@ -1114,7 +1094,10 @@ class PluginManager:
             # or raises ActionCallError on failure
             while True:
                 try:
-                    result_data = await _anext_with_deadline(gen, context)
+                    result_data = await anext_with_deadline(
+                        gen,
+                        (context.get("runtime") or {}).get("deadline_at"),
+                    )
                 except StopAsyncIteration:
                     break
                 yield result_data

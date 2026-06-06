@@ -7,7 +7,10 @@ import pydantic
 import enum
 
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
-from langbot_plugin.api.entities.builtin.agent_runner.state import VALID_STATE_SCOPES, STATE_SCOPE_LITERAL
+from langbot_plugin.api.entities.builtin.agent_runner.state import (
+    VALID_STATE_SCOPES,
+    STATE_SCOPE_LITERAL,
+)
 
 
 class AgentRunResultType(str, enum.Enum):

@@ -1,4 +1,5 @@
 """Tests for TranscriptItem, HistoryPage, EventPage, AgentEventRecord entities."""
+
 from __future__ import annotations
 
 from langbot_plugin.api.entities.builtin.agent_runner.transcript import TranscriptItem
@@ -48,7 +49,9 @@ class TestTranscriptItem:
 
         data = item.model_dump(mode="json")
         assert data["transcript_id"] == "t1"
-        assert data["artifact_refs"] == [{"artifact_id": "a1", "artifact_type": "image"}]
+        assert data["artifact_refs"] == [
+            {"artifact_id": "a1", "artifact_type": "image"}
+        ]
         assert data["seq"] == 1
 
     def test_transcript_item_with_content_json(self):

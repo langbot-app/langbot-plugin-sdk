@@ -275,7 +275,10 @@ class TestAgentRunState:
     def test_state_with_values(self):
         """Test state with actual values."""
         state = AgentRunState(
-            conversation={"external.conversation_id": "abc", "external.thread_id": "xyz"},
+            conversation={
+                "external.conversation_id": "abc",
+                "external.thread_id": "xyz",
+            },
             actor={"preferred_language": "zh"},
             subject={"group_topic": "general"},
             runner={"cache_version": 1},
@@ -366,7 +369,9 @@ class TestAgentRunResultV1:
         assert result.data["size_bytes"] == len(content)
         assert result.data["sha256"] == "abc123"
         assert result.data["metadata"] == {"source": "generated"}
-        assert result.data["content_base64"] == base64.b64encode(content).decode("utf-8")
+        assert result.data["content_base64"] == base64.b64encode(content).decode(
+            "utf-8"
+        )
 
     def test_artifact_created_metadata_only(self):
         """Test artifact.created without content (metadata-only)."""
@@ -482,7 +487,9 @@ class TestAgentRunResultV1:
     def test_run_completed_validate(self):
         """Test run.completed result."""
         message = Message(role="assistant", content="Done")
-        result = AgentRunResult.run_completed(run_id="run_1", message=message, finish_reason="stop")
+        result = AgentRunResult.run_completed(
+            run_id="run_1", message=message, finish_reason="stop"
+        )
 
         assert result.run_id == "run_1"
         assert result.type == AgentRunResultType.RUN_COMPLETED

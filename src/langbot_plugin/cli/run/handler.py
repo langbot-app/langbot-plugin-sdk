@@ -9,7 +9,7 @@ import logging
 from copy import deepcopy
 from pathlib import Path
 
-from langbot_plugin.utils.deadline import remaining_deadline_seconds
+from langbot_plugin.utils.deadline import anext_with_deadline
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
@@ -71,10 +71,6 @@ def _resolve_asset_path(file_key: str) -> Path | None:
     return None
 
 
-def _remaining_deadline_seconds(deadline_at: typing.Any) -> float | None:
-    return remaining_deadline_seconds(deadline_at)
-
-
 async def _iter_runner_results_with_deadline(
     runner_instance: typing.Any,
     run_context: typing.Any,
@@ -85,15 +81,11 @@ async def _iter_runner_results_with_deadline(
     result_gen = runner_instance.run(run_context)
     try:
         while True:
-            remaining = _remaining_deadline_seconds(run_context.runtime.deadline_at)
-            if remaining is not None and remaining <= 0:
-                raise asyncio.TimeoutError
-
             try:
-                if remaining is None:
-                    result = await anext(result_gen)
-                else:
-                    result = await asyncio.wait_for(anext(result_gen), timeout=remaining)
+                result = await anext_with_deadline(
+                    result_gen,
+                    run_context.runtime.deadline_at,
+                )
             except StopAsyncIteration:
                 break
 
@@ -371,9 +363,15 @@ class PluginRuntimeHandler(Handler):
             data: dict[str, typing.Any],
         ) -> typing.AsyncGenerator[ActionResponse, None]:
             """Run an AgentRunner component."""
-            from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-            from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-            from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+            from langbot_plugin.api.definition.components.agent_runner.runner import (
+                AgentRunner,
+            )
+            from langbot_plugin.api.entities.builtin.agent_runner.context import (
+                AgentRunContext,
+            )
+            from langbot_plugin.api.entities.builtin.agent_runner.result import (
+                AgentRunResult,
+            )
 
             runner_name = data["runner_name"]
             context_data = data["context"]

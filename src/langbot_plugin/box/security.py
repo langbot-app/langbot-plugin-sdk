@@ -43,8 +43,12 @@ def _validate_host_path(host_path: str, field_name: str) -> None:
     sep = os.sep
     _norm = os.path.normcase
     for blocked in BLOCKED_HOST_PATHS:
-        if _norm(real) == _norm(blocked) or _norm(real).startswith(_norm(blocked) + sep):
-            raise BoxValidationError(f'{field_name} {host_path} is blocked for security')
+        if _norm(real) == _norm(blocked) or _norm(real).startswith(
+            _norm(blocked) + sep
+        ):
+            raise BoxValidationError(
+                f"{field_name} {host_path} is blocked for security"
+            )
 
 
 def validate_sandbox_security(spec: BoxSpec) -> None:
