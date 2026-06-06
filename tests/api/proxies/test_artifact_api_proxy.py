@@ -31,7 +31,7 @@ def make_context() -> AgentRunContext:
             },
         },
         resources={"models": [], "tools": [], "knowledge_bases": [], "files": [], "storage": {}},
-        runtime={"langbot_version": "1.0", "sdk_protocol_version": "1", "deadline_at": None, "metadata": {}},
+        runtime={"langbot_version": "1.0", "protocol_version": "1", "deadline_at": None, "metadata": {}},
         state={},
         config={},
     )
