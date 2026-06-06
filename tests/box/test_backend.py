@@ -480,6 +480,28 @@ def test_validate_sandbox_security_rejects_blocked_path():
             validate_sandbox_security(spec)
 
 
+def test_validate_sandbox_security_rejects_blocked_extra_mount_path():
+    """The security validator rejects blocked extra mount host paths."""
+    from langbot_plugin.box.security import validate_sandbox_security
+
+    spec = BoxSpec(
+        session_id='sec-extra',
+        cmd='x',
+        extra_mounts=[
+            BoxMountSpec(
+                host_path='/etc',
+                mount_path='/workspace/etc',
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ],
+    )
+    with mock.patch('os.path.realpath', return_value='/etc'):
+        with pytest.raises(BoxValidationError) as exc:
+            validate_sandbox_security(spec)
+
+    assert 'extra_mounts.host_path /etc is blocked for security' in str(exc.value)
+
+
 def test_validate_sandbox_security_allows_safe_path():
     """The security validator passes ordinary host paths."""
     from langbot_plugin.box.security import validate_sandbox_security

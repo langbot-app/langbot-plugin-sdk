@@ -13,6 +13,7 @@ import time
 import zipfile
 import yaml
 import logging
+from langbot_plugin.utils.deadline import remaining_deadline_seconds
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -49,13 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 def _remaining_deadline_seconds(context: dict[str, typing.Any]) -> float | None:
-    deadline_at = (context.get("runtime") or {}).get("deadline_at")
-    if deadline_at is None:
-        return None
-    try:
-        return float(deadline_at) - time.time()
-    except (TypeError, ValueError):
-        return None
+    return remaining_deadline_seconds((context.get("runtime") or {}).get("deadline_at"))
 
 
 def _runner_action_timeout(context: dict[str, typing.Any]) -> float:

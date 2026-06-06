@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import shlex
 
 from .backend import BaseSandboxBackend, _MAX_RAW_OUTPUT_BYTES
@@ -72,7 +73,7 @@ def _adapt_path_for_e2b(path: str) -> str:
 
 def _rewrite_command_paths_for_e2b(command: str) -> str:
     """Rewrite LangBot's logical /workspace paths for E2B's real writable path."""
-    return command.replace("/workspace", E2B_WORKSPACE_DIR)
+    return re.sub(r"(?<![\w.-])/workspace(?=$|/|[^\w.-])", E2B_WORKSPACE_DIR, command)
 
 
 class E2BSandboxBackend(BaseSandboxBackend):
