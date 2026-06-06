@@ -12,7 +12,6 @@ Uses composition + delegation pattern:
 from __future__ import annotations
 
 import base64
-import time
 from typing import Any
 
 from langbot_plugin.runtime.io.handler import Handler
@@ -20,7 +19,18 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.resource import tool as resource_tool
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
+from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
+    ArtifactMetadata,
+    ArtifactReadResult,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
+    AgentEventRecord,
+    EventPage,
+    HistoryPage,
+    HistorySearchResult,
+)
 from langbot_plugin.api.proxies.langbot_api import LangBotAPIProxy
+from langbot_plugin.utils.deadline import remaining_deadline_seconds
 
 
 class PermissionDeniedError(Exception):
@@ -87,13 +97,7 @@ class AgentRunAPIProxy:
         return self.ctx.run_id
 
     def _remaining_deadline_seconds(self) -> float | None:
-        deadline_at = self.ctx.runtime.deadline_at
-        if deadline_at is None:
-            return None
-        try:
-            return float(deadline_at) - time.time()
-        except (TypeError, ValueError):
-            return None
+        return remaining_deadline_seconds(self.ctx.runtime.deadline_at)
 
     def _bounded_timeout(
         self,
@@ -271,7 +275,7 @@ class AgentRunAPIProxy:
         self,
         tool_name: str,
         parameters: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> HistoryPage:
         """Call a tool with permission validation."""
         self._validate_tool_access(tool_name)
         timeout = self._bounded_timeout(default=180.0)
@@ -546,7 +550,7 @@ class AgentRunAPIProxy:
             include_artifacts: Whether to include artifact refs in items.
 
         Returns:
-            HistoryPage as dict with items, next_cursor, prev_cursor, has_more.
+            HistoryPage with items, next_cursor, prev_cursor, has_more.
 
         Raises:
             PermissionDeniedError: If not authorized for this conversation.
@@ -566,14 +570,14 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp
+        return HistoryPage.model_validate(resp)
 
     async def history_search(
         self,
         query: str,
         filters: dict[str, Any] | None = None,
         top_k: int = 10,
-    ) -> dict[str, Any]:
+    ) -> HistorySearchResult:
         """Search transcript history for matching items.
 
         This is a basic search capability. Host implementation may use
@@ -585,7 +589,7 @@ class AgentRunAPIProxy:
             top_k: Maximum results to return.
 
         Returns:
-            HistorySearchResult as dict with items, total_count, query.
+            HistorySearchResult with items, total_count, query.
 
         Note:
             Basic implementation may return unsupported error or limited results.
@@ -602,18 +606,18 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp
+        return HistorySearchResult.model_validate(resp)
 
     # ================= Event APIs (run-scoped) =================
 
-    async def event_get(self, event_id: str) -> dict[str, Any]:
+    async def event_get(self, event_id: str) -> AgentEventRecord:
         """Get a single event record by ID.
 
         Args:
             event_id: The event ID to retrieve.
 
         Returns:
-            AgentEventRecord as dict.
+            AgentEventRecord.
 
         Raises:
             PermissionDeniedError: If event not accessible by current run.
@@ -628,7 +632,7 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp
+        return AgentEventRecord.model_validate(resp)
 
     async def event_page(
         self,
@@ -636,7 +640,7 @@ class AgentRunAPIProxy:
         event_types: list[str] | None = None,
         before_cursor: str | None = None,
         limit: int = 50,
-    ) -> dict[str, Any]:
+    ) -> EventPage:
         """Page through event records.
 
         Args:
@@ -646,7 +650,7 @@ class AgentRunAPIProxy:
             limit: Maximum items to return. Has a hard cap on host side.
 
         Returns:
-            EventPage as dict with items, next_cursor, prev_cursor, has_more.
+            EventPage with items, next_cursor, prev_cursor, has_more.
 
         Raises:
             PermissionDeniedError: If not authorized for this conversation.
@@ -664,18 +668,18 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp
+        return EventPage.model_validate(resp)
 
     # ================= Artifact APIs (run-scoped) =================
 
-    async def artifact_metadata(self, artifact_id: str) -> dict[str, Any]:
+    async def artifact_metadata(self, artifact_id: str) -> ArtifactMetadata:
         """Get metadata for an artifact.
 
         Args:
             artifact_id: The artifact ID to retrieve metadata for.
 
         Returns:
-            ArtifactMetadata as dict with artifact_id, artifact_type, mime_type,
+            ArtifactMetadata with artifact_id, artifact_type, mime_type,
             size_bytes, source, conversation_id, run_id, etc.
 
         Raises:
@@ -691,14 +695,14 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp
+        return ArtifactMetadata.model_validate(resp)
 
     async def artifact_read(
         self,
         artifact_id: str,
         offset: int = 0,
         limit: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> ArtifactReadResult:
         """Read artifact content.
 
         For small artifacts, returns content_base64 directly.
@@ -710,7 +714,7 @@ class AgentRunAPIProxy:
             limit: Maximum bytes to read. Host may enforce a hard limit.
 
         Returns:
-            ArtifactReadResult as dict with:
+            ArtifactReadResult with:
             - artifact_id: The artifact identifier
             - mime_type: MIME type of content
             - size_bytes: Total artifact size
@@ -739,7 +743,7 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        return resp
+        return ArtifactReadResult.model_validate(resp)
 
     # Alias for artifact_read with range semantics
     async def artifact_read_range(
@@ -747,7 +751,7 @@ class AgentRunAPIProxy:
         artifact_id: str,
         offset: int = 0,
         length: int | None = None,
-    ) -> dict[str, Any]:
+    ) -> ArtifactReadResult:
         """Read a range of artifact content.
 
         Alias for artifact_read with clearer range semantics.
@@ -758,7 +762,7 @@ class AgentRunAPIProxy:
             length: Maximum bytes to read.
 
         Returns:
-            ArtifactReadResult as dict.
+            ArtifactReadResult.
         """
         return await self.artifact_read(artifact_id, offset=offset, limit=length)
 

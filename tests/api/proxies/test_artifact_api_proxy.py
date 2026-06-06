@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, AsyncMock
 
+from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
+    ArtifactMetadata,
+    ArtifactReadResult,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
@@ -68,11 +72,31 @@ class TestArtifactAPIProxyPayloads:
     actually running async code.
     """
 
+    @staticmethod
+    def _metadata_response(artifact_id: str = "art_001") -> dict:
+        return {
+            "artifact_id": artifact_id,
+            "artifact_type": "file",
+            "source": "runner",
+        }
+
+    @staticmethod
+    def _read_response(artifact_id: str = "art_001", offset: int = 0, limit: int | None = None) -> dict:
+        return {
+            "artifact_id": artifact_id,
+            "mime_type": "text/plain",
+            "size_bytes": limit,
+            "offset": offset,
+            "length": limit,
+            "content_base64": "",
+            "has_more": False,
+        }
+
     def test_artifact_metadata_payload_structure(self):
         """artifact_metadata constructs correct action payload."""
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_call_action = AsyncMock(return_value={"ok": True, "data": {}})
+        mock_call_action = AsyncMock(return_value=self._metadata_response())
         mock_handler.call_action = mock_call_action
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
@@ -99,17 +123,18 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value={"ok": True, "data": {}})
+        mock_handler.call_action = AsyncMock(return_value=self._metadata_response())
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         # Run in a new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(proxy.artifact_metadata(artifact_id="art_001"))
+            result = loop.run_until_complete(proxy.artifact_metadata(artifact_id="art_001"))
         finally:
             loop.close()
 
+        assert isinstance(result, ArtifactMetadata)
         mock_handler.call_action.assert_called_once()
         call_args = mock_handler.call_action.call_args
         action_name = call_args[0][0]
@@ -125,18 +150,19 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value={"ok": True, "data": {}})
+        mock_handler.call_action = AsyncMock(return_value=self._read_response("art_002", offset=100, limit=1024))
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(
+            result = loop.run_until_complete(
                 proxy.artifact_read(artifact_id="art_002", offset=100, limit=1024)
             )
         finally:
             loop.close()
 
+        assert isinstance(result, ArtifactReadResult)
         mock_handler.call_action.assert_called_once()
         call_args = mock_handler.call_action.call_args
         action_name = call_args[0][0]
@@ -154,7 +180,7 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value={"ok": True, "data": {}})
+        mock_handler.call_action = AsyncMock(return_value=self._read_response("art_003"))
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
@@ -176,7 +202,7 @@ class TestArtifactAPIProxyPayloads:
 
         ctx = make_context()
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value={"ok": True, "data": {}})
+        mock_handler.call_action = AsyncMock(return_value=self._read_response("art_004", offset=500, limit=2048))
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
@@ -206,7 +232,7 @@ class TestArtifactAPIProxyPayloads:
         ctx = make_context()
         ctx.run_id = "custom_run_id_123"  # Custom run_id
         mock_handler = MagicMock()
-        mock_handler.call_action = AsyncMock(return_value={"ok": True, "data": {}})
+        mock_handler.call_action = AsyncMock(return_value=self._metadata_response())
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         loop = asyncio.new_event_loop()
