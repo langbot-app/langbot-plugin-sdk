@@ -939,6 +939,8 @@ All Box WebSocket endpoints share one port (default `5410`): `/rpc/ws` (action R
 
 Box selects the first available sandbox backend among **Docker / nsjail / E2B**. Backends live in `box/backend.py`, `box/nsjail_backend.py`, `box/e2b_backend.py`. A common false "no backend" on the LangBot side is Docker running but the user not in the `docker` group (socket permission denied) — that's a host-permissions issue, not a Box bug.
 
+To make LangBot connect to a standalone Box runtime (mirrors the plugin-runtime flow): in LangBot's `data/config.yaml` set `box.runtime.endpoint` to the runtime's base URL (e.g. `ws://127.0.0.1:5410`), pick `box.backend` (`'local'`/`'docker'`/`'nsjail'`/`'e2b'`), and start LangBot with `--standalone-box`. In Docker deployments LangBot reaches the Box runtime at host `langbot_box:5410`.
+
 ### Plugin development loop
 
 ```bash
