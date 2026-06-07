@@ -27,9 +27,6 @@ class AgentRunnerCapabilities(pydantic.BaseModel):
     skill_authoring: bool = False
     """Runner wants Host-provided skill authoring tools when skills are available."""
 
-    skill_injection: bool = False
-    """Runner wants the Host skill index injected into its effective prompt."""
-
     event_context: bool = True
     """Runner will read ctx.event/actor/subject. Defaults True for Protocol v1."""
 

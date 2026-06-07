@@ -28,7 +28,6 @@ class {{ runner_attr }}(AgentRunner):
             knowledge_retrieval=False,
             multimodal_input=False,
             skill_authoring=False,
-            skill_injection=False,
             event_context=True,
             platform_api=False,
             interrupt=False,
