@@ -45,6 +45,19 @@ class KnowledgeBaseResource(pydantic.BaseModel):
     """Knowledge base type."""
 
 
+class SkillResource(pydantic.BaseModel):
+    """Skill resource available to the agent."""
+
+    skill_name: str
+    """Skill name used by the activate tool."""
+
+    display_name: str | None = None
+    """Skill display name."""
+
+    description: str | None = None
+    """Skill description."""
+
+
 class FileResource(pydantic.BaseModel):
     """File resource available to the agent."""
 
@@ -86,6 +99,9 @@ class AgentResources(pydantic.BaseModel):
 
     knowledge_bases: list[KnowledgeBaseResource] = pydantic.Field(default_factory=list)
     """Available knowledge bases."""
+
+    skills: list[SkillResource] = pydantic.Field(default_factory=list)
+    """Available skills."""
 
     files: list[FileResource] = pydantic.Field(default_factory=list)
     """Available files."""
