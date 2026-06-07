@@ -301,6 +301,9 @@ def test_build_resource_limits_cgroup(backend):
 
     args = backend._build_resource_limits(spec)
 
+    # Bug regression: cgroup v2 mode MUST opt in explicitly, otherwise nsjail
+    # falls back to the v1 layout and aborts on a v2-only host.
+    assert '--use_cgroupv2' in args
     assert '--cgroup_mem_max' in args
     mem_idx = args.index('--cgroup_mem_max')
     assert args[mem_idx + 1] == str(1024 * 1024 * 1024)
@@ -326,6 +329,7 @@ def test_build_resource_limits_rlimit_fallback(backend):
     assert args[nproc_idx + 1] == '128'
 
     # cgroup flags should NOT be present.
+    assert '--use_cgroupv2' not in args
     assert '--cgroup_mem_max' not in args
 
 
@@ -376,35 +380,41 @@ def test_detect_cgroup_v2_no_mount():
         assert NsjailBackend._detect_cgroup_v2() is False
 
 
-def test_detect_cgroup_v2_root_user():
-    def always_exists(self):
-        return True
+def test_detect_cgroup_v2_writable():
+    """When the cgroup v2 root is writable (mkdir succeeds), report True.
+
+    This mirrors the only thing nsjail actually needs: the ability to create a
+    child cgroup under /sys/fs/cgroup. Being root is irrelevant on its own.
+    """
+    def fake_exists(self):
+        path = str(self)
+        return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers')
+
+    with (
+        mock.patch.object(pathlib.Path, 'exists', fake_exists),
+        mock.patch.object(pathlib.Path, 'mkdir', return_value=None),
+        mock.patch.object(pathlib.Path, 'rmdir', return_value=None),
+    ):
+        assert NsjailBackend._detect_cgroup_v2() is True
+
+
+def test_detect_cgroup_v2_readonly_root_returns_false():
+    """A read-only /sys/fs/cgroup (the default containerized case) must report
+    False so the backend falls back to rlimit limits instead of selecting a
+    cgroup path that nsjail cannot use. Root does NOT override a RO mount."""
+    def fake_exists(self):
+        path = str(self)
+        return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers')
 
     with (
         mock.patch('os.getuid', return_value=0),
-        mock.patch.object(pathlib.Path, 'exists', always_exists),
-    ):
-        assert NsjailBackend._detect_cgroup_v2() is True
-
-
-def test_detect_cgroup_v2_user_slice_must_be_writable():
-    def fake_exists(self):
-        path = str(self)
-        return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers') or 'user.slice' in path
-
-    with (
-        mock.patch('os.getuid', return_value=1000),
         mock.patch.object(pathlib.Path, 'exists', fake_exists),
-        mock.patch('os.access', return_value=False),
+        mock.patch.object(
+            pathlib.Path, 'mkdir',
+            side_effect=OSError('Read-only file system'),
+        ),
     ):
         assert NsjailBackend._detect_cgroup_v2() is False
-
-    with (
-        mock.patch('os.getuid', return_value=1000),
-        mock.patch.object(pathlib.Path, 'exists', fake_exists),
-        mock.patch('os.access', return_value=True),
-    ):
-        assert NsjailBackend._detect_cgroup_v2() is True
 
 
 # ── cleanup_orphaned_containers ───────────────────────────────────────
