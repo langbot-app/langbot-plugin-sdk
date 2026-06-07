@@ -19,6 +19,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     AgentResources,
     ModelResource,
     ToolResource,
+    SkillResource,
     StorageResource,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
@@ -190,6 +191,7 @@ class TestAgentRunContextV1:
         resources = AgentResources(
             models=[ModelResource(model_id="gpt-4", model_type="chat")],
             tools=[ToolResource(tool_name="search", tool_type="function")],
+            skills=[SkillResource(skill_name="pdf", display_name="PDF", description="Work with PDFs")],
             storage=StorageResource(plugin_storage=True, workspace_storage=True),
         )
         state = AgentRunState(
@@ -229,6 +231,7 @@ class TestAgentRunContextV1:
         assert ctx.run_id == "run_full"
         assert ctx.conversation.launcher_type == "person"
         assert ctx.resources.models[0].model_id == "gpt-4"
+        assert ctx.resources.skills[0].skill_name == "pdf"
         assert ctx.config["model"] == "gpt-4"
         assert ctx.context.has_history_before is True
 
@@ -590,7 +593,6 @@ class TestCapabilitiesAndPermissions:
         assert not caps.knowledge_retrieval
         assert not caps.multimodal_input
         assert not caps.skill_authoring
-        assert not caps.skill_injection
         # Protocol v1 defaults
         assert caps.event_context is True  # Default True for Protocol v1
         assert not caps.platform_api
@@ -617,13 +619,11 @@ class TestCapabilitiesAndPermissions:
             streaming=True,
             tool_calling=True,
             skill_authoring=True,
-            skill_injection=True,
             stateful_session=True,
         )
         assert caps.streaming
         assert caps.tool_calling
         assert caps.skill_authoring
-        assert caps.skill_injection
         assert caps.stateful_session
 
     def test_permissions_from_dict(self):
