@@ -15,10 +15,15 @@ LangBot Plugin SDK is the infrastructure for LangBot's plugin system, providing:
 
 This SDK is the shared dependency between LangBot and plugins; LangBot pins it as `langbot-plugin==<x.y.z>` in its `pyproject.toml`. The package version lives in this repo's `pyproject.toml`.
 
-The SDK enables developers to extend LangBot with custom:
-- **Commands**: User-triggered actions (e.g., `!weather tokyo`)
-- **Tools**: LLM-callable functions for AI agents (e.g., web search, database queries)
-- **Event Listeners**: Handlers for message events (e.g., auto-reply, content filtering)
+The SDK enables developers to extend LangBot with custom components. Six component types are supported (scaffold any of them with `lbp comp <Type>`):
+- **Command**: User-triggered actions (e.g., `!weather tokyo`)
+- **Tool**: LLM-callable functions for AI agents (e.g., web search, database queries)
+- **EventListener**: Handlers for message-pipeline events (e.g., auto-reply, content filtering)
+- **KnowledgeEngine**: Custom knowledge-base retrieval/integration used by RAG
+- **Parser**: Custom parsing of messages/content
+- **Page**: Custom web page embeddable in the LangBot admin panel
+
+Component base classes live in `src/langbot_plugin/api/definition/components/` (`command/`, `tool/`, `common/event_listener.py`, `knowledge_engine/`, `parser/`, `page/`).
 
 ## Technology Stack
 
@@ -118,12 +123,12 @@ langbot-plugin-sdk/
 
 ```
 BasePlugin
-  ├── Command (1+ per plugin)
-  │   └── Subcommand handlers
-  ├── Tool (0+ per plugin)
-  │   └── call() method
-  └── EventListener (1 per plugin)
-      └── Event handlers
+  ├── Command          → Subcommand handlers
+  ├── Tool             → call() method
+  ├── EventListener    → event handlers
+  ├── KnowledgeEngine  → knowledge-base retrieval/integration (RAG)
+  ├── Parser           → message/content parsing
+  └── Page             → custom admin-panel web page
 ```
 
 ## SDK Development
