@@ -24,6 +24,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     ModelResource,
     ToolResource,
     KnowledgeBaseResource,
+    SkillResource,
     FileResource,
     StorageResource,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "ModelResource",
     "ToolResource",
     "KnowledgeBaseResource",
+    "SkillResource",
     "FileResource",
     "StorageResource",
     "AgentRuntimeContext",
