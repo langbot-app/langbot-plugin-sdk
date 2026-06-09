@@ -93,18 +93,60 @@ async def test_start_session_creates_directories(backend, tmp_base):
 @pytest.mark.anyio
 async def test_start_session_with_host_path(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
+    host_path = str(tmp_base / 'rw_host')
     spec = BoxSpec(
         session_id='sess2',
         cmd='ls',
-        host_path='/some/path',
+        host_path=host_path,
         host_path_mode=BoxHostMountMode.READ_WRITE,
         mount_path='/project',
     )
 
     info = await backend.start_session(spec)
-    assert info.host_path == '/some/path'
+    assert info.host_path == host_path
     assert info.host_path_mode == BoxHostMountMode.READ_WRITE
     assert info.mount_path == '/project'
+
+
+@pytest.mark.anyio
+async def test_start_session_creates_missing_rw_host_path(backend, tmp_base):
+    """Regression: a read-write host_path that does not yet exist must be
+    created by start_session, otherwise nsjail's --bindmount source is missing
+    and the command exits 255 with no output (SaaS MCP shared-workspace bug)."""
+    tmp_base.mkdir(parents=True, exist_ok=True)
+    host_path = tmp_base / 'never_created' / 'workspace'
+    assert not host_path.exists()
+
+    spec = BoxSpec(
+        session_id='sess-mkdir',
+        cmd='ls',
+        host_path=str(host_path),
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        mount_path='/workspace',
+    )
+
+    await backend.start_session(spec)
+    assert host_path.is_dir()
+
+
+@pytest.mark.anyio
+async def test_start_session_does_not_create_ro_host_path(backend, tmp_base):
+    """A missing read-only host_path is a caller error and must NOT be silently
+    created — it should surface rather than mount an empty dir."""
+    tmp_base.mkdir(parents=True, exist_ok=True)
+    host_path = tmp_base / 'ro_missing'
+    assert not host_path.exists()
+
+    spec = BoxSpec(
+        session_id='sess-ro',
+        cmd='ls',
+        host_path=str(host_path),
+        host_path_mode=BoxHostMountMode.READ_ONLY,
+        mount_path='/project',
+    )
+
+    await backend.start_session(spec)
+    assert not host_path.exists()
 
 
 # ── stop_session ──────────────────────────────────────────────────────

@@ -116,6 +116,19 @@ class NsjailBackend(BaseSandboxBackend):
         for d in (root_dir, workspace_dir, tmp_dir, home_dir):
             d.mkdir(parents=True, exist_ok=True)
 
+        # When a host_path is mounted into the sandbox it becomes the nsjail
+        # bind-mount source (see _build_mounts). nsjail requires the source to
+        # already exist on the host, otherwise the bind-mount fails and the
+        # command exits 255 with no stdout/stderr. The per-session loop above
+        # never creates host_path (it lives outside session_dir), so ensure it
+        # exists here. Read-only mounts intentionally are NOT auto-created: a
+        # missing read-only source is a caller error that should surface.
+        if (
+            spec.host_path is not None
+            and spec.host_path_mode == BoxHostMountMode.READ_WRITE
+        ):
+            os.makedirs(spec.host_path, exist_ok=True)
+
         # If host_path is specified, we will use it directly instead of the
         # per-session workspace when building nsjail args (see _build_mounts).
         meta = {
