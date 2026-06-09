@@ -38,6 +38,10 @@ from langbot_plugin.api.entities.builtin.command.context import (
 )
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
+from langbot_plugin.entities.io.errors import (
+    DependencyInstallError,
+    DependencyVerificationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +331,9 @@ class PluginManager:
             total_deps = len(deps)
             total_downloaded = 0
             start_time = time.time()
-            failed_deps = []
+            # Requirement specs pip could not install even after retries,
+            # mapped to the tail of pip's stderr for diagnostics.
+            install_failures: dict[str, str] = {}
             already_installed_count = len(already_installed)
             to_install_count = len(to_install)
 
@@ -357,16 +363,20 @@ class PluginManager:
                         f"Failed to install dependency after retries: {dep}, "
                         f"error: {error_msg}"
                     )
-                    failed_deps.append(dep)
+                    install_failures[dep] = error_msg
 
-            missing_deps = await pkgmgr_helper.verify_dependencies(deps)
-            if missing_deps:
-                logger.warning(
-                    f"Dependency verification failed, missing: {missing_deps}"
-                )
-                for dep in missing_deps:
-                    if dep not in failed_deps:
-                        failed_deps.append(dep)
+            # Verification: pip may report success while the distribution is
+            # still unimportable or the installed version violates the
+            # specifier. Only verify deps that pip did not already flag as a
+            # hard install failure, so the two error classes stay distinct.
+            verified_targets = [d for d in deps if d not in install_failures]
+            missing_deps, version_mismatch = (
+                pkgmgr_helper.classify_unsatisfied_dependencies(verified_targets)
+            )
+
+            failed_deps = (
+                list(install_failures.keys()) + missing_deps + version_mismatch
+            )
 
             elapsed = time.time() - start_time
             yield {
@@ -383,13 +393,34 @@ class PluginManager:
                 },
             }
 
-            if failed_deps:
-                error_message = (
-                    f"Plugin {plugin_author}/{plugin_name} has {len(failed_deps)} "
-                    f"failed dependencies: {failed_deps}"
+            plugin_ref = f"{plugin_author}/{plugin_name}"
+
+            # pip-level install failures take priority — they are the root
+            # cause and carry the actual pip stderr for debugging.
+            if install_failures:
+                logger.error(
+                    f"Plugin {plugin_ref} failed to install "
+                    f"{len(install_failures)} dependencies: "
+                    f"{list(install_failures.keys())}"
                 )
-                logger.error(error_message)
-                raise RuntimeError(error_message)
+                raise DependencyInstallError(
+                    failed=list(install_failures.keys()),
+                    plugin=plugin_ref,
+                    details=install_failures,
+                )
+
+            # pip succeeded but the result cannot be verified — surface which
+            # deps are missing vs. version-mismatched so callers can react.
+            if missing_deps or version_mismatch:
+                logger.error(
+                    f"Plugin {plugin_ref} dependency verification failed — "
+                    f"missing: {missing_deps}, version mismatch: {version_mismatch}"
+                )
+                raise DependencyVerificationError(
+                    missing=missing_deps,
+                    version_mismatch=version_mismatch,
+                    plugin=plugin_ref,
+                )
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}

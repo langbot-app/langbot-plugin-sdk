@@ -249,21 +249,58 @@ async def verify_dependencies(deps: list[str]) -> list[str]:
     Returns:
         List of dependency specs that failed verification.
     """
-    missing = []
+    missing, _ = classify_unsatisfied_dependencies(deps)
+    return missing
+
+
+def classify_unsatisfied_dependencies(
+    deps: list[str],
+) -> tuple[list[str], list[str]]:
+    """Split dependency specs into (missing, version_mismatch).
+
+    A spec is reported as ``version_mismatch`` when its distribution IS
+    installed but the installed version does not satisfy the requested
+    specifier; otherwise, if it is not satisfied at all, it is ``missing``.
+    Specs that are satisfied (including skipped environment markers and
+    URL requirements whose distribution exists) are omitted from both lists.
+
+    Returns:
+        (missing, version_mismatch) — two disjoint lists of requirement specs.
+    """
+    missing: list[str] = []
+    version_mismatch: list[str] = []
     for dep in deps:
         if _check_dependency_installed(dep):
             continue
-        # _check_dependency_installed always returns False for URL
-        # requirements (preferring pip to decide).  After pip has run,
-        # distribution existence is sufficient verification.
+
         try:
             req = Requirement(dep)
-            if req.url and _is_distribution_installed(req.name):
-                continue
         except Exception:
-            pass
+            # Genuinely malformed spec — pip should have decided. Treat as
+            # missing so the caller surfaces it rather than silently passing.
+            missing.append(dep)
+            continue
+
+        # Environment marker excludes this dep from the current env → satisfied.
+        if req.marker and not req.marker.evaluate():
+            continue
+
+        # URL requirement: _check_dependency_installed always defers to pip and
+        # returns False. After pip has run, the presence of the distribution is
+        # sufficient verification.
+        if req.url:
+            if _is_distribution_installed(req.name):
+                continue
+            missing.append(dep)
+            continue
+
+        # Distribution present but specifier not met → version mismatch.
+        if req.specifier and _is_distribution_installed(req.name):
+            version_mismatch.append(dep)
+            continue
+
         missing.append(dep)
-    return missing
+    return missing, version_mismatch
 
 
 async def install_with_retry(

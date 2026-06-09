@@ -20,6 +20,10 @@ from langbot_plugin.runtime.plugin.container import (
     RuntimeContainerStatus,
 )
 from langbot_plugin.runtime.plugin.mgr import PluginInstallSource, PluginManager
+from langbot_plugin.entities.io.errors import (
+    DependencyInstallError,
+    DependencyVerificationError,
+)
 
 
 def _manifest(
@@ -290,8 +294,65 @@ async def test_install_plugin_raises_when_dependency_install_fails(tmp_path, mon
     async def fake_install_from_file(plugin_file):
         return "data/plugins/tester__demo", "tester", "demo", "1.0.0"
 
-    async def fake_install_single_async(dep):
+    call_count = {"n": 0}
+
+    async def fake_install_single_async(dep, extra_params=None):
+        call_count["n"] += 1
         return 1, 0, "pip could not find package"
+
+    # No real sleeping between retries.
+    async def fake_sleep(delay):
+        return None
+
+    monkeypatch.setattr(manager, "install_plugin_from_file", fake_install_from_file)
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.install_single_async",
+        fake_install_single_async,
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.helper.pkgmgr.asyncio.sleep",
+        fake_sleep,
+    )
+
+    progress = []
+    with pytest.raises(DependencyInstallError) as exc_info:
+        async for item in manager.install_plugin(
+            PluginInstallSource.LOCAL,
+            {"plugin_file": b"zip"},
+        ):
+            progress.append(item["current_action"])
+
+    err = exc_info.value
+    assert err.plugin == "tester/demo"
+    assert err.failed == ["missing-package"]
+    # pip stderr preserved in structured details for debugging.
+    assert "pip could not find package" in err.details["missing-package"]
+    # install_with_retry must have retried up to max_retries (3) before giving up.
+    assert call_count["n"] == 3
+
+    assert progress[0] == "downloading plugin package"
+    assert "installing dependencies" in progress
+    assert "initializing plugin settings" not in progress
+    assert "launching plugin" not in progress
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_raises_verification_error_when_pip_lies(tmp_path, monkeypatch):
+    """pip reports success but the dependency is still unsatisfiable."""
+    monkeypatch.chdir(tmp_path)
+    plugin_path = tmp_path / "data/plugins/tester__demo"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "requirements.txt").write_text(
+        "langbot-absent-after-install\n", encoding="utf-8"
+    )
+    manager = _manager()
+
+    async def fake_install_from_file(plugin_file):
+        return "data/plugins/tester__demo", "tester", "demo", "1.0.0"
+
+    # pip exits 0 (success) but nothing actually got installed.
+    async def fake_install_single_async(dep, extra_params=None):
+        return 0, 0, "Successfully installed langbot-absent-after-install"
 
     monkeypatch.setattr(manager, "install_plugin_from_file", fake_install_from_file)
     monkeypatch.setattr(
@@ -299,18 +360,17 @@ async def test_install_plugin_raises_when_dependency_install_fails(tmp_path, mon
         fake_install_single_async,
     )
 
-    progress = []
-    with pytest.raises(RuntimeError, match="pip could not find package"):
-        async for item in manager.install_plugin(
+    with pytest.raises(DependencyVerificationError) as exc_info:
+        async for _ in manager.install_plugin(
             PluginInstallSource.LOCAL,
             {"plugin_file": b"zip"},
         ):
-            progress.append(item["current_action"])
+            pass
 
-    assert progress[0] == "downloading plugin package"
-    assert "installing dependencies" in progress
-    assert "initializing plugin settings" not in progress
-    assert "launching plugin" not in progress
+    err = exc_info.value
+    assert err.plugin == "tester/demo"
+    assert "langbot-absent-after-install" in err.missing
+    assert err.version_mismatch == []
 
 
 @pytest.mark.asyncio
