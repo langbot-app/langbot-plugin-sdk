@@ -101,6 +101,35 @@ class LangBotAPIProxy:
 
         return provider_message.Message.model_validate(resp)
 
+    async def invoke_llm_stream(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] = [],
+        extra_args: dict[str, Any] = {},
+    ):
+        """Invoke an LLM model with streaming response
+
+        Args:
+            llm_model_uuid: The UUID of the LLM model to use
+            messages: List of conversation messages
+            funcs: List of tools available to the LLM
+            extra_args: Extra arguments for the LLM provider
+
+        Yields:
+            MessageChunk: Streamed message chunks from the LLM
+        """
+        async for chunk_data in self.plugin_runtime_handler.call_action_generator(
+            PluginToRuntimeAction.INVOKE_LLM_STREAM,
+            {
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+            },
+        ):
+            yield provider_message.MessageChunk.model_validate(chunk_data["chunk"])
+
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
         await self.plugin_runtime_handler.call_action(
@@ -428,7 +457,7 @@ class LangBotAPIProxy:
             File content bytes.
         """
         resp = await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
+            PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM,
             {"storage_path": storage_path},
         )
         # File was transferred via FILE_CHUNK; read from local temp

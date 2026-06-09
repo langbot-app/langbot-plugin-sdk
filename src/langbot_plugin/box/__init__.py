@@ -2,4 +2,4 @@
 
 from .client import BoxRuntimeClient, ActionRPCBoxClient
 
-__all__ = ['BoxRuntimeClient', 'ActionRPCBoxClient']
+__all__ = ["BoxRuntimeClient", "ActionRPCBoxClient"]

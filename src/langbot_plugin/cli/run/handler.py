@@ -5,9 +5,11 @@ import os
 import mimetypes
 import typing
 import aiofiles
+import logging
 from copy import deepcopy
 from pathlib import Path
 
+from langbot_plugin.utils.deadline import anext_with_deadline
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
@@ -23,7 +25,11 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
-from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
+from langbot_plugin.api.definition.components.page import (
+    Page,
+    PageRequest,
+    PageResponse,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -32,6 +38,8 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 )
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_asset_path(file_key: str) -> Path | None:
@@ -61,6 +69,39 @@ def _resolve_asset_path(file_key: str) -> Path | None:
             return resolved
 
     return None
+
+
+async def _iter_runner_results_with_deadline(
+    runner_instance: typing.Any,
+    run_context: typing.Any,
+) -> typing.AsyncGenerator[typing.Any, None]:
+    """Iterate runner results and cancel the runner when the run deadline expires."""
+    from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+
+    result_gen = runner_instance.run(run_context)
+    try:
+        while True:
+            try:
+                result = await anext_with_deadline(
+                    result_gen,
+                    run_context.runtime.deadline_at,
+                )
+            except StopAsyncIteration:
+                break
+
+            yield result
+    except asyncio.TimeoutError:
+        yield AgentRunResult.run_failed(
+            run_id=run_context.run_id,
+            error="Agent runner timed out",
+            code="runner.timeout",
+            retryable=True,
+        )
+    finally:
+        try:
+            await result_gen.aclose()
+        except Exception:
+            pass
 
 
 class PluginRuntimeHandler(Handler):
@@ -137,7 +178,9 @@ class PluginRuntimeHandler(Handler):
             file_key = data["file_key"]
             file_path = _resolve_asset_path(file_key)
             if file_path is None:
-                return ActionResponse.success({"file_file_key": None, "mime_type": None})
+                return ActionResponse.success(
+                    {"file_file_key": None, "mime_type": None}
+                )
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
@@ -166,7 +209,9 @@ class PluginRuntimeHandler(Handler):
                     continue
                 if isinstance(component.component_instance, NoneComponent):
                     return ActionResponse.success(
-                        PageResponse.fail("Page component is not initialized").model_dump()
+                        PageResponse.fail(
+                            "Page component is not initialized"
+                        ).model_dump()
                     )
                 if not isinstance(component.component_instance, Page):
                     return ActionResponse.success(
@@ -311,6 +356,91 @@ class PluginRuntimeHandler(Handler):
             else:
                 yield ActionResponse.error(
                     f"Command {command_context.command} not found"
+                )
+
+        @self.action(RuntimeToPluginAction.RUN_AGENT)
+        async def run_agent(
+            data: dict[str, typing.Any],
+        ) -> typing.AsyncGenerator[ActionResponse, None]:
+            """Run an AgentRunner component."""
+            from langbot_plugin.api.definition.components.agent_runner.runner import (
+                AgentRunner,
+            )
+            from langbot_plugin.api.entities.builtin.agent_runner.context import (
+                AgentRunContext,
+            )
+            from langbot_plugin.api.entities.builtin.agent_runner.result import (
+                AgentRunResult,
+            )
+
+            runner_name = data["runner_name"]
+            context_data = data["context"]
+            run_id = (
+                context_data.get("run_id", "unknown")
+                if isinstance(context_data, dict)
+                else "unknown"
+            )
+
+            # Validate context
+            try:
+                run_context = AgentRunContext.model_validate(context_data)
+            except Exception as e:
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_id,
+                        error=f"Context validation failed: {e}",
+                        code="runner.context_invalid",
+                    ).model_dump(mode="json")
+                )
+                return
+
+            # Find the AgentRunner component
+            runner_component = None
+            for component in self.plugin_container.components:
+                if component.manifest.kind == AgentRunner.__kind__:
+                    if component.manifest.metadata.name == runner_name:
+                        runner_component = component
+                        break
+
+            if runner_component is None:
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"AgentRunner {runner_name} not found",
+                        code="runner.not_found",
+                    ).model_dump(mode="json")
+                )
+                return
+
+            # Check if initialized
+            if isinstance(runner_component.component_instance, NoneComponent):
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"AgentRunner {runner_name} not initialized",
+                        code="runner.not_initialized",
+                    ).model_dump(mode="json")
+                )
+                return
+
+            runner_instance = runner_component.component_instance
+            assert isinstance(runner_instance, AgentRunner)
+
+            # Run the agent and stream results
+            try:
+                async for result in _iter_runner_results_with_deadline(
+                    runner_instance,
+                    run_context,
+                ):
+                    yield ActionResponse.success(result.model_dump(mode="json"))
+            except Exception as e:
+                logger.exception("AgentRunner %s failed", runner_name)
+                yield ActionResponse.success(
+                    AgentRunResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"Error running agent: {e}",
+                        code="runner.exception",
+                    ).model_dump(mode="json")
                 )
 
         @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)

@@ -47,7 +47,11 @@ def test_init_git_repo_invokes_git_init(monkeypatch):
 def test_init_git_repo_reports_git_warning(monkeypatch):
     error = subprocess.CalledProcessError(1, ["git"], stderr=b"boom")
     prints = []
-    monkeypatch.setattr(initplugin.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(error))
+    monkeypatch.setattr(
+        initplugin.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
     monkeypatch.setattr(initplugin, "cli_print", lambda *args: prints.append(args))
 
     initplugin.init_git_repo("plugin")
@@ -91,7 +95,9 @@ def test_init_plugin_process_rejects_invalid_name(tmp_path, monkeypatch, capsys)
     assert not (tmp_path / "bad name").exists()
 
 
-def test_init_plugin_process_rejects_non_empty_existing_directory(tmp_path, monkeypatch, capsys):
+def test_init_plugin_process_rejects_non_empty_existing_directory(
+    tmp_path, monkeypatch, capsys
+):
     plugin_dir = tmp_path / "demo"
     plugin_dir.mkdir()
     (plugin_dir / "main.py").write_text("existing", encoding="utf-8")

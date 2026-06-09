@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 LONG_RUNNING_OPERATION_TIMEOUT = 180.0
 
 
+def _get_caller_plugin_identity(
+    handler_instance: "PluginConnectionHandler",
+) -> str | None:
+    """Get the caller plugin identity (author/name) from the handler instance.
+
+    Returns None if the handler is not associated with a registered plugin.
+    """
+    for plugin_container in handler_instance.context.plugin_mgr.plugins:
+        if plugin_container._runtime_plugin_handler == handler_instance:
+            return f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
+    return None
+
+
 class PluginConnectionHandler(handler.Handler):
     """The handler for plugin connection."""
 
@@ -58,6 +71,18 @@ class PluginConnectionHandler(handler.Handler):
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
         self.stdio_process = stdio_process
+
+        def _inject_caller_identity(data: dict[str, Any]) -> str | None:
+            caller_identity = _get_caller_plugin_identity(self)
+            if caller_identity:
+                data["caller_plugin_identity"] = caller_identity
+            return caller_identity
+
+        def _set_plugin_storage_owner(data: dict[str, Any]) -> None:
+            data["owner_type"] = "plugin"
+            caller_identity = _inject_caller_identity(data)
+            if caller_identity:
+                data["owner"] = caller_identity
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
@@ -212,6 +237,8 @@ class PluginConnectionHandler(handler.Handler):
             if not isinstance(timeout, (int, float)) or timeout <= 0:
                 timeout = 120.0
 
+            _inject_caller_identity(data)
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.INVOKE_LLM,
                 {
@@ -220,6 +247,26 @@ class PluginConnectionHandler(handler.Handler):
                 timeout=float(timeout),
             )
             return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.INVOKE_LLM_STREAM)
+        async def invoke_llm_stream(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            """Forward INVOKE_LLM_STREAM to LangBot control handler."""
+            timeout = data.pop("timeout", 120.0)
+            if not isinstance(timeout, (int, float)) or timeout <= 0:
+                timeout = 120.0
+
+            _inject_caller_identity(data)
+
+            async for chunk in self.context.control_handler.call_action_generator(
+                PluginToRuntimeAction.INVOKE_LLM_STREAM,
+                {
+                    **data,
+                },
+                timeout=float(timeout),
+            ):
+                yield handler.ActionResponse.success(chunk)
 
         @self.action(PluginToRuntimeAction.INVOKE_EMBEDDING)
         async def invoke_embedding(data: dict[str, Any]) -> handler.ActionResponse:
@@ -281,13 +328,13 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
-        @self.action(PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM)
+        @self.action(PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM)
         async def get_knowledge_file_stream(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
             """Forward file stream from LangBot to plugin via chunked transfer."""
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
+                PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM,
                 data,
                 timeout=60,
             )
@@ -313,6 +360,8 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            _inject_caller_identity(data)
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
                 data,
@@ -334,6 +383,8 @@ class PluginConnectionHandler(handler.Handler):
         async def retrieve_knowledge_base(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
+            _inject_caller_identity(data)
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
                 data,
@@ -365,14 +416,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SET_PLUGIN_STORAGE)
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            data["owner_type"] = "plugin"
-
-            for plugin_container in self.context.plugin_mgr.plugins:
-                if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = (
-                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
-                    )
-                    break
+            _set_plugin_storage_owner(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.SET_BINARY_STORAGE,
@@ -384,14 +428,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_PLUGIN_STORAGE)
         async def get_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            data["owner_type"] = "plugin"
-
-            for plugin_container in self.context.plugin_mgr.plugins:
-                if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = (
-                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
-                    )
-                    break
+            _set_plugin_storage_owner(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE,
@@ -405,14 +442,7 @@ class PluginConnectionHandler(handler.Handler):
         async def get_plugin_storage_keys(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            data["owner_type"] = "plugin"
-
-            for plugin_container in self.context.plugin_mgr.plugins:
-                if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = (
-                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
-                    )
-                    break
+            _set_plugin_storage_owner(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
@@ -424,14 +454,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.DELETE_PLUGIN_STORAGE)
         async def delete_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            data["owner_type"] = "plugin"
-
-            for plugin_container in self.context.plugin_mgr.plugins:
-                if plugin_container._runtime_plugin_handler == self:
-                    data["owner"] = (
-                        f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
-                    )
-                    break
+            _set_plugin_storage_owner(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
@@ -445,6 +468,7 @@ class PluginConnectionHandler(handler.Handler):
         async def set_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
+            _inject_caller_identity(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.SET_BINARY_STORAGE,
@@ -458,6 +482,7 @@ class PluginConnectionHandler(handler.Handler):
         async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
+            _inject_caller_identity(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE,
@@ -473,6 +498,7 @@ class PluginConnectionHandler(handler.Handler):
         ) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
+            _inject_caller_identity(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
@@ -488,6 +514,7 @@ class PluginConnectionHandler(handler.Handler):
         ) -> handler.ActionResponse:
             data["owner_type"] = "workspace"
             data["owner"] = "default"
+            _inject_caller_identity(data)
 
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
@@ -500,11 +527,17 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.GET_CONFIG_FILE)
         async def get_config_file(data: dict[str, Any]) -> handler.ActionResponse:
             """Get a config file by file key"""
+            _inject_caller_identity(data)
+
             # Forward the request to LangBot
             result = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_CONFIG_FILE,
                 {
                     "file_key": data["file_key"],
+                    "run_id": data.get(
+                        "run_id"
+                    ),  # Pass run_id for AgentRunner validation
+                    "caller_plugin_identity": data.get("caller_plugin_identity"),
                 },
             )
             return handler.ActionResponse.success(result)
@@ -525,29 +558,58 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
         async def get_tool_detail(data: dict[str, Any]) -> handler.ActionResponse:
-            tool_name = data["tool_name"]
-            tools = await self.context.plugin_mgr.list_tools()
-            for tool in tools:
-                if tool.metadata.name == tool_name:
-                    return handler.ActionResponse.success(
-                        {"tool": tool.to_plain_dict()}
-                    )
-            return handler.ActionResponse.error(
-                message=f"Tool not found: {tool_name}"
+            """Forward tool detail requests to LangBot Host.
+
+            AgentRunner calls include run_id so Host can validate the tool against
+            the active run session. Legacy plugin calls still work without run_id.
+            """
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_TOOL_DETAIL,
+                data,
+                timeout=30,
             )
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
-            tool_name = data["tool_name"]
-            tool_parameters = data["tool_parameters"]
-            session = data["session"]
-            query_id = data["query_id"]
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id
+            """Forward tool call to LangBot Host with caller_plugin_identity injection.
+
+            AgentRunner calls use parameters/result. Legacy plugin calls use
+            tool_parameters/tool_response through LangBotAPIProxy.
+            """
+            if data.get("run_id"):
+                if "parameters" not in data:
+                    return handler.ActionResponse.error(
+                        "parameters is required for AgentRunner tool calls"
+                    )
+            elif "tool_parameters" not in data:
+                return handler.ActionResponse.error(
+                    "tool_parameters is required for legacy tool calls"
+                )
+
+            _inject_caller_identity(data)
+
+            # Forward to LangBot Host via control_handler (enables Host validation)
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.CALL_TOOL,
+                data,
+                timeout=LONG_RUNNING_OPERATION_TIMEOUT,
             )
-            return handler.ActionResponse.success(
-                {"tool_response": resp}
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.PROMPT_GET)
+        async def prompt_get(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward prompt_get requests to LangBot Host."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.PROMPT_GET,
+                data,
+                timeout=30,
             )
+            return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:
@@ -559,6 +621,132 @@ class PluginConnectionHandler(handler.Handler):
                     ]
                 }
             )
+
+        # ================= Agent History/Event/Artifact Pull API Handlers =================
+        # These handlers forward pull API calls from plugin to LangBot Host with caller_plugin_identity injection.
+
+        @self.action(PluginToRuntimeAction.HISTORY_PAGE)
+        async def history_page(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward HISTORY_PAGE to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.HISTORY_PAGE,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.HISTORY_SEARCH)
+        async def history_search(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward HISTORY_SEARCH to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.HISTORY_SEARCH,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.EVENT_GET)
+        async def event_get(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward EVENT_GET to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.EVENT_GET,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.EVENT_PAGE)
+        async def event_page(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward EVENT_PAGE to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.EVENT_PAGE,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.ARTIFACT_METADATA)
+        async def artifact_metadata(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward ARTIFACT_METADATA to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.ARTIFACT_METADATA,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.ARTIFACT_READ)
+        async def artifact_read(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward ARTIFACT_READ to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.ARTIFACT_READ,
+                data,
+                timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
+        # ================= Agent State Pull API Handlers =================
+        # These handlers forward State API calls from plugin to LangBot Host with caller_plugin_identity injection.
+
+        @self.action(PluginToRuntimeAction.STATE_GET)
+        async def state_get(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward STATE_GET to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.STATE_GET,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.STATE_SET)
+        async def state_set(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward STATE_SET to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.STATE_SET,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.STATE_DELETE)
+        async def state_delete(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward STATE_DELETE to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.STATE_DELETE,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.STATE_LIST)
+        async def state_list(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward STATE_LIST to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.STATE_LIST,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]

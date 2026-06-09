@@ -13,6 +13,10 @@ import time
 import zipfile
 import yaml
 import logging
+from langbot_plugin.utils.deadline import (
+    anext_with_deadline,
+    remaining_deadline_seconds,
+)
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -31,7 +35,9 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
+    RuntimeToPluginAction,
 )
+from langbot_plugin.entities.io.errors import ActionCallTimeoutError
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
@@ -40,6 +46,19 @@ from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 
 logger = logging.getLogger(__name__)
+
+
+def _remaining_deadline_seconds(context: dict[str, typing.Any]) -> float | None:
+    return remaining_deadline_seconds((context.get("runtime") or {}).get("deadline_at"))
+
+
+def _runner_action_timeout(context: dict[str, typing.Any]) -> float:
+    remaining = _remaining_deadline_seconds(context)
+    if remaining is None:
+        return 300
+    if remaining <= 0:
+        return 0.001
+    return max(remaining + 1.0, 0.001)
 
 
 class PluginInstallSource(enum.Enum):
@@ -57,13 +76,13 @@ class PluginManager:
 
     context: context_module.RuntimeContext
 
-    plugin_handlers: list[runtime_plugin_handler_cls.PluginConnectionHandler] = []
+    plugin_handlers: list[runtime_plugin_handler_cls.PluginConnectionHandler]
 
-    plugins: list[runtime_plugin_container.PluginContainer] = []
+    plugins: list[runtime_plugin_container.PluginContainer]
 
-    plugin_run_tasks: list[asyncio.Task] = []
+    plugin_run_tasks: list[asyncio.Task]
 
-    wait_for_control_connection: asyncio.Future[None] | None = None
+    wait_for_control_connection: asyncio.Future[None] | None
 
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
@@ -331,9 +350,11 @@ class PluginManager:
                     },
                 }
 
-                returncode, downloaded_bytes, output = (
-                    await pkgmgr_helper.install_single_async(dep)
-                )
+                (
+                    returncode,
+                    downloaded_bytes,
+                    output,
+                ) = await pkgmgr_helper.install_single_async(dep)
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
@@ -429,7 +450,9 @@ class PluginManager:
 
         # refresh plugin container from plugin (components may have changed)
         plugin_container_data = await handler.get_plugin_container()
-        refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(
+            plugin_container_data
+        )
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
         plugin_container.status = refreshed.status
@@ -801,6 +824,218 @@ class PluginManager:
                         yield CommandReturn.model_validate(resp["command_response"])
 
                     break
+
+    # AgentRunner methods (Protocol v1)
+    async def list_agent_runners(
+        self, include_plugins: list[str] | None = None
+    ) -> list[dict[str, typing.Any]]:
+        """List all available AgentRunner components from plugins.
+
+        Returns v1 protocol format with capabilities, permissions, and config.
+        A plugin can have multiple AgentRunner components.
+        """
+        from langbot_plugin.api.definition.components.agent_runner.runner import (
+            AgentRunner,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
+            AgentRunnerCapabilities,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
+            AgentRunnerPermissions,
+        )
+
+        runners: list[dict[str, typing.Any]] = []
+
+        for plugin in self.plugins:
+            if (
+                plugin.status
+                != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+            ):
+                continue
+
+            if not plugin.enabled:
+                continue
+
+            # Filter by include_plugins if specified
+            if include_plugins is not None:
+                plugin_id = (
+                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
+                )
+                if plugin_id not in include_plugins:
+                    continue
+
+            for component in plugin.components:
+                if component.manifest.kind == AgentRunner.__kind__:
+                    # Get spec from manifest, with defaults
+                    spec = component.manifest.spec or {}
+                    runner_cls = (
+                        type(component.component_instance)
+                        if isinstance(component.component_instance, AgentRunner)
+                        else AgentRunner
+                    )
+
+                    # Parse capabilities from manifest or use class defaults
+                    capabilities_data = spec.get("capabilities") or (
+                        runner_cls.get_capabilities().model_dump(mode="json")
+                    )
+                    capabilities = AgentRunnerCapabilities(**capabilities_data)
+
+                    # Parse permissions from manifest or use class defaults
+                    permissions_data = spec.get("permissions") or (
+                        runner_cls.get_permissions().model_dump(mode="json")
+                    )
+                    permissions = AgentRunnerPermissions(**permissions_data)
+
+                    # Get config schema
+                    config_schema = spec.get("config") or runner_cls.get_config_schema()
+
+                    # Get protocol version
+                    protocol_version = spec.get("protocol_version", "1")
+
+                    runners.append(
+                        {
+                            "plugin_author": plugin.manifest.metadata.author,
+                            "plugin_name": plugin.manifest.metadata.name,
+                            "runner_name": component.manifest.metadata.name,
+                            "runner_description": component.manifest.metadata.description,
+                            "manifest": component.manifest.manifest,  # raw manifest dict
+                            "protocol_version": protocol_version,
+                            "capabilities": capabilities.model_dump(),
+                            "permissions": permissions.model_dump(),
+                            "config": config_schema,
+                        }
+                    )
+
+        return runners
+
+    async def run_agent(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        runner_name: str,
+        context: dict[str, typing.Any],
+    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
+        """Run an AgentRunner component with Protocol v1.
+
+        Forwards the RUN_AGENT action to the plugin process and streams results back.
+        All errors are converted to run.failed events.
+        """
+        from langbot_plugin.api.definition.components.agent_runner.runner import (
+            AgentRunner,
+        )
+        from langbot_plugin.api.entities.builtin.agent_runner.result import (
+            AgentRunResult,
+        )
+
+        # Extract run_id from context for error responses
+        run_id = context.get("run_id", "unknown")
+
+        # Find the plugin
+        target_plugin = None
+        for plugin in self.plugins:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
+                target_plugin = plugin
+                break
+
+        if target_plugin is None:
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Plugin {plugin_author}/{plugin_name} not found",
+                code="runner.plugin_not_found",
+            ).model_dump(mode="json")
+            return
+
+        if not target_plugin.enabled:
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Plugin {plugin_author}/{plugin_name} is disabled",
+                code="runner.plugin_disabled",
+            ).model_dump(mode="json")
+            return
+
+        if (
+            target_plugin.status
+            != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+        ):
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Plugin {plugin_author}/{plugin_name} is not initialized",
+                code="runner.plugin_not_initialized",
+            ).model_dump(mode="json")
+            return
+
+        # Find the component (supports multiple runners per plugin)
+        target_component = None
+        for component in target_plugin.components:
+            if (
+                component.manifest.kind == AgentRunner.__kind__
+                and component.manifest.metadata.name == runner_name
+            ):
+                target_component = component
+                break
+
+        if target_component is None:
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
+                code="runner.not_found",
+            ).model_dump(mode="json")
+            return
+
+        # Check if plugin handler exists for forwarding
+        if target_plugin._runtime_plugin_handler is None:
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Plugin {plugin_author}/{plugin_name} has no runtime handler",
+                code="runner.handler_not_found",
+            ).model_dump(mode="json")
+            return
+
+        # Forward RUN_AGENT action to the plugin process and stream results
+        try:
+            gen = target_plugin._runtime_plugin_handler.call_action_generator(
+                RuntimeToPluginAction.RUN_AGENT,
+                {
+                    "runner_name": runner_name,
+                    "context": context,
+                },
+                timeout=_runner_action_timeout(context),
+            )
+
+            # call_action_generator yields response.data directly on success,
+            # or raises ActionCallError on failure
+            while True:
+                try:
+                    result_data = await anext_with_deadline(
+                        gen,
+                        (context.get("runtime") or {}).get("deadline_at"),
+                    )
+                except StopAsyncIteration:
+                    break
+                yield result_data
+
+        except (asyncio.TimeoutError, ActionCallTimeoutError):
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error="Agent runner timed out",
+                code="runner.timeout",
+                retryable=True,
+            ).model_dump(mode="json")
+        except Exception as e:
+            logger.exception(
+                "Error forwarding AgentRunner %s/%s:%s",
+                plugin_author,
+                plugin_name,
+                runner_name,
+            )
+            yield AgentRunResult.run_failed(
+                run_id=run_id,
+                error=f"Error forwarding to plugin: {e}",
+                code="runner.forward_exception",
+            ).model_dump(mode="json")
 
     async def retrieve_knowledge(
         self,

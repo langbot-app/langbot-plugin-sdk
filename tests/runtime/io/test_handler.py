@@ -63,7 +63,9 @@ async def test_call_action_sends_request_and_returns_response_data():
     assert request["data"] == {"message": "hello"}
 
     handler.resp_waiters[request["seq_id"]].set_result(
-        ActionResponse(seq_id=request["seq_id"], code=0, message="ok", data={"ok": True})
+        ActionResponse(
+            seq_id=request["seq_id"], code=0, message="ok", data={"ok": True}
+        )
     )
 
     assert await task == {"ok": True}

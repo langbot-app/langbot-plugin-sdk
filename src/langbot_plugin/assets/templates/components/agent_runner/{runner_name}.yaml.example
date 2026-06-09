@@ -1,0 +1,37 @@
+apiVersion: langbot/v1
+kind: AgentRunner
+metadata:
+  name: {{ runner_name }}
+  label:
+    en_US: {{ runner_label }}
+    zh_Hans: {{ runner_label }}
+  description:
+    en_US: {{ runner_description }}
+    zh_Hans: {{ runner_description }}
+spec:
+  protocol_version: "1"
+  config: []
+  capabilities:
+    streaming: false
+    tool_calling: false
+    knowledge_retrieval: false
+    multimodal_input: false
+    skill_authoring: false
+    event_context: true
+    platform_api: false
+    interrupt: false
+    stateful_session: false
+  permissions:
+    models: []
+    tools: []
+    knowledge_bases: []
+    history: []
+    events: []
+    artifacts: []
+    storage: []
+    files: []
+    platform_api: []
+execution:
+  python:
+    path: ./{{ runner_name }}.py
+    attr: {{ runner_attr }}

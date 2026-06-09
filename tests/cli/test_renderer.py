@@ -12,19 +12,30 @@ def test_component_input_post_processors_create_python_class_names():
         "tool_description": "Search the web",
         "tool_attr": "WebSearch",
     }
-    assert renderer.command_component_input_post_process(
-        {"cmd_name": "hello_world", "cmd_description": "Say hello"}
-    )["cmd_attr"] == "HelloWorld"
-    assert renderer.knowledge_engine_component_input_post_process(
-        {
-            "knowledge_engine_name": "local_docs",
-            "knowledge_engine_description": "Docs",
-        }
-    )["knowledge_engine_attr"] == "LocalDocs"
-    assert renderer.parser_component_input_post_process(
-        {"parser_name": "pdf_reader", "parser_description": "PDF"}
-    )["parser_label"] == "PdfReader"
-    assert renderer.page_component_input_post_process({"page_name": "settings_page"}) == {
+    assert (
+        renderer.command_component_input_post_process(
+            {"cmd_name": "hello_world", "cmd_description": "Say hello"}
+        )["cmd_attr"]
+        == "HelloWorld"
+    )
+    assert (
+        renderer.knowledge_engine_component_input_post_process(
+            {
+                "knowledge_engine_name": "local_docs",
+                "knowledge_engine_description": "Docs",
+            }
+        )["knowledge_engine_attr"]
+        == "LocalDocs"
+    )
+    assert (
+        renderer.parser_component_input_post_process(
+            {"parser_name": "pdf_reader", "parser_description": "PDF"}
+        )["parser_label"]
+        == "PdfReader"
+    )
+    assert renderer.page_component_input_post_process(
+        {"page_name": "settings_page"}
+    ) == {
         "page_name": "settings_page",
         "page_label": "SettingsPage",
     }
@@ -38,12 +49,14 @@ def test_component_type_registry_contains_expected_public_component_kinds():
         "Tool",
         "Command",
         "KnowledgeEngine",
+        "AgentRunner",
         "Parser",
         "Page",
     }
     assert by_name["Tool"].target_dir == "components/tools"
     assert "{tool_name}.py" in by_name["Tool"].template_files
     assert by_name["Page"].target_dir == "components/pages"
+    assert by_name["AgentRunner"].target_dir == "components/agent_runner"
 
 
 def test_simple_render_uses_python_format_context():

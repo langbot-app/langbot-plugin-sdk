@@ -40,7 +40,7 @@ class PluginToRuntimeAction(ActionType):
     GET_LLM_MODELS = "get_llm_models"
     # GET_LLM_MODEL_INFO = "get_llm_model_info"
     INVOKE_LLM = "invoke_llm"
-    # INVOKE_LLM_STREAMING = "invoke_llm_streaming"
+    INVOKE_LLM_STREAM = "invoke_llm_stream"
 
     SET_PLUGIN_STORAGE = "set_plugin_storage"
     GET_PLUGIN_STORAGE = "get_plugin_storage"
@@ -61,11 +61,12 @@ class PluginToRuntimeAction(ActionType):
     CALL_TOOL = "call_tool"
 
     INVOKE_EMBEDDING = "invoke_embedding"
+    INVOKE_RERANK = "invoke_rerank"
     VECTOR_UPSERT = "vector_upsert"
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
     VECTOR_LIST = "vector_list"
-    GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
+    GET_KNOWLEDGE_FILE_STREAM = "get_knowledge_file_stream"
 
     LIST_PARSERS = "list_parsers"
     INVOKE_PARSER = "invoke_parser"
@@ -77,6 +78,23 @@ class PluginToRuntimeAction(ActionType):
     """Knowledge Base Query APIs (query-based, pipeline-scoped)"""
     LIST_PIPELINE_KNOWLEDGE_BASES = "list_pipeline_knowledge_bases"
     RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
+
+    """Agent History/Event APIs (run-scoped, requires run_id authorization)"""
+    PROMPT_GET = "prompt_get"
+    HISTORY_PAGE = "history_page"
+    HISTORY_SEARCH = "history_search"
+    EVENT_GET = "event_get"
+    EVENT_PAGE = "event_page"
+
+    """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
+    ARTIFACT_METADATA = "artifact_metadata"
+    ARTIFACT_READ = "artifact_read"
+
+    """Agent State APIs (run-scoped, requires run_id authorization)"""
+    STATE_GET = "state_get"
+    STATE_SET = "state_set"
+    STATE_DELETE = "state_delete"
+    STATE_LIST = "state_list"
 
 
 class RuntimeToPluginAction(ActionType):
@@ -91,6 +109,9 @@ class RuntimeToPluginAction(ActionType):
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
+
+    # AgentRunner actions
+    RUN_AGENT = "run_agent"
 
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
     INGEST_DOCUMENT = "ingest_document"
@@ -122,8 +143,12 @@ class LangBotToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
 
-    # RAG actions
+    # KnowledgeEngine retrieval action
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+
+    # AgentRunner actions
+    LIST_AGENT_RUNNERS = "list_agent_runners"
+    RUN_AGENT = "run_agent"
 
     # Knowledge Engine actions (LangBot -> Runtime -> Plugin)
     LIST_KNOWLEDGE_ENGINES = "list_knowledge_engines"

@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncGenerator
 
-logger = logging.getLogger(__name__)
-
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
@@ -15,6 +13,8 @@ from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
+
+logger = logging.getLogger(__name__)
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -134,7 +134,13 @@ class ControlConnectionHandler(handler.Handler):
         async def page_api(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            for field in ("plugin_author", "plugin_name", "page_id", "endpoint", "method"):
+            for field in (
+                "plugin_author",
+                "plugin_name",
+                "page_id",
+                "endpoint",
+                "method",
+            ):
                 if field not in data:
                     return handler.ActionResponse.success(
                         {"data": None, "error": f"Missing required field: {field}"}
@@ -269,8 +275,30 @@ class ControlConnectionHandler(handler.Handler):
             ):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
+        # AgentRunner actions
+        @self.action(LangBotToRuntimeAction.LIST_AGENT_RUNNERS)
+        async def list_agent_runners(data: dict[str, Any]) -> handler.ActionResponse:
+            include_plugins = data.get("include_plugins")
+            runners = await self.context.plugin_mgr.list_agent_runners(include_plugins)
+            return handler.ActionResponse.success({"runners": runners})
+
+        @self.action(LangBotToRuntimeAction.RUN_AGENT)
+        async def run_agent(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            runner_name = data["runner_name"]
+            context = data["context"]
+
+            async for result in self.context.plugin_mgr.run_agent(
+                plugin_author, plugin_name, runner_name, context
+            ):
+                yield handler.ActionResponse.success(result)
+
         @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            """Retrieve knowledge using a KnowledgeEngine instance."""
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             retriever_name = data["retriever_name"]

@@ -95,6 +95,9 @@ class Message(pydantic.BaseModel):
 
     tool_call_id: typing.Optional[str] = None
 
+    resp_message_id: typing.Optional[str] = None
+    """Response message ID for tracking"""
+
     def readable_str(self) -> str:
         if self.content is not None:
             return (
