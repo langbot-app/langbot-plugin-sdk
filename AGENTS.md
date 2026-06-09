@@ -816,34 +816,49 @@ Encapsulates plugin instance with:
 
 ### Communication Protocol (`runtime/io/`)
 
-**Action-Based Protocol**:
-- Bidirectional JSON messages
-- Request-response with sequence IDs
-- Streaming support via chunk status
-- File transfer (16KB chunks)
+This protocol is **JSON-RPC 2.0 in all but field names** — a bidirectional, action-based
+RPC carried over a single connection. It is the same shape the Language Server Protocol
+(LSP) and the Model Context Protocol (MCP) use: JSON-RPC 2.0 over stdio / WebSocket, with
+either peer free to initiate calls. We did not adopt the spec verbatim, but the semantics
+map 1:1, and it is useful to think of it that way:
 
-**Action Structure**:
+| Our field (`entities/io`)  | JSON-RPC 2.0             | Meaning |
+|----------------------------|--------------------------|---------|
+| `seq_id`                   | `id`                     | Correlates a response back to its request |
+| `action`                   | `method`                 | Which action to invoke |
+| `data` (in a request)      | `params`                 | Call arguments |
+| `data` (in a response)     | `result`                 | Return value (when `code == 0`) |
+| `code` + `message`         | `error.{code,message}`   | `code == 0` is success; non-zero carries the failure in `message` |
+| `chunk_status`             | (MCP-style streaming ext.) | `continue` per chunk, `end` closes a streamed response |
+
+Both peers share one connection and may call each other's actions. Requests and responses
+are told apart by shape: a message carrying `action` is an inbound request, one carrying
+`code` is a response. Each side allocates `seq_id` from its own incrementing counter, so the
+two id spaces are dispatched independently and never collide.
+
+**Request** (`ActionRequest`, `entities/io/req.py`):
 ```json
-{
-  "action": "action_name",
-  "seq": 12345,
-  "data": {...},
-  "chunk_status": "start|continue|end"
-}
+{ "seq_id": 12345, "action": "action_name", "data": {} }
 ```
 
-**Response Structure**:
+**Response** (`ActionResponse`, `entities/io/resp.py`):
 ```json
-{
-  "seq": 12345,
-  "ok": true,
-  "data": {...}
-}
+{ "seq_id": 12345, "code": 0, "message": "success", "data": {}, "chunk_status": "continue" }
 ```
 
-**Transport Implementations**:
-- `StdioHandler`: stdin/stdout communication
-- `WebSocketHandler`: WebSocket client/server
+- `code == 0` → success, payload in `data`; non-zero → error, human-readable text in `message`.
+- **Streaming**: the responder emits N chunks with `chunk_status: "continue"`, then a final
+  `chunk_status: "end"` (consumed by `Handler.call_action_generator`).
+- **File transfer**: large blobs travel as `__file_chunk` actions — 16KB base64 chunks,
+  reassembled to `data/temp/lbp/<file_key>` on the receiving side.
+
+**Core engine**: `runtime/io/handler.py` (`Handler`) owns `seq_id` allocation, the
+`resp_waiters` (single response) and `resp_queues` (streamed response) correlation maps,
+timeouts, and the receive loop (`Handler.run`).
+
+**Transport Implementations** (`Connection` subclasses, `runtime/io/connections/`):
+- `stdio.py`: stdin/stdout — default for subprocess (personal / lightweight) plugins
+- `ws.py`: WebSocket — for containerized / remote plugin deployments
 
 ## CLI Tools
 
