@@ -9,7 +9,6 @@ metadata:
     en_US: {{ runner_description }}
     zh_Hans: {{ runner_description }}
 spec:
-  protocol_version: "1"
   config: []
   capabilities:
     streaming: false

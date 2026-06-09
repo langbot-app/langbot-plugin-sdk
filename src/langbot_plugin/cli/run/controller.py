@@ -46,8 +46,6 @@ def _apply_agent_runner_class_defaults(
     if not isinstance(spec, dict):
         return
 
-    spec.setdefault("protocol_version", AgentRunner.__protocol_version__)
-
     capabilities = component_impl_cls.get_capabilities()
     if not spec.get("capabilities") and capabilities != AgentRunner.get_capabilities():
         spec["capabilities"] = capabilities.model_dump(mode="json")

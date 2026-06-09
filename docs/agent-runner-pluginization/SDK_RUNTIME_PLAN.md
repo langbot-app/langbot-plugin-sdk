@@ -11,6 +11,10 @@ schema；协议字段、结果类型、权限字面量和 Host API 语义以 Lan
 - `LIST_AGENT_RUNNERS` / `RUN_AGENT` runtime action 转发。
 - component manifest 的 capabilities / permissions / config 读取。
 - runner 组件模板和 CLI 生成入口。
+- 远端 AgentRunner 执行支撑，包括 SDK 侧 daemon、run channel、工作区文件物化、
+  HTTP `/run` 客户端 helper、run-scoped MCP 回传 shim 和 adapter 注册接口。
+  SDK 不内置 Claude Code、Codex、Kimi Code、Pi Agent 等具体 adapter；这些由
+  对应 runner/plugin 包通过 `AgentAdapter` 和 `--adapter module:attr` 提供。
 - SDK 侧单测和模板示例，保证 runner 作者只看到当前协议字段。
 
 ## 源码入口
@@ -23,6 +27,7 @@ schema；协议字段、结果类型、权限字面量和 Host API 语义以 Lan
 | `src/langbot_plugin/runtime/plugin/mgr.py` | runner discovery 与 `RUN_AGENT` 转发。 |
 | `src/langbot_plugin/runtime/io/handlers/control.py` | LangBot -> Runtime action handler。 |
 | `src/langbot_plugin/assets/templates/components/agent_runner/` | runner scaffold 模板。 |
+| `src/langbot_plugin/remote/agent_runner/` | SDK 远端 AgentRunner daemon、client、channel、MCP shim。 |
 
 ## 同步流程
 
@@ -53,6 +58,8 @@ SDK 与 Host 独立发版，先验证 Host action handler，再升级会转发 t
 - `RUN_AGENT` 成功流式输出。
 - `RUN_AGENT` 插件异常、runner 不存在、context schema 错误 -> `run.failed`。
 - 模板和 README 示例不出现旧协议字段。
+- SDK 远端 AgentRunner daemon 能物化文件、拒绝越界路径、路由 adapter，并通过
+  run channel 回传 MCP tool call。
 
 ## 不在本文维护
 

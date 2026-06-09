@@ -87,8 +87,7 @@ class TestAgentRunContextV1:
         assert ctx.input.text == "Hello"
         assert ctx.config == {}
         assert ctx.context is not None  # Has default
-        assert ctx.runtime.protocol_version == "1"
-        assert "protocol_version" in ctx.runtime.model_dump()
+        assert "protocol_version" not in ctx.runtime.model_dump()
         assert "sdk_protocol_version" not in AgentRuntimeContext.model_fields
 
     def test_event_is_required(self):
