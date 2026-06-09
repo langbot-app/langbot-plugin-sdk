@@ -40,7 +40,6 @@ def make_context() -> AgentRunContext:
         },
         runtime={
             "langbot_version": "1.0",
-            "protocol_version": "1",
             "deadline_at": None,
             "metadata": {},
         },

@@ -568,7 +568,7 @@ class LangBotAPIProxy:
             File content bytes.
         """
         resp = await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM,
+            PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
             {"storage_path": storage_path},
         )
         # File was transferred via FILE_CHUNK; read from local temp

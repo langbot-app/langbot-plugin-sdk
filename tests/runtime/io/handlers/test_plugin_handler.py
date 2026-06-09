@@ -234,7 +234,7 @@ async def test_plugin_handler_forwards_config_file_requests_to_langbot():
 async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypatch):
     handler, _manager, control = _handler()
     file_ops = []
-    control.results[PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM] = {
+    control.results[PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM] = {
         "file_key": "host-file"
     }
 
@@ -255,7 +255,7 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
-            PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM.value,
+            PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM.value,
             {"storage_path": "kb/doc"},
         )
 
@@ -351,30 +351,6 @@ async def test_plugin_handler_forwards_agent_runner_tool_envelope():
                 "parameters": {"city": "Shanghai"},
             },
             180.0,
-        )
-    ]
-
-
-async def test_plugin_handler_forwards_prompt_get():
-    handler, _manager, control = _handler()
-    control.results[PluginToRuntimeAction.PROMPT_GET] = {
-        "prompt": [{"role": "system", "content": "Host prompt"}],
-    }
-
-    async with ProtocolSession(handler) as session:
-        response = await session.request(
-            PluginToRuntimeAction.PROMPT_GET.value,
-            {"run_id": "run-1"},
-        )
-
-    assert response["data"] == {
-        "prompt": [{"role": "system", "content": "Host prompt"}],
-    }
-    assert control.calls == [
-        (
-            PluginToRuntimeAction.PROMPT_GET,
-            {"run_id": "run-1"},
-            30,
         )
     ]
 

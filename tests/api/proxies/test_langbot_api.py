@@ -226,7 +226,7 @@ async def test_tool_and_rag_helpers_preserve_payload_contracts():
 @pytest.mark.asyncio
 async def test_get_knowledge_file_stream_reads_and_deletes_local_chunk_file():
     handler = FakeHandler(
-        {PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM: {"file_key": "file-key"}}
+        {PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM: {"file_key": "file-key"}}
     )
     proxy = LangBotAPIProxy(handler)
 

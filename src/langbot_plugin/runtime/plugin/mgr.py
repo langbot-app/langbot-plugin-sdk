@@ -974,9 +974,6 @@ class PluginManager:
                     # Get config schema
                     config_schema = spec.get("config") or runner_cls.get_config_schema()
 
-                    # Get protocol version
-                    protocol_version = spec.get("protocol_version", "1")
-
                     runners.append(
                         {
                             "plugin_author": plugin.manifest.metadata.author,
@@ -984,7 +981,6 @@ class PluginManager:
                             "runner_name": component.manifest.metadata.name,
                             "runner_description": component.manifest.metadata.description,
                             "manifest": component.manifest.manifest,  # raw manifest dict
-                            "protocol_version": protocol_version,
                             "capabilities": capabilities.model_dump(),
                             "permissions": permissions.model_dump(),
                             "config": config_schema,
