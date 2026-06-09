@@ -67,7 +67,6 @@ def create_mock_context(
     knowledge_bases: list[dict] | None = None,
     storage: dict | None = None,
     files: list[dict] | None = None,
-    prompt_get: bool = False,
     available_apis: ContextAPICapabilities | None = None,
 ) -> AgentRunContext:
     """Create a mock AgentRunContext for testing."""
@@ -81,7 +80,6 @@ def create_mock_context(
             artifact_read=True,
             state=True,
             storage=True,
-            prompt_get=prompt_get,
         )
 
     return AgentRunContext(
@@ -244,12 +242,12 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
 
         assert hasattr(proxy, "get_langbot_version")
 
-    def test_exposes_prompt_api_with_availability_validation(self):
-        """AgentRunAPIProxy exposes run-scoped prompt access."""
+    def test_does_not_expose_prompt_api(self):
+        """AgentRunAPIProxy does not expose Host prompt internals."""
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert hasattr(proxy, "get_prompt")
+        assert not hasattr(proxy, "get_prompt")
 
 
 class TestAgentRunAPIProxyResourceValidation:
@@ -334,36 +332,6 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert "image_gen" in str(exc_info.value)
         assert "not authorized" in str(exc_info.value)
-
-    @pytest.mark.anyio
-    async def test_get_prompt_requires_available_api(self):
-        """get_prompt is rejected unless Host exposed prompt_get for this run."""
-        proxy = AgentRunAPIProxy(
-            ctx=create_mock_context(available_apis=ContextAPICapabilities()),
-            plugin_runtime_handler=MockHandler(),
-        )
-
-        with pytest.raises(PermissionDeniedError) as exc_info:
-            await proxy.get_prompt()
-
-        assert "prompt_get" in str(exc_info.value)
-
-    @pytest.mark.anyio
-    async def test_get_prompt_with_available_api(self):
-        """get_prompt calls the run-scoped Host prompt API."""
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "prompt": [{"role": "system", "content": "Host prompt"}],
-        }
-        ctx = create_mock_context(run_id="run_prompt_test", prompt_get=True)
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        prompt = await proxy.get_prompt()
-
-        assert prompt == [{"role": "system", "content": "Host prompt"}]
-        action, data, _timeout = mock_handler.call_action_mock.call_args[0]
-        assert action == PluginToRuntimeAction.PROMPT_GET
-        assert data == {"run_id": "run_prompt_test"}
 
     @pytest.mark.anyio
     async def test_retrieve_knowledge_with_authorized_kb(self):
