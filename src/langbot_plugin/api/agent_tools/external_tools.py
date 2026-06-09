@@ -113,12 +113,14 @@ class AgentRunExternalTools:
                 ],
             }
 
-        structured = result if isinstance(result, dict) else {"result": result}
+        structured = _dump_jsonable(result)
+        if not isinstance(structured, dict):
+            structured = {"result": structured}
         return {
             "content": [
                 {
                     "type": "text",
-                    "text": json.dumps(result, ensure_ascii=False),
+                    "text": json.dumps(structured, ensure_ascii=False),
                 }
             ],
             "structuredContent": structured,
