@@ -155,6 +155,10 @@ def init_plugin_process(
     os.makedirs(assets_dir, exist_ok=True)
     vscode_dir = os.path.join(plugin_dir, ".vscode")
     os.makedirs(vscode_dir, exist_ok=True)
+    readme_dir = os.path.join(plugin_dir, "readme")
+    os.makedirs(readme_dir, exist_ok=True)
+    github_workflows_dir = os.path.join(plugin_dir, ".github", "workflows")
+    os.makedirs(github_workflows_dir, exist_ok=True)
 
     # Create all files from templates
     for file in init_plugin_files:
