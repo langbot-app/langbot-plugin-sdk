@@ -44,6 +44,23 @@ _READONLY_ETC_ENTRIES: list[str] = [
     '/etc/resolv.conf',  # needed when network=ON
 ]
 
+# Essential character devices bind-mounted into the sandbox's /dev.
+# /dev is a fresh empty tmpfs (see _build_args), so these nodes do not exist
+# unless we bind them in from the host. Tooling that shells out for probes
+# relies on them — notably `uv`/`uvx` redirects its glibc/musl detection
+# subprocess to /dev/null; without it uv fails with "Could not detect either
+# glibc version nor musl libc version" and the process exits before it can do
+# anything (e.g. an stdio MCP server dies before the initialize handshake,
+# surfacing as a misleading "Connection closed / please check URL").
+_DEV_NODES: list[str] = [
+    '/dev/null',
+    '/dev/zero',
+    '/dev/full',
+    '/dev/random',
+    '/dev/urandom',
+    '/dev/tty',
+]
+
 _DEFAULT_BASE_DIR = '/tmp/langbot-box-nsjail'
 
 
@@ -329,6 +346,15 @@ class NsjailBackend(BaseSandboxBackend):
         # Isolated /proc and minimal /dev.
         args.extend(['--mount', 'none:/proc:proc:rw'])
         args.extend(['--mount', 'none:/dev:tmpfs:rw'])
+
+        # /dev is a fresh empty tmpfs, so bind in the essential character
+        # devices. Without /dev/null in particular, uv's glibc/musl detection
+        # subprocess fails and any uvx-launched process (e.g. stdio MCP servers)
+        # exits before doing useful work. Mounted read-write so writes to
+        # /dev/null behave normally.
+        for dev in _DEV_NODES:
+            if os.path.exists(dev):
+                args.extend(['--bindmount', f'{dev}:{dev}'])
 
         # Working directory.
         args.extend(['--cwd', spec.workdir])

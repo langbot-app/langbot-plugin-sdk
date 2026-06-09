@@ -215,6 +215,54 @@ def test_build_nsjail_args_basic(backend, tmp_base):
     assert (session_dir / 'root' / 'home').is_dir()
 
 
+def test_build_nsjail_args_binds_essential_dev_nodes(backend, tmp_base):
+    """/dev is a fresh empty tmpfs, so essential character devices must be
+    bind-mounted in. Regression: without /dev/null, uv's glibc/musl detection
+    subprocess fails ("Could not detect either glibc version nor musl libc
+    version") and uvx-launched stdio MCP servers die before the initialize
+    handshake, surfacing as a misleading "Connection closed / please check URL".
+    """
+    tmp_base.mkdir(parents=True, exist_ok=True)
+    session_dir = tmp_base / 'test_dev'
+    for d in ('root', 'workspace', 'tmp', 'home'):
+        (session_dir / d).mkdir(parents=True)
+
+    spec = BoxSpec(session_id='s-dev', cmd='echo hi')
+    session = BoxSessionInfo(
+        session_id='s-dev',
+        backend_name='nsjail',
+        backend_session_id=str(session_dir),
+        image=spec.image,
+        network=BoxNetworkMode.OFF,
+        created_at='2024-01-01T00:00:00+00:00',
+        last_used_at='2024-01-01T00:00:00+00:00',
+    )
+
+    # Pretend every candidate device node exists on the host.
+    with mock.patch('os.path.exists', return_value=True):
+        args = backend._build_nsjail_args(session, spec, session_dir)
+
+    # /dev itself is a tmpfs mount.
+    mount_specs = [args[i + 1] for i, a in enumerate(args) if a == '--mount']
+    assert 'none:/dev:tmpfs:rw' in mount_specs
+
+    # /dev/null (the critical one for uv) must be bind-mounted read-write,
+    # ordered AFTER the /dev tmpfs mount so it lands on the fresh tmpfs.
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
+    assert '/dev/null:/dev/null' in rw_binds
+    assert '/dev/urandom:/dev/urandom' in rw_binds
+
+    dev_tmpfs_idx = next(
+        i for i, a in enumerate(args)
+        if a == '--mount' and args[i + 1] == 'none:/dev:tmpfs:rw'
+    )
+    dev_null_idx = next(
+        i for i, a in enumerate(args)
+        if a == '--bindmount' and args[i + 1] == '/dev/null:/dev/null'
+    )
+    assert dev_tmpfs_idx < dev_null_idx
+
+
 def test_build_nsjail_args_network_on(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
     session_dir = tmp_base / 'test_session_net'
