@@ -233,6 +233,12 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         data = await self._call(
             LangBotToBoxAction.START_MANAGED_PROCESS,
             {"session_id": session_id, "spec": spec.model_dump(mode="json")},
+            # Starting a managed process can involve a cold dependency bootstrap
+            # (e.g. `uvx <pkg>` downloading the package + interpreter on first
+            # run), which easily exceeds the default 15s action timeout and
+            # caused stdio MCP servers to be torn down mid-install. Give it
+            # headroom so the first launch can complete.
+            timeout=30.0,
         )
         return BoxManagedProcessInfo.model_validate(data)
 
