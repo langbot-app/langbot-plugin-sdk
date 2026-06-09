@@ -38,6 +38,10 @@ from langbot_plugin.api.entities.builtin.command.context import (
 )
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
+from langbot_plugin.entities.io.errors import (
+    DependencyInstallError,
+    DependencyVerificationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -312,49 +316,111 @@ class PluginManager:
         yield {"current_action": "installing dependencies"}
         requirements_file = os.path.join(plugin_path, "requirements.txt")
         if os.path.exists(requirements_file):
-            deps = pkgmgr_helper.parse_requirements(requirements_file)
+            precheck_result = await pkgmgr_helper.precheck_dependencies(
+                requirements_file
+            )
+            deps = precheck_result["deps"]
+            to_install = precheck_result["to_install"]
+            already_installed = precheck_result["already_installed"]
+
+            logger.info(
+                f"Dependency precheck: {len(already_installed)} already installed, "
+                f"{len(to_install)} to install"
+            )
+
             total_deps = len(deps)
             total_downloaded = 0
             start_time = time.time()
+            # Requirement specs pip could not install even after retries,
+            # mapped to the tail of pip's stderr for diagnostics.
+            install_failures: dict[str, str] = {}
+            already_installed_count = len(already_installed)
+            to_install_count = len(to_install)
 
-            for i, dep in enumerate(deps):
+            for i, dep in enumerate(to_install):
                 elapsed = time.time() - start_time
                 yield {
                     "current_action": "installing dependencies",
                     "metadata": {
                         "deps_total": total_deps,
-                        "deps_installed": i,
-                        "deps_remaining": total_deps - i,
+                        "deps_installed": already_installed_count + i,
+                        "deps_remaining": to_install_count - i,
                         "current_dep": dep,
                         "deps_downloaded_size": total_downloaded,
                         "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
+                        "already_installed": already_installed_count,
+                        "to_install": to_install_count,
                     },
                 }
 
-                returncode, downloaded_bytes, output = (
-                    await pkgmgr_helper.install_single_async(dep)
+                returncode, downloaded_bytes, error_msg = (
+                    await pkgmgr_helper.install_with_retry(dep, max_retries=3)
                 )
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
-                    error_message = f"Failed to install dependency: {dep}"
-                    if output:
-                        error_message = f"{error_message}\n{output.strip()}"
-                    logger.error(error_message)
-                    raise RuntimeError(error_message)
+                    logger.error(
+                        f"Failed to install dependency after retries: {dep}, "
+                        f"error: {error_msg}"
+                    )
+                    install_failures[dep] = error_msg
+
+            # Verification: pip may report success while the distribution is
+            # still unimportable or the installed version violates the
+            # specifier. Only verify deps that pip did not already flag as a
+            # hard install failure, so the two error classes stay distinct.
+            verified_targets = [d for d in deps if d not in install_failures]
+            missing_deps, version_mismatch = (
+                pkgmgr_helper.classify_unsatisfied_dependencies(verified_targets)
+            )
+
+            failed_deps = (
+                list(install_failures.keys()) + missing_deps + version_mismatch
+            )
 
             elapsed = time.time() - start_time
             yield {
                 "current_action": "installing dependencies",
                 "metadata": {
                     "deps_total": total_deps,
-                    "deps_installed": total_deps,
+                    "deps_installed": total_deps - len(failed_deps),
                     "deps_remaining": 0,
+                    "deps_failed": len(failed_deps),
+                    "failed_deps": failed_deps,
                     "current_dep": "",
                     "deps_downloaded_size": total_downloaded,
                     "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
                 },
             }
+
+            plugin_ref = f"{plugin_author}/{plugin_name}"
+
+            # pip-level install failures take priority — they are the root
+            # cause and carry the actual pip stderr for debugging.
+            if install_failures:
+                logger.error(
+                    f"Plugin {plugin_ref} failed to install "
+                    f"{len(install_failures)} dependencies: "
+                    f"{list(install_failures.keys())}"
+                )
+                raise DependencyInstallError(
+                    failed=list(install_failures.keys()),
+                    plugin=plugin_ref,
+                    details=install_failures,
+                )
+
+            # pip succeeded but the result cannot be verified — surface which
+            # deps are missing vs. version-mismatched so callers can react.
+            if missing_deps or version_mismatch:
+                logger.error(
+                    f"Plugin {plugin_ref} dependency verification failed — "
+                    f"missing: {missing_deps}, version mismatch: {version_mismatch}"
+                )
+                raise DependencyVerificationError(
+                    missing=missing_deps,
+                    version_mismatch=version_mismatch,
+                    plugin=plugin_ref,
+                )
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}
