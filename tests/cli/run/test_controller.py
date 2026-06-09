@@ -214,7 +214,6 @@ async def test_initialize_writes_agent_runner_class_declarations_to_manifest(
     assert runner.component_instance.initialized is True
     assert runner.component_instance.plugin_identity == "tester/demo"
     assert runner.component_instance.get_plugin_config() == {"token": "secret"}
-    assert spec["protocol_version"] == "1"
     assert spec["capabilities"]["streaming"] is True
     assert spec["capabilities"]["tool_calling"] is True
     assert spec["permissions"]["models"] == ["stream"]

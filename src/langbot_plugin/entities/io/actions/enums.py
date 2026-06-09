@@ -66,7 +66,10 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
     VECTOR_LIST = "vector_list"
-    GET_KNOWLEDGE_FILE_STREAM = "get_knowledge_file_stream"
+    # TODO: Keep the legacy misspelled enum member for now. Renaming this
+    # member is unrelated to the AgentRunner branch and should be handled in
+    # a separate compatibility cleanup.
+    GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
 
     LIST_PARSERS = "list_parsers"
     INVOKE_PARSER = "invoke_parser"
@@ -80,7 +83,6 @@ class PluginToRuntimeAction(ActionType):
     RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
 
     """Agent History/Event APIs (run-scoped, requires run_id authorization)"""
-    PROMPT_GET = "prompt_get"
     HISTORY_PAGE = "history_page"
     HISTORY_SEARCH = "history_search"
     EVENT_GET = "event_get"

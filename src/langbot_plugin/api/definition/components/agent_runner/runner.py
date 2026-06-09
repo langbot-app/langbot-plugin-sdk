@@ -69,7 +69,6 @@ class AgentRunner(BaseComponent):
     """
 
     __kind__ = "AgentRunner"
-    __protocol_version__ = "1"
 
     _plugin_runtime_handler: "Handler | None"
     _plugin_config: dict[str, Any]

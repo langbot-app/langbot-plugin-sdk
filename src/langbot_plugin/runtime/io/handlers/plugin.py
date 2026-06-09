@@ -328,13 +328,13 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
-        @self.action(PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM)
+        @self.action(PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM)
         async def get_knowledge_file_stream(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
             """Forward file stream from LangBot to plugin via chunked transfer."""
             result = await _proxy_rag_action(
-                PluginToRuntimeAction.GET_KNOWLEDGE_FILE_STREAM,
+                PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM,
                 data,
                 timeout=60,
             )
@@ -596,18 +596,6 @@ class PluginConnectionHandler(handler.Handler):
                 PluginToRuntimeAction.CALL_TOOL,
                 data,
                 timeout=LONG_RUNNING_OPERATION_TIMEOUT,
-            )
-            return handler.ActionResponse.success(result)
-
-        @self.action(PluginToRuntimeAction.PROMPT_GET)
-        async def prompt_get(data: dict[str, Any]) -> handler.ActionResponse:
-            """Forward prompt_get requests to LangBot Host."""
-            _inject_caller_identity(data)
-
-            result = await self.context.control_handler.call_action(
-                PluginToRuntimeAction.PROMPT_GET,
-                data,
-                timeout=30,
             )
             return handler.ActionResponse.success(result)
 

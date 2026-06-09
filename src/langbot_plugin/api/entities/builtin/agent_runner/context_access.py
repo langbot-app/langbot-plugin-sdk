@@ -58,9 +58,6 @@ class ContextAPICapabilities(pydantic.BaseModel):
     storage: bool = False
     """Whether storage API is available."""
 
-    prompt_get: bool = False
-    """Whether a Host effective prompt/instruction package pull API is available."""
-
 
 class ContextAccess(pydantic.BaseModel):
     """Context access descriptor for the runner.

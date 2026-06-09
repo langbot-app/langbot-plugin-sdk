@@ -292,25 +292,6 @@ class AgentRunAPIProxy:
         )
         return resp["result"]
 
-    # ================= Prompt API =================
-
-    async def get_prompt(self) -> list[dict[str, Any]]:
-        """Get the Host effective prompt for this run when available."""
-        self._require_context_api("prompt_get")
-
-        timeout = self._bounded_timeout(default=30.0)
-        resp = await self._api.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.PROMPT_GET,
-            {
-                "run_id": self.run_id,
-            },
-            timeout,
-        )
-        prompt = resp["prompt"]
-        if not isinstance(prompt, list):
-            raise TypeError("prompt_get response must contain a prompt list")
-        return prompt
-
     # ================= Knowledge Base API (delegated with validation) =================
 
     async def retrieve_knowledge(

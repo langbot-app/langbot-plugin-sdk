@@ -112,7 +112,6 @@ def create_mock_component_manifest(
     mock_manifest.metadata.name = runner_name
     mock_manifest.metadata.description = f"Test runner {runner_name}"
     mock_manifest.spec = spec or {
-        "protocol_version": "1",
         "config": [],
         "capabilities": {},
         "permissions": {},
@@ -160,7 +159,6 @@ def create_mock_plugin(
     components = []
     for runner_name, runner_instance in runner_components:
         spec = {
-            "protocol_version": "1",
             "config": [],
             "capabilities": capabilities or {},
             "permissions": permissions or {},
@@ -258,7 +256,7 @@ class TestListAgentRunners:
         assert runners[0]["plugin_author"] == "test-author"
         assert runners[0]["plugin_name"] == "test-plugin"
         assert runners[0]["runner_name"] == "default"
-        assert runners[0]["protocol_version"] == "1"
+        assert "protocol_version" not in runners[0]
         assert "capabilities" in runners[0]
         assert "permissions" in runners[0]
 
@@ -295,7 +293,7 @@ class TestListAgentRunners:
 
         # Check capabilities and permissions are included
         for runner in runners:
-            assert runner["protocol_version"] == "1"
+            assert "protocol_version" not in runner
             assert "capabilities" in runner
             assert "permissions" in runner
 
@@ -372,7 +370,7 @@ class TestListAgentRunners:
         )
         plugin.components[0].manifest = create_mock_component_manifest(
             "default",
-            spec={"protocol_version": "1"},
+            spec={},
         )
         mgr.plugins = [plugin]
 
