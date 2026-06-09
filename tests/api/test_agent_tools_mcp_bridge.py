@@ -21,6 +21,8 @@ from langbot_plugin.api.entities.builtin.agent_runner import (
     AgentRuntimeContext,
     AgentTrigger,
     DeliveryContext,
+    HistoryPage,
+    TranscriptItem,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
     ContextAccess,
@@ -65,7 +67,17 @@ class FakeRunAPI:
 
     async def history_page(self, **kwargs):
         self.calls.append(("history_page", kwargs))
-        return {"items": [{"text": "older"}], "has_more": False}
+        return HistoryPage(
+            items=[
+                TranscriptItem(
+                    transcript_id="transcript_1",
+                    event_id="event_1",
+                    role="user",
+                    content="older",
+                )
+            ],
+            has_more=False,
+        )
 
     async def retrieve_knowledge(self, **kwargs):
         self.calls.append(("retrieve_knowledge", kwargs))
@@ -275,9 +287,8 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
             ]
             listed_tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
             assert "langbot_history_page" in listed_tools
-            assert responses[2]["result"]["structuredContent"]["items"] == [
-                {"text": "older"}
-            ]
+            assert responses[2]["result"]["structuredContent"]["items"][0]["content"] == "older"
+            assert responses[2]["result"]["content"][0]["text"].startswith('{"items"')
             assert responses[3]["result"]["structuredContent"]["result"] == [
                 {"content": "kb:stdio"}
             ]
