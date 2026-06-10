@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import select
 import secrets
 import shlex
 import signal
@@ -451,6 +452,10 @@ async def run_subprocess(
         terminate_process(process)
         await process.wait()
         raise
+    except asyncio.CancelledError:
+        terminate_process(process)
+        await process.wait()
+        raise
 
     return (
         process.returncode or 0,
@@ -688,33 +693,58 @@ class RemoteAgentHandler(BaseHTTPRequestHandler):
                 raise ValueError("run.start payload must be an object")
 
             session = self.server.create_run_channel(str(run_payload.get("run_id") or "run"))
+            future = asyncio.run_coroutine_threadsafe(
+                self.server.handle_channel_run(run_payload, session),
+                self.server.loop,
+            )
             try:
-                future = asyncio.run_coroutine_threadsafe(
-                    self.server.handle_channel_run(run_payload, session),
-                    self.server.loop,
-                )
                 self._run_channel_loop(session, future)
             finally:
+                self._cancel_run_future(future)
                 self.server.remove_run_channel(session.run_id)
+        except EOFError:
+            pass
         except Exception as e:
-            self._write_ws_json({"type": "run.failed", "error": {"code": "remote_daemon_error", "error": str(e)}})
+            try:
+                self._write_ws_json({"type": "run.failed", "error": {"code": "remote_daemon_error", "error": str(e)}})
+            except OSError:
+                pass
 
     def _run_channel_loop(self, session: ActiveRunChannel, future: typing.Any) -> None:
-        while True:
-            outgoing_future = asyncio.run_coroutine_threadsafe(session.outgoing.get(), self.server.loop)
-            try:
-                outgoing = outgoing_future.result(timeout=0.05)
-            except TimeoutError:
-                outgoing_future.cancel()
-                if future.done():
-                    response = future.result()
-                    self._write_ws_json({"type": "run.completed", "response": response})
-                    return
-                continue
+        try:
+            while True:
+                self._read_pending_channel_messages(session)
+                outgoing_future = asyncio.run_coroutine_threadsafe(session.outgoing.get(), self.server.loop)
+                try:
+                    outgoing = outgoing_future.result(timeout=0.05)
+                except TimeoutError:
+                    outgoing_future.cancel()
+                    if future.done():
+                        response = future.result()
+                        self._write_ws_json({"type": "run.completed", "response": response})
+                        return
+                    continue
 
-            self._write_ws_json(outgoing)
-            if outgoing.get("type") == "mcp.request":
-                self._read_channel_response(session)
+                self._write_ws_json(outgoing)
+                if outgoing.get("type") == "mcp.request":
+                    self._read_channel_response(session)
+        except EOFError:
+            self._cancel_run_future(future)
+            raise
+        except Exception:
+            self._cancel_run_future(future)
+            raise
+
+    def _cancel_run_future(self, future: typing.Any) -> None:
+        if not future.done():
+            future.cancel()
+
+    def _read_pending_channel_messages(self, session: ActiveRunChannel) -> None:
+        while True:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            if not readable:
+                return
+            self._read_channel_response(session)
 
     def _read_channel_response(self, session: ActiveRunChannel) -> None:
         opcode, payload = channel.read_ws_frame_sync(self.rfile)
