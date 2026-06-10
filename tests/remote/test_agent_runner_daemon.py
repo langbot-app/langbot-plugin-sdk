@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from langbot_plugin.remote.agent_runner.daemon import (
     AgentAdapter,
     handle_run_request,
     load_adapters,
+    run_subprocess,
 )
 
 
@@ -126,3 +128,43 @@ def test_load_adapters_from_import_specs(monkeypatch, tmp_path) -> None:
 
     assert len(adapters) == 1
     assert adapters[0].name == "custom"
+
+
+def test_run_subprocess_kills_process_on_cancellation(tmp_path) -> None:
+    async def exercise() -> None:
+        pid_file = tmp_path / "pid.txt"
+        script = (
+            "import os, pathlib, sys, time; "
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8'); "
+            "time.sleep(60)"
+        )
+        task = asyncio.create_task(
+            run_subprocess(
+                [sys.executable, "-c", script, str(pid_file)],
+                "",
+                60,
+                tmp_path,
+            )
+        )
+        for _ in range(100):
+            if pid_file.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert pid_file.exists()
+        pid = int(pid_file.read_text(encoding="utf-8"))
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        for _ in range(100):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("cancelled remote subprocess is still running")
+
+    asyncio.run(exercise())
