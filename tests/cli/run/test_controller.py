@@ -9,13 +9,7 @@ from langbot_plugin.api.definition.components.agent_runner.runner import AgentRu
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
-from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
-    AgentRunnerCapabilities,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
-    AgentRunnerPermissions,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 from langbot_plugin.api.definition.plugin import BasePlugin, NonePlugin
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
@@ -54,14 +48,6 @@ class DemoEventListener(EventListener):
 
 class DemoAgentRunner(AgentRunner):
     initialized = False
-
-    @classmethod
-    def get_capabilities(cls) -> AgentRunnerCapabilities:
-        return AgentRunnerCapabilities(streaming=True, tool_calling=True)
-
-    @classmethod
-    def get_permissions(cls) -> AgentRunnerPermissions:
-        return AgentRunnerPermissions(models=["stream"], tools=["call"])
 
     @classmethod
     def get_config_schema(cls) -> list[dict[str, Any]]:
@@ -214,10 +200,6 @@ async def test_initialize_writes_agent_runner_class_declarations_to_manifest(
     assert runner.component_instance.initialized is True
     assert runner.component_instance.plugin_identity == "tester/demo"
     assert runner.component_instance.get_plugin_config() == {"token": "secret"}
-    assert spec["capabilities"]["streaming"] is True
-    assert spec["capabilities"]["tool_calling"] is True
-    assert spec["permissions"]["models"] == ["stream"]
-    assert spec["permissions"]["tools"] == ["call"]
     assert spec["config"] == [{"type": "string", "name": "mode", "default": "chat"}]
     assert runner.manifest.manifest["spec"] is spec
 

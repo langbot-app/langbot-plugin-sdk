@@ -831,17 +831,14 @@ class PluginManager:
     ) -> list[dict[str, typing.Any]]:
         """List all available AgentRunner components from plugins.
 
-        Returns v1 protocol format with capabilities, permissions, and config.
+        Returns v1 protocol format with typed manifest data and transport fields.
         A plugin can have multiple AgentRunner components.
         """
         from langbot_plugin.api.definition.components.agent_runner.runner import (
             AgentRunner,
         )
-        from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
-            AgentRunnerCapabilities,
-        )
-        from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
-            AgentRunnerPermissions,
+        from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
+            AgentRunnerManifest,
         )
 
         runners: list[dict[str, typing.Any]] = []
@@ -874,30 +871,54 @@ class PluginManager:
                         else AgentRunner
                     )
 
-                    # Parse capabilities from manifest or use class defaults
-                    capabilities_data = spec.get("capabilities") or (
-                        runner_cls.get_capabilities().model_dump(mode="json")
-                    )
-                    capabilities = AgentRunnerCapabilities(**capabilities_data)
-
-                    # Parse permissions from manifest or use class defaults
-                    permissions_data = spec.get("permissions") or (
-                        runner_cls.get_permissions().model_dump(mode="json")
-                    )
-                    permissions = AgentRunnerPermissions(**permissions_data)
-
                     # Get config schema
                     config_schema = spec.get("config") or runner_cls.get_config_schema()
+                    runner_name = component.manifest.metadata.name
+                    runner_id = (
+                        "plugin:"
+                        f"{plugin.manifest.metadata.author}/"
+                        f"{plugin.manifest.metadata.name}/"
+                        f"{runner_name}"
+                    )
+
+                    try:
+                        runner_manifest = AgentRunnerManifest(
+                            id=runner_id,
+                            name=runner_name,
+                            label=component.manifest.metadata.label.to_dict(),
+                            description=component.manifest.metadata.description.to_dict()
+                            if component.manifest.metadata.description is not None
+                            else None,
+                            capabilities=spec.get("capabilities") or {},
+                            permissions=spec.get("permissions") or {},
+                            config_schema=config_schema,
+                            metadata={
+                                "plugin_author": plugin.manifest.metadata.author,
+                                "plugin_name": plugin.manifest.metadata.name,
+                                "runner_name": runner_name,
+                            },
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Skipping invalid AgentRunner manifest %s/%s/%s: %s",
+                            plugin.manifest.metadata.author,
+                            plugin.manifest.metadata.name,
+                            runner_name,
+                            exc,
+                        )
+                        continue
+
+                    manifest_data = runner_manifest.model_dump(mode="json")
 
                     runners.append(
                         {
                             "plugin_author": plugin.manifest.metadata.author,
                             "plugin_name": plugin.manifest.metadata.name,
-                            "runner_name": component.manifest.metadata.name,
-                            "runner_description": component.manifest.metadata.description,
-                            "manifest": component.manifest.manifest,  # raw manifest dict
-                            "capabilities": capabilities.model_dump(),
-                            "permissions": permissions.model_dump(),
+                            "runner_name": runner_name,
+                            "runner_description": manifest_data["description"],
+                            "manifest": manifest_data,
+                            "capabilities": manifest_data["capabilities"],
+                            "permissions": manifest_data["permissions"],
                             "config": config_schema,
                         }
                     )

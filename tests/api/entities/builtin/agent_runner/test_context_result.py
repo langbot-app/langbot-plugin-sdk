@@ -12,6 +12,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.context import (
 from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
     AgentRunResultType,
+    ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
@@ -27,12 +28,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.state import (
     AgentRunState,
     VALID_STATE_SCOPES,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
-    AgentRunnerCapabilities,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
-    AgentRunnerPermissions,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.event import (
     ConversationContext,
     AgentEventContext,
@@ -43,11 +38,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
     ContextAccess,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.context_policy import (
-    AgentRunnerContextPolicy,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
+    AgentRunnerCapabilities,
     AgentRunnerManifest,
+    AgentRunnerPermissions,
 )
 from langbot_plugin.api.entities.builtin.provider.message import (
     Message,
@@ -392,6 +386,29 @@ class TestAgentRunResultV1:
         # content_base64 is not added when not provided
         assert "content_base64" not in result.data
 
+    def test_artifact_created_rejects_invalid_content_base64(self):
+        """Test artifact.created validates inline content."""
+        with pytest.raises(pydantic.ValidationError, match="valid base64"):
+            AgentRunResult.artifact_created(
+                run_id="run_1",
+                artifact_id="artifact_1",
+                artifact_type="file",
+                content_base64="not base64",
+            )
+
+    def test_artifact_created_rejects_oversized_inline_content(self):
+        """Test artifact.created enforces inline content size."""
+        import base64
+
+        oversized = b"x" * (ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES + 1)
+        with pytest.raises(pydantic.ValidationError, match="exceeds"):
+            AgentRunResult.artifact_created(
+                run_id="run_1",
+                artifact_id="artifact_1",
+                artifact_type="file",
+                content_base64=base64.b64encode(oversized).decode("utf-8"),
+            )
+
     def test_tool_call_started_validate(self):
         """Test tool.call.started result."""
         result = AgentRunResult.tool_call_started(
@@ -581,85 +598,6 @@ class TestAgentInput:
         assert input.to_text() == ""
 
 
-class TestCapabilitiesAndPermissions:
-    """Test AgentRunnerCapabilities and AgentRunnerPermissions."""
-
-    def test_capabilities_defaults(self):
-        """Test capabilities defaults."""
-        caps = AgentRunnerCapabilities()
-        assert not caps.streaming
-        assert not caps.tool_calling
-        assert not caps.knowledge_retrieval
-        assert not caps.multimodal_input
-        assert not caps.skill_authoring
-        # Protocol v1 defaults
-        assert caps.event_context is True  # Default True for Protocol v1
-        assert not caps.platform_api
-        assert not caps.interrupt
-        assert not caps.stateful_session
-        assert caps.self_managed_context is True  # Default True for Protocol v1
-
-    def test_permissions_defaults(self):
-        """Test all permissions default to empty lists."""
-        perms = AgentRunnerPermissions()
-        assert perms.models == []
-        assert perms.tools == []
-        assert perms.knowledge_bases == []
-        assert perms.history == []  # New field
-        assert perms.events == []  # New field
-        assert perms.artifacts == []  # New field
-        assert perms.storage == []
-        assert perms.files == []
-        assert perms.platform_api == []
-
-    def test_capabilities_from_dict(self):
-        """Test capabilities from manifest data."""
-        caps = AgentRunnerCapabilities(
-            streaming=True,
-            tool_calling=True,
-            skill_authoring=True,
-            stateful_session=True,
-        )
-        assert caps.streaming
-        assert caps.tool_calling
-        assert caps.skill_authoring
-        assert caps.stateful_session
-
-    def test_permissions_from_dict(self):
-        """Test permissions from manifest data."""
-        perms = AgentRunnerPermissions(
-            models=["invoke", "stream", "rerank"],
-            tools=["detail", "call"],
-            storage=["plugin", "workspace", "binding"],
-        )
-        assert perms.models == ["invoke", "stream", "rerank"]
-        assert perms.tools == ["detail", "call"]
-        assert perms.storage == ["plugin", "workspace", "binding"]
-
-
-class TestContextPolicy:
-    """Test AgentRunnerContextPolicy."""
-
-    def test_context_policy_defaults(self):
-        """Test context policy defaults for Protocol v1."""
-        policy = AgentRunnerContextPolicy()
-
-        assert policy.supports_history_pull is True
-        assert policy.owns_compaction is True
-
-    def test_context_policy_capabilities(self):
-        """Test context capability declaration."""
-        policy = AgentRunnerContextPolicy(
-            supports_history_pull=False,
-            supports_history_search=True,
-            owns_compaction=True,
-        )
-
-        assert policy.supports_history_pull is False
-        assert policy.supports_history_search is True
-        assert policy.owns_compaction is True
-
-
 class TestAgentRunnerManifest:
     """Test AgentRunnerManifest."""
 
@@ -673,9 +611,10 @@ class TestAgentRunnerManifest:
 
         assert manifest.id == "plugin:author/plugin/runner"
         assert manifest.name == "default"
-        assert manifest.capabilities is not None
-        assert manifest.permissions is not None
-        assert manifest.context is not None
+        assert isinstance(manifest.capabilities, AgentRunnerCapabilities)
+        assert isinstance(manifest.permissions, AgentRunnerPermissions)
+        assert manifest.capabilities.streaming is False
+        assert manifest.permissions.models == []
 
     def test_manifest_full(self):
         """Test full manifest."""
@@ -684,14 +623,38 @@ class TestAgentRunnerManifest:
             name="default",
             label={"en_US": "Runner"},
             description={"en_US": "A runner"},
-            capabilities=AgentRunnerCapabilities(streaming=True),
-            permissions=AgentRunnerPermissions(models=["invoke", "stream"]),
-            context=AgentRunnerContextPolicy(supports_history_pull=False),
+            capabilities={"streaming": True, "tool_calling": True},
+            permissions={
+                "models": ["invoke", "stream"],
+                "tools": ["detail", "call"],
+                "history": ["page"],
+            },
         )
 
+        assert manifest.description == {"en_US": "A runner"}
         assert manifest.capabilities.streaming is True
         assert manifest.permissions.models == ["invoke", "stream"]
-        assert manifest.context.supports_history_pull is False
+        assert manifest.permissions.history == ["page"]
+
+    def test_manifest_rejects_unknown_capability_key(self):
+        """Test non-standard capability keys are rejected."""
+        with pytest.raises(pydantic.ValidationError, match="extra_forbidden"):
+            AgentRunnerManifest(
+                id="plugin:author/plugin/runner",
+                name="default",
+                label={"en_US": "Runner"},
+                capabilities={"event_context": True},
+            )
+
+    def test_manifest_rejects_platform_api_permission(self):
+        """Test platform_api is not a Protocol v1 permission."""
+        with pytest.raises(pydantic.ValidationError, match="extra_forbidden"):
+            AgentRunnerManifest(
+                id="plugin:author/plugin/runner",
+                name="default",
+                label={"en_US": "Runner"},
+                permissions={"platform_api": ["message.send"]},
+            )
 
 
 class TestEventContextProtocolV1:
