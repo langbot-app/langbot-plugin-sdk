@@ -9,19 +9,15 @@ metadata:
     en_US: {{ runner_description }}
     zh_Hans: {{ runner_description }}
 spec:
-  config: []
   capabilities:
-    streaming: false
+    streaming: true
     tool_calling: false
     knowledge_retrieval: false
     multimodal_input: false
     skill_authoring: false
-    event_context: true
-    platform_api: false
     interrupt: false
-    stateful_session: false
   permissions:
-    models: []
+    models: ["invoke", "stream"]
     tools: []
     knowledge_bases: []
     history: []
@@ -29,7 +25,7 @@ spec:
     artifacts: []
     storage: []
     files: []
-    platform_api: []
+  config: []
 execution:
   python:
     path: ./{{ runner_name }}.py

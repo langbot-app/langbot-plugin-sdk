@@ -10,12 +10,6 @@ import pytest
 
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
-    AgentRunnerCapabilities,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
-    AgentRunnerPermissions,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
@@ -84,21 +78,19 @@ class ClassDeclaredAgentRunner(AgentRunner):
     """AgentRunner that declares runner metadata in Python class defaults."""
 
     @classmethod
-    def get_capabilities(cls) -> AgentRunnerCapabilities:
-        return AgentRunnerCapabilities(streaming=True, tool_calling=True)
-
-    @classmethod
     def get_config_schema(cls) -> list[dict[str, typing.Any]]:
         return [{"type": "llm-model-selector", "name": "model"}]
-
-    @classmethod
-    def get_permissions(cls) -> AgentRunnerPermissions:
-        return AgentRunnerPermissions(models=["invoke"], tools=["call"])
 
     async def run(
         self, ctx: AgentRunContext
     ) -> typing.AsyncGenerator[AgentRunResult, None]:
         yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
+
+
+def _i18n(value: str):
+    i18n = Mock()
+    i18n.to_dict.return_value = {"en_US": value}
+    return i18n
 
 
 def create_mock_component_manifest(
@@ -110,22 +102,22 @@ def create_mock_component_manifest(
     mock_manifest.kind = "AgentRunner"
     mock_manifest.metadata = Mock()
     mock_manifest.metadata.name = runner_name
-    mock_manifest.metadata.description = f"Test runner {runner_name}"
+    mock_manifest.metadata.label = _i18n(f"Test runner {runner_name}")
+    mock_manifest.metadata.description = _i18n(f"Test runner {runner_name}")
     mock_manifest.spec = spec or {
         "config": [],
         "capabilities": {},
         "permissions": {},
     }
-    mock_manifest.model_dump = Mock(
-        return_value={
-            "kind": "AgentRunner",
-            "metadata": {
-                "name": runner_name,
-                "description": f"Test runner {runner_name}",
-            },
-            "spec": mock_manifest.spec,
-        }
-    )
+    mock_manifest.manifest = {
+        "kind": "AgentRunner",
+        "metadata": {
+            "name": runner_name,
+            "description": f"Test runner {runner_name}",
+        },
+        "spec": mock_manifest.spec,
+    }
+    mock_manifest.model_dump = Mock(return_value=mock_manifest.manifest)
     return mock_manifest
 
 
@@ -146,7 +138,6 @@ def create_mock_plugin(
         name: Plugin name
         runner_components: List of (runner_name, runner_instance) tuples
         capabilities: Optional capabilities dict
-        permissions: Optional permissions dict
         mock_handler_responses: Optional list of response lists for each runner.
             Each element is a list of responses to yield for that runner.
     """
@@ -257,8 +248,9 @@ class TestListAgentRunners:
         assert runners[0]["plugin_name"] == "test-plugin"
         assert runners[0]["runner_name"] == "default"
         assert "protocol_version" not in runners[0]
-        assert "capabilities" in runners[0]
-        assert "permissions" in runners[0]
+        assert runners[0]["manifest"]["id"] == "plugin:test-author/test-plugin/default"
+        assert runners[0]["capabilities"]["streaming"] is False
+        assert runners[0]["permissions"]["models"] == []
 
     @pytest.mark.anyio
     async def test_single_plugin_multiple_runners(self):
@@ -279,7 +271,6 @@ class TestListAgentRunners:
                 ("tool_based", MockAgentRunner()),
             ],
             capabilities={"streaming": True, "tool_calling": True},
-            permissions={"models": ["invoke"], "tools": ["call"]},
         )
         mgr.plugins = [plugin]
 
@@ -291,11 +282,12 @@ class TestListAgentRunners:
         assert "streaming" in runner_names
         assert "tool_based" in runner_names
 
-        # Check capabilities and permissions are included
+        # Discovery returns typed manifest plus extracted config.
         for runner in runners:
             assert "protocol_version" not in runner
-            assert "capabilities" in runner
-            assert "permissions" in runner
+            assert runner["capabilities"]["streaming"] is True
+            assert runner["capabilities"]["tool_calling"] is True
+            assert runner["manifest"]["capabilities"]["streaming"] is True
 
     @pytest.mark.anyio
     async def test_include_plugins_filter(self):
@@ -377,11 +369,37 @@ class TestListAgentRunners:
         runners = await mgr.list_agent_runners()
 
         assert len(runners) == 1
-        assert runners[0]["capabilities"]["streaming"] is True
-        assert runners[0]["capabilities"]["tool_calling"] is True
-        assert runners[0]["permissions"]["models"] == ["invoke"]
-        assert runners[0]["permissions"]["tools"] == ["call"]
+        assert runners[0]["capabilities"]["streaming"] is False
+        assert runners[0]["permissions"]["models"] == []
         assert runners[0]["config"] == [{"type": "llm-model-selector", "name": "model"}]
+
+    @pytest.mark.anyio
+    async def test_skips_invalid_runner_manifest(self, caplog):
+        """Invalid typed manifest data skips only that runner."""
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mock_context = Mock(spec=RuntimeContext)
+        mgr = PluginManager(mock_context)
+        plugin = create_mock_plugin(
+            "test-author",
+            "invalid-runner-plugin",
+            [("valid", MockAgentRunner()), ("invalid", MockAgentRunner())],
+        )
+        plugin.components[1].manifest = create_mock_component_manifest(
+            "invalid",
+            spec={
+                "config": [],
+                "capabilities": {"event_context": True},
+                "permissions": {},
+            },
+        )
+        mgr.plugins = [plugin]
+
+        runners = await mgr.list_agent_runners()
+
+        assert [runner["runner_name"] for runner in runners] == ["valid"]
+        assert "Skipping invalid AgentRunner manifest" in caplog.text
 
 
 class TestRunAgent:

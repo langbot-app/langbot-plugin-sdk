@@ -43,7 +43,7 @@ class AgentRunAPIProxy:
     """Restricted API proxy for AgentRunner execution.
 
     Uses COMPOSITION + DELEGATION to LangBotAPIProxy:
-    - Validates permissions before delegating calls
+    - Validates run-scoped authorization before delegating calls
     - Reduces code duplication by reusing LangBotAPIProxy implementation
     - Only exposes authorized APIs (hasattr returns False for unauthorized methods)
 

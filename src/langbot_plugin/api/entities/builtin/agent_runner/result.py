@@ -5,12 +5,16 @@ from __future__ import annotations
 import typing
 import pydantic
 import enum
+import base64
+import binascii
 
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 from langbot_plugin.api.entities.builtin.agent_runner.state import (
     VALID_STATE_SCOPES,
     STATE_SCOPE_LITERAL,
 )
+
+ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES = 1024 * 1024
 
 
 class AgentRunResultType(str, enum.Enum):
@@ -25,6 +29,116 @@ class AgentRunResultType(str, enum.Enum):
     ACTION_REQUESTED = "action.requested"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
+
+
+class MessageDeltaPayload(pydantic.BaseModel):
+    """Payload for message.delta."""
+
+    chunk: MessageChunk
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class MessageCompletedPayload(pydantic.BaseModel):
+    """Payload for message.completed."""
+
+    message: Message
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class ToolCallStartedPayload(pydantic.BaseModel):
+    """Payload for tool.call.started."""
+
+    tool_call_id: str
+    tool_name: str
+    parameters: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class ToolCallCompletedPayload(pydantic.BaseModel):
+    """Payload for tool.call.completed."""
+
+    tool_call_id: str
+    tool_name: str
+    result: dict[str, typing.Any] | None = None
+    error: str | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class ArtifactCreatedPayload(pydantic.BaseModel):
+    """Payload for artifact.created."""
+
+    artifact_id: str
+    artifact_type: str
+    mime_type: str | None = None
+    name: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+    metadata: dict[str, typing.Any] | None = None
+    content_base64: str | None = None
+
+    @pydantic.field_validator("content_base64")
+    @classmethod
+    def validate_content_base64_size(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("content_base64 must be valid base64") from exc
+
+        if len(decoded) > ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES:
+            raise ValueError(
+                "content_base64 decoded content exceeds "
+                f"{ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES} bytes"
+            )
+
+        return value
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class StateUpdatedPayload(pydantic.BaseModel):
+    """Payload for state.updated."""
+
+    scope: STATE_SCOPE_LITERAL
+    key: str
+    value: typing.Any
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class RunCompletedPayload(pydantic.BaseModel):
+    """Payload for run.completed."""
+
+    finish_reason: str = "stop"
+    message: Message | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class RunFailedPayload(pydantic.BaseModel):
+    """Payload for run.failed."""
+
+    error: str
+    code: str = "runner.error"
+    retryable: bool = False
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class ActionRequestedPayload(pydantic.BaseModel):
+    """Payload for action.requested."""
+
+    action: str
+    target: dict[str, typing.Any] | None = None
+    payload: dict[str, typing.Any] | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
 
 
 class AgentRunResult(pydantic.BaseModel):
@@ -66,10 +180,11 @@ class AgentRunResult(pydantic.BaseModel):
 
         LangBot maps this to MessageChunk for streaming output.
         """
+        payload = MessageDeltaPayload(chunk=chunk)
         return cls(
             run_id=run_id,
             type=AgentRunResultType.MESSAGE_DELTA,
-            data={"chunk": chunk.model_dump(mode="json")},
+            data=payload.model_dump(mode="json"),
         )
 
     @classmethod
@@ -82,10 +197,11 @@ class AgentRunResult(pydantic.BaseModel):
 
         LangBot maps this to a complete Message.
         """
+        payload = MessageCompletedPayload(message=message)
         return cls(
             run_id=run_id,
             type=AgentRunResultType.MESSAGE_COMPLETED,
-            data={"message": message.model_dump(mode="json")},
+            data=payload.model_dump(mode="json"),
         )
 
     @classmethod
@@ -100,14 +216,15 @@ class AgentRunResult(pydantic.BaseModel):
 
         LangBot records this for telemetry/debug.
         """
+        payload = ToolCallStartedPayload(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            parameters=parameters,
+        )
         return cls(
             run_id=run_id,
             type=AgentRunResultType.TOOL_CALL_STARTED,
-            data={
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "parameters": parameters,
-            },
+            data=payload.model_dump(mode="json"),
         )
 
     @classmethod
@@ -123,15 +240,16 @@ class AgentRunResult(pydantic.BaseModel):
 
         LangBot records this for telemetry/debug.
         """
+        payload = ToolCallCompletedPayload(
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            result=result,
+            error=error,
+        )
         return cls(
             run_id=run_id,
             type=AgentRunResultType.TOOL_CALL_COMPLETED,
-            data={
-                "tool_call_id": tool_call_id,
-                "tool_name": tool_name,
-                "result": result,
-                "error": error,
-            },
+            data=payload.model_dump(mode="json"),
         )
 
     @classmethod
@@ -173,29 +291,21 @@ class AgentRunResult(pydantic.BaseModel):
             - Do NOT pass conversation_id/run_id in data; Host ignores them for security.
             - For large artifacts (>1MB), consider using external storage and omitting content_base64.
         """
-        data: dict[str, typing.Any] = {
-            "artifact_id": artifact_id,
-            "artifact_type": artifact_type,
-        }
-
-        # Optional fields
-        if mime_type is not None:
-            data["mime_type"] = mime_type
-        if name is not None:
-            data["name"] = name
-        if size_bytes is not None:
-            data["size_bytes"] = size_bytes
-        if sha256 is not None:
-            data["sha256"] = sha256
-        if metadata is not None:
-            data["metadata"] = metadata
-        if content_base64 is not None:
-            data["content_base64"] = content_base64
+        payload = ArtifactCreatedPayload(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            mime_type=mime_type,
+            name=name,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            metadata=metadata,
+            content_base64=content_base64,
+        )
 
         return cls(
             run_id=run_id,
             type=AgentRunResultType.ARTIFACT_CREATED,
-            data=data,
+            data=payload.model_dump(mode="json", exclude_none=True),
         )
 
     @classmethod
@@ -245,10 +355,12 @@ class AgentRunResult(pydantic.BaseModel):
                 f"Invalid scope '{scope}'. Must be one of: {', '.join(VALID_STATE_SCOPES)}"
             )
 
+        payload = StateUpdatedPayload(scope=scope, key=key, value=value)
+
         return cls(
             run_id=run_id,
             type=AgentRunResultType.STATE_UPDATED,
-            data={"scope": scope, "key": key, "value": value},
+            data=payload.model_dump(mode="json"),
         )
 
     @classmethod
@@ -263,10 +375,12 @@ class AgentRunResult(pydantic.BaseModel):
         If message is provided, LangBot can map it to final Message.
         If message.completed was already output, message can be None.
         """
-        data: dict[str, typing.Any] = {"finish_reason": finish_reason}
-        if message is not None:
-            data["message"] = message.model_dump(mode="json")
-        return cls(run_id=run_id, type=AgentRunResultType.RUN_COMPLETED, data=data)
+        payload = RunCompletedPayload(finish_reason=finish_reason, message=message)
+        return cls(
+            run_id=run_id,
+            type=AgentRunResultType.RUN_COMPLETED,
+            data=payload.model_dump(mode="json", exclude_none=True),
+        )
 
     @classmethod
     def run_failed(
@@ -280,14 +394,15 @@ class AgentRunResult(pydantic.BaseModel):
 
         LangBot returns a user-friendly error message per host delivery strategy.
         """
+        payload = RunFailedPayload(
+            error=error,
+            code=code or "runner.error",
+            retryable=retryable,
+        )
         return cls(
             run_id=run_id,
             type=AgentRunResultType.RUN_FAILED,
-            data={
-                "error": error,
-                "code": code or "runner.error",
-                "retryable": retryable,
-            },
+            data=payload.model_dump(mode="json"),
         )
 
     @classmethod
@@ -302,12 +417,13 @@ class AgentRunResult(pydantic.BaseModel):
 
         This phase only logs to telemetry, actual execution waits for EBA.
         """
+        result_payload = ActionRequestedPayload(
+            action=action,
+            target=target,
+            payload=payload,
+        )
         return cls(
             run_id=run_id,
             type=AgentRunResultType.ACTION_REQUESTED,
-            data={
-                "action": action,
-                "target": target,
-                "payload": payload,
-            },
+            data=result_payload.model_dump(mode="json"),
         )
