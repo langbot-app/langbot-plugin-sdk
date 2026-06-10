@@ -7,50 +7,12 @@ from langbot_plugin.api.definition.components.agent_runner.runner import AgentRu
 from langbot_plugin.api.entities.builtin.agent_runner import (
     AgentRunContext,
     AgentRunResult,
-    AgentRunnerCapabilities,
-    AgentRunnerPermissions,
 )
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 
 
 class {{ runner_attr }}(AgentRunner):
     """{{ runner_description }}"""
-
-    @classmethod
-    def get_capabilities(cls) -> AgentRunnerCapabilities:
-        """Declare capabilities for this runner.
-
-        Override to enable features like streaming, tool calling, etc.
-        """
-        return AgentRunnerCapabilities(
-            streaming=False,
-            tool_calling=False,
-            knowledge_retrieval=False,
-            multimodal_input=False,
-            skill_authoring=False,
-            event_context=True,
-            platform_api=False,
-            interrupt=False,
-            stateful_session=False,
-        )
-
-    @classmethod
-    def get_permissions(cls) -> AgentRunnerPermissions:
-        """Declare permissions required by this runner.
-
-        Override to request access to models, tools, knowledge bases, etc.
-        """
-        return AgentRunnerPermissions(
-            models=[],  # ["invoke", "stream", "rerank"]
-            tools=[],   # ["detail", "call"]
-            knowledge_bases=[],  # ["list", "retrieve"]
-            history=[],  # ["page", "search"]
-            events=[],  # ["get", "page"]
-            artifacts=[],  # ["metadata", "read"]
-            storage=[],  # ["plugin", "workspace", "binding"]
-            files=[],  # ["config", "knowledge"]
-            platform_api=[],
-        )
 
     async def run(self, ctx: AgentRunContext) -> AsyncGenerator[AgentRunResult, None]:
         """Process user input and generate response.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import typing
 import pydantic
 
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
@@ -54,9 +53,6 @@ class AgentInput(pydantic.BaseModel):
 
     contents: list[ContentElement] = pydantic.Field(default_factory=list)
     """Structured content elements (text, images, files, etc.)."""
-
-    message_chain: list[dict[str, typing.Any]] | dict[str, typing.Any] | None = None
-    """Raw platform message chain reference (adapter field, not stable dependency)."""
 
     attachments: list[ArtifactRef] = pydantic.Field(default_factory=list)
     """Artifact references for files/images/attachments."""

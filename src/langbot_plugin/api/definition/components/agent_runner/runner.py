@@ -8,12 +8,6 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 from langbot_plugin.api.definition.components.base import BaseComponent
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
-from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
-    AgentRunnerCapabilities,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
-    AgentRunnerPermissions,
-)
 
 if TYPE_CHECKING:
     from langbot_plugin.api.agent_tools import AgentRunMCPBridge
@@ -28,7 +22,7 @@ class AgentRunner(BaseComponent):
     It can use LLM models, tools, and knowledge bases to generate intelligent responses.
 
     Unlike PoC design, Protocol v1 allows a plugin to have multiple AgentRunner components.
-    Each runner component exposes its own manifest with name, config, capabilities, and permissions.
+    Each runner component exposes its own manifest with name and config.
 
     Example:
         ```python
@@ -41,13 +35,6 @@ class AgentRunner(BaseComponent):
         from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 
         class MyAgentRunner(AgentRunner):
-            @classmethod
-            def get_capabilities(cls) -> AgentRunnerCapabilities:
-                return AgentRunnerCapabilities(
-                    streaming=True,
-                    tool_calling=True,
-                )
-
             async def run(self, ctx: AgentRunContext) -> AsyncGenerator[AgentRunResult, None]:
                 # Get API proxy with run_id for LLM/tool/KB calls
                 api = self.get_run_api(ctx)
@@ -66,6 +53,9 @@ class AgentRunner(BaseComponent):
                 final_message = Message(role="assistant", content="Hello world")
                 yield AgentRunResult.run_completed(ctx.run_id, message=final_message)
         ```
+
+    Runner capabilities are declared in the component manifest's
+    ``spec.capabilities`` map when the Host needs them for UI/resource projection.
     """
 
     __kind__ = "AgentRunner"
@@ -149,15 +139,6 @@ class AgentRunner(BaseComponent):
         )
 
     @classmethod
-    def get_capabilities(cls) -> AgentRunnerCapabilities:
-        """Get default capabilities for this runner.
-
-        Override to declare specific capabilities.
-        Manifest spec.capabilities takes precedence if declared.
-        """
-        return AgentRunnerCapabilities()
-
-    @classmethod
     def get_config_schema(cls) -> list[dict[str, Any]]:
         """Get default config schema for this runner.
 
@@ -165,15 +146,6 @@ class AgentRunner(BaseComponent):
         Manifest spec.config takes precedence if declared.
         """
         return []
-
-    @classmethod
-    def get_permissions(cls) -> AgentRunnerPermissions:
-        """Get default permissions for this runner.
-
-        Override to declare required permissions.
-        Manifest spec.permissions takes precedence if declared.
-        """
-        return AgentRunnerPermissions()
 
     @abc.abstractmethod
     async def run(self, ctx: AgentRunContext) -> AsyncGenerator[AgentRunResult, None]:
@@ -187,7 +159,7 @@ class AgentRunner(BaseComponent):
                 - event: Event envelope subset (REQUIRED for Protocol v1)
                 - actor: Who triggered the event
                 - subject: What the event is about
-                - input: User input (text, contents, message_chain, attachments)
+                - input: User input (text, contents, attachments)
                 - delivery: Output surface capabilities (REQUIRED for Protocol v1)
                 - resources: Authorized resources (models, tools, KBs, files, storage)
                 - context: ContextAccess - what's inlined, what APIs are available
