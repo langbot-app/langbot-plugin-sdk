@@ -1,23 +1,9 @@
-"""AgentRunner manifest as defined in Protocol v1.
-
-The manifest describes an AgentRunner component's metadata,
-capabilities, permissions, and context policy.
-"""
+"""AgentRunner manifest as defined in Protocol v1."""
 
 from __future__ import annotations
 
 import typing
 import pydantic
-
-from langbot_plugin.api.entities.builtin.agent_runner.capabilities import (
-    AgentRunnerCapabilities,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.permissions import (
-    AgentRunnerPermissions,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.context_policy import (
-    AgentRunnerContextPolicy,
-)
 
 
 # I18n object: maps locale code to localized string
@@ -55,12 +41,79 @@ class DynamicFormItemSchema(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
 
-class AgentRunnerManifest(pydantic.BaseModel):
-    """Manifest describing an AgentRunner component.
+class AgentRunnerCapabilities(pydantic.BaseModel):
+    """Capabilities declared by an AgentRunner component."""
 
-    This is the stable descriptor returned during LIST_AGENT_RUNNERS.
-    Contains metadata, capabilities, permissions, and config schema.
+    streaming: bool = False
+    """Runner may output message.delta events."""
+
+    tool_calling: bool = False
+    """Runner needs host tool detail/call operations."""
+
+    knowledge_retrieval: bool = False
+    """Runner needs host knowledge base retrieval operations."""
+
+    multimodal_input: bool = False
+    """Runner can process non-text input contents or attachments."""
+
+    skill_authoring: bool = False
+    """Runner wants Host-provided skill authoring tools when available."""
+
+    interrupt: bool = False
+    """Runner supports cancel or interrupt operations."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class AgentRunnerPermissions(pydantic.BaseModel):
+    """LangBot resource permissions requested by an AgentRunner component.
+
+    These declarations are only an upper bound for LangBot-managed resources.
+    The Host must intersect them with the binding policy for the current run.
+    They do not constrain native capabilities of an external harness.
     """
+
+    models: list[typing.Literal["invoke", "stream", "rerank"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Model operations allowed."""
+
+    tools: list[typing.Literal["detail", "call"]] = pydantic.Field(default_factory=list)
+    """Tool operations allowed."""
+
+    knowledge_bases: list[typing.Literal["list", "retrieve"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Knowledge base operations allowed."""
+
+    history: list[typing.Literal["page", "search"]] = pydantic.Field(
+        default_factory=list
+    )
+    """History operations allowed."""
+
+    events: list[typing.Literal["get", "page"]] = pydantic.Field(default_factory=list)
+    """Event operations allowed."""
+
+    artifacts: list[typing.Literal["metadata", "read"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Artifact operations allowed."""
+
+    storage: list[typing.Literal["plugin", "workspace"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Storage scopes allowed."""
+
+    files: list[typing.Literal["config", "knowledge"]] = pydantic.Field(
+        default_factory=list
+    )
+    """File access scopes allowed."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class AgentRunnerManifest(pydantic.BaseModel):
+    """Stable AgentRunner descriptor returned during LIST_AGENT_RUNNERS."""
 
     id: str
     """Unique runner ID. Recommended format: plugin:author/plugin_name/runner_name."""
@@ -82,15 +135,12 @@ class AgentRunnerManifest(pydantic.BaseModel):
     permissions: AgentRunnerPermissions = pydantic.Field(
         default_factory=AgentRunnerPermissions
     )
-    """Runner permissions."""
-
-    context: AgentRunnerContextPolicy = pydantic.Field(
-        default_factory=AgentRunnerContextPolicy
-    )
-    """Context policy."""
+    """Requested LangBot resource permissions."""
 
     config_schema: list[DynamicFormItemSchema] = pydantic.Field(default_factory=list)
     """Configuration form schema for Agent/runner config."""
 
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata for display, diagnostics, non-stable extensions."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")

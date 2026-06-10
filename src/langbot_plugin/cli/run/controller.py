@@ -46,14 +46,6 @@ def _apply_agent_runner_class_defaults(
     if not isinstance(spec, dict):
         return
 
-    capabilities = component_impl_cls.get_capabilities()
-    if not spec.get("capabilities") and capabilities != AgentRunner.get_capabilities():
-        spec["capabilities"] = capabilities.model_dump(mode="json")
-
-    permissions = component_impl_cls.get_permissions()
-    if not spec.get("permissions") and permissions != AgentRunner.get_permissions():
-        spec["permissions"] = permissions.model_dump(mode="json")
-
     config_schema = component_impl_cls.get_config_schema()
     if not spec.get("config") and config_schema != AgentRunner.get_config_schema():
         spec["config"] = config_schema

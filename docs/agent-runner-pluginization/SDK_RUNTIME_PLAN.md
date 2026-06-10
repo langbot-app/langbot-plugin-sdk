@@ -1,7 +1,7 @@
 # AgentRunner SDK / Runtime 实现说明
 
 本文档面向 SDK / Runtime 维护者。它不定义 AgentRunner Protocol v1 的
-schema；协议字段、结果类型、权限字面量和 Host API 语义以 LangBot 仓库的
+schema；协议字段、结果类型、permissions 字面量和 Host API 语义以 LangBot 仓库的
 `docs/agent-runner-pluginization/PROTOCOL_V1.md` 为准。
 
 ## SDK 负责的实现面
@@ -9,7 +9,7 @@ schema；协议字段、结果类型、权限字面量和 Host API 语义以 Lan
 - `AgentRunner` 组件基类和 runner-scoped API 入口。
 - AgentRunner Protocol v1 的 Pydantic 实体实现。
 - `LIST_AGENT_RUNNERS` / `RUN_AGENT` runtime action 转发。
-- component manifest 的 capabilities / permissions / config 读取。
+- component manifest 的 `spec.capabilities` / `spec.permissions` / `spec.config` 读取。
 - runner 组件模板和 CLI 生成入口。
 - 远端 AgentRunner 执行支撑，包括 SDK 侧 daemon、run channel、工作区文件物化、
   HTTP `/run` 客户端 helper、run-scoped MCP 回传 shim 和 adapter 注册接口。
@@ -53,7 +53,7 @@ SDK 与 Host 独立发版，先验证 Host action handler，再升级会转发 t
 
 - `AgentRunContext` 最小字段 validate。
 - `AgentRunResult` 所有稳定 result type validate。
-- capabilities / permissions / context policy 默认值。
+- manifest capabilities / permissions 和 context access 默认值。
 - 单插件多 AgentRunner discovery。
 - `RUN_AGENT` 成功流式输出。
 - `RUN_AGENT` 插件异常、runner 不存在、context schema 错误 -> `run.failed`。

@@ -28,7 +28,7 @@ class InlineContextPolicy(pydantic.BaseModel):
     """Whether all relevant messages are included."""
 
     reason: str | None = None
-    """Reason for the policy (e.g., 'self_managed_context')."""
+    """Reason for the policy (e.g., 'current_event_only')."""
 
 
 class ContextAPICapabilities(pydantic.BaseModel):
