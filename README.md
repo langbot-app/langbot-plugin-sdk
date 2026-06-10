@@ -13,6 +13,10 @@ This repository contains the Runtime / SDK / CLI for LangBot Plugins. More detai
 The SDK owns the reusable remote AgentRunner runtime used by external code
 runners and third-party remote agents. It provides the daemon, run channel,
 workspace file materialization, HTTP client helpers, and run-scoped MCP relay.
+Remote runs are bound to the current LangBot Host process and run channel; they
+are not durable across Host restarts. If the channel closes, the daemon cancels
+the active runner process and rejects further run-scoped MCP calls for that
+`run_id`.
 
 ```bash
 python -m langbot_plugin.remote.agent_runner \
