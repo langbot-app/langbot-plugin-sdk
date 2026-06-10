@@ -142,6 +142,11 @@ class LangBotToRuntimeAction(ActionType):
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"
 
+    # Runtime configuration pushed by LangBot at connection init (e.g. the
+    # marketplace / cloud service URL), so the runtime does not rely on its own
+    # env/default.
+    SET_RUNTIME_CONFIG = "set_runtime_config"
+
     # Page API
     PAGE_API = "page_api"
 

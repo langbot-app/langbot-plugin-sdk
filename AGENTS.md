@@ -1,21 +1,29 @@
 # AGENTS.md
 
-This file is for guiding code agents (like Claude Code, GitHub Copilot, OpenAI Codex, etc.) to work in the langbot-plugin-sdk project.
+This file is for guiding code agents (like Claude Code, GitHub Copilot, OpenAI Codex, etc.) to work in the langbot-plugin-sdk project. `CLAUDE.md` is a symlink to this file.
 
-**IMPORTANT**: This document may contain outdated information and may differ from the actual content. Please refer to the actual situation for accuracy.
+> Always verify specifics (file paths, CLI flags, function signatures) against the actual source before relying on them. When you find this doc out of date, fix it as part of your change.
 
 ## Project Overview
 
 LangBot Plugin SDK is the infrastructure for LangBot's plugin system, providing:
 - **Plugin SDK**: Python APIs and interfaces for plugin development
-- **Plugin Runtime**: Execution environment managing plugin lifecycle
-- **CLI Tools**: `lbp` command for scaffolding, building, and debugging plugins
+- **Plugin Runtime**: Execution environment managing plugin lifecycle (`lbp rt`)
+- **Box Runtime**: Code-sandbox runtime service backing LangBot's Box subsystem (`lbp box`)
+- **CLI Tools**: `lbp` command for scaffolding, building, debugging, and running runtimes
 - **Communication Protocol**: Bidirectional action-based protocol (stdio/WebSocket)
 
-The SDK enables developers to extend LangBot with custom:
-- **Commands**: User-triggered actions (e.g., `!weather tokyo`)
-- **Tools**: LLM-callable functions for AI agents (e.g., web search, database queries)
-- **Event Listeners**: Handlers for message events (e.g., auto-reply, content filtering)
+This SDK is the shared dependency between LangBot and plugins; LangBot pins it as `langbot-plugin==<x.y.z>` in its `pyproject.toml`. The package version lives in this repo's `pyproject.toml`.
+
+The SDK enables developers to extend LangBot with custom components. Six component types are supported (scaffold any of them with `lbp comp <Type>`):
+- **Command**: User-triggered actions (e.g., `!weather tokyo`)
+- **Tool**: LLM-callable functions for AI agents (e.g., web search, database queries)
+- **EventListener**: Handlers for message-pipeline events (e.g., auto-reply, content filtering)
+- **KnowledgeEngine**: Custom knowledge-base retrieval/integration used by RAG
+- **Parser**: Custom parsing of messages/content
+- **Page**: Custom web page embeddable in the LangBot admin panel
+
+Component base classes live in `src/langbot_plugin/api/definition/components/` (`command/`, `tool/`, `common/event_listener.py`, `knowledge_engine/`, `parser/`, `page/`).
 
 ## Technology Stack
 
@@ -47,31 +55,33 @@ langbot-plugin-sdk/
 │   │   │       ├── command/     # CommandReturn
 │   │   │       └── provider/    # Session, Conversation
 │   │   └── proxies/             # API proxy classes
-│   │       ├── langbot_api.py   # LangBotAPIProxy
-│   │       └── query_based.py   # QueryBasedAPIProxy
 │   ├── runtime/                 # Plugin runtime system
-│   │   ├── plugin/              # Plugin management
-│   │   │   ├── mgr.py           # PluginManager
-│   │   │   ├── container.py     # PluginContainer
-│   │   │   └── installer.py    # Plugin installation
+│   │   ├── app.py               # `lbp rt` entrypoint (runtime_app.main)
+│   │   ├── plugin/              # Plugin management (mgr.py, container.py, installer)
 │   │   ├── io/                  # Communication layer
-│   │   │   ├── handler.py       # Action handler
-│   │   │   ├── stdio.py         # Stdio transport
-│   │   │   └── websocket.py    # WebSocket transport
-│   │   └── event/               # Event dispatching
-│   ├── cli/                     # Command-line tools
-│   │   ├── main.py              # lbp entrypoint
-│   │   ├── init.py              # Plugin initialization
-│   │   ├── gen/                 # Component generation
-│   │   └── run.py               # Plugin debugging
+│   │   │   ├── connection.py    # Base connection
+│   │   │   ├── connections/     # stdio / ws connection impls
+│   │   │   ├── controller.py , controllers/   # client/server controllers (stdio, ws)
+│   │   │   ├── handler.py , handlers/          # action handlers
+│   │   └── helper/
+│   ├── box/                     # Box (code-sandbox) runtime — `lbp box`
+│   │   ├── server.py            # `lbp box` entrypoint (box_main)
+│   │   ├── backend.py           # Backend abstraction + selection (Docker handled here/runtime)
+│   │   ├── nsjail_backend.py / e2b_backend.py  # sandbox backend impls
+│   │   ├── runtime.py , client.py , actions.py , models.py , errors.py , security.py , skill_store.py
+│   ├── cli/                     # Command-line tools (`lbp`)
+│   │   ├── __init__.py          # lbp entrypoint + argparse subcommands
+│   │   ├── commands/            # init / comp / build / publish / login / logout impls
+│   │   ├── run/                 # plugin run (remote-debug) impl
+│   │   ├── gen/                 # component generation (Jinja2)
+│   │   ├── i18n.py , locales/   # CLI i18n
+│   │   └── utils/
 │   ├── entities/                # Internal data structures
-│   │   ├── io/                  # Communication protocol
-│   │   └── plugin/              # Plugin metadata
-│   └── utils/                   # Utilities
-│       ├── discover/            # Component discovery
-│       └── network/             # Network helpers
+│   │   └── io/                  # Communication protocol (actions, errors, resp)
+│   ├── assets/templates/        # Plugin scaffolding templates
+│   └── utils/                   # Utilities (discover/, network, log, ...)
 ├── docs/                        # Documentation
-├── pyproject.toml               # Python project config
+├── pyproject.toml               # Python project config (version, requires-python >=3.10)
 └── README.md
 ```
 
@@ -113,12 +123,12 @@ langbot-plugin-sdk/
 
 ```
 BasePlugin
-  ├── Command (1+ per plugin)
-  │   └── Subcommand handlers
-  ├── Tool (0+ per plugin)
-  │   └── call() method
-  └── EventListener (1 per plugin)
-      └── Event handlers
+  ├── Command          → Subcommand handlers
+  ├── Tool             → call() method
+  ├── EventListener    → event handlers
+  ├── KnowledgeEngine  → knowledge-base retrieval/integration (RAG)
+  ├── Parser           → message/content parsing
+  └── Page             → custom admin-panel web page
 ```
 
 ## SDK Development
@@ -806,84 +816,164 @@ Encapsulates plugin instance with:
 
 ### Communication Protocol (`runtime/io/`)
 
-**Action-Based Protocol**:
-- Bidirectional JSON messages
-- Request-response with sequence IDs
-- Streaming support via chunk status
-- File transfer (16KB chunks)
+This protocol is **JSON-RPC 2.0 in all but field names** — a bidirectional, action-based
+RPC carried over a single connection. It is the same shape the Language Server Protocol
+(LSP) and the Model Context Protocol (MCP) use: JSON-RPC 2.0 over stdio / WebSocket, with
+either peer free to initiate calls. We did not adopt the spec verbatim, but the semantics
+map 1:1, and it is useful to think of it that way:
 
-**Action Structure**:
+| Our field (`entities/io`)  | JSON-RPC 2.0             | Meaning |
+|----------------------------|--------------------------|---------|
+| `seq_id`                   | `id`                     | Correlates a response back to its request |
+| `action`                   | `method`                 | Which action to invoke |
+| `data` (in a request)      | `params`                 | Call arguments |
+| `data` (in a response)     | `result`                 | Return value (when `code == 0`) |
+| `code` + `message`         | `error.{code,message}`   | `code == 0` is success; non-zero carries the failure in `message` |
+| `chunk_status`             | (MCP-style streaming ext.) | `continue` per chunk, `end` closes a streamed response |
+
+Both peers share one connection and may call each other's actions. Requests and responses
+are told apart by shape: a message carrying `action` is an inbound request, one carrying
+`code` is a response. Each side allocates `seq_id` from its own incrementing counter, so the
+two id spaces are dispatched independently and never collide.
+
+**Request** (`ActionRequest`, `entities/io/req.py`):
 ```json
-{
-  "action": "action_name",
-  "seq": 12345,
-  "data": {...},
-  "chunk_status": "start|continue|end"
-}
+{ "seq_id": 12345, "action": "action_name", "data": {} }
 ```
 
-**Response Structure**:
+**Response** (`ActionResponse`, `entities/io/resp.py`):
 ```json
-{
-  "seq": 12345,
-  "ok": true,
-  "data": {...}
-}
+{ "seq_id": 12345, "code": 0, "message": "success", "data": {}, "chunk_status": "continue" }
 ```
 
-**Transport Implementations**:
-- `StdioHandler`: stdin/stdout communication
-- `WebSocketHandler`: WebSocket client/server
+- `code == 0` → success, payload in `data`; non-zero → error, human-readable text in `message`.
+- **Streaming**: the responder emits N chunks with `chunk_status: "continue"`, then a final
+  `chunk_status: "end"` (consumed by `Handler.call_action_generator`).
+- **File transfer**: large blobs travel as `__file_chunk` actions — 16KB base64 chunks,
+  reassembled to `data/temp/lbp/<file_key>` on the receiving side.
+
+**Core engine**: `runtime/io/handler.py` (`Handler`) owns `seq_id` allocation, the
+`resp_waiters` (single response) and `resp_queues` (streamed response) correlation maps,
+timeouts, and the receive loop (`Handler.run`).
+
+**Transport Implementations** (`Connection` subclasses, `runtime/io/connections/`):
+- `stdio.py`: stdin/stdout — default for subprocess (personal / lightweight) plugins
+- `ws.py`: WebSocket — for containerized / remote plugin deployments
 
 ## CLI Tools
 
-### lbp Commands
+### `lbp` Commands
 
 ```bash
-# Initialize new plugin
-lbp init [plugin_name]
-
-# Generate component
-lbp comp [Command|Tool|EventListener]
-
-# Run plugin locally (requires running LangBot)
-lbp run [-s]
-
-# Build plugin for distribution
-lbp build
-
-# Publish to marketplace
-lbp publish
-
-# Start runtime (for WebSocket mode)
-lbp rt
+lbp init [plugin_name]            # Scaffold a new plugin
+lbp comp <Command|Tool|EventListener>   # Generate a component
+lbp run [-s]                      # Run/remote-debug the plugin against a running Runtime
+lbp build [-o dist]               # Build the plugin into a zip
+lbp publish [-o dist]             # Publish to LangBot Marketplace (login first: lbp login)
+lbp login [-t TOKEN] / lbp logout # Marketplace account auth
+lbp rt [...]                      # Run the Plugin Runtime (see below)
+lbp box [...]                     # Run the Box (sandbox) Runtime (see below)
+lbp ver                           # Print SDK version
 ```
 
-### Template System (`cli/gen/`)
+The CLI entrypoint is `src/langbot_plugin/cli/__init__.py` (argparse). `lbp rt` dispatches to `langbot_plugin.runtime.app.main`; `lbp box` dispatches to `langbot_plugin.box.server.main`. Subcommand implementations live under `cli/commands/`, `cli/run/`, and `cli/gen/`.
 
-- Jinja2-based templates in `assets/templates/`
-- Variables: plugin_name, plugin_author, component_name
-- Generates boilerplate code and manifests
+## Debugging the Runtime, CLI & SDK
 
-## Testing & Debugging
+This is the canonical place for runtime/CLI/box debugging detail (LangBot's own `AGENTS.md` only indexes this section). The corresponding user-facing wiki page is ["调试插件运行时、CLI、SDK"](https://docs.langbot.app/zh/develop/plugin-runtime).
 
-### Local Testing
+### Recommended workspace layout
 
-1. Start LangBot:
+Because LangBot depends on entities defined here, clone both repos as siblings under one parent dir and open that parent in your editor:
+
+```
+langbot-projects/
+├── LangBot
+└── langbot-plugin-sdk
+```
+
+Set up LangBot's venv (`cd LangBot && uv sync --dev`) and point your editor's Python interpreter at LangBot's `.venv`.
+
+### Plugin Runtime — `lbp rt`
+
+Start a standalone Plugin Runtime from this repo:
+
 ```bash
+uv run --no-sync lbp rt
+# equivalent: python -m langbot_plugin.cli.__init__ rt
+```
+
+`lbp rt` flags (see `cli/__init__.py`):
+
+- `-s`, `--stdio-control`: use stdio for the control connection. **Production only** — in a container LangBot pipes the runtime over stdio.
+- `--ws-control-port` (default `5400`): control port LangBot's main process connects to.
+- `--ws-debug-port` (default `5401`): debug port for `lbp run` to attach a plugin under development.
+- `--debug-only`: do not auto-start plugins in `data/plugins/`; only accept plugins via debug connections.
+- `--skip-deps-check`: skip the per-startup check/install of every installed plugin's dependencies.
+- `--pypi-index-url` / `--pypi-trusted-host`: customize the index used for plugin dependency installs.
+
+> **Transport note:** When LangBot is run directly (not in a container), it spawns the runtime itself and talks **stdio**, which **cannot auto-reconnect** — on disconnect it logs "please restart LangBot". A frequent cause is an **orphan runtime** from a previous backend still holding `5400`/`5401`; kill it and restart.
+
+### Make LangBot use your locally-modified SDK
+
+If you change shared definitions (message entities, plugin data models, etc.), install your local SDK into LangBot's environment so data formats stay compatible at runtime:
+
+```bash
+# In a terminal where LangBot's .venv is ACTIVE, from the langbot-plugin-sdk dir:
+uv pip install .
+```
+
+### Make LangBot connect to your standalone Runtime (WebSocket)
+
+1. In LangBot's `data/config.yaml`, set the control URL:
+
+   ```yaml
+   plugin:
+     runtime_ws_url: ws://localhost:5400/control/ws
+   ```
+
+2. Launch LangBot with `--standalone-runtime` and `--no-sync` (the latter prevents `uv` from overwriting your locally-installed SDK):
+
+   ```bash
+   uv run --no-sync main.py --standalone-runtime
+   ```
+
+   Restart LangBot; it now connects to your `lbp rt` over WebSocket, so you can iterate on the runtime/SDK independently.
+
+### Box Runtime — `lbp box`
+
+The Box Runtime is the sandbox service backing LangBot's `pkg/box` subsystem (`src/langbot_plugin/box/`). Start it with:
+
+```bash
+lbp box                  # WebSocket control transport (default)
+lbp box -s               # stdio control transport
+```
+
+`lbp box` flags:
+
+- `--host` (default `0.0.0.0`): bind address.
+- `-s`, `--stdio-control`: use stdio for the control connection (instead of WebSocket).
+- `--ws-control-port` (default `5410`): control port.
+
+All Box WebSocket endpoints share one port (default `5410`): `/rpc/ws` (action RPC control channel) plus managed-process stdio relay endpoints under `/v1/sessions/...`. There is **no** `python -m langbot_plugin.box` launch path — `lbp box` is the only supported entrypoint.
+
+Box selects the first available sandbox backend among **Docker / nsjail / E2B**. Backends live in `box/backend.py`, `box/nsjail_backend.py`, `box/e2b_backend.py`. A common false "no backend" on the LangBot side is Docker running but the user not in the `docker` group (socket permission denied) — that's a host-permissions issue, not a Box bug.
+
+To make LangBot connect to a standalone Box runtime (mirrors the plugin-runtime flow): in LangBot's `data/config.yaml` set `box.runtime.endpoint` to the runtime's base URL (e.g. `ws://127.0.0.1:5410`), pick `box.backend` (`'local'`/`'docker'`/`'nsjail'`/`'e2b'`), and start LangBot with `--standalone-box`. In Docker deployments LangBot reaches the Box runtime at host `langbot_box:5410`.
+
+### Plugin development loop
+
+```bash
+# 1. Start a LangBot instance (which spawns or connects to a Runtime)
 cd /path/to/LangBot
 uv run main.py
-```
 
-2. Run plugin:
-```bash
+# 2. In your plugin dir, attach it to the Runtime's debug port for live debugging
 cd /path/to/your-plugin
 lbp run
 ```
 
-Plugin connects to LangBot via stdio for testing.
-
-### Debugging Tips
+### Debugging tips
 
 - Use `print()` statements (output to stderr for visibility)
 - Check LangBot logs for plugin errors

@@ -16,6 +16,7 @@ import random
 import os
 import hashlib
 import base64
+import uuid
 import aiofiles
 import aiofiles.os
 import logging
@@ -70,11 +71,9 @@ class Handler(abc.ABC):
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
             file_key = data["file_key"]
-            file_length = data["file_length"]
             chunk_base64 = data["chunk_base64"]
             chunk_index = data["chunk_index"]
             chunk_amount = data["chunk_amount"]
-            chunk_size = data["chunk_size"]
             # append the chunk to the file
             async with aiofiles.open(
                 os.path.join(FILE_STORAGE_DIR, file_key), "ab"
@@ -180,6 +179,8 @@ class Handler(abc.ABC):
             return response.data
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
+        except ActionCallError:
+            raise
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:
@@ -218,6 +219,8 @@ class Handler(abc.ABC):
                     raise ActionCallTimeoutError(
                         f"Action {action.value} call timed out"
                     )
+                except ActionCallError:
+                    raise
                 except Exception as e:
                     raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
         finally:
@@ -268,8 +271,10 @@ class Handler(abc.ABC):
     # ====== file transfer ======
     async def send_file(self, file_bytes: bytes, file_extension: str) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
-        hash_value = hashlib.sha256(file_bytes).hexdigest()
-        file_key = f"{hash_value}.{file_extension}"
+        hash_value = hashlib.sha256(file_bytes).hexdigest()[:16]
+        extension = file_extension.strip(".")
+        suffix = f".{extension}" if extension else ""
+        file_key = f"{hash_value}-{uuid.uuid4().hex}{suffix}"
         file_length = len(file_bytes)
         chunk_amount = max(
             1, (file_length + FILE_CHUNK_LENGTH - 1) // FILE_CHUNK_LENGTH
@@ -308,4 +313,7 @@ class Handler(abc.ABC):
             return await f.read()
 
     async def delete_local_file(self, file_key: str) -> None:
-        await aiofiles.os.remove(os.path.join(FILE_STORAGE_DIR, file_key))
+        try:
+            await aiofiles.os.remove(os.path.join(FILE_STORAGE_DIR, file_key))
+        except FileNotFoundError:
+            return
