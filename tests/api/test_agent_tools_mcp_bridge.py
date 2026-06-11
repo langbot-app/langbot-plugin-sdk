@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import urllib.request
 from unittest.mock import MagicMock
 
 import pytest
@@ -328,6 +329,85 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
             {
                 "tool_name": "weather",
                 "parameters": {"city": "Shanghai"},
+            },
+        ),
+    ]
+
+
+def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
+    async def run_probe() -> FakeRunAPI:
+        api = FakeRunAPI()
+        bridge = AgentRunMCPBridge.from_run_api(api, _authorized_ctx())
+        bridge.start()
+        try:
+            config = bridge.http_mcp_server_config()
+
+            def call(message: dict) -> dict:
+                payload = json.dumps(message).encode("utf-8")
+                request = urllib.request.Request(
+                    config["url"],
+                    data=payload,
+                    method="POST",
+                    headers={
+                        "Content-Type": "application/json",
+                        **config["headers"],
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            initialized = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2025-06-18"},
+                }
+            )
+            tools = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/list",
+                    "params": {},
+                }
+            )
+            history = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "langbot_history_page",
+                        "arguments": {"limit": 2},
+                    },
+                }
+            )
+
+            assert initialized["result"]["serverInfo"]["name"] == "langbot-agent"
+            assert {
+                tool["name"] for tool in tools["result"]["tools"]
+            } >= {"langbot_history_page", "langbot_retrieve_knowledge", "langbot_call_tool"}
+            assert history["result"]["structuredContent"]["items"][0]["content"] == "older"
+            return api
+        finally:
+            bridge.stop()
+
+    api = asyncio.run(run_probe())
+
+    assert api.calls == [
+        (
+            "history_page",
+            {
+                "conversation_id": None,
+                "before_cursor": None,
+                "after_cursor": None,
+                "limit": 2,
+                "direction": "backward",
+                "include_artifacts": False,
             },
         ),
     ]

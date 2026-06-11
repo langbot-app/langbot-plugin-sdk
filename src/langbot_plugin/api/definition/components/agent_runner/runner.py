@@ -125,17 +125,30 @@ class AgentRunner(BaseComponent):
             plugin_runtime_handler=self._plugin_runtime_handler,
         )
 
-    def create_external_mcp_bridge(self, ctx: AgentRunContext) -> "AgentRunMCPBridge":
+    def create_external_mcp_bridge(
+        self,
+        ctx: AgentRunContext,
+        *,
+        host: str = "127.0.0.1",
+        request_timeout: float = 60.0,
+        server_name: str | None = None,
+    ) -> "AgentRunMCPBridge":
         """Create a run-scoped MCP bridge for external harnesses.
 
         The bridge exposes the SDK-owned AgentRunExternalTools surface and
         delegates all LangBot asset access through AgentRunAPIProxy.
         """
-        from langbot_plugin.api.agent_tools import AgentRunMCPBridge
+        from langbot_plugin.api.agent_tools import (
+            AgentRunMCPBridge,
+            LANGBOT_AGENT_MCP_SERVER_NAME,
+        )
 
         return AgentRunMCPBridge.from_run_api(
             api=self.get_run_api(ctx),
             ctx=ctx,
+            host=host,
+            request_timeout=request_timeout,
+            server_name=server_name or LANGBOT_AGENT_MCP_SERVER_NAME,
         )
 
     @classmethod

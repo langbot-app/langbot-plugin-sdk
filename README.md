@@ -73,22 +73,13 @@ Plugins extend LangBot through six component types, scaffolded with
 - **Parser** — custom message / content parsing
 - **Page** — custom web page embedded in the LangBot admin panel
 
-## Remote AgentRunner Runtime
+## AgentRunner Runtime
 
-The SDK owns the reusable remote AgentRunner runtime used by external code
-runners and third-party remote agents. It provides the daemon, run channel,
-workspace file materialization, HTTP client helpers, and run-scoped MCP relay.
-Remote runs are bound to the current LangBot Host process and run channel; they
-are not durable across Host restarts. If the channel closes, the daemon cancels
-the active runner process and rejects further run-scoped MCP calls for that
-`run_id`.
-
-```bash
-python -m langbot_plugin.remote.agent_runner \
-  --adapter my_agent.remote:adapter \
-  --agent my-agent \
-  --base-dir /path/to/langbot-remote-workspaces
-```
+The SDK provides AgentRunner component definitions, protocol entities, runtime
+dispatch, and run-scoped Host API helpers. It no longer ships a generic remote
+AgentRunner daemon; external harness execution should be implemented by the
+runner/plugin package or delegated to a managed platform such as LiteLLM Agent
+Platform.
 
 ## Documentation
 
