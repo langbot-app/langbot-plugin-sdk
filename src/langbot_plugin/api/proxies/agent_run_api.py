@@ -661,8 +661,9 @@ class AgentRunAPIProxy:
         """Pull pending run-scoped steering/follow-up input.
 
         Args:
-            mode: "all" to pull all currently queued items, or "one"/
-                "one-at-a-time" to pull one item.
+            mode: "all" to pull all currently queued items in Host claim order,
+                or "one"/"one-at-a-time" to pull one item. Host does not merge
+                multiple user messages.
             limit: Optional maximum number of items to pull. Host applies a
                 hard cap.
 
