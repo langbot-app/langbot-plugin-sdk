@@ -16,6 +16,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunCon
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 
 LANGBOT_AGENT_MCP_SERVER_NAME = "langbot_agent"
+MCP_SERVER_INFO = {"name": "langbot-agent", "version": "0.1.0"}
 
 
 def merge_mcp_server_config(
@@ -82,6 +83,10 @@ class AgentRunMCPBridge:
         host, port = self._server.server_address[:2]
         return f"http://{host}:{port}"
 
+    @property
+    def http_mcp_endpoint(self) -> str:
+        return f"{self.endpoint}/mcp/http"
+
     def start(self) -> None:
         if self._server is not None:
             return
@@ -100,46 +105,74 @@ class AgentRunMCPBridge:
                 self._write_json(200, {"ok": True})
 
             def do_POST(self) -> None:
-                if self.path != "/mcp":
+                if self.path not in {"/mcp", "/mcp/http"}:
                     self.send_error(404)
                     return
-                if not hmac.compare_digest(
-                    self.headers.get("X-LangBot-Agent-MCP-Token", ""),
-                    bridge.token,
-                ):
+                if not self._authorized():
                     self._write_json(401, {"ok": False, "error": "unauthorized"})
                     return
 
-                try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                except ValueError:
-                    length = 0
-                try:
-                    body = self.rfile.read(length).decode("utf-8")
-                    payload = json.loads(body) if body else {}
-                except Exception as e:
-                    self._write_json(400, {"ok": False, "error": f"invalid JSON: {e}"})
+                payload = self._read_json_payload()
+                if isinstance(payload, Exception):
+                    self._write_json(400, {"ok": False, "error": f"invalid JSON: {payload}"})
                     return
+
+                if self.path == "/mcp/http":
+                    assert bridge._loop is not None
+                    future = asyncio.run_coroutine_threadsafe(
+                        bridge.handle_http_mcp_request(payload),
+                        bridge._loop,
+                    )
+                    try:
+                        result = future.result(timeout=bridge.request_timeout)
+                    except Exception as e:
+                        self._write_json(500, _jsonrpc_error(None, -32000, str(e)))
+                        return
+                    if result is None:
+                        self._write_empty(202)
+                        return
+                    self._write_json(200, result)
+                    return
+
                 if not isinstance(payload, dict):
                     self._write_json(
                         400, {"ok": False, "error": "request must be an object"}
                     )
                     return
 
-                assert bridge._loop is not None
-                future = asyncio.run_coroutine_threadsafe(
-                    bridge.handle_mcp_method(
-                        str(payload.get("method") or ""),
-                        payload.get("params") or {},
-                    ),
-                    bridge._loop,
-                )
                 try:
+                    assert bridge._loop is not None
+                    future = asyncio.run_coroutine_threadsafe(
+                        bridge.handle_mcp_method(
+                            str(payload.get("method") or ""),
+                            payload.get("params") or {},
+                        ),
+                        bridge._loop,
+                    )
                     result = future.result(timeout=bridge.request_timeout)
                 except Exception as e:
                     self._write_json(500, {"ok": False, "error": str(e)})
                     return
                 self._write_json(200, {"ok": True, "result": result})
+
+            def _authorized(self) -> bool:
+                token = self.headers.get("X-LangBot-Agent-MCP-Token", "")
+                authorization = self.headers.get("Authorization", "")
+                return hmac.compare_digest(token, bridge.token) or hmac.compare_digest(
+                    authorization,
+                    f"Bearer {bridge.token}",
+                )
+
+            def _read_json_payload(self) -> typing.Any:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                try:
+                    body = self.rfile.read(length).decode("utf-8")
+                    return json.loads(body) if body else {}
+                except Exception as e:
+                    return e
 
             def _write_json(self, status: int, payload: dict[str, typing.Any]) -> None:
                 data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -148,6 +181,11 @@ class AgentRunMCPBridge:
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _write_empty(self, status: int) -> None:
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
         self._server = ThreadingHTTPServer((self.host, 0), Handler)
         self._thread = threading.Thread(
@@ -180,6 +218,26 @@ class AgentRunMCPBridge:
             },
         }
 
+    def http_mcp_server_config(
+        self,
+        *,
+        public_url: str | None = None,
+        transport: str = "http",
+    ) -> dict[str, typing.Any]:
+        """Return HTTP MCP server config for external harnesses."""
+
+        url = (public_url or self.http_mcp_endpoint).strip()
+        return {
+            "name": self.server_name,
+            "url": url,
+            "type": transport,
+            "transport": transport,
+            "headers": {
+                "Authorization": f"Bearer {self.token}",
+                "X-LangBot-Agent-MCP-Token": self.token,
+            },
+        }
+
     def merged_mcp_config(
         self, base_config: dict[str, typing.Any] | None = None
     ) -> dict[str, typing.Any]:
@@ -201,3 +259,79 @@ class AgentRunMCPBridge:
                 arguments = {}
             return await self.tools.call_mcp_tool(name, arguments)
         raise ValueError(f"Unsupported MCP bridge method: {method}")
+
+    async def handle_http_mcp_request(
+        self, payload: typing.Any
+    ) -> dict[str, typing.Any] | list[dict[str, typing.Any]] | None:
+        if isinstance(payload, list):
+            if not payload:
+                return _jsonrpc_error(None, -32600, "Invalid request")
+            responses: list[dict[str, typing.Any]] = []
+            for item in payload:
+                response = await self._handle_http_mcp_message(item)
+                if response is not None:
+                    responses.append(response)
+            return responses or None
+        return await self._handle_http_mcp_message(payload)
+
+    async def _handle_http_mcp_message(
+        self, message: typing.Any
+    ) -> dict[str, typing.Any] | None:
+        if not isinstance(message, dict):
+            return _jsonrpc_error(None, -32600, "Invalid request")
+
+        message_id = message.get("id")
+        method = str(message.get("method") or "")
+        params = message.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+
+        if message_id is None:
+            return None
+
+        if method == "initialize":
+            return _jsonrpc_result(
+                message_id,
+                {
+                    "protocolVersion": str(
+                        params.get("protocolVersion") or "2025-06-18"
+                    ),
+                    "capabilities": {
+                        "tools": {
+                            "listChanged": False,
+                        }
+                    },
+                    "serverInfo": MCP_SERVER_INFO,
+                },
+            )
+        if method == "ping":
+            return _jsonrpc_result(message_id, {})
+        if method in {"tools/list", "tools/call"}:
+            try:
+                result = await self.handle_mcp_method(method, params)
+            except Exception as e:
+                return _jsonrpc_error(message_id, -32000, str(e))
+            return _jsonrpc_result(message_id, result)
+        return _jsonrpc_error(message_id, -32601, f"Method not found: {method}")
+
+
+def _jsonrpc_result(
+    message_id: typing.Any,
+    result: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
+    return {"jsonrpc": "2.0", "id": message_id, "result": result}
+
+
+def _jsonrpc_error(
+    message_id: typing.Any,
+    code: int,
+    message: str,
+) -> dict[str, typing.Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": message_id,
+        "error": {
+            "code": code,
+            "message": message,
+        },
+    }
