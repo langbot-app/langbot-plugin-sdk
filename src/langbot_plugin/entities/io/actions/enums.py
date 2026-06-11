@@ -87,6 +87,7 @@ class PluginToRuntimeAction(ActionType):
     HISTORY_SEARCH = "history_search"
     EVENT_GET = "event_get"
     EVENT_PAGE = "event_page"
+    STEERING_PULL = "steering_pull"
 
     """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
     ARTIFACT_METADATA = "artifact_metadata"

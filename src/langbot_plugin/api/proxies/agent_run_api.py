@@ -653,6 +653,38 @@ class AgentRunAPIProxy:
         )
         return EventPage.model_validate(resp)
 
+    async def steering_pull(
+        self,
+        mode: str = "all",
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Pull pending run-scoped steering/follow-up input.
+
+        Args:
+            mode: "all" to pull all currently queued items, or "one"/
+                "one-at-a-time" to pull one item.
+            limit: Optional maximum number of items to pull. Host applies a
+                hard cap.
+
+        Returns:
+            Dict with an "items" list. Each item contains event/input/context
+            projections for a message claimed by the active run.
+
+        Raises:
+            PermissionDeniedError: If steering_pull is not available.
+        """
+        self._require_context_api("steering_pull")
+        timeout = self._bounded_timeout(default=10.0)
+        return await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.STEERING_PULL,
+            {
+                "run_id": self.run_id,
+                "mode": mode,
+                "limit": limit,
+            },
+            timeout,
+        )
+
     # ================= Artifact APIs (run-scoped) =================
 
     async def artifact_metadata(self, artifact_id: str) -> ArtifactMetadata:

@@ -58,6 +58,9 @@ class ContextAPICapabilities(pydantic.BaseModel):
     storage: bool = False
     """Whether storage API is available."""
 
+    steering_pull: bool = False
+    """Whether run-scoped steering/follow-up pull API is available."""
+
 
 class ContextAccess(pydantic.BaseModel):
     """Context access descriptor for the runner.

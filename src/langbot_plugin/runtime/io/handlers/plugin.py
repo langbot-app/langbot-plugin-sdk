@@ -661,6 +661,18 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.STEERING_PULL)
+        async def steering_pull(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward STEERING_PULL to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.STEERING_PULL,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.ARTIFACT_METADATA)
         async def artifact_metadata(data: dict[str, Any]) -> handler.ActionResponse:
             """Forward ARTIFACT_METADATA to LangBot Host with caller_plugin_identity injection."""
