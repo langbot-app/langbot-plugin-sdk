@@ -62,6 +62,9 @@ class AgentRunnerCapabilities(pydantic.BaseModel):
     interrupt: bool = False
     """Runner supports cancel or interrupt operations."""
 
+    steering: bool = False
+    """Runner can pull run-scoped steering/follow-up input at turn boundaries."""
+
     model_config = pydantic.ConfigDict(extra="forbid")
 
 
