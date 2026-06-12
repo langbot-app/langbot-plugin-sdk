@@ -79,6 +79,7 @@ async def _iter_runner_results_with_deadline(
     from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 
     result_gen = runner_instance.run(run_context)
+    sequence = 0
     try:
         while True:
             try:
@@ -89,13 +90,18 @@ async def _iter_runner_results_with_deadline(
             except StopAsyncIteration:
                 break
 
+            sequence += 1
+            if getattr(result, "sequence", None) is None and hasattr(result, "model_copy"):
+                result = result.model_copy(update={"sequence": sequence})
             yield result
     except asyncio.TimeoutError:
+        sequence += 1
         yield AgentRunResult.run_failed(
             run_id=run_context.run_id,
             error="Agent runner timed out",
             code="runner.timeout",
             retryable=True,
+            sequence=sequence,
         )
     finally:
         try:

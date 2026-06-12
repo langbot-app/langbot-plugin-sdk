@@ -30,8 +30,8 @@ class ActionResponse(pydantic.BaseModel):
         return cls(seq_id=0, code=0, message="success", data=data)
 
     @classmethod
-    def error(cls, message: str) -> ActionResponse:
-        return cls(code=1, message=message, data={})
+    def error(cls, message: str, data: dict[str, Any] | None = None) -> ActionResponse:
+        return cls(code=1, message=message, data=data or {})
 
     @pydantic.field_serializer("chunk_status")
     def serialize_chunk_status(

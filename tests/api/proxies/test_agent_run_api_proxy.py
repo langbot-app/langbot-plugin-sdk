@@ -15,8 +15,10 @@ import pytest
 
 from langbot_plugin.api.proxies.agent_run_api import (
     AgentRunAPIProxy,
+    AgentAPIException,
     PermissionDeniedError,
 )
+from langbot_plugin.entities.io.errors import ActionCallError
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
@@ -80,6 +82,7 @@ def create_mock_context(
             artifact_read=True,
             state=True,
             storage=True,
+            steering_pull=True,
         )
 
     return AgentRunContext(
@@ -840,6 +843,74 @@ class TestAgentRunAPIProxyFieldConsistency:
         assert "query_text" in data
         assert "top_k" in data
         assert "filters" in data
+
+    @pytest.mark.anyio
+    async def test_steering_pull_returns_typed_result(self):
+        """STEERING_PULL returns SteeringPullResult instead of a raw dict."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            "items": [
+                {
+                    "claimed_run_id": "run_1",
+                    "runner_id": "plugin:test/demo/default",
+                    "event": {
+                        "event_id": "evt_1",
+                        "event_type": "message.received",
+                        "source": "platform",
+                    },
+                    "input": {"text": "follow up"},
+                }
+            ]
+        }
+
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.steering_pull(mode="one")
+
+        assert result.items[0].input.text == "follow up"
+
+    @pytest.mark.anyio
+    async def test_action_error_is_wrapped_as_agent_api_exception(self):
+        """Host action failures surface as structured AgentAPIException."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = ActionCallError(
+            "access denied",
+            {
+                "error": {
+                    "code": "history.unauthorized",
+                    "message": "access denied",
+                    "retryable": False,
+                    "details": {"conversation_id": "conv_1"},
+                }
+            },
+        )
+
+        ctx = create_mock_context(
+            knowledge_bases=[{"kb_id": "kb_001"}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(AgentAPIException) as exc_info:
+            await proxy.retrieve_knowledge("kb_001", "query")
+
+        assert exc_info.value.error.code == "history.unauthorized"
+        assert exc_info.value.error.details["conversation_id"] == "conv_1"
+
+    @pytest.mark.anyio
+    async def test_malformed_response_is_wrapped_as_agent_api_exception(self):
+        """Malformed Host responses do not leak KeyError to runners."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {"unexpected": "shape"}
+
+        ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(AgentAPIException) as exc_info:
+            await proxy.call_tool("test_tool", {})
+
+        assert exc_info.value.error.code == "host.malformed_response"
+        assert exc_info.value.error.details["missing_key"] == "result"
 
 
 class TestAgentRunAPIProxyStateAPI:

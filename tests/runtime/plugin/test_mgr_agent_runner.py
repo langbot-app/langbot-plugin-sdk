@@ -448,6 +448,7 @@ class TestRunAgent:
         # Should have streaming chunks + run.completed
         assert len(results) >= 2
         assert results[-1]["type"] == "run.completed"
+        assert [result["sequence"] for result in results] == [1, 2, 3]
 
     @pytest.mark.anyio
     async def test_run_agent_plugin_not_found(self):
@@ -764,6 +765,21 @@ async def test_plugin_runtime_runner_deadline_cancels_runner_coroutine():
     assert results[0].type.value == "run.failed"
     assert results[0].data["code"] == "runner.timeout"
     assert results[0].data["retryable"] is True
+    assert results[0].sequence == 1
+
+
+@pytest.mark.anyio
+async def test_plugin_runtime_runner_results_get_sequence_numbers():
+    """The plugin-process RUN_AGENT helper assigns sequence to runner results."""
+    from langbot_plugin.cli.run.handler import _iter_runner_results_with_deadline
+
+    ctx = create_run_context()
+
+    results = [
+        result async for result in _iter_runner_results_with_deadline(MockAgentRunner(), ctx)
+    ]
+
+    assert [result.sequence for result in results] == [1, 2]
 
 
 @pytest.mark.anyio

@@ -65,6 +65,7 @@ class TestPluginConnectionHandlerPullAPIRegistration:
             PluginToRuntimeAction.HISTORY_SEARCH,
             PluginToRuntimeAction.EVENT_GET,
             PluginToRuntimeAction.EVENT_PAGE,
+            PluginToRuntimeAction.STEERING_PULL,
             PluginToRuntimeAction.ARTIFACT_METADATA,
             PluginToRuntimeAction.ARTIFACT_READ,
             PluginToRuntimeAction.STATE_GET,
@@ -289,6 +290,27 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         assert call_args[1].get("timeout") == 15
 
     @pytest.mark.anyio
+    async def test_steering_pull_forwards_correctly(self):
+        """STEERING_PULL forwards to control_handler.call_action with correct parameters."""
+        fake_context = make_fake_context()
+        handler = PluginConnectionHandler(FakeConnection(), fake_context)
+
+        payload = {"run_id": "run_001", "mode": "one-at-a-time", "limit": 1}
+        resp = await handler.actions[PluginToRuntimeAction.STEERING_PULL.value](payload)
+
+        assert resp.code == 0
+        fake_context.control_handler.call_action.assert_called_once()
+
+        call_args = fake_context.control_handler.call_action.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.STEERING_PULL
+
+        forwarded_payload = call_args[0][1]
+        assert forwarded_payload["run_id"] == "run_001"
+        assert forwarded_payload["mode"] == "one-at-a-time"
+        assert forwarded_payload["limit"] == 1
+        assert call_args[1].get("timeout") == 15
+
+    @pytest.mark.anyio
     async def test_artifact_read_forwards_correctly(self):
         """ARTIFACT_READ forwards to control_handler.call_action with correct parameters."""
         fake_context = make_fake_context()
@@ -339,7 +361,12 @@ class TestPluginConnectionHandlerCallerIdentity:
         )
         fake_context.plugin_mgr.plugins = [plugin_container]
 
-        payload = {"run_id": "run_001", "scope": "conversation", "key": "external.k"}
+        payload = {
+            "run_id": "run_001",
+            "scope": "conversation",
+            "key": "external.k",
+            "caller_plugin_identity": "attacker/plugin",
+        }
         resp = await handler.actions[PluginToRuntimeAction.STATE_GET.value](payload)
 
         assert resp.code == 0
@@ -348,6 +375,29 @@ class TestPluginConnectionHandlerCallerIdentity:
         call_args = fake_context.control_handler.call_action.call_args
         forwarded_payload = call_args[0][1]
         assert forwarded_payload["caller_plugin_identity"] == "test-author/test-plugin"
+
+    @pytest.mark.anyio
+    async def test_spoofed_caller_plugin_identity_stripped_without_plugin_container(self):
+        """caller_plugin_identity from an unregistered connection is stripped."""
+        fake_context = make_fake_context()
+        handler = PluginConnectionHandler(FakeConnection(), fake_context)
+
+        fake_context.plugin_mgr.plugins = []
+
+        payload = {
+            "run_id": "run_001",
+            "scope": "conversation",
+            "key": "external.k",
+            "caller_plugin_identity": "attacker/plugin",
+        }
+        resp = await handler.actions[PluginToRuntimeAction.STATE_GET.value](payload)
+
+        assert resp.code == 0
+        fake_context.control_handler.call_action.assert_called_once()
+
+        call_args = fake_context.control_handler.call_action.call_args
+        forwarded_payload = call_args[0][1]
+        assert "caller_plugin_identity" not in forwarded_payload
 
     @pytest.mark.anyio
     async def test_no_caller_plugin_identity_when_no_plugin_container(self):
@@ -435,6 +485,7 @@ class TestPluginConnectionHandlerCallerIdentity:
             (PluginToRuntimeAction.HISTORY_SEARCH, {"run_id": "r", "query": "q"}),
             (PluginToRuntimeAction.EVENT_GET, {"run_id": "r", "event_id": "e"}),
             (PluginToRuntimeAction.EVENT_PAGE, {"run_id": "r", "limit": 10}),
+            (PluginToRuntimeAction.STEERING_PULL, {"run_id": "r"}),
             (
                 PluginToRuntimeAction.ARTIFACT_METADATA,
                 {"run_id": "r", "artifact_id": "a"},

@@ -14,6 +14,8 @@ from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResultType,
     ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.errors import AgentAPIError
+from langbot_plugin.api.entities.builtin.agent_runner.steering import SteeringPullResult
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
 from langbot_plugin.api.entities.builtin.agent_runner.resources import (
@@ -339,6 +341,18 @@ class TestAgentRunResultV1:
         assert result.type == AgentRunResultType.ARTIFACT_CREATED
         assert result.data["artifact_id"] == "artifact_1"
 
+    def test_artifact_created_allows_host_generated_id(self):
+        """artifact.created may omit artifact_id so Host can generate one."""
+        result = AgentRunResult.artifact_created(
+            run_id="run_1",
+            artifact_type="file",
+            mime_type="text/plain",
+        )
+
+        assert result.type == AgentRunResultType.ARTIFACT_CREATED
+        assert result.data["artifact_type"] == "file"
+        assert "artifact_id" not in result.data
+
     def test_artifact_created_with_new_fields(self):
         """Test artifact.created with all new fields."""
         import base64
@@ -566,6 +580,62 @@ class TestAgentRunResultV1:
         dumped = result.model_dump(mode="json")
         assert dumped["type"] == "message.completed"
         assert isinstance(dumped["data"]["message"]["content"], str)
+
+    def test_unknown_result_type_is_accepted_for_forward_compatibility(self):
+        """SDK model accepts unknown result type strings for Protocol v1 evolution."""
+        result = AgentRunResult.model_validate(
+            {
+                "run_id": "run_1",
+                "type": "future.result",
+                "data": {"value": 1},
+                "sequence": 7,
+            }
+        )
+
+        assert result.type == "future.result"
+        assert result.sequence == 7
+
+    def test_sequence_can_be_set_by_factories(self):
+        """Factories accept sequence for runtime-managed streams."""
+        message = Message(role="assistant", content="Done")
+        result = AgentRunResult.message_completed("run_1", message, sequence=3)
+
+        assert result.sequence == 3
+
+
+class TestAgentRunAPIContractEntities:
+    """Test SDK entities that back AgentRunAPIProxy contract."""
+
+    def test_agent_api_error_validate(self):
+        error = AgentAPIError(
+            code="history.unauthorized",
+            message="not allowed",
+            retryable=False,
+            details={"scope": "conversation"},
+        )
+
+        assert error.code == "history.unauthorized"
+        assert error.details["scope"] == "conversation"
+
+    def test_steering_pull_result_validate(self):
+        result = SteeringPullResult.model_validate(
+            {
+                "items": [
+                    {
+                        "claimed_run_id": "run_1",
+                        "runner_id": "plugin:test/demo/default",
+                        "event": {
+                            "event_id": "evt_1",
+                            "event_type": "message.received",
+                            "source": "platform",
+                        },
+                        "input": {"text": "follow up"},
+                    }
+                ]
+            }
+        )
+
+        assert result.items[0].input.text == "follow up"
 
 
 class TestAgentInput:

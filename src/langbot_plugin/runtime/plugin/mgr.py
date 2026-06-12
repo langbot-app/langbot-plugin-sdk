@@ -65,6 +65,18 @@ def _runner_action_timeout(context: dict[str, typing.Any]) -> float:
     return max(remaining + 1.0, 0.001)
 
 
+def _ensure_result_sequence(
+    result_data: dict[str, typing.Any],
+    sequence: int,
+) -> dict[str, typing.Any]:
+    if not isinstance(result_data, dict):
+        return result_data
+    if result_data.get("sequence") is None:
+        result_data = dict(result_data)
+        result_data["sequence"] = sequence
+    return result_data
+
+
 class PluginInstallSource(enum.Enum):
     """The source of plugin installation."""
 
@@ -1118,6 +1130,7 @@ class PluginManager:
                 run_id=run_id,
                 error=f"Plugin {plugin_author}/{plugin_name} not found",
                 code="runner.plugin_not_found",
+                sequence=1,
             ).model_dump(mode="json")
             return
 
@@ -1126,6 +1139,7 @@ class PluginManager:
                 run_id=run_id,
                 error=f"Plugin {plugin_author}/{plugin_name} is disabled",
                 code="runner.plugin_disabled",
+                sequence=1,
             ).model_dump(mode="json")
             return
 
@@ -1137,6 +1151,7 @@ class PluginManager:
                 run_id=run_id,
                 error=f"Plugin {plugin_author}/{plugin_name} is not initialized",
                 code="runner.plugin_not_initialized",
+                sequence=1,
             ).model_dump(mode="json")
             return
 
@@ -1155,6 +1170,7 @@ class PluginManager:
                 run_id=run_id,
                 error=f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
                 code="runner.not_found",
+                sequence=1,
             ).model_dump(mode="json")
             return
 
@@ -1164,6 +1180,7 @@ class PluginManager:
                 run_id=run_id,
                 error=f"Plugin {plugin_author}/{plugin_name} has no runtime handler",
                 code="runner.handler_not_found",
+                sequence=1,
             ).model_dump(mode="json")
             return
 
@@ -1180,6 +1197,7 @@ class PluginManager:
 
             # call_action_generator yields response.data directly on success,
             # or raises ActionCallError on failure
+            sequence = 0
             while True:
                 try:
                     result_data = await anext_with_deadline(
@@ -1188,16 +1206,20 @@ class PluginManager:
                     )
                 except StopAsyncIteration:
                     break
-                yield result_data
+                sequence += 1
+                yield _ensure_result_sequence(result_data, sequence)
 
         except (asyncio.TimeoutError, ActionCallTimeoutError):
+            next_sequence = locals().get("sequence", 0) + 1
             yield AgentRunResult.run_failed(
                 run_id=run_id,
                 error="Agent runner timed out",
                 code="runner.timeout",
                 retryable=True,
+                sequence=next_sequence,
             ).model_dump(mode="json")
         except Exception as e:
+            next_sequence = locals().get("sequence", 0) + 1
             logger.exception(
                 "Error forwarding AgentRunner %s/%s:%s",
                 plugin_author,
@@ -1208,6 +1230,7 @@ class PluginManager:
                 run_id=run_id,
                 error=f"Error forwarding to plugin: {e}",
                 code="runner.forward_exception",
+                sequence=next_sequence,
             ).model_dump(mode="json")
 
     async def retrieve_knowledge(
