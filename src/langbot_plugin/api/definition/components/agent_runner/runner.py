@@ -130,6 +130,7 @@ class AgentRunner(BaseComponent):
         ctx: AgentRunContext,
         *,
         host: str = "127.0.0.1",
+        port: int = 0,
         request_timeout: float = 60.0,
         server_name: str | None = None,
     ) -> "AgentRunMCPBridge":
@@ -147,6 +148,7 @@ class AgentRunner(BaseComponent):
             api=self.get_run_api(ctx),
             ctx=ctx,
             host=host,
+            port=port,
             request_timeout=request_timeout,
             server_name=server_name or LANGBOT_AGENT_MCP_SERVER_NAME,
         )
