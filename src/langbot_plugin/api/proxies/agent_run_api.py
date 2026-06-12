@@ -41,6 +41,14 @@ from langbot_plugin.api.proxies.langbot_api import LangBotAPIProxy
 from langbot_plugin.utils.deadline import remaining_deadline_seconds
 
 
+DEFAULT_RESOURCE_OPERATIONS: dict[str, frozenset[str]] = {
+    "model": frozenset({"invoke", "stream", "rerank"}),
+    "tool": frozenset({"detail", "call"}),
+    "knowledge_base": frozenset({"list", "retrieve"}),
+    "file": frozenset({"config", "knowledge"}),
+}
+
+
 class PermissionDeniedError(Exception):
     """Raised when an API call is not authorized by ctx.resources."""
 
@@ -148,6 +156,10 @@ class AgentRunAPIProxy:
     _allowed_tool_names: frozenset[str]
     _allowed_kb_ids: frozenset[str]
     _allowed_file_ids: frozenset[str]
+    _allowed_model_operations: dict[str, frozenset[str]]
+    _allowed_tool_operations: dict[str, frozenset[str]]
+    _allowed_kb_operations: dict[str, frozenset[str]]
+    _allowed_file_operations: dict[str, frozenset[str]]
 
     def __init__(self, ctx: AgentRunContext, plugin_runtime_handler: Handler):
         self.ctx = ctx
@@ -157,6 +169,22 @@ class AgentRunAPIProxy:
         self._allowed_tool_names = frozenset(t.tool_name for t in ctx.resources.tools)
         self._allowed_kb_ids = frozenset(k.kb_id for k in ctx.resources.knowledge_bases)
         self._allowed_file_ids = frozenset(f.file_id for f in ctx.resources.files)
+        self._allowed_model_operations = {
+            m.model_id: self._normalize_operations("model", m.operations)
+            for m in ctx.resources.models
+        }
+        self._allowed_tool_operations = {
+            t.tool_name: self._normalize_operations("tool", t.operations)
+            for t in ctx.resources.tools
+        }
+        self._allowed_kb_operations = {
+            k.kb_id: self._normalize_operations("knowledge_base", k.operations)
+            for k in ctx.resources.knowledge_bases
+        }
+        self._allowed_file_operations = {
+            f.file_id: self._normalize_operations("file", f.operations)
+            for f in ctx.resources.files
+        }
 
     @property
     def run_id(self) -> str:
@@ -229,33 +257,77 @@ class AgentRunAPIProxy:
 
     # ================= Permission Validation =================
 
-    def _validate_model_access(self, llm_model_uuid: str) -> None:
+    @staticmethod
+    def _normalize_operations(resource_type: str, operations: list[str] | None) -> frozenset[str]:
+        if operations:
+            return frozenset(str(operation) for operation in operations)
+        return DEFAULT_RESOURCE_OPERATIONS[resource_type]
+
+    @staticmethod
+    def _validate_operation(
+        resource_type: str,
+        resource_id: str,
+        operation: str,
+        allowed_operations: frozenset[str] | None,
+    ) -> None:
+        effective_operations = allowed_operations or DEFAULT_RESOURCE_OPERATIONS[resource_type]
+        if operation not in effective_operations:
+            raise PermissionDeniedError(
+                f"{resource_type} '{resource_id}' is not authorized for operation '{operation}'. "
+                f"Allowed operations: {sorted(effective_operations)}"
+            )
+
+    def _validate_model_access(self, llm_model_uuid: str, operation: str) -> None:
         if llm_model_uuid not in self._allowed_model_ids:
             raise PermissionDeniedError(
                 f"Model '{llm_model_uuid}' is not authorized. "
                 f"Allowed models: {list(self._allowed_model_ids)}"
             )
+        self._validate_operation(
+            "model",
+            llm_model_uuid,
+            operation,
+            self._allowed_model_operations.get(llm_model_uuid),
+        )
 
-    def _validate_tool_access(self, tool_name: str) -> None:
+    def _validate_tool_access(self, tool_name: str, operation: str) -> None:
         if tool_name not in self._allowed_tool_names:
             raise PermissionDeniedError(
                 f"Tool '{tool_name}' is not authorized. "
                 f"Allowed tools: {list(self._allowed_tool_names)}"
             )
+        self._validate_operation(
+            "tool",
+            tool_name,
+            operation,
+            self._allowed_tool_operations.get(tool_name),
+        )
 
-    def _validate_knowledge_base_access(self, kb_id: str) -> None:
+    def _validate_knowledge_base_access(self, kb_id: str, operation: str) -> None:
         if kb_id not in self._allowed_kb_ids:
             raise PermissionDeniedError(
                 f"Knowledge base '{kb_id}' is not authorized. "
                 f"Allowed knowledge bases: {list(self._allowed_kb_ids)}"
             )
+        self._validate_operation(
+            "knowledge_base",
+            kb_id,
+            operation,
+            self._allowed_kb_operations.get(kb_id),
+        )
 
-    def _validate_file_access(self, file_key: str) -> None:
+    def _validate_file_access(self, file_key: str, operation: str) -> None:
         if file_key not in self._allowed_file_ids:
             raise PermissionDeniedError(
                 f"File '{file_key}' is not authorized. "
                 f"Allowed files: {list(self._allowed_file_ids)}"
             )
+        self._validate_operation(
+            "file",
+            file_key,
+            operation,
+            self._allowed_file_operations.get(file_key),
+        )
 
     def _validate_plugin_storage_access(self) -> None:
         if not self.ctx.resources.storage.plugin_storage:
@@ -277,7 +349,7 @@ class AgentRunAPIProxy:
         remove_think: bool | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
-        self._validate_model_access(llm_model_uuid)
+        self._validate_model_access(llm_model_uuid, "invoke")
         effective_timeout = self._bounded_timeout(default=120.0, requested=timeout)
         funcs = funcs or []
         extra_args = extra_args or {}
@@ -309,7 +381,7 @@ class AgentRunAPIProxy:
         remove_think: bool | None = None,
     ):
         """Invoke an LLM model with streaming, permission validation."""
-        self._validate_model_access(llm_model_uuid)
+        self._validate_model_access(llm_model_uuid, "stream")
         effective_timeout = self._bounded_timeout(default=120.0)
         funcs = funcs or []
         extra_args = extra_args or {}
@@ -353,7 +425,7 @@ class AgentRunAPIProxy:
         Raises:
             PermissionDeniedError: Tool not authorized for this run
         """
-        self._validate_tool_access(tool_name)
+        self._validate_tool_access(tool_name, "detail")
         timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.GET_TOOL_DETAIL,
@@ -371,7 +443,7 @@ class AgentRunAPIProxy:
         parameters: dict[str, Any],
     ) -> dict[str, Any]:
         """Call a tool with permission validation."""
-        self._validate_tool_access(tool_name)
+        self._validate_tool_access(tool_name, "call")
         timeout = self._bounded_timeout(default=180.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.CALL_TOOL,
@@ -394,7 +466,7 @@ class AgentRunAPIProxy:
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve from knowledge base with permission validation."""
-        self._validate_knowledge_base_access(kb_id)
+        self._validate_knowledge_base_access(kb_id, "retrieve")
         timeout = self._bounded_timeout(default=30.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
@@ -544,7 +616,7 @@ class AgentRunAPIProxy:
         Returns:
             The file content as bytes
         """
-        self._validate_file_access(file_key)
+        self._validate_file_access(file_key, "config")
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.GET_CONFIG_FILE,
             {
@@ -604,7 +676,7 @@ class AgentRunAPIProxy:
             #     ...
             # ]
         """
-        self._validate_model_access(rerank_model_uuid)
+        self._validate_model_access(rerank_model_uuid, "rerank")
         effective_timeout = self._bounded_timeout(default=30.0, requested=timeout)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.INVOKE_RERANK,
