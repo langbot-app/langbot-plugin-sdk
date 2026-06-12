@@ -298,6 +298,26 @@ class TestAgentRunAPIProxyResourceValidation:
         assert "not authorized" in str(exc_info.value)
 
     @pytest.mark.anyio
+    async def test_invoke_llm_stream_requires_stream_operation(self):
+        """invoke_llm_stream requires the model stream operation."""
+        mock_handler = MockHandler()
+
+        ctx = create_mock_context(
+            run_id="run_stream_denied",
+            models=[{"model_id": "model_001", "operations": ["invoke"]}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        messages = [Message(role="user", content="Hello")]
+
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            async for _chunk in proxy.invoke_llm_stream("model_001", messages):
+                pass
+
+        assert "operation 'stream'" in str(exc_info.value)
+        mock_handler.call_action_generator_mock.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_call_tool_with_authorized_tool(self):
         """call_tool succeeds when tool is in ctx.resources.tools."""
         mock_handler = MockHandler()
@@ -335,6 +355,23 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert "image_gen" in str(exc_info.value)
         assert "not authorized" in str(exc_info.value)
+
+    @pytest.mark.anyio
+    async def test_call_tool_requires_call_operation(self):
+        """call_tool requires the tool call operation."""
+        mock_handler = MockHandler()
+
+        ctx = create_mock_context(
+            run_id="run_tool_call_denied",
+            tools=[{"tool_name": "web_search", "operations": ["detail"]}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(PermissionDeniedError) as exc_info:
+            await proxy.call_tool("web_search", {"query": "hello"})
+
+        assert "operation 'call'" in str(exc_info.value)
+        mock_handler.call_action_mock.assert_not_called()
 
     @pytest.mark.anyio
     async def test_retrieve_knowledge_with_authorized_kb(self):

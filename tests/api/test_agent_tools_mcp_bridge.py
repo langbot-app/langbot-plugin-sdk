@@ -201,7 +201,7 @@ def test_agent_runner_runtime_binding_is_scoped() -> None:
     )
 
     api = runner.get_run_api(_ctx())
-    assert api._api.plugin_runtime_handler is handler
+    assert api._api.plugin_runtime_handler._handler is handler
     assert runner.get_plugin_config() == {"plugin_key": "value"}
     assert runner.plugin_identity == "test/plugin"
 
