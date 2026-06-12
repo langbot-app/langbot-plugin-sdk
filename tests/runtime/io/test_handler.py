@@ -91,11 +91,18 @@ async def test_call_action_error_response_should_preserve_peer_message():
     [request] = await _wait_for_sent(conn)
 
     handler.resp_waiters[request["seq_id"]].set_result(
-        ActionResponse(seq_id=request["seq_id"], code=1, message="peer failed", data={})
+        ActionResponse(
+            seq_id=request["seq_id"],
+            code=1,
+            message="peer failed",
+            data={"error": {"code": "peer.failed"}},
+        )
     )
 
-    with pytest.raises(ActionCallError, match="^peer failed$"):
+    with pytest.raises(ActionCallError, match="^peer failed$") as exc_info:
         await task
+
+    assert exc_info.value.data == {"error": {"code": "peer.failed"}}
 
 
 @pytest.mark.asyncio
@@ -135,6 +142,27 @@ async def test_call_action_generator_yields_chunks_until_end():
     await task
     assert chunks == [{"part": 1}]
     assert handler.resp_queues == {}
+
+
+@pytest.mark.asyncio
+async def test_call_action_generator_cancel_propagates_and_cleans_queue():
+    conn = QueueConnection()
+    handler = Handler(conn)
+
+    async def consume():
+        async for _chunk in handler.call_action_generator(
+            SampleAction.STREAM, {}, timeout=1
+        ):
+            pass
+
+    task = asyncio.create_task(consume())
+    [request] = await _wait_for_sent(conn)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert request["seq_id"] not in handler.resp_queues
 
 
 @pytest.mark.asyncio

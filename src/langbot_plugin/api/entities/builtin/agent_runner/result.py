@@ -71,7 +71,7 @@ class ToolCallCompletedPayload(pydantic.BaseModel):
 class ArtifactCreatedPayload(pydantic.BaseModel):
     """Payload for artifact.created."""
 
-    artifact_id: str
+    artifact_id: str | None = None
     artifact_type: str
     mime_type: str | None = None
     name: str | None = None
@@ -158,8 +158,8 @@ class AgentRunResult(pydantic.BaseModel):
     run_id: str
     """Run identifier linking this result to the run."""
 
-    type: AgentRunResultType
-    """Result type."""
+    type: AgentRunResultType | str
+    """Result type. Unknown strings are accepted for forward compatibility."""
 
     data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Result data."""
@@ -175,6 +175,9 @@ class AgentRunResult(pydantic.BaseModel):
         cls,
         run_id: str,
         chunk: MessageChunk,
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a message.delta result.
 
@@ -185,6 +188,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.MESSAGE_DELTA,
             data=payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -192,6 +197,9 @@ class AgentRunResult(pydantic.BaseModel):
         cls,
         run_id: str,
         message: Message,
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a message.completed result.
 
@@ -202,6 +210,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.MESSAGE_COMPLETED,
             data=payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -211,6 +221,9 @@ class AgentRunResult(pydantic.BaseModel):
         tool_call_id: str,
         tool_name: str,
         parameters: dict[str, typing.Any],
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a tool.call.started result.
 
@@ -225,6 +238,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.TOOL_CALL_STARTED,
             data=payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -235,6 +250,9 @@ class AgentRunResult(pydantic.BaseModel):
         tool_name: str,
         result: dict[str, typing.Any] | None = None,
         error: str | None = None,
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a tool.call.completed result.
 
@@ -250,14 +268,16 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.TOOL_CALL_COMPLETED,
             data=payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
     def artifact_created(
         cls,
         run_id: str,
-        artifact_id: str,
-        artifact_type: str,
+        artifact_id: str | None = None,
+        artifact_type: str | None = None,
         mime_type: str | None = None,
         name: str | None = None,
         *,
@@ -265,6 +285,8 @@ class AgentRunResult(pydantic.BaseModel):
         sha256: str | None = None,
         metadata: dict[str, typing.Any] | None = None,
         content_base64: str | None = None,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create an artifact.created result.
 
@@ -291,6 +313,9 @@ class AgentRunResult(pydantic.BaseModel):
             - Do NOT pass conversation_id/run_id in data; Host ignores them for security.
             - For large artifacts (>1MB), consider using external storage and omitting content_base64.
         """
+        if not artifact_type:
+            raise ValueError("artifact_type is required")
+
         payload = ArtifactCreatedPayload(
             artifact_id=artifact_id,
             artifact_type=artifact_type,
@@ -306,6 +331,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.ARTIFACT_CREATED,
             data=payload.model_dump(mode="json", exclude_none=True),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -315,6 +342,9 @@ class AgentRunResult(pydantic.BaseModel):
         key: str,
         value: typing.Any,
         scope: STATE_SCOPE_LITERAL,
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a state.updated result.
 
@@ -361,6 +391,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.STATE_UPDATED,
             data=payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -369,6 +401,9 @@ class AgentRunResult(pydantic.BaseModel):
         run_id: str,
         message: Message | None = None,
         finish_reason: str = "stop",
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a run.completed result.
 
@@ -380,6 +415,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.RUN_COMPLETED,
             data=payload.model_dump(mode="json", exclude_none=True),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -389,6 +426,9 @@ class AgentRunResult(pydantic.BaseModel):
         error: str,
         code: str | None = None,
         retryable: bool = False,
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a run.failed result.
 
@@ -403,6 +443,8 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.RUN_FAILED,
             data=payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
 
     @classmethod
@@ -412,6 +454,9 @@ class AgentRunResult(pydantic.BaseModel):
         action: str,
         target: dict[str, typing.Any] | None = None,
         payload: dict[str, typing.Any] | None = None,
+        *,
+        sequence: int | None = None,
+        timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create an action.requested result.
 
@@ -426,4 +471,6 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.ACTION_REQUESTED,
             data=result_payload.model_dump(mode="json"),
+            sequence=sequence,
+            timestamp=timestamp,
         )
