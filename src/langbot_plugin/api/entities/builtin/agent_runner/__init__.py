@@ -68,6 +68,14 @@ from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
     ArtifactMetadata,
     ArtifactReadResult,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.errors import (
+    AgentAPIError,
+    AgentAPIException,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.steering import (
+    SteeringInputItem,
+    SteeringPullResult,
+)
 
 __all__ = [
     # Manifest
@@ -124,4 +132,10 @@ __all__ = [
     # Artifact APIs
     "ArtifactMetadata",
     "ArtifactReadResult",
+    # Steering API
+    "SteeringInputItem",
+    "SteeringPullResult",
+    # Error model
+    "AgentAPIError",
+    "AgentAPIException",
 ]

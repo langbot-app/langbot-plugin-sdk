@@ -175,7 +175,7 @@ class Handler(abc.ABC):
         try:
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
-                raise ActionCallError(f"{response.message}")
+                raise ActionCallError(f"{response.message}", response.data)
             return response.data
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
@@ -207,14 +207,14 @@ class Handler(abc.ABC):
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
                     if response.code != 0:
-                        raise ActionCallError(f"{response.message}")
+                        raise ActionCallError(f"{response.message}", response.data)
 
                     if response.chunk_status == ChunkStatus.CONTINUE:
                         yield response.data
                     elif response.chunk_status == ChunkStatus.END:
                         break
                 except asyncio.CancelledError:
-                    break
+                    raise
                 except asyncio.TimeoutError:
                     raise ActionCallTimeoutError(
                         f"Action {action.value} call timed out"
