@@ -18,6 +18,11 @@ class ModelResource(pydantic.BaseModel):
     provider: str | None = None
     """Model provider name."""
 
+    operations: list[typing.Literal["invoke", "stream", "rerank"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Model operations authorized for this run."""
+
 
 class ToolResource(pydantic.BaseModel):
     """Tool resource available to the agent."""
@@ -31,6 +36,11 @@ class ToolResource(pydantic.BaseModel):
     description: str | None = None
     """Tool description."""
 
+    operations: list[typing.Literal["detail", "call"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Tool operations authorized for this run."""
+
 
 class KnowledgeBaseResource(pydantic.BaseModel):
     """Knowledge base resource available to the agent."""
@@ -43,6 +53,11 @@ class KnowledgeBaseResource(pydantic.BaseModel):
 
     kb_type: str | None = None
     """Knowledge base type."""
+
+    operations: list[typing.Literal["list", "retrieve"]] = pydantic.Field(
+        default_factory=list
+    )
+    """Knowledge-base operations authorized for this run."""
 
 
 class SkillResource(pydantic.BaseModel):
@@ -72,6 +87,11 @@ class FileResource(pydantic.BaseModel):
 
     source: str | None = None
     """File source (config, knowledge, etc.)."""
+
+    operations: list[typing.Literal["config", "knowledge"]] = pydantic.Field(
+        default_factory=list
+    )
+    """File access scopes authorized for this run."""
 
 
 class StorageResource(pydantic.BaseModel):
