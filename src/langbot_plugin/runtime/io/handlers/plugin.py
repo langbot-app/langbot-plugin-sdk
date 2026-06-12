@@ -83,6 +83,7 @@ class PluginConnectionHandler(handler.Handler):
             self.log_buffer.start_reader(self.stdio_process.stderr)
 
         def _inject_caller_identity(data: dict[str, Any]) -> str | None:
+            data.pop("caller_plugin_identity", None)
             caller_identity = _get_caller_plugin_identity(self)
             if caller_identity:
                 data["caller_plugin_identity"] = caller_identity

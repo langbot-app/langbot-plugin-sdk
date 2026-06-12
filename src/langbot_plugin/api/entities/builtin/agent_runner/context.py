@@ -109,5 +109,4 @@ class AgentRunContext(pydantic.BaseModel):
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata."""
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = pydantic.ConfigDict(arbitrary_types_allowed=True)
