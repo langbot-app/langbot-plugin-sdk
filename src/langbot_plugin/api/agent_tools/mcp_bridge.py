@@ -47,11 +47,13 @@ class AgentRunMCPBridge:
         tools: AgentRunExternalTools,
         *,
         host: str = "127.0.0.1",
+        port: int = 0,
         request_timeout: float = 60.0,
         server_name: str = LANGBOT_AGENT_MCP_SERVER_NAME,
     ) -> None:
         self.tools = tools
         self.host = host
+        self.port = port
         self.request_timeout = request_timeout
         self.server_name = server_name
         self.token = secrets.token_urlsafe(32)
@@ -66,12 +68,14 @@ class AgentRunMCPBridge:
         ctx: AgentRunContext,
         *,
         host: str = "127.0.0.1",
+        port: int = 0,
         request_timeout: float = 60.0,
         server_name: str = LANGBOT_AGENT_MCP_SERVER_NAME,
     ) -> "AgentRunMCPBridge":
         return cls(
             AgentRunExternalTools(api, ctx),
             host=host,
+            port=port,
             request_timeout=request_timeout,
             server_name=server_name,
         )
@@ -187,7 +191,7 @@ class AgentRunMCPBridge:
                 self.send_header("Content-Length", "0")
                 self.end_headers()
 
-        self._server = ThreadingHTTPServer((self.host, 0), Handler)
+        self._server = ThreadingHTTPServer((self.host, self.port), Handler)
         self._thread = threading.Thread(
             target=self._server.serve_forever,
             name="langbot-agent-mcp-bridge",
