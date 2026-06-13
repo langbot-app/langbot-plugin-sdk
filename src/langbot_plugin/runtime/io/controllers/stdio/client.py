@@ -34,6 +34,9 @@ class StdioClientController(Controller):
             *self.args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
+            # Capture stderr (where the plugin's Python `logging` output goes)
+            # so the runtime can buffer per-plugin logs for the detail page.
+            stderr=asyncio.subprocess.PIPE,
             env=self.env,
             cwd=self.working_dir,
         )

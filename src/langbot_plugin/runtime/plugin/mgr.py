@@ -729,6 +729,27 @@ class PluginManager:
 
         return b""
 
+    async def get_plugin_logs(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        limit: int = 200,
+        level: str | None = None,
+    ) -> list[dict[str, typing.Any]]:
+        """Return recent log entries captured from the plugin's stderr.
+
+        Each entry: {"ts": float, "level": str, "text": str}.
+        Returns an empty list if the plugin is not running.
+        """
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None and plugin._runtime_plugin_handler is not None:
+            log_buffer = getattr(
+                plugin._runtime_plugin_handler, "log_buffer", None
+            )
+            if log_buffer is not None:
+                return log_buffer.get_logs(limit=limit, level=level)
+        return []
+
     async def get_plugin_assets_file(
         self, plugin_author: str, plugin_name: str, file_key: str
     ) -> tuple[bytes, str]:
