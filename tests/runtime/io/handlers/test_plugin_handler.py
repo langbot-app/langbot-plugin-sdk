@@ -160,6 +160,47 @@ async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
     ]
 
 
+async def test_plugin_handler_forwards_invoke_rerank_with_caller_identity():
+    handler, manager, control = _handler()
+    manager.plugins = [FakePluginContainer(runtime_handler=handler)]
+    control.results[PluginToRuntimeAction.INVOKE_RERANK] = {
+        "results": [{"index": 0, "relevance_score": 0.95}]
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.INVOKE_RERANK.value,
+            {
+                "run_id": "run-1",
+                "rerank_model_uuid": "rerank-model",
+                "query": "query",
+                "documents": ["doc"],
+                "top_k": 1,
+                "extra_args": {},
+                "caller_plugin_identity": "spoofed/plugin",
+            },
+        )
+
+    assert response["data"] == {
+        "results": [{"index": 0, "relevance_score": 0.95}]
+    }
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.INVOKE_RERANK,
+            {
+                "run_id": "run-1",
+                "rerank_model_uuid": "rerank-model",
+                "query": "query",
+                "documents": ["doc"],
+                "top_k": 1,
+                "extra_args": {},
+                "caller_plugin_identity": "tester/demo",
+            },
+            60,
+        )
+    ]
+
+
 async def test_plugin_handler_adds_plugin_owner_for_binary_storage():
     handler, manager, control = _handler()
     manager.plugins = [FakePluginContainer(runtime_handler=handler)]
