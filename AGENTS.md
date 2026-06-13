@@ -961,6 +961,15 @@ Box selects the first available sandbox backend among **Docker / nsjail / E2B**.
 
 To make LangBot connect to a standalone Box runtime (mirrors the plugin-runtime flow): in LangBot's `data/config.yaml` set `box.runtime.endpoint` to the runtime's base URL (e.g. `ws://127.0.0.1:5410`), pick `box.backend` (`'local'`/`'docker'`/`'nsjail'`/`'e2b'`), and start LangBot with `--standalone-box`. In Docker deployments LangBot reaches the Box runtime at host `langbot_box:5410`.
 
+#### nsjail backend in containers — cgroup namespace requirement
+
+The official `docker/docker-compose.yaml` runs the Box container with the **Docker (docker.sock) backend**, which has no cgroup requirements. The **nsjail backend** is different and has a non-obvious deployment requirement when run inside a container (e.g. a per-pod Box sidecar, or `BOX__BACKEND=nsjail`):
+
+- nsjail with cgroup v2 limits (`--use_cgroupv2`) creates a child cgroup and enables controllers by writing `+memory`/`+pids`/`+cpu` to the cgroup root's `cgroup.subtree_control`. Inside a **private cgroup namespace** (Docker/k8s default) the container's own cgroup root already holds live processes (the Box runtime itself), so the kernel's *no-internal-process* rule rejects that write with **EBUSY** and every sandbox launch aborts with **exit 255**.
+- **Fix: run the Box container in the host cgroup namespace** — compose `cgroup: host` (or `docker run --cgroupns=host`), plus `privileged: true` (nsjail also needs clone-namespaces/chroot). Then `_detect_cgroup_v2()` succeeds and nsjail applies precise cgroup memory/pid/cpu caps.
+- `NsjailBackend._detect_cgroup_v2()` probes the **authoritative** operation (a real `cgroup.subtree_control` write), not just a `mkdir` under the cgroup root — a mkdir probe false-positives in a private cgroupns because mkdir succeeds while the subtree_control write later EBUSYs.
+- **Without cgroups there is no hard memory cap.** When cgroup v2 is unavailable the backend falls back to rlimits but **deliberately does NOT set `--rlimit_as`**: RLIMIT_AS limits *virtual* address space, which `uv`/`node`/Rust/JVM reserve in gigabytes, so a small RLIMIT_AS aborts them instantly (`memory allocation of N bytes failed`, exit 255) — this is what silently broke uvx-based stdio MCP servers. There is no RSS-based rlimit on modern Linux, so accurate memory capping **requires** cgroups (host cgroupns) or a container-level memory limit (compose `mem_limit`). The rlimit fallback still applies safe caps (pids/fsize/nofile).
+
 ### Plugin development loop
 
 ```bash

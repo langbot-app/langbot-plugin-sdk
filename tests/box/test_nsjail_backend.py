@@ -411,12 +411,20 @@ def test_build_resource_limits_rlimit_fallback(backend):
 
     args = backend._build_resource_limits(spec)
 
-    assert '--rlimit_as' in args
-    as_idx = args.index('--rlimit_as')
-    assert args[as_idx + 1] == '512'
+    # Bug regression: --rlimit_as must NOT be used as the memory cap. It limits
+    # virtual address space, which uv/node/Rust/JVM reserve in huge amounts, so
+    # a small --rlimit_as aborts them instantly ("memory allocation failed",
+    # exit 255) and silently broke every uvx stdio MCP server. There is no
+    # RSS-based rlimit on modern Linux, so memory capping requires cgroups;
+    # the fallback runs without a hard memory cap by design.
+    assert '--rlimit_as' not in args
 
     nproc_idx = args.index('--rlimit_nproc')
     assert args[nproc_idx + 1] == '128'
+
+    # Safe rlimits still apply.
+    assert '--rlimit_fsize' in args
+    assert '--rlimit_nofile' in args
 
     # cgroup flags should NOT be present.
     assert '--use_cgroupv2' not in args
@@ -470,40 +478,90 @@ def test_detect_cgroup_v2_no_mount():
         assert NsjailBackend._detect_cgroup_v2() is False
 
 
-def test_detect_cgroup_v2_writable():
-    """When the cgroup v2 root is writable (mkdir succeeds), report True.
+def test_detect_cgroup_v2_subtree_writable():
+    """When writing to cgroup.subtree_control succeeds, report True.
 
-    This mirrors the only thing nsjail actually needs: the ability to create a
-    child cgroup under /sys/fs/cgroup. Being root is irrelevant on its own.
+    This is the authoritative probe: it mirrors exactly what nsjail does with
+    --use_cgroupv2 (enable a controller on the root's subtree_control so the
+    child cgroup can use it). A plain mkdir probe is insufficient because it
+    succeeds even in a private cgroup namespace where the subtree_control write
+    then fails with EBUSY.
     """
     def fake_exists(self):
         path = str(self)
-        return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers')
+        return path in (
+            '/sys/fs/cgroup',
+            '/sys/fs/cgroup/cgroup.controllers',
+            '/sys/fs/cgroup/cgroup.subtree_control',
+        )
+
+    def fake_read_text(self, *a, **k):
+        path = str(self)
+        if path.endswith('cgroup.controllers'):
+            return 'cpuset cpu io memory hugetlb pids'
+        if path.endswith('cgroup.subtree_control'):
+            return ''  # nothing delegated yet -> probe will enable then disable
+        raise FileNotFoundError(path)
+
+    writes: list[str] = []
+
+    def fake_write_text(self, data, *a, **k):
+        writes.append(data)
+        return len(data)
 
     with (
         mock.patch.object(pathlib.Path, 'exists', fake_exists),
-        mock.patch.object(pathlib.Path, 'mkdir', return_value=None),
-        mock.patch.object(pathlib.Path, 'rmdir', return_value=None),
+        mock.patch.object(pathlib.Path, 'read_text', fake_read_text),
+        mock.patch.object(pathlib.Path, 'write_text', fake_write_text),
     ):
         assert NsjailBackend._detect_cgroup_v2() is True
+    # Probe must enable then disable to leave host config untouched.
+    assert writes == ['+memory', '-memory']
 
 
-def test_detect_cgroup_v2_readonly_root_returns_false():
-    """A read-only /sys/fs/cgroup (the default containerized case) must report
-    False so the backend falls back to rlimit limits instead of selecting a
-    cgroup path that nsjail cannot use. Root does NOT override a RO mount."""
+def test_detect_cgroup_v2_private_cgroupns_ebusy_returns_false():
+    """A private cgroup namespace (Docker/k8s default) lets mkdir succeed but
+    rejects the subtree_control write with EBUSY (no-internal-process rule).
+    The probe MUST catch this and report False so the backend uses the rlimit
+    fallback instead of selecting a cgroup path that aborts nsjail (exit 255).
+    """
     def fake_exists(self):
         path = str(self)
-        return path == '/sys/fs/cgroup' or path.endswith('cgroup.controllers')
+        return path in (
+            '/sys/fs/cgroup',
+            '/sys/fs/cgroup/cgroup.controllers',
+            '/sys/fs/cgroup/cgroup.subtree_control',
+        )
+
+    def fake_read_text(self, *a, **k):
+        path = str(self)
+        if path.endswith('cgroup.controllers'):
+            return 'cpu memory pids'
+        if path.endswith('cgroup.subtree_control'):
+            return ''
+        raise FileNotFoundError(path)
+
+    def fake_write_text(self, data, *a, **k):
+        raise OSError(16, 'Device or resource busy')
 
     with (
-        mock.patch('os.getuid', return_value=0),
         mock.patch.object(pathlib.Path, 'exists', fake_exists),
-        mock.patch.object(
-            pathlib.Path, 'mkdir',
-            side_effect=OSError('Read-only file system'),
-        ),
+        mock.patch.object(pathlib.Path, 'read_text', fake_read_text),
+        mock.patch.object(pathlib.Path, 'write_text', fake_write_text),
     ):
+        assert NsjailBackend._detect_cgroup_v2() is False
+
+
+def test_detect_cgroup_v2_no_subtree_control_returns_false():
+    """A read-only /sys/fs/cgroup with no subtree_control file reports False."""
+    def fake_exists(self):
+        path = str(self)
+        return path in (
+            '/sys/fs/cgroup',
+            '/sys/fs/cgroup/cgroup.controllers',
+        )
+
+    with mock.patch.object(pathlib.Path, 'exists', fake_exists):
         assert NsjailBackend._detect_cgroup_v2() is False
 
 
