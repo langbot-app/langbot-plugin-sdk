@@ -211,9 +211,14 @@ class AgentRunAPIProxy:
         return max(min(float(base_timeout), remaining), 0.001)
 
     def _context_api_enabled(self, name: str) -> bool:
-        available_apis = getattr(
-            getattr(self.ctx, "context", None), "available_apis", None
-        )
+        context = getattr(self.ctx, "context", None)
+        if isinstance(context, dict):
+            available_apis = context.get("available_apis")
+        else:
+            available_apis = getattr(context, "available_apis", None)
+
+        if isinstance(available_apis, dict):
+            return bool(available_apis.get(name, False))
         return bool(getattr(available_apis, name, False))
 
     def _require_context_api(self, name: str) -> None:
@@ -693,6 +698,25 @@ class AgentRunAPIProxy:
         return resp.get("results", [])
 
     # ================= History APIs (run-scoped, conversation-scoped) =================
+
+    async def get_prompt(self) -> list[dict[str, Any]]:
+        """Get the Host effective prompt for the current run.
+
+        The returned prompt reflects host-side PromptPreProcessing output for
+        query-backed runs. Runners should fall back to ctx.config.prompt when
+        this API is unavailable or returns an empty list.
+        """
+        self._require_context_api("prompt_get")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.GET_PROMPT,
+            {
+                "run_id": self.run_id,
+            },
+            timeout,
+        )
+        prompt = resp.get("prompt", [])
+        return prompt if isinstance(prompt, list) else []
 
     async def history_page(
         self,

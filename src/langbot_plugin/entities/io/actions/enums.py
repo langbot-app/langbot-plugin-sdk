@@ -83,6 +83,7 @@ class PluginToRuntimeAction(ActionType):
     RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
 
     """Agent History/Event APIs (run-scoped, requires run_id authorization)"""
+    GET_PROMPT = "get_prompt"
     HISTORY_PAGE = "history_page"
     HISTORY_SEARCH = "history_search"
     EVENT_GET = "event_get"

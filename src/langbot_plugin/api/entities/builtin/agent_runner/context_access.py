@@ -34,6 +34,9 @@ class InlineContextPolicy(pydantic.BaseModel):
 class ContextAPICapabilities(pydantic.BaseModel):
     """Available context APIs for the runner."""
 
+    prompt_get: bool = False
+    """Whether the effective prompt API is available."""
+
     history_page: bool = False
     """Whether history.page API is available."""
 
