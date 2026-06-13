@@ -19,7 +19,11 @@ from langbot_plugin.api.proxies.agent_run_api import (
     AgentAPIException,
     PermissionDeniedError,
 )
-from langbot_plugin.entities.io.errors import ActionCallError
+from langbot_plugin.entities.io.errors import (
+    ActionCallError,
+    ActionCallTimeoutError,
+    ConnectionClosedError,
+)
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
@@ -960,6 +964,57 @@ class TestAgentRunAPIProxyFieldConsistency:
 
         assert exc_info.value.error.code == "history.unauthorized"
         assert exc_info.value.error.details["conversation_id"] == "conv_1"
+
+    @pytest.mark.anyio
+    async def test_action_timeout_is_wrapped_as_agent_api_exception(self):
+        """Transport timeouts must not escape the runner-facing API contract."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = ActionCallTimeoutError("slow host action")
+
+        ctx = create_mock_context(
+            knowledge_bases=[{"kb_id": "kb_001"}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(AgentAPIException) as exc_info:
+            await proxy.retrieve_knowledge("kb_001", "query")
+
+        assert exc_info.value.error.code == "deadline_exceeded"
+        assert exc_info.value.error.retryable is True
+        assert exc_info.value.error.details["action"] == PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE.value
+
+    @pytest.mark.anyio
+    async def test_connection_closed_is_wrapped_as_agent_api_exception(self):
+        """Connection failures must be normalized for runner error handling."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = ConnectionClosedError("connection closed")
+
+        ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(AgentAPIException) as exc_info:
+            await proxy.call_tool("test_tool", {})
+
+        assert exc_info.value.error.code == "runtime_error"
+        assert exc_info.value.error.retryable is True
+        assert exc_info.value.error.details["action"] == PluginToRuntimeAction.CALL_TOOL.value
+
+    @pytest.mark.anyio
+    async def test_expired_deadline_fails_fast_before_host_call(self):
+        """Expired run deadlines should fail locally instead of issuing doomed calls."""
+        mock_handler = MockHandler()
+
+        ctx = create_mock_context(
+            deadline_at=time.time() - 1,
+            knowledge_bases=[{"kb_id": "kb_001"}],
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(AgentAPIException) as exc_info:
+            await proxy.retrieve_knowledge("kb_001", "query")
+
+        assert exc_info.value.error.code == "deadline_exceeded"
+        mock_handler.call_action_mock.assert_not_called()
 
     @pytest.mark.anyio
     async def test_malformed_response_is_wrapped_as_agent_api_exception(self):

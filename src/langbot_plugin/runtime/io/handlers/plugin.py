@@ -292,6 +292,8 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.INVOKE_RERANK)
         async def invoke_rerank(data: dict[str, Any]) -> handler.ActionResponse:
+            _inject_caller_identity(data)
+
             result = await self.context.control_handler.call_action(
                 PluginToRuntimeAction.INVOKE_RERANK,
                 {

@@ -236,6 +236,34 @@ async def test_run_handles_streaming_action_response():
 
 
 @pytest.mark.asyncio
+async def test_run_cancels_active_streaming_action_on_disconnect():
+    conn = QueueConnection()
+    handler = Handler(conn)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    @handler.action(SampleAction.STREAM)
+    async def stream(_data):
+        started.set()
+        try:
+            while True:
+                await asyncio.sleep(60)
+                yield ActionResponse.success({"part": "late"})
+        finally:
+            cancelled.set()
+
+    task = asyncio.create_task(handler.run())
+    await conn.incoming.put(json.dumps({"seq_id": 3, "action": "stream", "data": {}}))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await conn.incoming.put(ConnectionClosedError("closed"))
+    await task
+
+    assert cancelled.is_set()
+    assert handler._active_tasks == set()
+
+
+@pytest.mark.asyncio
 async def test_send_file_calls_file_chunk_action_for_each_chunk(monkeypatch):
     conn = QueueConnection()
     handler = Handler(conn)
