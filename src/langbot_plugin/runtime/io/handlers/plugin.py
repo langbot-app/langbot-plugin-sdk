@@ -232,6 +232,17 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.INVOKE_RERANK)
+        async def invoke_rerank(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.INVOKE_RERANK,
+                {
+                    **data,
+                },
+                timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
         # ================= RAG Capability Handlers (Plugin -> Runtime -> Host) =================
 
         async def _proxy_rag_action(
