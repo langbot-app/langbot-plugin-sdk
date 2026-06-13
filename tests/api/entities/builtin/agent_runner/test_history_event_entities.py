@@ -66,6 +66,21 @@ class TestTranscriptItem:
 
         assert item.content_json == {"role": "assistant", "content": "Response"}
 
+    def test_transcript_item_accepts_scope_fields(self):
+        """Test TranscriptItem accepts host-provided scope fields."""
+        item = TranscriptItem(
+            transcript_id="t3",
+            event_id="e3",
+            conversation_id="c1",
+            bot_id="bot1",
+            workspace_id="ws1",
+            role="user",
+            content="Scoped message",
+        )
+
+        assert item.bot_id == "bot1"
+        assert item.workspace_id == "ws1"
+
 
 class TestHistoryPage:
     """Test HistoryPage serialization."""
@@ -113,6 +128,8 @@ class TestHistoryPage:
                     transcript_id="t1",
                     event_id="e1",
                     conversation_id="c1",
+                    bot_id="bot1",
+                    workspace_id="ws1",
                     role="user",
                     content="Hi",
                 )
@@ -123,6 +140,8 @@ class TestHistoryPage:
         data = page.model_dump(mode="json")
         assert "items" in data
         assert data["items"][0]["transcript_id"] == "t1"
+        assert data["items"][0]["bot_id"] == "bot1"
+        assert data["items"][0]["workspace_id"] == "ws1"
 
 
 class TestHistorySearchResult:
