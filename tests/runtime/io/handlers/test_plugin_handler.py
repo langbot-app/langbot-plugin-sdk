@@ -146,7 +146,10 @@ async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch)
 
 async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
     handler, _manager, control = _handler()
-    control.results[PluginToRuntimeAction.INVOKE_LLM] = {"message": "ok"}
+    control.results[PluginToRuntimeAction.INVOKE_LLM] = {
+        "message": "ok",
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -154,7 +157,10 @@ async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
             {"messages": [], "timeout": -1},
         )
 
-    assert response["data"] == {"message": "ok"}
+    assert response["data"] == {
+        "message": "ok",
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
     assert control.calls == [
         (PluginToRuntimeAction.INVOKE_LLM, {"messages": []}, 120.0)
     ]

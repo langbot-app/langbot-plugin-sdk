@@ -99,6 +99,36 @@ async def test_invoke_llm_serializes_messages_and_uses_effective_timeout():
 
 
 @pytest.mark.asyncio
+async def test_invoke_llm_with_usage_preserves_provider_usage():
+    handler = FakeHandler(
+        {
+            PluginToRuntimeAction.INVOKE_LLM: {
+                "message": {"role": "assistant", "content": "ok"},
+                "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 8,
+                    "total_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 5},
+                },
+            }
+        }
+    )
+    proxy = LangBotAPIProxy(handler)
+
+    result = await proxy.invoke_llm_with_usage(
+        "model",
+        [Message(role="user", content="hello")],
+    )
+
+    assert result.message == Message(role="assistant", content="ok")
+    assert result.usage is not None
+    assert result.usage.total_tokens == 20
+    assert result.usage.model_dump()["prompt_tokens_details"] == {
+        "cached_tokens": 5
+    }
+
+
+@pytest.mark.asyncio
 async def test_storage_helpers_encode_and_decode_base64():
     handler = FakeHandler(
         {

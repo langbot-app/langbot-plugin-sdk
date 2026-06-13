@@ -188,6 +188,7 @@ class MessageChunk(pydantic.BaseModel):
     is_final: bool = False
     """是否是结束"""
 
+
     msg_sequence: int = 0
     """消息迭代次数"""
 
@@ -265,3 +266,40 @@ class ToolCallChunk(pydantic.BaseModel):
 
     function: FunctionCall
     """函数调用"""
+
+
+class LLMTokenUsage(pydantic.BaseModel):
+    """Token usage returned by an LLM provider.
+
+    The standard OpenAI-compatible counters are normalized when available.
+    Provider-specific fields such as prompt/completion token details or cache
+    counters are preserved as extra fields.
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+
+class LLMInvokeResult(pydantic.BaseModel):
+    """Non-streaming LLM invoke result with optional provider usage."""
+
+    message: Message
+    usage: LLMTokenUsage | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class LLMStreamEvent(pydantic.BaseModel):
+    """Streaming LLM event.
+
+    Most events carry a message chunk. A final provider usage event may carry
+    usage without a chunk when the upstream API reports usage after completion.
+    """
+
+    chunk: MessageChunk | None = None
+    usage: LLMTokenUsage | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
