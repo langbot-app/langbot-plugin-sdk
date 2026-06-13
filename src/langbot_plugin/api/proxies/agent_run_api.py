@@ -395,6 +395,26 @@ class AgentRunAPIProxy:
         remove_think: bool | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
+        result = await self.invoke_llm_with_usage(
+            llm_model_uuid=llm_model_uuid,
+            messages=messages,
+            funcs=funcs,
+            extra_args=extra_args,
+            timeout=timeout,
+            remove_think=remove_think,
+        )
+        return result.message
+
+    async def invoke_llm_with_usage(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] | None = None,
+        extra_args: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        remove_think: bool | None = None,
+    ) -> provider_message.LLMInvokeResult:
+        """Invoke an LLM model and return the message plus optional provider usage."""
         self._validate_model_access(llm_model_uuid, "invoke")
         effective_timeout = self._bounded_timeout(default=120.0, requested=timeout)
         funcs = funcs or []
@@ -414,8 +434,15 @@ class AgentRunAPIProxy:
             payload,
             effective_timeout,
         )
-        return provider_message.Message.model_validate(
-            self._expect_key(resp, "message", PluginToRuntimeAction.INVOKE_LLM)
+        return provider_message.LLMInvokeResult.model_validate(
+            {
+                "message": self._expect_key(
+                    resp,
+                    "message",
+                    PluginToRuntimeAction.INVOKE_LLM,
+                ),
+                "usage": resp.get("usage") if isinstance(resp, dict) else None,
+            }
         )
 
     async def invoke_llm_stream(
@@ -427,6 +454,25 @@ class AgentRunAPIProxy:
         remove_think: bool | None = None,
     ):
         """Invoke an LLM model with streaming, permission validation."""
+        async for event in self.invoke_llm_stream_events(
+            llm_model_uuid=llm_model_uuid,
+            messages=messages,
+            funcs=funcs,
+            extra_args=extra_args,
+            remove_think=remove_think,
+        ):
+            if event.chunk is not None:
+                yield event.chunk
+
+    async def invoke_llm_stream_events(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] | None = None,
+        extra_args: dict[str, Any] | None = None,
+        remove_think: bool | None = None,
+    ):
+        """Invoke an LLM model and yield chunks plus optional final usage events."""
         self._validate_model_access(llm_model_uuid, "stream")
         effective_timeout = self._bounded_timeout(default=120.0)
         funcs = funcs or []
@@ -446,13 +492,18 @@ class AgentRunAPIProxy:
             payload,
             effective_timeout,
         ):
-            yield provider_message.MessageChunk.model_validate(
-                self._expect_key(
+            event_data: dict[str, Any] = {}
+            if isinstance(chunk_data, dict) and "chunk" in chunk_data:
+                event_data["chunk"] = chunk_data["chunk"]
+            if isinstance(chunk_data, dict) and "usage" in chunk_data:
+                event_data["usage"] = chunk_data["usage"]
+            if not event_data:
+                event_data["chunk"] = self._expect_key(
                     chunk_data,
                     "chunk",
                     PluginToRuntimeAction.INVOKE_LLM_STREAM,
                 )
-            )
+            yield provider_message.LLMStreamEvent.model_validate(event_data)
 
     # ================= Tool APIs (delegated with validation) =================
 
