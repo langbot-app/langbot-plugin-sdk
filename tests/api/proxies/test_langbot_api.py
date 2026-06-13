@@ -146,6 +146,9 @@ async def test_tool_and_rag_helpers_preserve_payload_contracts():
             PluginToRuntimeAction.GET_TOOL_DETAIL: {"tool": {"name": "tool"}},
             PluginToRuntimeAction.CALL_TOOL: {"tool_response": {"ok": True}},
             PluginToRuntimeAction.INVOKE_EMBEDDING: {"vectors": [[0.1]]},
+            PluginToRuntimeAction.INVOKE_RERANK: {
+                "results": [{"index": 0, "relevance_score": 0.9}]
+            },
             PluginToRuntimeAction.VECTOR_SEARCH: {"results": [{"id": "1"}]},
             PluginToRuntimeAction.VECTOR_DELETE: {"count": 2},
             PluginToRuntimeAction.VECTOR_LIST: {"items": [], "total": 0},
@@ -161,6 +164,9 @@ async def test_tool_and_rag_helpers_preserve_payload_contracts():
     assert await proxy.get_tool_detail("tool") == {"name": "tool"}
     assert await proxy.call_tool("tool", {"q": 1}, {"s": 1}, 7) == {"ok": True}
     assert await proxy.invoke_embedding("embed", ["hi"]) == [[0.1]]
+    assert await proxy.invoke_rerank(
+        "rerank", "query", ["doc"], top_k=1, extra_args={"return_documents": False}
+    ) == [{"index": 0, "relevance_score": 0.9}]
     await proxy.vector_upsert("c", [[0.1]], ["id"], documents=["doc"])
     assert await proxy.vector_search("c", [0.1], filters={"a": 1}) == [{"id": "1"}]
     assert await proxy.vector_delete("c", file_ids=["f"]) == 2
@@ -173,6 +179,18 @@ async def test_tool_and_rag_helpers_preserve_payload_contracts():
     ][0]
     assert call_tool_call[1]["tool_parameters"] == {"q": 1}
     assert call_tool_call[2] == 180
+
+    rerank_call = [
+        call for call in handler.calls if call[0] is PluginToRuntimeAction.INVOKE_RERANK
+    ][0]
+    assert rerank_call[1] == {
+        "rerank_model_uuid": "rerank",
+        "query": "query",
+        "documents": ["doc"],
+        "top_k": 1,
+        "extra_args": {"return_documents": False},
+    }
+    assert rerank_call[2] == 60.0
 
 
 @pytest.mark.asyncio

@@ -284,6 +284,43 @@ class LangBotAPIProxy:
             )
         )["vectors"]
 
+    async def invoke_rerank(
+        self,
+        rerank_model_uuid: str,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+        extra_args: dict[str, Any] | None = None,
+        timeout: float = 60.0,
+    ) -> list[dict[str, Any]]:
+        """Rerank documents using Host's rerank model.
+
+        Args:
+            rerank_model_uuid: The UUID of the rerank model to use.
+            query: Query text used to score document relevance.
+            documents: Candidate document texts to rerank.
+            top_k: Optional number of scored results to return.
+            extra_args: Optional provider-specific arguments.
+            timeout: Request timeout in seconds.
+
+        Returns:
+            List of score dicts, usually containing ``index`` and
+            ``relevance_score``.
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.INVOKE_RERANK,
+                {
+                    "rerank_model_uuid": rerank_model_uuid,
+                    "query": query,
+                    "documents": documents,
+                    "top_k": top_k,
+                    "extra_args": extra_args or {},
+                },
+                timeout=timeout,
+            )
+        )["results"]
+
     async def vector_upsert(
         self,
         collection_id: str,
