@@ -61,6 +61,7 @@ class TestPluginConnectionHandlerPullAPIRegistration:
 
         # Verify all pull API actions are registered
         expected_actions = [
+            PluginToRuntimeAction.GET_PROMPT,
             PluginToRuntimeAction.HISTORY_PAGE,
             PluginToRuntimeAction.HISTORY_SEARCH,
             PluginToRuntimeAction.EVENT_GET,
@@ -208,6 +209,25 @@ class TestPluginConnectionHandlerPullAPIForwarding:
 
         # timeout is passed as keyword argument
         assert call_args[1].get("timeout") == 30
+
+    @pytest.mark.anyio
+    async def test_get_prompt_forwards_correctly(self):
+        """GET_PROMPT forwards to control_handler.call_action with correct parameters."""
+        fake_context = make_fake_context()
+        handler = PluginConnectionHandler(FakeConnection(), fake_context)
+
+        payload = {"run_id": "run_001"}
+        resp = await handler.actions[PluginToRuntimeAction.GET_PROMPT.value](payload)
+
+        assert resp.code == 0
+        fake_context.control_handler.call_action.assert_called_once()
+
+        call_args = fake_context.control_handler.call_action.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.GET_PROMPT
+
+        forwarded_payload = call_args[0][1]
+        assert forwarded_payload["run_id"] == "run_001"
+        assert call_args[1].get("timeout") == 15
 
     @pytest.mark.anyio
     async def test_history_search_forwards_correctly(self):
@@ -481,6 +501,7 @@ class TestPluginConnectionHandlerCallerIdentity:
                 PluginToRuntimeAction.STATE_LIST,
                 {"run_id": "r", "scope": "conversation"},
             ),
+            (PluginToRuntimeAction.GET_PROMPT, {"run_id": "r"}),
             (PluginToRuntimeAction.HISTORY_PAGE, {"run_id": "r", "limit": 10}),
             (PluginToRuntimeAction.HISTORY_SEARCH, {"run_id": "r", "query": "q"}),
             (PluginToRuntimeAction.EVENT_GET, {"run_id": "r", "event_id": "e"}),

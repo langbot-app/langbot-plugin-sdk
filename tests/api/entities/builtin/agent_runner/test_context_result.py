@@ -83,6 +83,7 @@ class TestAgentRunContextV1:
         assert ctx.input.text == "Hello"
         assert ctx.config == {}
         assert ctx.context is not None  # Has default
+        assert ctx.context.available_apis.prompt_get is False
         assert "protocol_version" not in ctx.runtime.model_dump()
         assert "sdk_protocol_version" not in AgentRuntimeContext.model_fields
 

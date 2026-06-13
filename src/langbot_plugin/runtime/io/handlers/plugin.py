@@ -655,6 +655,18 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.GET_PROMPT)
+        async def get_prompt(data: dict[str, Any]) -> handler.ActionResponse:
+            """Forward GET_PROMPT to LangBot Host with caller_plugin_identity injection."""
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.GET_PROMPT,
+                data,
+                timeout=15,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.HISTORY_SEARCH)
         async def history_search(data: dict[str, Any]) -> handler.ActionResponse:
             """Forward HISTORY_SEARCH to LangBot Host with caller_plugin_identity injection."""
