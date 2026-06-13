@@ -44,6 +44,7 @@ def create_mock_context(
         delivery=DeliveryContext(surface="test"),
         context=ContextAccess(
             available_apis=ContextAPICapabilities(
+                prompt_get=True,
                 history_page=True,
                 history_search=True,
                 event_get=True,
@@ -62,6 +63,27 @@ def create_mock_context(
 
 class TestHistoryPageMethod:
     """Test history_page method."""
+
+    @pytest.mark.anyio
+    async def test_get_prompt_sends_run_id(self):
+        """Test get_prompt sends run_id in request."""
+        mock_handler = MagicMock()
+        mock_handler.call_action = AsyncMock(
+            return_value={
+                "prompt": [{"role": "system", "content": "effective prompt"}],
+            }
+        )
+
+        ctx = create_mock_context(run_id="run_prompt")
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        prompt = await proxy.get_prompt()
+
+        assert prompt == [{"role": "system", "content": "effective prompt"}]
+        mock_handler.call_action.assert_called_once()
+        call_args = mock_handler.call_action.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.GET_PROMPT
+        assert call_args[0][1]["run_id"] == "run_prompt"
 
     @pytest.mark.anyio
     async def test_history_page_sends_run_id(self):

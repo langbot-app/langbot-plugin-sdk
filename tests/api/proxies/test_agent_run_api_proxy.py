@@ -9,6 +9,7 @@ These tests verify that AgentRunAPIProxy:
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -245,12 +246,12 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
 
         assert hasattr(proxy, "get_langbot_version")
 
-    def test_does_not_expose_prompt_api(self):
-        """AgentRunAPIProxy does not expose Host prompt internals."""
+    def test_exposes_prompt_api_with_available_api_gate(self):
+        """AgentRunAPIProxy exposes get_prompt only behind prompt_get capability."""
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert not hasattr(proxy, "get_prompt")
+        assert hasattr(proxy, "get_prompt")
 
 
 class TestAgentRunAPIProxyResourceValidation:
@@ -424,6 +425,7 @@ class TestAgentRunAPIProxyAvailableAPIGate:
             ("history_search", "history_search", ("query",)),
             ("event_get", "event_get", ("event_1",)),
             ("event_page", "event_page", ()),
+            ("get_prompt", "prompt_get", ()),
             ("artifact_metadata", "artifact_metadata", ("artifact_1",)),
             ("artifact_read", "artifact_read", ("artifact_1",)),
             ("state_get", "state", ("conversation", "external.key")),
@@ -450,6 +452,31 @@ class TestAgentRunAPIProxyAvailableAPIGate:
         assert capability_name in str(exc_info.value)
         mock_handler.call_action_mock.assert_not_called()
         mock_handler.call_action_generator_mock.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_pull_api_gate_accepts_dict_context_payloads(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {"items": []}
+        proxy = AgentRunAPIProxy(
+            ctx=SimpleNamespace(
+                run_id="run_dict_context",
+                runtime=SimpleNamespace(deadline_at=None),
+                context={"available_apis": {"steering_pull": True}},
+                resources=SimpleNamespace(
+                    models=[],
+                    tools=[],
+                    knowledge_bases=[],
+                    files=[],
+                ),
+            ),
+            plugin_runtime_handler=mock_handler,
+        )
+
+        await proxy.steering_pull()
+
+        call_args = mock_handler.call_action_mock.call_args
+        assert call_args[0][0] == PluginToRuntimeAction.STEERING_PULL
+        assert call_args[0][1]["run_id"] == "run_dict_context"
 
 
 class TestAgentRunAPIProxyNoQueryId:
