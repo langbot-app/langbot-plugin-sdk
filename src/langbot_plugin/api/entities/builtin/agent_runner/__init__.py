@@ -76,6 +76,11 @@ from langbot_plugin.api.entities.builtin.agent_runner.steering import (
     SteeringInputItem,
     SteeringPullResult,
 )
+from langbot_plugin.api.entities.builtin.provider.message import (
+    LLMInvokeResult,
+    LLMStreamEvent,
+    LLMTokenUsage,
+)
 
 __all__ = [
     # Manifest
@@ -138,4 +143,8 @@ __all__ = [
     # Error model
     "AgentAPIError",
     "AgentAPIException",
+    # LLM invoke result metadata
+    "LLMInvokeResult",
+    "LLMStreamEvent",
+    "LLMTokenUsage",
 ]

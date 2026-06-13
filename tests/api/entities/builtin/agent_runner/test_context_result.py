@@ -46,6 +46,8 @@ from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
     AgentRunnerPermissions,
 )
 from langbot_plugin.api.entities.builtin.provider.message import (
+    LLMInvokeResult,
+    LLMStreamEvent,
     Message,
     MessageChunk,
     ContentElement,
@@ -637,6 +639,37 @@ class TestAgentRunAPIContractEntities:
         )
 
         assert result.items[0].input.text == "follow up"
+
+    def test_llm_usage_results_preserve_provider_details(self):
+        result = LLMInvokeResult.model_validate(
+            {
+                "message": {"role": "assistant", "content": "ok"},
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 4,
+                    "total_tokens": 14,
+                    "prompt_tokens_details": {"cached_tokens": 6},
+                },
+            }
+        )
+        event = LLMStreamEvent.model_validate(
+            {
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 4,
+                    "total_tokens": 14,
+                    "prompt_tokens_details": {"cached_tokens": 6},
+                }
+            }
+        )
+
+        assert result.usage is not None
+        assert result.usage.model_dump()["prompt_tokens_details"] == {
+            "cached_tokens": 6
+        }
+        assert event.chunk is None
+        assert event.usage is not None
+        assert event.usage.total_tokens == 14
 
 
 class TestAgentInput:

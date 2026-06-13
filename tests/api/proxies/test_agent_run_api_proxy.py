@@ -284,6 +284,57 @@ class TestAgentRunAPIProxyResourceValidation:
         assert data["llm_model_uuid"] == "model_001"
 
     @pytest.mark.anyio
+    async def test_invoke_llm_with_usage_returns_provider_usage(self):
+        """invoke_llm_with_usage preserves optional provider usage metadata."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            "message": {"role": "assistant", "content": "Hello back"},
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 5,
+                "total_tokens": 17,
+                "prompt_tokens_details": {"cached_tokens": 7},
+            },
+        }
+
+        ctx = create_mock_context(
+            run_id="run_llm_usage_test", models=[{"model_id": "model_001"}]
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        result = await proxy.invoke_llm_with_usage(
+            "model_001",
+            [Message(role="user", content="Hello")],
+        )
+
+        assert result.message.content == "Hello back"
+        assert result.usage is not None
+        assert result.usage.prompt_tokens == 12
+        assert result.usage.model_dump()["prompt_tokens_details"] == {
+            "cached_tokens": 7
+        }
+
+    @pytest.mark.anyio
+    async def test_invoke_llm_keeps_message_only_compatibility(self):
+        """invoke_llm keeps the legacy Message return value when usage is present."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            "message": {"role": "assistant", "content": "Hello back"},
+            "usage": {"prompt_tokens": 12, "completion_tokens": 5, "total_tokens": 17},
+        }
+
+        ctx = create_mock_context(models=[{"model_id": "model_001"}])
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        message = await proxy.invoke_llm(
+            "model_001",
+            [Message(role="user", content="Hello")],
+        )
+
+        assert isinstance(message, Message)
+        assert message.content == "Hello back"
+
+    @pytest.mark.anyio
     async def test_invoke_llm_with_unauthorized_model_raises_error(self):
         """invoke_llm raises PermissionDeniedError when model is NOT authorized."""
         mock_handler = MockHandler()
@@ -321,6 +372,75 @@ class TestAgentRunAPIProxyResourceValidation:
 
         assert "operation 'stream'" in str(exc_info.value)
         mock_handler.call_action_generator_mock.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_invoke_llm_stream_events_yields_usage_event(self):
+        """invoke_llm_stream_events exposes usage-only stream events."""
+
+        class StreamHandler(MockHandler):
+            def call_action_generator(self, action, data, timeout=120):
+                async def gen():
+                    yield {"chunk": {"role": "assistant", "content": "Hi"}}
+                    yield {
+                        "usage": {
+                            "prompt_tokens": 9,
+                            "completion_tokens": 2,
+                            "total_tokens": 11,
+                            "prompt_tokens_details": {"cached_tokens": 4},
+                        }
+                    }
+
+                return gen()
+
+        ctx = create_mock_context(
+            models=[{"model_id": "model_001", "operations": ["stream"]}]
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=StreamHandler())
+
+        events = [
+            event
+            async for event in proxy.invoke_llm_stream_events(
+                "model_001",
+                [Message(role="user", content="Hello")],
+            )
+        ]
+
+        assert events[0].chunk is not None
+        assert events[0].chunk.content == "Hi"
+        assert events[1].chunk is None
+        assert events[1].usage is not None
+        assert events[1].usage.total_tokens == 11
+        assert events[1].usage.model_dump()["prompt_tokens_details"] == {
+            "cached_tokens": 4
+        }
+
+    @pytest.mark.anyio
+    async def test_invoke_llm_stream_ignores_usage_only_events(self):
+        """invoke_llm_stream remains chunk-only for existing callers."""
+
+        class StreamHandler(MockHandler):
+            def call_action_generator(self, action, data, timeout=120):
+                async def gen():
+                    yield {"chunk": {"role": "assistant", "content": "Hi"}}
+                    yield {"usage": {"prompt_tokens": 9, "completion_tokens": 2}}
+
+                return gen()
+
+        ctx = create_mock_context(
+            models=[{"model_id": "model_001", "operations": ["stream"]}]
+        )
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=StreamHandler())
+
+        chunks = [
+            chunk
+            async for chunk in proxy.invoke_llm_stream(
+                "model_001",
+                [Message(role="user", content="Hello")],
+            )
+        ]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "Hi"
 
     @pytest.mark.anyio
     async def test_call_tool_with_authorized_tool(self):
