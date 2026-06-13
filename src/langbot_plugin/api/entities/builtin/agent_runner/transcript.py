@@ -23,6 +23,12 @@ class TranscriptItem(pydantic.BaseModel):
     conversation_id: str | None = None
     """Conversation this item belongs to."""
 
+    bot_id: str | None = None
+    """Bot UUID that handled this transcript item."""
+
+    workspace_id: str | None = None
+    """Workspace ID for multi-tenant deployments."""
+
     thread_id: str | None = None
     """Thread ID if platform supports threads."""
 
