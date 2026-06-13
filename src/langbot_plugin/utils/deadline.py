@@ -31,11 +31,6 @@ async def anext_with_deadline(
         if remaining is None:
             return await anext(gen)
         return await asyncio.wait_for(anext(gen), timeout=remaining)
-    except StopAsyncIteration:
-        exhausted = remaining_deadline_seconds(deadline_at)
-        if exhausted is not None and exhausted <= 0:
-            raise asyncio.TimeoutError
-        raise
     except asyncio.TimeoutError:
         await gen.aclose()
         raise

@@ -15,7 +15,11 @@ import base64
 from typing import Any
 
 from langbot_plugin.runtime.io.handler import Handler
-from langbot_plugin.entities.io.errors import ActionCallError
+from langbot_plugin.entities.io.errors import (
+    ActionCallError,
+    ActionCallTimeoutError,
+    ConnectionClosedError,
+)
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.resource import tool as resource_tool
@@ -81,6 +85,39 @@ def _build_agent_api_exception(
     )
 
 
+def _build_transport_api_exception(
+    action: PluginToRuntimeAction,
+    error: ActionCallTimeoutError | ConnectionClosedError,
+) -> AgentAPIException:
+    if isinstance(error, ActionCallTimeoutError):
+        return AgentAPIException(
+            AgentAPIError(
+                code="deadline_exceeded",
+                message=str(error),
+                retryable=True,
+                details={"action": action.value},
+            )
+        )
+    return AgentAPIException(
+        AgentAPIError(
+            code="runtime_error",
+            message=str(error),
+            retryable=True,
+            details={"action": action.value},
+        )
+    )
+
+
+def _build_deadline_exceeded_exception() -> AgentAPIException:
+    return AgentAPIException(
+        AgentAPIError(
+            code="deadline_exceeded",
+            message="Agent run deadline has expired",
+            retryable=True,
+        )
+    )
+
+
 class _AgentRunHandlerAdapter:
     """Wrap Handler errors in AgentAPIException for runner-facing APIs."""
 
@@ -100,6 +137,8 @@ class _AgentRunHandlerAdapter:
             return await self._handler.call_action(action, data, timeout)
         except ActionCallError as error:
             raise _build_agent_api_exception(action, error) from error
+        except (ActionCallTimeoutError, ConnectionClosedError) as error:
+            raise _build_transport_api_exception(action, error) from error
 
     async def call_action_generator(
         self,
@@ -112,6 +151,8 @@ class _AgentRunHandlerAdapter:
                 yield item
         except ActionCallError as error:
             raise _build_agent_api_exception(action, error) from error
+        except (ActionCallTimeoutError, ConnectionClosedError) as error:
+            raise _build_transport_api_exception(action, error) from error
 
 
 class AgentRunAPIProxy:
@@ -207,7 +248,7 @@ class AgentRunAPIProxy:
         if remaining is None:
             return float(base_timeout)
         if remaining <= 0:
-            return 0.001
+            raise _build_deadline_exceeded_exception()
         return max(min(float(base_timeout), remaining), 0.001)
 
     def _context_api_enabled(self, name: str) -> bool:
