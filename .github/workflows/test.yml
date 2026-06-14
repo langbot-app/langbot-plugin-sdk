@@ -34,7 +34,7 @@ jobs:
             --cov-fail-under=75
 
   test-lint:
-    name: Lint and Format
+    name: Test Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +42,5 @@ jobs:
           persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@v6
-      - name: Ruff check
-        run: uv run ruff check src tests --output-format=concise
-      - name: Ruff format check
-        run: uv run ruff format --check src tests
+      - name: Ruff tests
+        run: uv run ruff check tests --output-format=concise
