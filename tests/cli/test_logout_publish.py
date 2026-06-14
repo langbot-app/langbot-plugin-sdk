@@ -34,9 +34,7 @@ def test_logout_process_removes_old_flat_token_config(tmp_path, monkeypatch):
     assert prints[0] == ("logout_successful",)
 
 
-def test_logout_process_removes_current_server_from_nested_config(
-    tmp_path, monkeypatch
-):
+def test_logout_process_removes_current_server_from_nested_config(tmp_path, monkeypatch):
     config_dir = tmp_path / ".langbot" / "cli"
     config_dir.mkdir(parents=True)
     config_file = config_dir / "config.json"
@@ -173,21 +171,9 @@ def test_publish_process_builds_publishes_and_cleans_tmp_dir(monkeypatch):
     calls = []
     monkeypatch.setattr(publish, "check_login_status", lambda: True)
     monkeypatch.setattr(publish, "get_access_token", lambda: "token")
-    monkeypatch.setattr(
-        publish,
-        "build_plugin_process",
-        lambda output_dir: calls.append(("build", output_dir)) or "pkg",
-    )
-    monkeypatch.setattr(
-        publish,
-        "publish_plugin",
-        lambda path, changelog, token: calls.append(
-            ("publish", path, changelog, token)
-        ),
-    )
-    monkeypatch.setattr(
-        publish.shutil, "rmtree", lambda path: calls.append(("rmtree", path))
-    )
+    monkeypatch.setattr(publish, "build_plugin_process", lambda output_dir: calls.append(("build", output_dir)) or "pkg")
+    monkeypatch.setattr(publish, "publish_plugin", lambda path, changelog, token: calls.append(("publish", path, changelog, token)))
+    monkeypatch.setattr(publish.shutil, "rmtree", lambda path: calls.append(("rmtree", path)))
 
     publish.publish_process()
 

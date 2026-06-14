@@ -38,7 +38,7 @@ class _CommandResult:
 
 class BaseSandboxBackend(abc.ABC):
     name: str
-    instance_id: str = ""
+    instance_id: str = ''
 
     def __init__(self, logger: logging.Logger):
         self.logger = logger
@@ -66,41 +66,11 @@ class BaseSandboxBackend(abc.ABC):
         return True
 
     async def start_managed_process(self, session: BoxSessionInfo, spec):
-        raise BoxError(f"{self.name} backend does not support managed processes")
+        raise BoxError(f'{self.name} backend does not support managed processes')
 
-    async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
+    async def cleanup_orphaned_containers(self, current_instance_id: str = ''):
         """Remove lingering containers from previous runs. No-op by default."""
         pass
-
-    @staticmethod
-    def _clip_captured_bytes(
-        data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES
-    ) -> str:
-        text = data.decode("utf-8", errors="replace").strip()
-        if total_size > limit:
-            text += f"\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]"
-        return text
-
-    @staticmethod
-    async def _read_stream(
-        stream: asyncio.StreamReader | None,
-        limit: int = _MAX_RAW_OUTPUT_BYTES,
-    ) -> tuple[bytes, int]:
-        if stream is None:
-            return b"", 0
-
-        chunks = bytearray()
-        total_size = 0
-        while True:
-            chunk = await stream.read(65536)
-            if not chunk:
-                break
-            total_size += len(chunk)
-            remaining = limit - len(chunks)
-            if remaining > 0:
-                chunks.extend(chunk[:remaining])
-
-        return bytes(chunks), total_size
 
 
 class CLISandboxBackend(BaseSandboxBackend):
@@ -115,9 +85,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         if shutil.which(self.command) is None:
             return False
 
-        result = await self._run_command(
-            [self.command, "info"], timeout_sec=5, check=False
-        )
+        result = await self._run_command([self.command, 'info'], timeout_sec=5, check=False)
         return result.return_code == 0 and not result.timed_out
 
     async def start_session(self, spec: BoxSpec) -> BoxSessionInfo:
@@ -128,59 +96,53 @@ class CLISandboxBackend(BaseSandboxBackend):
 
         args = [
             self.command,
-            "run",
-            "-d",
+            'run',
+            '-d',
         ]
 
         if not spec.persistent:
-            args.append("--rm")
+            args.append('--rm')
 
-        args.extend(
-            [
-                "--name",
-                container_name,
-                "--label",
-                "langbot.box=true",
-                "--label",
-                f"langbot.session_id={spec.session_id}",
-                "--label",
-                f"langbot.box.instance_id={self.instance_id}",
-            ]
-        )
+        args.extend([
+            '--name',
+            container_name,
+            '--label',
+            'langbot.box=true',
+            '--label',
+            f'langbot.session_id={spec.session_id}',
+            '--label',
+            f'langbot.box.instance_id={self.instance_id}',
+        ])
 
         if spec.network == BoxNetworkMode.OFF:
-            args.extend(["--network", "none"])
+            args.extend(['--network', 'none'])
 
         # Resource limits
-        args.extend(["--cpus", str(spec.cpus)])
-        args.extend(["--memory", f"{spec.memory_mb}m"])
-        args.extend(["--pids-limit", str(spec.pids_limit)])
+        args.extend(['--cpus', str(spec.cpus)])
+        args.extend(['--memory', f'{spec.memory_mb}m'])
+        args.extend(['--pids-limit', str(spec.pids_limit)])
 
         if spec.read_only_rootfs:
-            args.append("--read-only")
-            args.extend(["--tmpfs", "/tmp:size=64m"])
+            args.append('--read-only')
+            args.extend(['--tmpfs', '/tmp:size=64m'])
 
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
-            mount_spec = (
-                f"{spec.host_path}:{spec.mount_path}:{spec.host_path_mode.value}"
-            )
-            args.extend(["-v", mount_spec])
+            mount_spec = f'{spec.host_path}:{spec.mount_path}:{spec.host_path_mode.value}'
+            args.extend(['-v', mount_spec])
 
         for mount in spec.extra_mounts:
             if mount.mode != BoxHostMountMode.NONE:
-                args.extend(
-                    ["-v", f"{mount.host_path}:{mount.mount_path}:{mount.mode.value}"]
-                )
+                args.extend(['-v', f'{mount.host_path}:{mount.mount_path}:{mount.mode.value}'])
 
-        args.extend([spec.image, "sh", "-lc", "while true; do sleep 3600; done"])
+        args.extend([spec.image, 'sh', '-lc', 'while true; do sleep 3600; done'])
 
         self.logger.info(
-            f"LangBot Box backend start_session: backend={self.name} "
-            f"session_id={spec.session_id} container_name={container_name} "
-            f"image={spec.image} network={spec.network.value} "
-            f"host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} "
-            f"cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} "
-            f"read_only_rootfs={spec.read_only_rootfs} workspace_quota_mb={spec.workspace_quota_mb}"
+            f'LangBot Box backend start_session: backend={self.name} '
+            f'session_id={spec.session_id} container_name={container_name} '
+            f'image={spec.image} network={spec.network.value} '
+            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} '
+            f'cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} '
+            f'read_only_rootfs={spec.read_only_rootfs} workspace_quota_mb={spec.workspace_quota_mb}'
         )
 
         await self._run_command(args, timeout_sec=30, check=True)
@@ -206,36 +168,32 @@ class CLISandboxBackend(BaseSandboxBackend):
 
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
         start = dt.datetime.now(dt.timezone.utc)
-        args = [self.command, "exec"]
+        args = [self.command, 'exec']
 
         for key, value in spec.env.items():
-            args.extend(["-e", f"{key}={value}"])
+            args.extend(['-e', f'{key}={value}'])
 
         args.extend(
             [
                 session.backend_session_id,
-                "sh",
-                "-lc",
+                'sh',
+                '-lc',
                 self._build_exec_command(spec.workdir, spec.cmd),
             ]
         )
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
-            cmd_preview = f"{cmd_preview[:397]}..."
+            cmd_preview = f'{cmd_preview[:397]}...'
         self.logger.info(
-            f"LangBot Box backend exec: backend={self.name} "
-            f"session_id={session.session_id} container_name={session.backend_session_id} "
-            f"workdir={spec.workdir} timeout_sec={spec.timeout_sec} "
-            f"env_keys={sorted(spec.env.keys())} cmd={cmd_preview}"
+            f'LangBot Box backend exec: backend={self.name} '
+            f'session_id={session.session_id} container_name={session.backend_session_id} '
+            f'workdir={spec.workdir} timeout_sec={spec.timeout_sec} '
+            f'env_keys={sorted(spec.env.keys())} cmd={cmd_preview}'
         )
 
-        result = await self._run_command(
-            args, timeout_sec=spec.timeout_sec, check=False
-        )
-        duration_ms = int(
-            (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
-        )
+        result = await self._run_command(args, timeout_sec=spec.timeout_sec, check=False)
+        duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
 
         if result.timed_out:
             return BoxExecutionResult(
@@ -244,8 +202,7 @@ class CLISandboxBackend(BaseSandboxBackend):
                 status=BoxExecutionStatus.TIMED_OUT,
                 exit_code=None,
                 stdout=result.stdout,
-                stderr=result.stderr
-                or f"Command timed out after {spec.timeout_sec} seconds.",
+                stderr=result.stderr or f'Command timed out after {spec.timeout_sec} seconds.',
                 duration_ms=duration_ms,
             )
 
@@ -261,11 +218,11 @@ class CLISandboxBackend(BaseSandboxBackend):
 
     async def stop_session(self, session: BoxSessionInfo):
         self.logger.info(
-            f"LangBot Box backend stop_session: backend={self.name} "
-            f"session_id={session.session_id} container_name={session.backend_session_id}"
+            f'LangBot Box backend stop_session: backend={self.name} '
+            f'session_id={session.session_id} container_name={session.backend_session_id}'
         )
         await self._run_command(
-            [self.command, "rm", "-f", session.backend_session_id],
+            [self.command, 'rm', '-f', session.backend_session_id],
             timeout_sec=20,
             check=False,
         )
@@ -274,17 +231,17 @@ class CLISandboxBackend(BaseSandboxBackend):
         result = await self._run_command(
             [
                 self.command,
-                "inspect",
-                "-f",
-                "{{.State.Running}}",
+                'inspect',
+                '-f',
+                '{{.State.Running}}',
                 session.backend_session_id,
             ],
             timeout_sec=5,
             check=False,
         )
-        return result.return_code == 0 and result.stdout.strip().lower() == "true"
+        return result.return_code == 0 and result.stdout.strip().lower() == 'true'
 
-    async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
+    async def cleanup_orphaned_containers(self, current_instance_id: str = ''):
         """Remove langbot.box containers from previous instances.
 
         Only removes containers whose ``langbot.box.instance_id`` label does
@@ -294,11 +251,11 @@ class CLISandboxBackend(BaseSandboxBackend):
         result = await self._run_command(
             [
                 self.command,
-                "ps",
-                "-a",
-                "--filter",
-                "label=langbot.box=true",
-                "--format",
+                'ps',
+                '-a',
+                '--filter',
+                'label=langbot.box=true',
+                '--format',
                 '{{.ID}}\t{{.Label "langbot.box.instance_id"}}',
             ],
             timeout_sec=10,
@@ -307,46 +264,44 @@ class CLISandboxBackend(BaseSandboxBackend):
         if result.return_code != 0 or not result.stdout.strip():
             return
         orphan_ids = []
-        for line in result.stdout.strip().split("\n"):
+        for line in result.stdout.strip().split('\n'):
             line = line.strip()
             if not line:
                 continue
-            parts = line.split("\t", 1)
+            parts = line.split('\t', 1)
             cid = parts[0].strip()
-            label_instance = parts[1].strip() if len(parts) > 1 else ""
+            label_instance = parts[1].strip() if len(parts) > 1 else ''
             if label_instance != current_instance_id:
                 orphan_ids.append(cid)
         if not orphan_ids:
             return
         for cid in orphan_ids:
-            self.logger.info(f"Cleaning up orphaned Box container: {cid}")
+            self.logger.info(f'Cleaning up orphaned Box container: {cid}')
         await self._run_command(
-            [self.command, "rm", "-f", *orphan_ids],
+            [self.command, 'rm', '-f', *orphan_ids],
             timeout_sec=30,
             check=False,
         )
 
-    async def start_managed_process(
-        self, session: BoxSessionInfo, spec
-    ) -> asyncio.subprocess.Process:
-        args = [self.command, "exec", "-i"]
+    async def start_managed_process(self, session: BoxSessionInfo, spec) -> asyncio.subprocess.Process:
+        args = [self.command, 'exec', '-i']
 
         for key, value in spec.env.items():
-            args.extend(["-e", f"{key}={value}"])
+            args.extend(['-e', f'{key}={value}'])
 
         args.extend(
             [
                 session.backend_session_id,
-                "sh",
-                "-lc",
+                'sh',
+                '-lc',
                 self._build_spawn_command(spec.cwd, spec.command, spec.args),
             ]
         )
 
         self.logger.info(
-            f"LangBot Box backend start_managed_process: backend={self.name} "
-            f"session_id={session.session_id} container_name={session.backend_session_id} "
-            f"cwd={spec.cwd} env_keys={sorted(spec.env.keys())} command={spec.command} args={spec.args}"
+            f'LangBot Box backend start_managed_process: backend={self.name} '
+            f'session_id={session.session_id} container_name={session.backend_session_id} '
+            f'cwd={spec.cwd} env_keys={sorted(spec.env.keys())} command={spec.command} args={spec.args}'
         )
 
         return await asyncio.create_subprocess_exec(
@@ -357,20 +312,18 @@ class CLISandboxBackend(BaseSandboxBackend):
         )
 
     def _build_container_name(self, session_id: str) -> str:
-        normalized = (
-            re.sub(r"[^a-zA-Z0-9_.-]+", "-", session_id).strip("-").lower() or "session"
-        )
+        normalized = re.sub(r'[^a-zA-Z0-9_.-]+', '-', session_id).strip('-').lower() or 'session'
         suffix = uuid.uuid4().hex[:8]
-        return f"langbot-box-{normalized[:32]}-{suffix}"
+        return f'langbot-box-{normalized[:32]}-{suffix}'
 
     def _build_exec_command(self, workdir: str, cmd: str) -> str:
         quoted_workdir = shlex.quote(workdir)
-        return f"mkdir -p {quoted_workdir} && cd {quoted_workdir} && {cmd}"
+        return f'mkdir -p {quoted_workdir} && cd {quoted_workdir} && {cmd}'
 
     def _build_spawn_command(self, cwd: str, command: str, args: list[str]) -> str:
         quoted_cwd = shlex.quote(cwd)
         command_parts = [shlex.quote(command), *[shlex.quote(arg) for arg in args]]
-        return f"mkdir -p {quoted_cwd} && cd {quoted_cwd} && exec {' '.join(command_parts)}"
+        return f'mkdir -p {quoted_cwd} && cd {quoted_cwd} && exec {" ".join(command_parts)}'
 
     async def _run_command(
         self,
@@ -409,9 +362,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         stderr = self._clip_captured_bytes(stderr_bytes, stderr_total)
 
         if check and process.returncode != 0:
-            raise BoxError(
-                self._format_cli_error(stderr or stdout or "unknown backend error")
-            )
+            raise BoxError(self._format_cli_error(stderr or stdout or 'unknown backend error'))
 
         return _CommandResult(
             return_code=process.returncode,
@@ -420,13 +371,41 @@ class CLISandboxBackend(BaseSandboxBackend):
             timed_out=False,
         )
 
+    @staticmethod
+    def _clip_captured_bytes(data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES) -> str:
+        text = data.decode('utf-8', errors='replace').strip()
+        if total_size > limit:
+            text += f'\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]'
+        return text
+
+    @staticmethod
+    async def _read_stream(
+        stream: asyncio.StreamReader | None,
+        limit: int = _MAX_RAW_OUTPUT_BYTES,
+    ) -> tuple[bytes, int]:
+        if stream is None:
+            return b'', 0
+
+        chunks = bytearray()
+        total_size = 0
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            remaining = limit - len(chunks)
+            if remaining > 0:
+                chunks.extend(chunk[:remaining])
+
+        return bytes(chunks), total_size
+
     def _format_cli_error(self, message: str) -> str:
-        message = " ".join(message.split())
+        message = ' '.join(message.split())
         if len(message) > 300:
-            message = f"{message[:297]}..."
-        return f"{self.name} backend error: {message}"
+            message = f'{message[:297]}...'
+        return f'{self.name} backend error: {message}'
 
 
 class DockerBackend(CLISandboxBackend):
     def __init__(self, logger: logging.Logger):
-        super().__init__(logger=logger, command="docker", backend_name="docker")
+        super().__init__(logger=logger, command='docker', backend_name='docker')
