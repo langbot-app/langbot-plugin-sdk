@@ -106,6 +106,17 @@ class ControlConnectionHandler(handler.Handler):
             else:
                 return handler.ActionResponse.success({"readme_file_key": None})
 
+        @self.action(LangBotToRuntimeAction.GET_PLUGIN_LOGS)
+        async def get_plugin_logs(data: dict[str, Any]) -> handler.ActionResponse:
+            author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            limit = int(data.get("limit", 200))
+            level = data.get("level") or None
+            logs = await self.context.plugin_mgr.get_plugin_logs(
+                author, plugin_name, limit=limit, level=level
+            )
+            return handler.ActionResponse.success({"logs": logs})
+
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_ASSETS_FILE)
         async def get_plugin_assets_file(
             data: dict[str, Any],

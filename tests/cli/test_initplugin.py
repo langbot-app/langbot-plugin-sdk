@@ -76,6 +76,8 @@ def test_init_plugin_process_generates_plugin_scaffold(tmp_path, monkeypatch):
     assert (plugin_dir / "main.py").is_file()
     assert (plugin_dir / "assets" / "icon.svg").is_file()
     assert (plugin_dir / ".vscode" / "launch.json").is_file()
+    assert (plugin_dir / "readme" / "README_zh_Hans.md").is_file()
+    assert (plugin_dir / ".github" / "workflows" / "release.yml").is_file()
     manifest = yaml.safe_load((plugin_dir / "manifest.yaml").read_text())
     assert manifest["metadata"]["author"] == "tester"
     assert manifest["metadata"]["name"] == "demo-plugin"

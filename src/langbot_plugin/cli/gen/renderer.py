@@ -42,11 +42,13 @@ init_plugin_files = [
     "manifest.yaml",
     "main.py",
     "README.md",
+    "readme/README_zh_Hans.md",
     "requirements.txt",
     ".env.example",
     ".gitignore",
     "assets/icon.svg",
     ".vscode/launch.json",
+    ".github/workflows/release.yml",
 ]
 
 

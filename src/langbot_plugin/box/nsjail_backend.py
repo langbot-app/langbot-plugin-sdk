@@ -44,6 +44,23 @@ _READONLY_ETC_ENTRIES: list[str] = [
     '/etc/resolv.conf',  # needed when network=ON
 ]
 
+# Essential character devices bind-mounted into the sandbox's /dev.
+# /dev is a fresh empty tmpfs (see _build_args), so these nodes do not exist
+# unless we bind them in from the host. Tooling that shells out for probes
+# relies on them — notably `uv`/`uvx` redirects its glibc/musl detection
+# subprocess to /dev/null; without it uv fails with "Could not detect either
+# glibc version nor musl libc version" and the process exits before it can do
+# anything (e.g. an stdio MCP server dies before the initialize handshake,
+# surfacing as a misleading "Connection closed / please check URL").
+_DEV_NODES: list[str] = [
+    '/dev/null',
+    '/dev/zero',
+    '/dev/full',
+    '/dev/random',
+    '/dev/urandom',
+    '/dev/tty',
+]
+
 _DEFAULT_BASE_DIR = '/tmp/langbot-box-nsjail'
 
 
@@ -93,8 +110,13 @@ class NsjailBackend(BaseSandboxBackend):
         self._cgroup_v2_available = self._detect_cgroup_v2()
         if not self._cgroup_v2_available:
             self.logger.warning(
-                'cgroup v2 not available for nsjail; '
-                'falling back to rlimit-based resource limits'
+                'nsjail cgroup v2 limits unavailable (private cgroup namespace '
+                'or read-only /sys/fs/cgroup); falling back to rlimit-based '
+                'limits WITHOUT a hard memory cap. RLIMIT_AS is intentionally '
+                'not used because it kills uv/node/etc. To enforce a memory '
+                'cap, run the Box container in the host cgroup namespace '
+                '(--cgroupns=host / compose `cgroup: host`) or set a '
+                'container-level memory limit.'
             )
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -115,6 +137,19 @@ class NsjailBackend(BaseSandboxBackend):
 
         for d in (root_dir, workspace_dir, tmp_dir, home_dir):
             d.mkdir(parents=True, exist_ok=True)
+
+        # When a host_path is mounted into the sandbox it becomes the nsjail
+        # bind-mount source (see _build_mounts). nsjail requires the source to
+        # already exist on the host, otherwise the bind-mount fails and the
+        # command exits 255 with no stdout/stderr. The per-session loop above
+        # never creates host_path (it lives outside session_dir), so ensure it
+        # exists here. Read-only mounts intentionally are NOT auto-created: a
+        # missing read-only source is a caller error that should surface.
+        if (
+            spec.host_path is not None
+            and spec.host_path_mode == BoxHostMountMode.READ_WRITE
+        ):
+            os.makedirs(spec.host_path, exist_ok=True)
 
         # If host_path is specified, we will use it directly instead of the
         # per-session workspace when building nsjail args (see _build_mounts).
@@ -317,6 +352,15 @@ class NsjailBackend(BaseSandboxBackend):
         args.extend(['--mount', 'none:/proc:proc:rw'])
         args.extend(['--mount', 'none:/dev:tmpfs:rw'])
 
+        # /dev is a fresh empty tmpfs, so bind in the essential character
+        # devices. Without /dev/null in particular, uv's glibc/musl detection
+        # subprocess fails and any uvx-launched process (e.g. stdio MCP servers)
+        # exits before doing useful work. Mounted read-write so writes to
+        # /dev/null behave normally.
+        for dev in _DEV_NODES:
+            if os.path.exists(dev):
+                args.extend(['--bindmount', f'{dev}:{dev}'])
+
         # Working directory.
         args.extend(['--cwd', spec.workdir])
 
@@ -424,18 +468,39 @@ class NsjailBackend(BaseSandboxBackend):
         args: list[str] = []
 
         if self._cgroup_v2_available:
-            # cgroup v2 – precise limits.
+            # cgroup v2 – precise limits. nsjail defaults to the legacy cgroup
+            # v1 layout, so we MUST opt into v2 explicitly; without this flag
+            # nsjail tries to mkdir under /sys/fs/cgroup/<controller>/... (v1
+            # paths) and aborts on a v2-only host. The writability of the v2
+            # root is already verified in _detect_cgroup_v2().
+            args.append('--use_cgroupv2')
             memory_bytes = spec.memory_mb * 1024 * 1024
             args.extend(['--cgroup_mem_max', str(memory_bytes)])
             args.extend(['--cgroup_pids_max', str(spec.pids_limit)])
             cpu_ms = int(spec.cpus * 1000)
             args.extend(['--cgroup_cpu_ms_per_sec', str(cpu_ms)])
         else:
-            # rlimit fallback – best-effort.
-            args.extend(['--rlimit_as', str(spec.memory_mb)])
+            # rlimit fallback – used whenever cgroup v2 delegation is not usable
+            # (private cgroup namespace -> EBUSY, or read-only /sys/fs/cgroup).
+            #
+            # We deliberately do NOT set --rlimit_as for the memory cap.
+            # RLIMIT_AS limits *virtual* address space, not resident memory, and
+            # modern runtimes reserve huge virtual mappings up front: uv/Rust
+            # (and Go/JVM/Node) mmap gigabytes of address space even to do tiny
+            # work, so a 512 MB --rlimit_as aborts them instantly with
+            # "memory allocation of N bytes failed" (exit 255) — which is what
+            # silently broke every uvx-based stdio MCP server in containerized
+            # nsjail deployments. There is no RSS-based rlimit on modern Linux
+            # (RLIMIT_RSS is ignored), so accurate memory capping REQUIRES
+            # cgroups. Operators who need a hard memory cap must run the Box
+            # container in the host cgroup namespace (--cgroupns=host /
+            # compose `cgroup: host`); otherwise bound memory at the container
+            # level (e.g. compose `mem_limit`). We still apply the pid cap,
+            # which is a real rlimit that does not break runtimes.
             args.extend(['--rlimit_nproc', str(spec.pids_limit)])
 
-        # Always set these rlimits regardless of cgroup mode.
+        # Always set these rlimits regardless of cgroup mode. These are safe
+        # for modern runtimes (unlike RLIMIT_AS).
         args.extend(['--rlimit_fsize', '512'])    # max file size 512 MB
         args.extend(['--rlimit_nofile', '256'])    # max open fds
 
@@ -478,25 +543,73 @@ class NsjailBackend(BaseSandboxBackend):
 
     @staticmethod
     def _detect_cgroup_v2() -> bool:
-        """Check whether the host runs cgroup v2 and we can write to it."""
+        """Check whether nsjail's ``--use_cgroupv2`` path will actually work.
+
+        nsjail (with ``--use_cgroupv2``) moves itself into a fresh child cgroup
+        it ``mkdir``s under the cgroup v2 mount root, then enables controllers
+        for that child by writing ``+memory`` (etc.) to the ROOT's
+        ``cgroup.subtree_control``. BOTH operations must succeed.
+
+        Probing ``mkdir`` alone is NOT sufficient and produces a false positive
+        in the common containerized case: inside a **private** cgroup namespace
+        (Docker/k8s default) the container's own cgroup root already contains
+        live processes (the Box runtime itself), so the kernel's
+        "no-internal-process" rule rejects the ``cgroup.subtree_control`` write
+        with ``EBUSY`` even though ``mkdir`` under the root succeeds. nsjail then
+        aborts and every sandbox launch exits 255. Conversely a read-only
+        ``/sys/fs/cgroup`` (another common case) fails the ``mkdir``.
+
+        So we probe the AUTHORITATIVE operation: a real write to
+        ``cgroup.subtree_control``. We only consider it available when that
+        write succeeds, which is exactly nsjail's requirement. Containerized
+        deployments that need cgroup limits must run the Box container in the
+        host cgroup namespace (``--cgroupns=host`` / compose ``cgroup: host``);
+        otherwise this returns False and the backend uses the rlimit fallback.
+        """
         cgroup_mount = pathlib.Path('/sys/fs/cgroup')
         if not cgroup_mount.exists():
             return False
-        # cgroup v2 has a single hierarchy with cgroup.controllers file.
+        # cgroup v2 has a single hierarchy with a cgroup.controllers file.
         controllers = cgroup_mount / 'cgroup.controllers'
-        if not controllers.exists():
+        subtree_control = cgroup_mount / 'cgroup.subtree_control'
+        if not controllers.exists() or not subtree_control.exists():
             return False
-        # Check if we can write to a cgroup subtree (needed for nsjail).
-        # A rough heuristic: if the user owns a cgroup directory we're probably
-        # running under systemd user delegation.
-        user_slice = cgroup_mount / f'user.slice/user-{os.getuid()}.slice'
-        if user_slice.exists() and os.access(user_slice, os.W_OK):
-            return True
-        # If running as root (uid 0), cgroup v2 is always usable.
-        if os.getuid() == 0:
-            return True
-        # Conservative: if we can't confirm writability, report unavailable.
-        return False
+        # nsjail enables the controllers it needs (memory, pids, cpu) on the
+        # child cgroup, which requires them to be delegated via the root's
+        # subtree_control. Only probe controllers actually present here.
+        try:
+            available = set(controllers.read_text().split())
+        except Exception:
+            return False
+        wanted = [c for c in ('memory', 'pids', 'cpu') if c in available]
+        if not wanted:
+            return False
+        # Authoritative writability probe: re-arm a controller that is already
+        # enabled (idempotent no-op), or briefly toggle one that is not. A
+        # successful write proves nsjail's subtree_control write will also
+        # succeed; EBUSY (private cgroupns) or EACCES/EROFS (read-only mount)
+        # all surface here and correctly select the rlimit fallback.
+        try:
+            enabled = set(subtree_control.read_text().split())
+        except Exception:
+            return False
+        probe_controller = wanted[0]
+        try:
+            if probe_controller in enabled:
+                # Already delegated: re-writing the same enable is a harmless
+                # no-op that still exercises the write permission + EBUSY rule.
+                subtree_control.write_text(f'+{probe_controller}')
+            else:
+                # Not yet delegated: enable then immediately disable to leave
+                # the host configuration untouched.
+                subtree_control.write_text(f'+{probe_controller}')
+                try:
+                    subtree_control.write_text(f'-{probe_controller}')
+                except Exception:
+                    pass
+        except Exception:
+            return False
+        return True
 
     async def _kill_session_processes(self, session_dir: pathlib.Path) -> None:
         """Best-effort kill of nsjail processes associated with a session dir.

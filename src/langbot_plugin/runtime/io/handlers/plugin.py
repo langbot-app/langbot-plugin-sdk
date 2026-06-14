@@ -13,6 +13,7 @@ from langbot_plugin.entities.io.actions.enums import (
 from langbot_plugin.runtime import context as context_module
 import asyncio
 from langbot_plugin.runtime.settings import settings as runtime_settings
+from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ class PluginConnectionHandler(handler.Handler):
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
+
+    log_buffer: PluginLogBuffer
+    """Ring buffer holding recent log lines (from the plugin's stderr)."""
 
     subprocess_on_windows_task: asyncio.Task | None = None
     """The task for the subprocess on Windows."""
@@ -84,6 +88,15 @@ class PluginConnectionHandler(handler.Handler):
             caller_identity = _inject_caller_identity(data)
             if caller_identity:
                 data["owner"] = caller_identity
+
+        # Capture the plugin subprocess's stderr (Python `logging` output) into
+        # a per-plugin ring buffer so LangBot can show logs on the detail page.
+        self.log_buffer = PluginLogBuffer()
+        if (
+            self.stdio_process is not None
+            and self.stdio_process.stderr is not None
+        ):
+            self.log_buffer.start_reader(self.stdio_process.stderr)
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:

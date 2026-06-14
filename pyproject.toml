@@ -1,6 +1,6 @@
 [project]
 name = "langbot-plugin"
-version = "0.4.1"
+version = "0.4.4"
 description = "This package contains the SDK, CLI for building plugins for LangBot, plus the runtime for hosting LangBot plugins"
 readme = "README.md"
 authors = [
@@ -14,6 +14,7 @@ dependencies = [
     "e2b>=2.15",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
+    "packaging>=24.0",
     "pip>=25.2",
     "pydantic>=2.11.5",
     "pydantic-settings>=2.10.1",
