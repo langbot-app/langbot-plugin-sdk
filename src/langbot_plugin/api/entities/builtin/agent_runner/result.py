@@ -8,7 +8,11 @@ import enum
 import base64
 import binascii
 
-from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
+from langbot_plugin.api.entities.builtin.provider.message import (
+    LLMTokenUsage,
+    Message,
+    MessageChunk,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.state import (
     VALID_STATE_SCOPES,
     STATE_SCOPE_LITERAL,
@@ -148,11 +152,20 @@ class AgentRunResult(pydantic.BaseModel):
     - run_id: Links result to the run
     - type: Result type
     - data: Type-specific payload
+    - usage: Optional token usage observed for this result/run
     - sequence: Optional sequence number for ordering
     - timestamp: Optional timestamp
 
     Each yield from the runner's run() method produces one AgentRunResult.
     LangBot maps these to appropriate host delivery events.
+
+    Token usage is optional because not every upstream runtime reports it. When
+    a runner can observe provider/runtime usage, it should attach the final
+    aggregate usage to the terminal run.completed result. For failed runs,
+    run.failed may include partial usage collected before the failure. Missing
+    usage means "unknown", not zero. Billing cost is intentionally not
+    standardized here; Host should derive authoritative cost from usage,
+    model identity, and its pricing table.
     """
 
     run_id: str
@@ -163,6 +176,9 @@ class AgentRunResult(pydantic.BaseModel):
 
     data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Result data."""
+
+    usage: LLMTokenUsage | None = None
+    """Optional token usage for this result or final aggregate run usage."""
 
     sequence: int | None = None
     """Optional sequence number for ordering."""
@@ -402,6 +418,7 @@ class AgentRunResult(pydantic.BaseModel):
         message: Message | None = None,
         finish_reason: str = "stop",
         *,
+        usage: LLMTokenUsage | dict[str, typing.Any] | None = None,
         sequence: int | None = None,
         timestamp: int | None = None,
     ) -> "AgentRunResult":
@@ -409,12 +426,14 @@ class AgentRunResult(pydantic.BaseModel):
 
         If message is provided, LangBot can map it to final Message.
         If message.completed was already output, message can be None.
+        If provider/runtime token usage is available, pass final aggregate usage.
         """
         payload = RunCompletedPayload(finish_reason=finish_reason, message=message)
         return cls(
             run_id=run_id,
             type=AgentRunResultType.RUN_COMPLETED,
             data=payload.model_dump(mode="json", exclude_none=True),
+            usage=usage,
             sequence=sequence,
             timestamp=timestamp,
         )
@@ -427,12 +446,14 @@ class AgentRunResult(pydantic.BaseModel):
         code: str | None = None,
         retryable: bool = False,
         *,
+        usage: LLMTokenUsage | dict[str, typing.Any] | None = None,
         sequence: int | None = None,
         timestamp: int | None = None,
     ) -> "AgentRunResult":
         """Create a run.failed result.
 
         LangBot returns a user-friendly error message per host delivery strategy.
+        If the runner collected usage before the failure, pass partial usage.
         """
         payload = RunFailedPayload(
             error=error,
@@ -443,6 +464,7 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.RUN_FAILED,
             data=payload.model_dump(mode="json"),
+            usage=usage,
             sequence=sequence,
             timestamp=timestamp,
         )

@@ -48,6 +48,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
 from langbot_plugin.api.entities.builtin.provider.message import (
     LLMInvokeResult,
     LLMStreamEvent,
+    LLMTokenUsage,
     Message,
     MessageChunk,
     ContentElement,
@@ -541,6 +542,29 @@ class TestAgentRunResultV1:
         assert result.data["finish_reason"] == "stop"
         assert "message" not in result.data
 
+    def test_run_completed_accepts_terminal_usage(self):
+        """Terminal run.completed may carry aggregate token usage."""
+        result = AgentRunResult.run_completed(
+            run_id="run_1",
+            finish_reason="stop",
+            usage={
+                "prompt_tokens": 10,
+                "completion_tokens": 4,
+                "total_tokens": 14,
+                "prompt_tokens_details": {"cached_tokens": 6},
+            },
+        )
+
+        assert result.usage is not None
+        assert result.usage.total_tokens == 14
+        assert result.usage.model_dump()["prompt_tokens_details"] == {
+            "cached_tokens": 6
+        }
+
+        dumped = result.model_dump(mode="json")
+        assert dumped["usage"]["prompt_tokens"] == 10
+        assert dumped["usage"]["prompt_tokens_details"] == {"cached_tokens": 6}
+
     def test_run_failed_validate(self):
         """Test run.failed result."""
         result = AgentRunResult.run_failed(
@@ -561,6 +585,27 @@ class TestAgentRunResultV1:
         result = AgentRunResult.run_failed(run_id="run_1", error="Something went wrong")
 
         assert result.data["code"] == "runner.error"
+
+    def test_run_failed_accepts_partial_usage(self):
+        """Terminal run.failed may carry usage collected before failure."""
+        usage = LLMTokenUsage(
+            prompt_tokens=8,
+            completion_tokens=1,
+            total_tokens=9,
+            provider_request_id="req_1",
+        )
+
+        result = AgentRunResult.run_failed(
+            run_id="run_1",
+            error="Context overflow",
+            code="provider.context_overflow",
+            retryable=False,
+            usage=usage,
+        )
+
+        assert result.usage is not None
+        assert result.usage.prompt_tokens == 8
+        assert result.usage.model_dump()["provider_request_id"] == "req_1"
 
     def test_action_requested_validate(self):
         """Test action.requested result."""
