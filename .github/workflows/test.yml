@@ -35,7 +35,7 @@ jobs:
             --cov-fail-under=84
 
   test-lint:
-    name: Lint and Format
+    name: Test Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -63,7 +63,9 @@ def test_build_plugin_process_packages_manifest_and_filters_ignored_files(
 
     package_path = buildplugin.build_plugin_process(str(output_dir))
 
-    assert package_path == os.path.join(str(output_dir), "tester-demo-0.1.0.lbpkg")
+    assert package_path == os.path.join(
+        str(output_dir), "tester-demo-0.1.0.lbpkg"
+    )
     with zipfile.ZipFile(package_path) as package:
         names = set(package.namelist())
         assert {"manifest.yaml", "main.py", ".gitignore"} <= names

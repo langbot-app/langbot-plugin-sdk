@@ -12,33 +12,25 @@ def test_component_input_post_processors_create_python_class_names():
         "tool_description": "Search the web",
         "tool_attr": "WebSearch",
     }
-    assert (
-        renderer.command_component_input_post_process(
-            {"cmd_name": "hello_world", "cmd_description": "Say hello"}
-        )["cmd_attr"]
-        == "HelloWorld"
-    )
-    assert (
-        renderer.knowledge_engine_component_input_post_process(
-            {
-                "knowledge_engine_name": "local_docs",
-                "knowledge_engine_description": "Docs",
-            }
-        )["knowledge_engine_attr"]
-        == "LocalDocs"
-    )
-    assert (
-        renderer.parser_component_input_post_process(
-            {"parser_name": "pdf_reader", "parser_description": "PDF"}
-        )["parser_label"]
-        == "PdfReader"
-    )
-    assert renderer.page_component_input_post_process(
-        {"page_name": "settings_page"}
-    ) == {
+    assert renderer.command_component_input_post_process(
+        {"cmd_name": "hello_world", "cmd_description": "Say hello"}
+    )["cmd_attr"] == "HelloWorld"
+    assert renderer.knowledge_engine_component_input_post_process(
+        {
+            "knowledge_engine_name": "local_docs",
+            "knowledge_engine_description": "Docs",
+        }
+    )["knowledge_engine_attr"] == "LocalDocs"
+    assert renderer.parser_component_input_post_process(
+        {"parser_name": "pdf_reader", "parser_description": "PDF"}
+    )["parser_label"] == "PdfReader"
+    assert renderer.page_component_input_post_process({"page_name": "settings_page"}) == {
         "page_name": "settings_page",
         "page_label": "SettingsPage",
     }
+    assert renderer.agent_runner_component_input_post_process(
+        {"runner_name": "local_agent", "runner_description": "Run local agents"}
+    )["runner_attr"] == "LocalAgent"
 
 
 def test_component_type_registry_contains_expected_public_component_kinds():

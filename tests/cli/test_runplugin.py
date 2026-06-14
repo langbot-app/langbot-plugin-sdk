@@ -110,9 +110,8 @@ async def test_arun_plugin_process_builds_controller_and_sets_runtime_env(
             (),
             {
                 "load_component_manifest": (
-                    lambda self, **kwargs: (
-                        calls.append(("load_manifest", kwargs)) or manifest
-                    )
+                    lambda self, **kwargs: calls.append(("load_manifest", kwargs))
+                    or manifest
                 )
             },
         )(),
@@ -120,9 +119,10 @@ async def test_arun_plugin_process_builds_controller_and_sets_runtime_env(
     monkeypatch.setattr(
         runplugin,
         "discover_plugin_components",
-        lambda plugin_manifest, engine: (
-            calls.append(("discover_components", plugin_manifest, engine)) or components
-        ),
+        lambda plugin_manifest, engine: calls.append(
+            ("discover_components", plugin_manifest, engine)
+        )
+        or components,
     )
     monkeypatch.setattr(
         runplugin,

@@ -58,13 +58,12 @@ def test_load_component_manifests_in_dir_respects_depth_and_file_extension(tmp_p
     components = engine.load_component_manifests_in_dir(str(tmp_path), max_depth=2)
 
     assert {component.metadata.name for component in components} == {"root", "nested"}
-    assert [
-        component.metadata.name
-        for component in engine.get_components_by_kind("Command")
-    ] == ["root"]
-    assert [
-        component.metadata.name for component in engine.get_components_by_kind("Tool")
-    ] == ["nested"]
+    assert [component.metadata.name for component in engine.get_components_by_kind("Command")] == [
+        "root"
+    ]
+    assert [component.metadata.name for component in engine.get_components_by_kind("Tool")] == [
+        "nested"
+    ]
 
 
 def test_discover_blueprint_loads_templates_before_other_component_groups(tmp_path):

@@ -6,15 +6,10 @@ import typing
 import enum
 import pydantic
 
-from typing import TYPE_CHECKING
-
 from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.definition.plugin import BasePlugin
 from langbot_plugin.api.definition.components.base import BaseComponent, NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
-
-if TYPE_CHECKING:
-    from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
 
 
 class RuntimeContainerStatus(enum.Enum):
@@ -63,9 +58,7 @@ class PluginContainer(pydantic.BaseModel):
     components: list[ComponentContainer]
     """组件容器列表"""
 
-    _runtime_plugin_handler: "PluginConnectionHandler | None" = pydantic.PrivateAttr(
-        default=None
-    )
+    _runtime_plugin_handler: typing.Any = pydantic.PrivateAttr(default=None)
 
     class Config:
         arbitrary_types_allowed = True

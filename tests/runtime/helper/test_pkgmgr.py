@@ -45,14 +45,10 @@ def test_parse_downloaded_bytes_supports_common_pip_units():
         ]
     )
 
-    assert (
-        pkgmgr._parse_downloaded_bytes(output) == int(1.5 * 1024) + 2 * 1024 * 1024 + 3
-    )
+    assert pkgmgr._parse_downloaded_bytes(output) == int(1.5 * 1024) + 2 * 1024 * 1024 + 3
 
 
-def test_install_single_builds_pip_command_and_returns_parsed_download_size(
-    monkeypatch,
-):
+def test_install_single_builds_pip_command_and_returns_parsed_download_size(monkeypatch):
     class Result:
         returncode = 0
         stdout = "Downloading pkg.whl (1 kB)"
@@ -60,11 +56,7 @@ def test_install_single_builds_pip_command_and_returns_parsed_download_size(
 
     calls = []
     monkeypatch.setattr(pkgmgr, "get_pip_index_args", lambda: ["-i", "https://mirror"])
-    monkeypatch.setattr(
-        pkgmgr.subprocess,
-        "run",
-        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or Result(),
-    )
+    monkeypatch.setattr(pkgmgr.subprocess, "run", lambda cmd, **kwargs: calls.append((cmd, kwargs)) or Result())
 
     returncode, downloaded, output = pkgmgr.install_single("demo", ["--no-deps"])
 

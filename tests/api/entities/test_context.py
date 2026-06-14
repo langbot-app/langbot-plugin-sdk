@@ -4,9 +4,7 @@ from langbot_plugin.api.entities import context as context_module
 from langbot_plugin.api.definition.abstract.platform.adapter import (
     AbstractMessagePlatformAdapter,
 )
-from langbot_plugin.api.definition.abstract.platform.event_logger import (
-    AbstractEventLogger,
-)
+from langbot_plugin.api.definition.abstract.platform.event_logger import AbstractEventLogger
 from langbot_plugin.api.entities.builtin.pipeline.query import Query
 from langbot_plugin.api.entities.builtin.platform.message import MessageChain, Plain
 from langbot_plugin.api.entities.builtin.platform.events import FriendMessage
