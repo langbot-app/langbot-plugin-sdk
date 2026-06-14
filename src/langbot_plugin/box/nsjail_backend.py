@@ -11,7 +11,8 @@ import shutil
 import signal
 import uuid
 
-from .backend import BaseSandboxBackend, _CommandResult
+from .backend import BaseSandboxBackend, _CommandResult, _MAX_RAW_OUTPUT_BYTES
+from .errors import BoxError
 from .models import (
     BoxExecutionResult,
     BoxExecutionStatus,
@@ -25,25 +26,25 @@ from .security import validate_sandbox_security
 # System directories to mount read-only inside the sandbox.
 # Only well-known paths needed for running Python/Node/shell commands.
 _READONLY_SYSTEM_MOUNTS: list[str] = [
-    "/usr",
-    "/lib",
-    "/lib64",
-    "/bin",
-    "/sbin",
+    '/usr',
+    '/lib',
+    '/lib64',
+    '/bin',
+    '/sbin',
 ]
 
 # Specific /etc entries required for dynamic linking and TLS.
 _READONLY_ETC_ENTRIES: list[str] = [
-    "/etc/alternatives",
-    "/etc/ld.so.cache",
-    "/etc/ld.so.conf",
-    "/etc/ld.so.conf.d",
-    "/etc/ssl/certs",
-    "/etc/localtime",
-    "/etc/resolv.conf",  # needed when network=ON
+    '/etc/alternatives',
+    '/etc/ld.so.cache',
+    '/etc/ld.so.conf',
+    '/etc/ld.so.conf.d',
+    '/etc/ssl/certs',
+    '/etc/localtime',
+    '/etc/resolv.conf',  # needed when network=ON
 ]
 
-_DEFAULT_BASE_DIR = "/tmp/langbot-box-nsjail"
+_DEFAULT_BASE_DIR = '/tmp/langbot-box-nsjail'
 
 
 class NsjailBackend(BaseSandboxBackend):
@@ -54,12 +55,12 @@ class NsjailBackend(BaseSandboxBackend):
     bind-mounted into every invocation.
     """
 
-    name = "nsjail"
+    name = 'nsjail'
 
     def __init__(
         self,
         logger: logging.Logger,
-        nsjail_bin: str = "nsjail",
+        nsjail_bin: str = 'nsjail',
         base_dir: str = _DEFAULT_BASE_DIR,
     ):
         super().__init__(logger)
@@ -71,30 +72,29 @@ class NsjailBackend(BaseSandboxBackend):
 
     async def is_available(self) -> bool:
         if shutil.which(self._nsjail_bin) is None:
-            self.logger.info("nsjail binary not found in PATH")
+            self.logger.info('nsjail binary not found in PATH')
             return False
 
         # Quick sanity check – nsjail --help exits 0.
         try:
             proc = await asyncio.create_subprocess_exec(
-                self._nsjail_bin,
-                "--help",
+                self._nsjail_bin, '--help',
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await asyncio.wait_for(proc.wait(), timeout=5)
             if proc.returncode != 0:
-                self.logger.info("nsjail --help returned non-zero")
+                self.logger.info('nsjail --help returned non-zero')
                 return False
         except Exception as exc:
-            self.logger.info(f"nsjail probe failed: {exc}")
+            self.logger.info(f'nsjail probe failed: {exc}')
             return False
 
         self._cgroup_v2_available = self._detect_cgroup_v2()
         if not self._cgroup_v2_available:
             self.logger.warning(
-                "cgroup v2 not available for nsjail; "
-                "falling back to rlimit-based resource limits"
+                'cgroup v2 not available for nsjail; '
+                'falling back to rlimit-based resource limits'
             )
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -104,16 +104,14 @@ class NsjailBackend(BaseSandboxBackend):
         validate_sandbox_security(spec)
 
         now = dt.datetime.now(dt.timezone.utc)
-        session_dir_name = (
-            f"{self.instance_id}_{spec.session_id}_{uuid.uuid4().hex[:8]}"
-        )
+        session_dir_name = f'{self.instance_id}_{spec.session_id}_{uuid.uuid4().hex[:8]}'
         session_dir = self._base_dir / session_dir_name
 
         # Per-session writable directories.
-        root_dir = session_dir / "root"
-        workspace_dir = session_dir / "workspace"
-        tmp_dir = session_dir / "tmp"
-        home_dir = session_dir / "home"
+        root_dir = session_dir / 'root'
+        workspace_dir = session_dir / 'workspace'
+        tmp_dir = session_dir / 'tmp'
+        home_dir = session_dir / 'home'
 
         for d in (root_dir, workspace_dir, tmp_dir, home_dir):
             d.mkdir(parents=True, exist_ok=True)
@@ -121,26 +119,26 @@ class NsjailBackend(BaseSandboxBackend):
         # If host_path is specified, we will use it directly instead of the
         # per-session workspace when building nsjail args (see _build_mounts).
         meta = {
-            "session_id": spec.session_id,
-            "instance_id": self.instance_id,
-            "host_path": spec.host_path,
-            "host_path_mode": spec.host_path_mode.value if spec.host_path else None,
-            "mount_path": spec.mount_path,
-            "network": spec.network.value,
-            "cpus": spec.cpus,
-            "memory_mb": spec.memory_mb,
-            "pids_limit": spec.pids_limit,
-            "created_at": now.isoformat(),
+            'session_id': spec.session_id,
+            'instance_id': self.instance_id,
+            'host_path': spec.host_path,
+            'host_path_mode': spec.host_path_mode.value if spec.host_path else None,
+            'mount_path': spec.mount_path,
+            'network': spec.network.value,
+            'cpus': spec.cpus,
+            'memory_mb': spec.memory_mb,
+            'pids_limit': spec.pids_limit,
+            'created_at': now.isoformat(),
         }
-        (session_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+        (session_dir / 'meta.json').write_text(json.dumps(meta, indent=2))
 
         self.logger.info(
-            f"LangBot Box backend start_session: backend=nsjail "
-            f"session_id={spec.session_id} session_dir={session_dir} "
-            f"network={spec.network.value} "
-            f"host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} "
-            f"cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} "
-            f"workspace_quota_mb={spec.workspace_quota_mb}"
+            f'LangBot Box backend start_session: backend=nsjail '
+            f'session_id={spec.session_id} session_dir={session_dir} '
+            f'network={spec.network.value} '
+            f'host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} '
+            f'cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} '
+            f'workspace_quota_mb={spec.workspace_quota_mb}'
         )
 
         return BoxSessionInfo(
@@ -173,18 +171,16 @@ class NsjailBackend(BaseSandboxBackend):
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
-            cmd_preview = f"{cmd_preview[:397]}..."
+            cmd_preview = f'{cmd_preview[:397]}...'
         self.logger.info(
-            f"LangBot Box backend exec: backend=nsjail "
-            f"session_id={session.session_id} session_dir={session_dir} "
-            f"workdir={spec.workdir} timeout_sec={spec.timeout_sec} "
-            f"env_keys={sorted(spec.env.keys())} cmd={cmd_preview}"
+            f'LangBot Box backend exec: backend=nsjail '
+            f'session_id={session.session_id} session_dir={session_dir} '
+            f'workdir={spec.workdir} timeout_sec={spec.timeout_sec} '
+            f'env_keys={sorted(spec.env.keys())} cmd={cmd_preview}'
         )
 
         result = await self._run_nsjail(args, timeout_sec=spec.timeout_sec)
-        duration_ms = int(
-            (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
-        )
+        duration_ms = int((dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000)
 
         if result.timed_out:
             return BoxExecutionResult(
@@ -193,8 +189,7 @@ class NsjailBackend(BaseSandboxBackend):
                 status=BoxExecutionStatus.TIMED_OUT,
                 exit_code=None,
                 stdout=result.stdout,
-                stderr=result.stderr
-                or f"Command timed out after {spec.timeout_sec} seconds.",
+                stderr=result.stderr or f'Command timed out after {spec.timeout_sec} seconds.',
                 duration_ms=duration_ms,
             )
 
@@ -211,8 +206,8 @@ class NsjailBackend(BaseSandboxBackend):
     async def stop_session(self, session: BoxSessionInfo):
         session_dir = pathlib.Path(session.backend_session_id)
         self.logger.info(
-            f"LangBot Box backend stop_session: backend=nsjail "
-            f"session_id={session.session_id} session_dir={session_dir}"
+            f'LangBot Box backend stop_session: backend=nsjail '
+            f'session_id={session.session_id} session_dir={session_dir}'
         )
 
         # Kill any lingering nsjail processes whose cwd is inside session_dir.
@@ -222,9 +217,7 @@ class NsjailBackend(BaseSandboxBackend):
             if session_dir.exists():
                 shutil.rmtree(session_dir)
         except Exception as exc:
-            self.logger.warning(
-                f"Failed to remove nsjail session dir {session_dir}: {exc}"
-            )
+            self.logger.warning(f'Failed to remove nsjail session dir {session_dir}: {exc}')
 
     async def start_managed_process(
         self, session: BoxSessionInfo, spec
@@ -233,9 +226,7 @@ class NsjailBackend(BaseSandboxBackend):
 
         # Build a BoxSpec-like object so we can reuse _build_nsjail_args.
         # ManagedProcessSpec has command/args/cwd/env but not the full BoxSpec.
-        inner_cmd = " ".join(
-            [shlex.quote(spec.command), *[shlex.quote(a) for a in spec.args]]
-        )
+        inner_cmd = ' '.join([shlex.quote(spec.command), *[shlex.quote(a) for a in spec.args]])
         pseudo_spec = BoxSpec(
             cmd=inner_cmd,
             workdir=spec.cwd,
@@ -255,10 +246,10 @@ class NsjailBackend(BaseSandboxBackend):
         args = self._build_nsjail_args(session, pseudo_spec, session_dir)
 
         self.logger.info(
-            f"LangBot Box backend start_managed_process: backend=nsjail "
-            f"session_id={session.session_id} session_dir={session_dir} "
-            f"cwd={spec.cwd} env_keys={sorted(spec.env.keys())} "
-            f"command={spec.command} args={spec.args}"
+            f'LangBot Box backend start_managed_process: backend=nsjail '
+            f'session_id={session.session_id} session_dir={session_dir} '
+            f'cwd={spec.cwd} env_keys={sorted(spec.env.keys())} '
+            f'command={spec.command} args={spec.args}'
         )
 
         return await asyncio.create_subprocess_exec(
@@ -268,7 +259,7 @@ class NsjailBackend(BaseSandboxBackend):
             stderr=asyncio.subprocess.PIPE,
         )
 
-    async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
+    async def cleanup_orphaned_containers(self, current_instance_id: str = ''):
         if not self._base_dir.exists():
             return
 
@@ -278,17 +269,15 @@ class NsjailBackend(BaseSandboxBackend):
 
             # Session dirs are named: <instance_id>_<session_id>_<suffix>
             # If it doesn't start with the current instance_id, it's orphaned.
-            if entry.name.startswith(f"{current_instance_id}_"):
+            if entry.name.startswith(f'{current_instance_id}_'):
                 continue
 
-            self.logger.info(f"Cleaning up orphaned nsjail session dir: {entry}")
+            self.logger.info(f'Cleaning up orphaned nsjail session dir: {entry}')
             try:
                 await self._kill_session_processes(entry)
                 shutil.rmtree(entry)
             except Exception as exc:
-                self.logger.warning(
-                    f"Failed to clean up orphaned nsjail dir {entry}: {exc}"
-                )
+                self.logger.warning(f'Failed to clean up orphaned nsjail dir {entry}: {exc}')
 
     # ── nsjail argument construction ──────────────────────────────────
 
@@ -301,7 +290,7 @@ class NsjailBackend(BaseSandboxBackend):
         args: list[str] = [self._nsjail_bin]
 
         # Mode: one-shot execution.
-        args.extend(["--mode", "o"])
+        args.extend(['--mode', 'o'])
 
         # nsjail enables the relevant clone namespaces by default. Some
         # versions do not expose positive --clone_new* flags, only disable
@@ -309,14 +298,14 @@ class NsjailBackend(BaseSandboxBackend):
 
         # Use a per-session chroot root so nsjail can create mount targets
         # without needing write access to the host root.
-        root_dir = session_dir / "root"
+        root_dir = session_dir / 'root'
         root_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_chroot_mount_targets(root_dir, session, spec)
-        args.extend(["--chroot", str(root_dir)])
+        args.extend(['--chroot', str(root_dir)])
 
         # Network namespace.
         if spec.network != BoxNetworkMode.OFF:
-            args.append("--disable_clone_newnet")
+            args.append('--disable_clone_newnet')
 
         # Read-only system mounts.
         args.extend(self._build_readonly_mounts(spec.network))
@@ -325,34 +314,29 @@ class NsjailBackend(BaseSandboxBackend):
         args.extend(self._build_writable_mounts(session, spec, session_dir))
 
         # Isolated /proc and minimal /dev.
-        args.extend(["--mount", "none:/proc:proc:rw"])
-        args.extend(["--mount", "none:/dev:tmpfs:rw"])
+        args.extend(['--mount', 'none:/proc:proc:rw'])
+        args.extend(['--mount', 'none:/dev:tmpfs:rw'])
 
         # Working directory.
-        args.extend(["--cwd", spec.workdir])
+        args.extend(['--cwd', spec.workdir])
 
         # Environment variables.
-        args.extend(["--env", "PYTHONUNBUFFERED=1"])
-        args.extend(["--env", "HOME=/home"])
-        args.extend(
-            [
-                "--env",
-                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            ]
-        )
+        args.extend(['--env', 'PYTHONUNBUFFERED=1'])
+        args.extend(['--env', 'HOME=/home'])
+        args.extend(['--env', 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'])
         for key, value in spec.env.items():
-            args.extend(["--env", f"{key}={value}"])
+            args.extend(['--env', f'{key}={value}'])
 
         # Resource limits.
         args.extend(self._build_resource_limits(spec))
 
         # Suppress nsjail's own log output.
-        args.append("--really_quiet")
+        args.append('--really_quiet')
 
         # The actual command.
         quoted_workdir = shlex.quote(spec.workdir)
-        user_cmd = f"mkdir -p {quoted_workdir} && cd {quoted_workdir} && {spec.cmd}"
-        args.extend(["--", "/bin/sh", "-lc", user_cmd])
+        user_cmd = f'mkdir -p {quoted_workdir} && cd {quoted_workdir} && {spec.cmd}'
+        args.extend(['--', '/bin/sh', '-lc', user_cmd])
 
         return args
 
@@ -361,14 +345,14 @@ class NsjailBackend(BaseSandboxBackend):
 
         for path in _READONLY_SYSTEM_MOUNTS:
             if os.path.exists(path):
-                args.extend(["--bindmount_ro", f"{path}:{path}"])
+                args.extend(['--bindmount_ro', f'{path}:{path}'])
 
         for path in _READONLY_ETC_ENTRIES:
             # /etc/resolv.conf is only needed when network is ON.
-            if path == "/etc/resolv.conf" and network == BoxNetworkMode.OFF:
+            if path == '/etc/resolv.conf' and network == BoxNetworkMode.OFF:
                 continue
             if os.path.exists(path):
-                args.extend(["--bindmount_ro", f"{path}:{path}"])
+                args.extend(['--bindmount_ro', f'{path}:{path}'])
 
         return args
 
@@ -383,24 +367,24 @@ class NsjailBackend(BaseSandboxBackend):
         # Workspace mount.
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
             if spec.host_path_mode == BoxHostMountMode.READ_ONLY:
-                args.extend(["--bindmount_ro", f"{spec.host_path}:{spec.mount_path}"])
+                args.extend(['--bindmount_ro', f'{spec.host_path}:{spec.mount_path}'])
             else:
-                args.extend(["--bindmount", f"{spec.host_path}:{spec.mount_path}"])
+                args.extend(['--bindmount', f'{spec.host_path}:{spec.mount_path}'])
         else:
-            workspace_dir = session_dir / "workspace"
-            args.extend(["--bindmount", f"{workspace_dir}:{spec.mount_path}"])
+            workspace_dir = session_dir / 'workspace'
+            args.extend(['--bindmount', f'{workspace_dir}:{spec.mount_path}'])
 
         for mount in spec.extra_mounts:
             if mount.mode == BoxHostMountMode.READ_ONLY:
-                args.extend(["--bindmount_ro", f"{mount.host_path}:{mount.mount_path}"])
+                args.extend(['--bindmount_ro', f'{mount.host_path}:{mount.mount_path}'])
             elif mount.mode == BoxHostMountMode.READ_WRITE:
-                args.extend(["--bindmount", f"{mount.host_path}:{mount.mount_path}"])
+                args.extend(['--bindmount', f'{mount.host_path}:{mount.mount_path}'])
 
         # /tmp and /home are always per-session writable.
-        tmp_dir = session_dir / "tmp"
-        home_dir = session_dir / "home"
-        args.extend(["--bindmount", f"{tmp_dir}:/tmp"])
-        args.extend(["--bindmount", f"{home_dir}:/home"])
+        tmp_dir = session_dir / 'tmp'
+        home_dir = session_dir / 'home'
+        args.extend(['--bindmount', f'{tmp_dir}:/tmp'])
+        args.extend(['--bindmount', f'{home_dir}:/home'])
 
         return args
 
@@ -411,10 +395,10 @@ class NsjailBackend(BaseSandboxBackend):
         spec: BoxSpec,
     ) -> None:
         mount_paths = {
-            "/proc",
-            "/dev",
-            "/tmp",
-            "/home",
+            '/proc',
+            '/dev',
+            '/tmp',
+            '/home',
             spec.mount_path,
             session.mount_path,
         }
@@ -426,7 +410,7 @@ class NsjailBackend(BaseSandboxBackend):
         for mount_path in mount_paths:
             if not mount_path:
                 continue
-            target = root_dir / mount_path.lstrip("/")
+            target = root_dir / mount_path.lstrip('/')
             try:
                 if os.path.isfile(mount_path):
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -434,9 +418,7 @@ class NsjailBackend(BaseSandboxBackend):
                 else:
                     target.mkdir(parents=True, exist_ok=True)
             except Exception as exc:
-                self.logger.debug(
-                    f"Failed to prepare nsjail mount target {target}: {exc}"
-                )
+                self.logger.debug(f'Failed to prepare nsjail mount target {target}: {exc}')
 
     def _build_resource_limits(self, spec: BoxSpec) -> list[str]:
         args: list[str] = []
@@ -444,18 +426,18 @@ class NsjailBackend(BaseSandboxBackend):
         if self._cgroup_v2_available:
             # cgroup v2 – precise limits.
             memory_bytes = spec.memory_mb * 1024 * 1024
-            args.extend(["--cgroup_mem_max", str(memory_bytes)])
-            args.extend(["--cgroup_pids_max", str(spec.pids_limit)])
+            args.extend(['--cgroup_mem_max', str(memory_bytes)])
+            args.extend(['--cgroup_pids_max', str(spec.pids_limit)])
             cpu_ms = int(spec.cpus * 1000)
-            args.extend(["--cgroup_cpu_ms_per_sec", str(cpu_ms)])
+            args.extend(['--cgroup_cpu_ms_per_sec', str(cpu_ms)])
         else:
             # rlimit fallback – best-effort.
-            args.extend(["--rlimit_as", str(spec.memory_mb)])
-            args.extend(["--rlimit_nproc", str(spec.pids_limit)])
+            args.extend(['--rlimit_as', str(spec.memory_mb)])
+            args.extend(['--rlimit_nproc', str(spec.pids_limit)])
 
         # Always set these rlimits regardless of cgroup mode.
-        args.extend(["--rlimit_fsize", "512"])  # max file size 512 MB
-        args.extend(["--rlimit_nofile", "256"])  # max open fds
+        args.extend(['--rlimit_fsize', '512'])    # max file size 512 MB
+        args.extend(['--rlimit_nofile', '256'])    # max open fds
 
         return args
 
@@ -497,17 +479,17 @@ class NsjailBackend(BaseSandboxBackend):
     @staticmethod
     def _detect_cgroup_v2() -> bool:
         """Check whether the host runs cgroup v2 and we can write to it."""
-        cgroup_mount = pathlib.Path("/sys/fs/cgroup")
+        cgroup_mount = pathlib.Path('/sys/fs/cgroup')
         if not cgroup_mount.exists():
             return False
         # cgroup v2 has a single hierarchy with cgroup.controllers file.
-        controllers = cgroup_mount / "cgroup.controllers"
+        controllers = cgroup_mount / 'cgroup.controllers'
         if not controllers.exists():
             return False
         # Check if we can write to a cgroup subtree (needed for nsjail).
         # A rough heuristic: if the user owns a cgroup directory we're probably
         # running under systemd user delegation.
-        user_slice = cgroup_mount / f"user.slice/user-{os.getuid()}.slice"
+        user_slice = cgroup_mount / f'user.slice/user-{os.getuid()}.slice'
         if user_slice.exists() and os.access(user_slice, os.W_OK):
             return True
         # If running as root (uid 0), cgroup v2 is always usable.
@@ -523,7 +505,7 @@ class NsjailBackend(BaseSandboxBackend):
         session directory path.
         """
         session_path_str = str(session_dir)
-        proc_dir = pathlib.Path("/proc")
+        proc_dir = pathlib.Path('/proc')
         if not proc_dir.exists():
             return
 
@@ -531,12 +513,40 @@ class NsjailBackend(BaseSandboxBackend):
             if not pid_dir.name.isdigit():
                 continue
             try:
-                cmdline = (
-                    (pid_dir / "cmdline").read_bytes().decode("utf-8", errors="replace")
-                )
+                cmdline = (pid_dir / 'cmdline').read_bytes().decode('utf-8', errors='replace')
                 if self._nsjail_bin in cmdline and session_path_str in cmdline:
                     pid = int(pid_dir.name)
                     os.kill(pid, signal.SIGKILL)
-                    self.logger.info(f"Killed orphaned nsjail process {pid}")
+                    self.logger.info(f'Killed orphaned nsjail process {pid}')
             except (OSError, ValueError):
                 continue
+
+    @staticmethod
+    def _clip_captured_bytes(
+        data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES
+    ) -> str:
+        text = data.decode('utf-8', errors='replace').strip()
+        if total_size > limit:
+            text += f'\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]'
+        return text
+
+    @staticmethod
+    async def _read_stream(
+        stream: asyncio.StreamReader | None,
+        limit: int = _MAX_RAW_OUTPUT_BYTES,
+    ) -> tuple[bytes, int]:
+        if stream is None:
+            return b'', 0
+
+        chunks = bytearray()
+        total_size = 0
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            remaining = limit - len(chunks)
+            if remaining > 0:
+                chunks.extend(chunk[:remaining])
+
+        return bytes(chunks), total_size
