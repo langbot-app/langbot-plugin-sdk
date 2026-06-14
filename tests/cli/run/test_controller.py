@@ -82,7 +82,9 @@ def test_controller_builds_unmounted_placeholder_container():
     assert controller.ws_debug_url == "ws://runtime/plugin/ws"
     assert controller.plugin_container.status is RuntimeContainerStatus.UNMOUNTED
     assert isinstance(controller.plugin_container.plugin_instance, NonePlugin)
-    assert [component.manifest.kind for component in controller.plugin_container.components] == [
+    assert [
+        component.manifest.kind for component in controller.plugin_container.components
+    ] == [
         "Tool",
         "EventListener",
         "UnknownKind",
@@ -159,9 +161,7 @@ async def test_cleanup_instances_resets_runtime_objects(monkeypatch):
         fake_component_class,
     )
 
-    await controller.initialize(
-        {"enabled": True, "priority": 0, "plugin_config": {}}
-    )
+    await controller.initialize({"enabled": True, "priority": 0, "plugin_config": {}})
     await controller.cleanup_instances()
 
     assert isinstance(controller.plugin_container.plugin_instance, NonePlugin)

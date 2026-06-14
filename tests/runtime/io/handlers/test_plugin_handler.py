@@ -18,7 +18,9 @@ class FakeManifest:
         self.metadata = SimpleNamespace(author=author, name=name)
 
     def model_dump(self, **kwargs):
-        return {"metadata": {"author": self.metadata.author, "name": self.metadata.name}}
+        return {
+            "metadata": {"author": self.metadata.author, "name": self.metadata.name}
+        }
 
 
 class FakePluginContainer:
@@ -58,9 +60,7 @@ class FakePluginManager:
         return self.tools
 
     async def call_tool(self, tool_name, tool_parameters, session, query_id):
-        self.calls.append(
-            ("call_tool", tool_name, tool_parameters, session, query_id)
-        )
+        self.calls.append(("call_tool", tool_name, tool_parameters, session, query_id))
         return {"text": "tool response"}
 
     async def list_commands(self):
@@ -98,7 +98,9 @@ def _handler(debug_plugin=False):
 
 async def test_plugin_handler_registers_plugin_when_debug_key_matches(monkeypatch):
     handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(plugin_handler_module.runtime_settings, "plugin_debug_key", "key")
+    monkeypatch.setattr(
+        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
+    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -107,14 +109,14 @@ async def test_plugin_handler_registers_plugin_when_debug_key_matches(monkeypatc
         )
 
     assert response["code"] == 0
-    assert manager.calls == [
-        ("register_plugin", handler, {"id": "plugin"}, True)
-    ]
+    assert manager.calls == [("register_plugin", handler, {"id": "plugin"}, True)]
 
 
 async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch):
     handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(plugin_handler_module.runtime_settings, "plugin_debug_key", "key")
+    monkeypatch.setattr(
+        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
+    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -139,9 +141,7 @@ async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch)
 
     assert response["code"] == 0
     assert handler.debug_plugin is False
-    assert manager.calls == [
-        ("register_plugin", handler, {"id": "plugin"}, False)
-    ]
+    assert manager.calls == [("register_plugin", handler, {"id": "plugin"}, False)]
 
 
 async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
@@ -206,7 +206,9 @@ async def test_plugin_handler_workspace_storage_uses_default_workspace_owner():
 
 async def test_plugin_handler_forwards_config_file_requests_to_langbot():
     handler, _manager, control = _handler()
-    control.results[RuntimeToLangBotAction.GET_CONFIG_FILE] = {"file_base64": "Y29uZmln"}
+    control.results[RuntimeToLangBotAction.GET_CONFIG_FILE] = {
+        "file_base64": "Y29uZmln"
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
