@@ -34,6 +34,15 @@ from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
     HistoryPage,
     HistorySearchResult,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRuntime,
+    RunEventPage,
+    RunPage,
+    RuntimePage,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 from langbot_plugin.api.entities.builtin.agent_runner.errors import (
     AgentAPIError,
     AgentAPIException,
@@ -956,6 +965,321 @@ class AgentRunAPIProxy:
             timeout,
         )
         return EventPage.model_validate(resp)
+
+    # ================= Run Ledger APIs (run-scoped) =================
+
+    async def run_get(self, run_id: str | None = None) -> AgentRun:
+        """Get one Host-owned run record.
+
+        Args:
+            run_id: Run ID to retrieve. Defaults to the current run.
+
+        Returns:
+            AgentRun record.
+
+        Raises:
+            PermissionDeniedError: If run_get is not available.
+        """
+        self._require_context_api("run_get")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_GET,
+            {
+                "run_id": self.run_id,
+                "target_run_id": run_id or self.run_id,
+            },
+            timeout,
+        )
+        return AgentRun.model_validate(resp)
+
+    async def run_list(
+        self,
+        conversation_id: str | None = None,
+        statuses: list[str] | None = None,
+        before_cursor: str | None = None,
+        limit: int = 50,
+    ) -> RunPage:
+        """List Host-owned run records visible to the current run scope.
+
+        Args:
+            conversation_id: Conversation ID to query. Must match current run
+                scope if supplied.
+            statuses: Optional run status filter.
+            before_cursor: Cursor returned by a previous page.
+            limit: Maximum items to return. Host applies a hard cap.
+        """
+        self._require_context_api("run_list")
+        timeout = self._bounded_timeout(default=30.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_LIST,
+            {
+                "run_id": self.run_id,
+                "conversation_id": conversation_id,
+                "statuses": statuses,
+                "before_cursor": before_cursor,
+                "limit": limit,
+            },
+            timeout,
+        )
+        return RunPage.model_validate(resp)
+
+    async def run_events_page(
+        self,
+        run_id: str | None = None,
+        before_cursor: str | None = None,
+        after_cursor: str | None = None,
+        limit: int = 50,
+        direction: str = "forward",
+    ) -> RunEventPage:
+        """Page through result events for one Host-owned run.
+
+        Args:
+            run_id: Run ID to inspect. Defaults to the current run.
+            before_cursor: Get events before this sequence.
+            after_cursor: Get events after this sequence.
+            limit: Maximum items to return. Host applies a hard cap.
+            direction: "forward" or "backward".
+        """
+        self._require_context_api("run_events_page")
+        timeout = self._bounded_timeout(default=30.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_EVENTS_PAGE,
+            {
+                "run_id": self.run_id,
+                "target_run_id": run_id or self.run_id,
+                "before_cursor": before_cursor,
+                "after_cursor": after_cursor,
+                "limit": limit,
+                "direction": direction,
+            },
+            timeout,
+        )
+        return RunEventPage.model_validate(resp)
+
+    async def run_cancel(
+        self,
+        run_id: str | None = None,
+        reason: str | None = None,
+    ) -> AgentRun:
+        """Request cancellation for one Host-owned run.
+
+        Args:
+            run_id: Run ID to cancel. Defaults to the current run.
+            reason: Optional cancellation reason for Host audit/debug output.
+        """
+        self._require_context_api("run_cancel")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_CANCEL,
+            {
+                "run_id": self.run_id,
+                "target_run_id": run_id or self.run_id,
+                "reason": reason,
+            },
+            timeout,
+        )
+        return AgentRun.model_validate(resp)
+
+    async def run_append_result(
+        self,
+        result: AgentRunResult,
+    ) -> AgentRunEvent:
+        """Append one result event to a Host-owned run ledger.
+
+        Args:
+            result: Existing AgentRunResult DTO to persist.
+        """
+        self._require_context_api("run_append_result")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_APPEND_RESULT,
+            {
+                "run_id": self.run_id,
+                "target_run_id": result.run_id,
+                "result": result.model_dump(mode="json"),
+            },
+            timeout,
+        )
+        return AgentRunEvent.model_validate(resp)
+
+    async def run_finalize(
+        self,
+        run_id: str | None = None,
+        status: str | None = None,
+        reason: str | None = None,
+    ) -> AgentRun:
+        """Finalize one Host-owned run ledger record.
+
+        Args:
+            run_id: Run ID to finalize. Defaults to the current run.
+            status: Optional terminal status supplied by the caller.
+            reason: Optional terminal status reason for Host audit/debug output.
+        """
+        self._require_context_api("run_finalize")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_FINALIZE,
+            {
+                "run_id": self.run_id,
+                "target_run_id": run_id or self.run_id,
+                "status": status,
+                "reason": reason,
+            },
+            timeout,
+        )
+        return AgentRun.model_validate(resp)
+
+    # ================= Runtime Registry and Claim Lease APIs =================
+
+    async def runtime_register(
+        self,
+        runtime_id: str,
+        status: str = "online",
+        display_name: str | None = None,
+        endpoint: str | None = None,
+        version: str | None = None,
+        capabilities: dict[str, Any] | None = None,
+        labels: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        heartbeat_deadline_at: int | None = None,
+    ) -> AgentRuntime:
+        """Register or update one Host-owned runtime record."""
+        self._require_context_api("runtime_register")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUNTIME_REGISTER,
+            {
+                "run_id": self.run_id,
+                "runtime_id": runtime_id,
+                "status": status,
+                "display_name": display_name,
+                "endpoint": endpoint,
+                "version": version,
+                "capabilities": capabilities or {},
+                "labels": labels or {},
+                "metadata": metadata or {},
+                "heartbeat_deadline_at": heartbeat_deadline_at,
+            },
+            timeout,
+        )
+        return AgentRuntime.model_validate(resp)
+
+    async def runtime_heartbeat(
+        self,
+        runtime_id: str,
+        status: str | None = None,
+        capabilities: dict[str, Any] | None = None,
+        labels: dict[str, str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        heartbeat_deadline_at: int | None = None,
+    ) -> AgentRuntime:
+        """Refresh one Host-owned runtime record heartbeat."""
+        self._require_context_api("runtime_heartbeat")
+        timeout = self._bounded_timeout(default=10.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUNTIME_HEARTBEAT,
+            {
+                "run_id": self.run_id,
+                "runtime_id": runtime_id,
+                "status": status,
+                "capabilities": capabilities,
+                "labels": labels,
+                "metadata": metadata,
+                "heartbeat_deadline_at": heartbeat_deadline_at,
+            },
+            timeout,
+        )
+        return AgentRuntime.model_validate(resp)
+
+    async def runtime_list(
+        self,
+        statuses: list[str] | None = None,
+        labels: dict[str, str] | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> RuntimePage:
+        """List Host-owned runtime records visible to this API scope."""
+        self._require_context_api("runtime_list")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUNTIME_LIST,
+            {
+                "run_id": self.run_id,
+                "statuses": statuses,
+                "labels": labels or {},
+                "cursor": cursor,
+                "limit": limit,
+            },
+            timeout,
+        )
+        return RuntimePage.model_validate(resp)
+
+    async def run_claim(
+        self,
+        runtime_id: str,
+        queue_name: str | None = None,
+        lease_seconds: int = 60,
+    ) -> AgentRun:
+        """Claim one queued run for a runtime lease."""
+        self._require_context_api("run_claim")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_CLAIM,
+            {
+                "run_id": self.run_id,
+                "runtime_id": runtime_id,
+                "queue_name": queue_name,
+                "lease_seconds": lease_seconds,
+            },
+            timeout,
+        )
+        return AgentRun.model_validate(resp)
+
+    async def run_renew_claim(
+        self,
+        run_id: str,
+        runtime_id: str,
+        claim_token: str,
+        lease_seconds: int = 60,
+    ) -> AgentRun:
+        """Renew an existing run claim lease."""
+        self._require_context_api("run_renew_claim")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_RENEW_CLAIM,
+            {
+                "run_id": self.run_id,
+                "target_run_id": run_id,
+                "runtime_id": runtime_id,
+                "claim_token": claim_token,
+                "lease_seconds": lease_seconds,
+            },
+            timeout,
+        )
+        return AgentRun.model_validate(resp)
+
+    async def run_release_claim(
+        self,
+        run_id: str,
+        runtime_id: str,
+        claim_token: str,
+        reason: str | None = None,
+    ) -> AgentRun:
+        """Release an existing run claim lease."""
+        self._require_context_api("run_release_claim")
+        timeout = self._bounded_timeout(default=15.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.RUN_RELEASE_CLAIM,
+            {
+                "run_id": self.run_id,
+                "target_run_id": run_id,
+                "runtime_id": runtime_id,
+                "claim_token": claim_token,
+                "reason": reason,
+            },
+            timeout,
+        )
+        return AgentRun.model_validate(resp)
 
     async def steering_pull(
         self,
