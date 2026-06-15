@@ -64,6 +64,42 @@ class ContextAPICapabilities(pydantic.BaseModel):
     steering_pull: bool = False
     """Whether run-scoped steering/follow-up pull API is available."""
 
+    run_get: bool = False
+    """Whether run.get API is available."""
+
+    run_list: bool = False
+    """Whether run.list API is available."""
+
+    run_events_page: bool = False
+    """Whether run.events.page API is available."""
+
+    run_cancel: bool = False
+    """Whether run.cancel API is available."""
+
+    run_append_result: bool = False
+    """Whether run.append_result API is available."""
+
+    run_finalize: bool = False
+    """Whether run.finalize API is available."""
+
+    runtime_register: bool = False
+    """Whether runtime.register API is available."""
+
+    runtime_heartbeat: bool = False
+    """Whether runtime.heartbeat API is available."""
+
+    runtime_list: bool = False
+    """Whether runtime.list API is available."""
+
+    run_claim: bool = False
+    """Whether run.claim API is available."""
+
+    run_renew_claim: bool = False
+    """Whether run.renew_claim API is available."""
+
+    run_release_claim: bool = False
+    """Whether run.release_claim API is available."""
+
 
 class ContextAccess(pydantic.BaseModel):
     """Context access descriptor for the runner.

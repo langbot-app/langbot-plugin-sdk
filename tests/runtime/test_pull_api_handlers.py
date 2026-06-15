@@ -73,6 +73,18 @@ class TestPluginConnectionHandlerPullAPIRegistration:
             PluginToRuntimeAction.STATE_SET,
             PluginToRuntimeAction.STATE_DELETE,
             PluginToRuntimeAction.STATE_LIST,
+            PluginToRuntimeAction.RUN_GET,
+            PluginToRuntimeAction.RUN_LIST,
+            PluginToRuntimeAction.RUN_EVENTS_PAGE,
+            PluginToRuntimeAction.RUN_CANCEL,
+            PluginToRuntimeAction.RUN_APPEND_RESULT,
+            PluginToRuntimeAction.RUN_FINALIZE,
+            PluginToRuntimeAction.RUNTIME_REGISTER,
+            PluginToRuntimeAction.RUNTIME_HEARTBEAT,
+            PluginToRuntimeAction.RUNTIME_LIST,
+            PluginToRuntimeAction.RUN_CLAIM,
+            PluginToRuntimeAction.RUN_RENEW_CLAIM,
+            PluginToRuntimeAction.RUN_RELEASE_CLAIM,
         ]
 
         for action in expected_actions:
@@ -516,6 +528,54 @@ class TestPluginConnectionHandlerCallerIdentity:
             (
                 PluginToRuntimeAction.ARTIFACT_READ,
                 {"run_id": "r", "artifact_id": "a", "offset": 0, "limit": 100},
+            ),
+            (PluginToRuntimeAction.RUN_GET, {"run_id": "r"}),
+            (PluginToRuntimeAction.RUN_LIST, {"run_id": "r"}),
+            (PluginToRuntimeAction.RUN_EVENTS_PAGE, {"run_id": "r"}),
+            (PluginToRuntimeAction.RUN_CANCEL, {"run_id": "r"}),
+            (
+                PluginToRuntimeAction.RUN_APPEND_RESULT,
+                {
+                    "run_id": "r",
+                    "target_run_id": "r",
+                    "sequence": 1,
+                    "result": {"type": "run.completed", "data": {}},
+                },
+            ),
+            (
+                PluginToRuntimeAction.RUN_FINALIZE,
+                {"run_id": "r", "status": "completed"},
+            ),
+            (
+                PluginToRuntimeAction.RUNTIME_REGISTER,
+                {"run_id": "r", "runtime_id": "runtime-1"},
+            ),
+            (
+                PluginToRuntimeAction.RUNTIME_HEARTBEAT,
+                {"run_id": "r", "runtime_id": "runtime-1"},
+            ),
+            (PluginToRuntimeAction.RUNTIME_LIST, {"run_id": "r"}),
+            (
+                PluginToRuntimeAction.RUN_CLAIM,
+                {"run_id": "r", "runtime_id": "runtime-1"},
+            ),
+            (
+                PluginToRuntimeAction.RUN_RENEW_CLAIM,
+                {
+                    "run_id": "r",
+                    "target_run_id": "target-r",
+                    "runtime_id": "runtime-1",
+                    "claim_token": "token",
+                },
+            ),
+            (
+                PluginToRuntimeAction.RUN_RELEASE_CLAIM,
+                {
+                    "run_id": "r",
+                    "target_run_id": "target-r",
+                    "runtime_id": "runtime-1",
+                    "claim_token": "token",
+                },
             ),
         ]
 

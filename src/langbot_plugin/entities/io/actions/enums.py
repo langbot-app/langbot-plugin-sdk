@@ -90,6 +90,22 @@ class PluginToRuntimeAction(ActionType):
     EVENT_PAGE = "event_page"
     STEERING_PULL = "steering_pull"
 
+    """Agent Run Ledger APIs (run-scoped, requires run_id authorization)"""
+    RUN_GET = "run_get"
+    RUN_LIST = "run_list"
+    RUN_EVENTS_PAGE = "run_events_page"
+    RUN_CANCEL = "run_cancel"
+    RUN_APPEND_RESULT = "run_append_result"
+    RUN_FINALIZE = "run_finalize"
+    RUN_CLAIM = "run_claim"
+    RUN_RENEW_CLAIM = "run_renew_claim"
+    RUN_RELEASE_CLAIM = "run_release_claim"
+
+    """Agent Runtime Registry APIs (Host control-plane scoped)"""
+    RUNTIME_REGISTER = "runtime_register"
+    RUNTIME_HEARTBEAT = "runtime_heartbeat"
+    RUNTIME_LIST = "runtime_list"
+
     """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
     ARTIFACT_METADATA = "artifact_metadata"
     ARTIFACT_READ = "artifact_read"

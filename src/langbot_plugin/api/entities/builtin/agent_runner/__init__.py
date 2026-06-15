@@ -64,6 +64,15 @@ from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
     AgentEventRecord,
     EventPage,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRuntime,
+    AgentRunStatus,
+    RunEventPage,
+    RunPage,
+    RuntimePage,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
     ArtifactMetadata,
     ArtifactReadResult,
@@ -134,6 +143,14 @@ __all__ = [
     "HistorySearchResult",
     "AgentEventRecord",
     "EventPage",
+    # Run Ledger APIs
+    "AgentRun",
+    "AgentRunEvent",
+    "AgentRuntime",
+    "AgentRunStatus",
+    "RunEventPage",
+    "RunPage",
+    "RuntimePage",
     # Artifact APIs
     "ArtifactMetadata",
     "ArtifactReadResult",

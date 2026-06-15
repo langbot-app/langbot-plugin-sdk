@@ -95,6 +95,19 @@ class PluginConnectionHandler(handler.Handler):
             if caller_identity:
                 data["owner"] = caller_identity
 
+        async def _forward_to_host(
+            action: PluginToRuntimeAction,
+            data: dict[str, Any],
+            timeout: float,
+        ) -> handler.ActionResponse:
+            _inject_caller_identity(data)
+            result = await self.context.control_handler.call_action(
+                action,
+                data,
+                timeout=timeout,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
 
@@ -791,6 +804,57 @@ class PluginConnectionHandler(handler.Handler):
                 timeout=15,
             )
             return handler.ActionResponse.success(result)
+
+        # ================= Agent Run Ledger and Runtime Registry Handlers =================
+        # These handlers forward Host-owned run/runtime primitives with caller_plugin_identity injection.
+
+        @self.action(PluginToRuntimeAction.RUN_GET)
+        async def run_get(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_GET, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUN_LIST)
+        async def run_list(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_LIST, data, timeout=30)
+
+        @self.action(PluginToRuntimeAction.RUN_EVENTS_PAGE)
+        async def run_events_page(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_EVENTS_PAGE, data, timeout=30)
+
+        @self.action(PluginToRuntimeAction.RUN_CANCEL)
+        async def run_cancel(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_CANCEL, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUN_APPEND_RESULT)
+        async def run_append_result(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_APPEND_RESULT, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUN_FINALIZE)
+        async def run_finalize(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_FINALIZE, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUNTIME_REGISTER)
+        async def runtime_register(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_REGISTER, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUNTIME_HEARTBEAT)
+        async def runtime_heartbeat(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_HEARTBEAT, data, timeout=10)
+
+        @self.action(PluginToRuntimeAction.RUNTIME_LIST)
+        async def runtime_list(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_LIST, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUN_CLAIM)
+        async def run_claim(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_CLAIM, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUN_RENEW_CLAIM)
+        async def run_renew_claim(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_RENEW_CLAIM, data, timeout=15)
+
+        @self.action(PluginToRuntimeAction.RUN_RELEASE_CLAIM)
+        async def run_release_claim(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(PluginToRuntimeAction.RUN_RELEASE_CLAIM, data, timeout=15)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
