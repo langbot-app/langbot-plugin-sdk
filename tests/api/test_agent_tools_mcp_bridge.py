@@ -8,6 +8,7 @@ import urllib.request
 import pytest
 
 from langbot_plugin.api.agent_tools import (
+    AgentAssetGateway,
     AgentRunExternalTools,
     AgentRunMCPBridge,
 )
@@ -85,6 +86,17 @@ class FakeRunAPI:
         self.calls.append(("call_tool", kwargs))
         return {"ok": True, "tool_name": kwargs["tool_name"]}
 
+    async def get_tool_detail(self, **kwargs):
+        self.calls.append(("get_tool_detail", kwargs))
+        return {
+            "name": kwargs["tool_name"],
+            "description": "Weather lookup",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+            },
+        }
+
 
 def test_agent_run_external_tools_are_annotation_backed() -> None:
     api = FakeRunAPI()
@@ -94,8 +106,10 @@ def test_agent_run_external_tools_are_annotation_backed() -> None:
 
     assert set(mcp_tools) == {
         "langbot_get_current_event",
+        "langbot_list_assets",
         "langbot_history_page",
         "langbot_retrieve_knowledge",
+        "langbot_get_tool_detail",
         "langbot_call_tool",
     }
     assert (
@@ -111,7 +125,10 @@ def test_agent_run_external_tools_are_run_authorization_filtered() -> None:
     api = FakeRunAPI()
     tools = AgentRunExternalTools(api, _ctx())
 
-    assert {tool["name"] for tool in tools.mcp_tools()} == {"langbot_get_current_event"}
+    assert {tool["name"] for tool in tools.mcp_tools()} == {
+        "langbot_get_current_event",
+        "langbot_list_assets",
+    }
 
     with pytest.raises(ValueError, match="Unknown LangBot external tool"):
         asyncio.run(tools.call_tool("langbot_history_page", {"limit": 1}))
@@ -132,6 +149,23 @@ def test_agent_run_external_tools_call_agent_run_api() -> None:
             },
         )
     )
+    listed = asyncio.run(
+        tools.call_tool(
+            "langbot_list_assets",
+            {
+                "asset_types": ["tools", "mcp_tools"],
+                "include_schemas": True,
+            },
+        )
+    )
+    tool_detail = asyncio.run(
+        tools.call_tool(
+            "langbot_get_tool_detail",
+            {
+                "tool_name": "weather",
+            },
+        )
+    )
     tool_result = asyncio.run(
         tools.call_tool(
             "langbot_call_tool",
@@ -144,6 +178,9 @@ def test_agent_run_external_tools_call_agent_run_api() -> None:
 
     assert event["input"]["text"] == "hello from im"
     assert retrieved == [{"content": "kb:hello"}]
+    assert listed["tools"][0]["tool_name"] == "weather"
+    assert "schema" in listed["mcp_tools"][0]
+    assert tool_detail["name"] == "weather"
     assert tool_result == {"ok": True, "tool_name": "weather"}
     assert api.calls[0] == (
         "retrieve_knowledge",
@@ -155,6 +192,12 @@ def test_agent_run_external_tools_call_agent_run_api() -> None:
         },
     )
     assert api.calls[1] == (
+        "get_tool_detail",
+        {
+            "tool_name": "weather",
+        },
+    )
+    assert api.calls[2] == (
         "call_tool",
         {
             "tool_name": "weather",
@@ -242,6 +285,7 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
             ]
             listed_tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
             assert "langbot_history_page" in listed_tools
+            assert "langbot_list_assets" in listed_tools
             assert (
                 responses[2]["result"]["structuredContent"]["items"][0]["content"]
                 == "older"
@@ -371,4 +415,105 @@ def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
                 "include_artifacts": False,
             },
         ),
+    ]
+
+
+def test_asset_gateway_uses_run_token_for_stable_mcp_tools() -> None:
+    async def run_probe() -> FakeRunAPI:
+        api = FakeRunAPI()
+        gateway = AgentAssetGateway()
+        registration = gateway.register_run(api, _authorized_ctx(), token="token_1")
+        try:
+            config = registration.http_mcp_server_config(include_token_header=False)
+
+            def call(message: dict, token: str | None = None) -> dict:
+                payload = json.dumps(message).encode("utf-8")
+                headers = {"Content-Type": "application/json"}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                request = urllib.request.Request(
+                    config["url"],
+                    data=payload,
+                    method="POST",
+                    headers=headers,
+                )
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    return json.loads(response.read().decode("utf-8"))
+
+            tools = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                    "params": {},
+                },
+            )
+            listed = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "langbot_list_assets",
+                        "arguments": {"run_token": "token_1"},
+                    },
+                },
+            )
+            detail = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "langbot_get_tool_detail",
+                        "arguments": {"tool_name": "weather"},
+                    },
+                },
+                "token_1",
+            )
+            rejected = await asyncio.to_thread(
+                call,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "langbot_list_assets",
+                        "arguments": {"run_token": "bad"},
+                    },
+                },
+            )
+
+            listed_tools = {tool["name"] for tool in tools["result"]["tools"]}
+            assert listed_tools >= {
+                "langbot_list_assets",
+                "langbot_get_tool_detail",
+                "langbot_call_tool",
+            }
+            run_token_schema = next(
+                tool
+                for tool in tools["result"]["tools"]
+                if tool["name"] == "langbot_list_assets"
+            )["inputSchema"]["properties"]["run_token"]
+            assert run_token_schema["type"] == "string"
+            assert listed["result"]["structuredContent"]["tools"][0]["tool_name"] == "weather"
+            assert detail["result"]["structuredContent"]["name"] == "weather"
+            assert rejected["result"]["isError"] is True
+            return api
+        finally:
+            registration.stop()
+            gateway.stop()
+
+    api = asyncio.run(run_probe())
+
+    assert api.calls == [
+        (
+            "get_tool_detail",
+            {
+                "tool_name": "weather",
+            },
+        )
     ]
