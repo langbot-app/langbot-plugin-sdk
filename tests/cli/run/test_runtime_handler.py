@@ -74,7 +74,9 @@ def _handler():
     return handler, initialized
 
 
-def test_resolve_asset_path_accepts_assets_and_component_page_files(tmp_path, monkeypatch):
+def test_resolve_asset_path_accepts_assets_and_component_page_files(
+    tmp_path, monkeypatch
+):
     assets_file = tmp_path / "assets" / "icon.svg"
     page_file = tmp_path / "components" / "pages" / "settings.html"
     outside_file = tmp_path / "components" / "tools" / "secret.txt"

@@ -83,11 +83,7 @@ class PluginLogBuffer:
         if level:
             min_no = logging.getLevelName(level)
             if isinstance(min_no, int):
-                entries = [
-                    e
-                    for e in entries
-                    if _level_no(e["level"]) >= min_no
-                ]
+                entries = [e for e in entries if _level_no(e["level"]) >= min_no]
 
         if limit and limit > 0:
             entries = entries[-limit:]

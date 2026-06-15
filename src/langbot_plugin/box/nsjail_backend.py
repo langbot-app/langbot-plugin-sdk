@@ -52,15 +52,15 @@ _READONLY_ETC_ENTRIES: list[str] = [
 # anything (e.g. an stdio MCP server dies before the initialize handshake,
 # surfacing as a misleading "Connection closed / please check URL").
 _DEV_NODES: list[str] = [
-    '/dev/null',
-    '/dev/zero',
-    '/dev/full',
-    '/dev/random',
-    '/dev/urandom',
-    '/dev/tty',
+    "/dev/null",
+    "/dev/zero",
+    "/dev/full",
+    "/dev/random",
+    "/dev/urandom",
+    "/dev/tty",
 ]
 
-_DEFAULT_BASE_DIR = '/tmp/langbot-box-nsjail'
+_DEFAULT_BASE_DIR = "/tmp/langbot-box-nsjail"
 
 
 class NsjailBackend(BaseSandboxBackend):
@@ -110,13 +110,13 @@ class NsjailBackend(BaseSandboxBackend):
         self._cgroup_v2_available = self._detect_cgroup_v2()
         if not self._cgroup_v2_available:
             self.logger.warning(
-                'nsjail cgroup v2 limits unavailable (private cgroup namespace '
-                'or read-only /sys/fs/cgroup); falling back to rlimit-based '
-                'limits WITHOUT a hard memory cap. RLIMIT_AS is intentionally '
-                'not used because it kills uv/node/etc. To enforce a memory '
-                'cap, run the Box container in the host cgroup namespace '
-                '(--cgroupns=host / compose `cgroup: host`) or set a '
-                'container-level memory limit.'
+                "nsjail cgroup v2 limits unavailable (private cgroup namespace "
+                "or read-only /sys/fs/cgroup); falling back to rlimit-based "
+                "limits WITHOUT a hard memory cap. RLIMIT_AS is intentionally "
+                "not used because it kills uv/node/etc. To enforce a memory "
+                "cap, run the Box container in the host cgroup namespace "
+                "(--cgroupns=host / compose `cgroup: host`) or set a "
+                "container-level memory limit."
             )
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -370,7 +370,7 @@ class NsjailBackend(BaseSandboxBackend):
         # /dev/null behave normally.
         for dev in _DEV_NODES:
             if os.path.exists(dev):
-                args.extend(['--bindmount', f'{dev}:{dev}'])
+                args.extend(["--bindmount", f"{dev}:{dev}"])
 
         # Working directory.
         args.extend(["--cwd", spec.workdir])
@@ -491,7 +491,7 @@ class NsjailBackend(BaseSandboxBackend):
             # nsjail tries to mkdir under /sys/fs/cgroup/<controller>/... (v1
             # paths) and aborts on a v2-only host. The writability of the v2
             # root is already verified in _detect_cgroup_v2().
-            args.append('--use_cgroupv2')
+            args.append("--use_cgroupv2")
             memory_bytes = spec.memory_mb * 1024 * 1024
             args.extend(["--cgroup_mem_max", str(memory_bytes)])
             args.extend(["--cgroup_pids_max", str(spec.pids_limit)])
@@ -515,12 +515,12 @@ class NsjailBackend(BaseSandboxBackend):
             # compose `cgroup: host`); otherwise bound memory at the container
             # level (e.g. compose `mem_limit`). We still apply the pid cap,
             # which is a real rlimit that does not break runtimes.
-            args.extend(['--rlimit_nproc', str(spec.pids_limit)])
+            args.extend(["--rlimit_nproc", str(spec.pids_limit)])
 
         # Always set these rlimits regardless of cgroup mode. These are safe
         # for modern runtimes (unlike RLIMIT_AS).
-        args.extend(['--rlimit_fsize', '512'])    # max file size 512 MB
-        args.extend(['--rlimit_nofile', '256'])    # max open fds
+        args.extend(["--rlimit_fsize", "512"])  # max file size 512 MB
+        args.extend(["--rlimit_nofile", "256"])  # max open fds
 
         return args
 
@@ -584,12 +584,12 @@ class NsjailBackend(BaseSandboxBackend):
         host cgroup namespace (``--cgroupns=host`` / compose ``cgroup: host``);
         otherwise this returns False and the backend uses the rlimit fallback.
         """
-        cgroup_mount = pathlib.Path('/sys/fs/cgroup')
+        cgroup_mount = pathlib.Path("/sys/fs/cgroup")
         if not cgroup_mount.exists():
             return False
         # cgroup v2 has a single hierarchy with a cgroup.controllers file.
-        controllers = cgroup_mount / 'cgroup.controllers'
-        subtree_control = cgroup_mount / 'cgroup.subtree_control'
+        controllers = cgroup_mount / "cgroup.controllers"
+        subtree_control = cgroup_mount / "cgroup.subtree_control"
         if not controllers.exists() or not subtree_control.exists():
             return False
         # nsjail enables the controllers it needs (memory, pids, cpu) on the
@@ -599,7 +599,7 @@ class NsjailBackend(BaseSandboxBackend):
             available = set(controllers.read_text().split())
         except Exception:
             return False
-        wanted = [c for c in ('memory', 'pids', 'cpu') if c in available]
+        wanted = [c for c in ("memory", "pids", "cpu") if c in available]
         if not wanted:
             return False
         # Authoritative writability probe: re-arm a controller that is already
@@ -616,13 +616,13 @@ class NsjailBackend(BaseSandboxBackend):
             if probe_controller in enabled:
                 # Already delegated: re-writing the same enable is a harmless
                 # no-op that still exercises the write permission + EBUSY rule.
-                subtree_control.write_text(f'+{probe_controller}')
+                subtree_control.write_text(f"+{probe_controller}")
             else:
                 # Not yet delegated: enable then immediately disable to leave
                 # the host configuration untouched.
-                subtree_control.write_text(f'+{probe_controller}')
+                subtree_control.write_text(f"+{probe_controller}")
                 try:
-                    subtree_control.write_text(f'-{probe_controller}')
+                    subtree_control.write_text(f"-{probe_controller}")
                 except Exception:
                     pass
         except Exception:

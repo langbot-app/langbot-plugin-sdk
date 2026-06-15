@@ -47,7 +47,9 @@ class DependencyInstallError(Exception):
 
     def __str__(self):
         prefix = f"Plugin {self.plugin} " if self.plugin else ""
-        return f"{prefix}failed to install {len(self.failed)} dependencies: {self.failed}"
+        return (
+            f"{prefix}failed to install {len(self.failed)} dependencies: {self.failed}"
+        )
 
 
 class DependencyVerificationError(Exception):

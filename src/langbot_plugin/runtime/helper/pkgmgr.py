@@ -175,7 +175,10 @@ def _resolve_import_names(pkg_name: str) -> set[str]:
     if _dist_to_packages is None:
         _dist_to_packages = {}
         try:
-            for top_pkg, dist_names in importlib.metadata.packages_distributions().items():
+            for (
+                top_pkg,
+                dist_names,
+            ) in importlib.metadata.packages_distributions().items():
                 for dist_name in dist_names:
                     key = dist_name.lower().replace("_", "-")
                     _dist_to_packages.setdefault(key, set()).add(top_pkg)

@@ -353,9 +353,11 @@ class PluginManager:
                     },
                 }
 
-                returncode, downloaded_bytes, error_msg = (
-                    await pkgmgr_helper.install_with_retry(dep, max_retries=3)
-                )
+                (
+                    returncode,
+                    downloaded_bytes,
+                    error_msg,
+                ) = await pkgmgr_helper.install_with_retry(dep, max_retries=3)
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
@@ -495,7 +497,9 @@ class PluginManager:
 
         # refresh plugin container from plugin (components may have changed)
         plugin_container_data = await handler.get_plugin_container()
-        refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(
+            plugin_container_data
+        )
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
         plugin_container.status = refreshed.status
@@ -743,9 +747,7 @@ class PluginManager:
         """
         plugin = self.find_plugin(plugin_author, plugin_name)
         if plugin is not None and plugin._runtime_plugin_handler is not None:
-            log_buffer = getattr(
-                plugin._runtime_plugin_handler, "log_buffer", None
-            )
+            log_buffer = getattr(plugin._runtime_plugin_handler, "log_buffer", None)
             if log_buffer is not None:
                 return log_buffer.get_logs(limit=limit, level=level)
         return []

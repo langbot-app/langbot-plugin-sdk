@@ -4,9 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncGenerator
 
-logger = logging.getLogger(__name__)
-
-from langbot_plugin.runtime.io import handler, connection
+from langbot_plugin.runtime.io import connection, handler
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
     LangBotToRuntimeAction,
@@ -15,6 +13,8 @@ from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
+
+logger = logging.getLogger(__name__)
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -145,7 +145,13 @@ class ControlConnectionHandler(handler.Handler):
         async def page_api(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            for field in ("plugin_author", "plugin_name", "page_id", "endpoint", "method"):
+            for field in (
+                "plugin_author",
+                "plugin_name",
+                "page_id",
+                "endpoint",
+                "method",
+            ):
                 if field not in data:
                     return handler.ActionResponse.success(
                         {"data": None, "error": f"Missing required field: {field}"}

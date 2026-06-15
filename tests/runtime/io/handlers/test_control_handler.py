@@ -26,7 +26,12 @@ class FakePlugin:
         )
 
     def model_dump(self, **kwargs):
-        return {"manifest": {"author": self.manifest.metadata.author, "name": self.manifest.metadata.name}}
+        return {
+            "manifest": {
+                "author": self.manifest.metadata.author,
+                "name": self.manifest.metadata.name,
+            }
+        }
 
 
 class FakePluginManager:
@@ -119,7 +124,9 @@ class FakePluginManager:
         self.calls.append(("list_parsers",))
         return [{"name": "parser"}]
 
-    async def parse_document(self, plugin_author, plugin_name, context_data, file_bytes):
+    async def parse_document(
+        self, plugin_author, plugin_name, context_data, file_bytes
+    ):
         self.calls.append(
             ("parse_document", plugin_author, plugin_name, context_data, file_bytes)
         )
@@ -219,9 +226,7 @@ async def test_control_handler_get_plugin_assets_file_sends_file_key(monkeypatch
             },
         )
 
-    assert manager.calls == [
-        ("get_plugin_assets_file", "tester", "demo", "icon.svg")
-    ]
+    assert manager.calls == [("get_plugin_assets_file", "tester", "demo", "icon.svg")]
     assert response["data"] == {
         "file_file_key": "asset-key",
         "mime_type": "text/plain",

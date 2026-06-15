@@ -36,7 +36,9 @@ class WebSocketClientController(Controller):
             # fails with "did not receive a valid HTTP response". This breaks
             # Docker deployments on hosts that inject a proxy into containers
             # (e.g. Docker Desktop with a configured proxy).
-            async with websockets.connect(self.ws_url, open_timeout=10, proxy=None) as websocket:
+            async with websockets.connect(
+                self.ws_url, open_timeout=10, proxy=None
+            ) as websocket:
                 connection = ws_connection.WebSocketConnection(websocket)
                 await new_connection_callback(connection)
         except Exception as e:

@@ -7,7 +7,9 @@ import textwrap
 from langbot_plugin.utils import importutil
 
 
-def test_import_dot_style_dir_imports_python_modules_from_package(tmp_path, monkeypatch):
+def test_import_dot_style_dir_imports_python_modules_from_package(
+    tmp_path, monkeypatch
+):
     package = tmp_path / "samplepkg"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
