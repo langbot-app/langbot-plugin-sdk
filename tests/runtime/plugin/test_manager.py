@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import zipfile
 from types import SimpleNamespace
 from typing import Any
@@ -107,6 +108,40 @@ spec: {{}}
         archive.writestr("manifest.yaml", manifest)
         archive.writestr("main.py", "")
     return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_launch_plugin_inherits_parent_environment(monkeypatch, tmp_path):
+    from langbot_plugin.runtime.plugin import mgr as mgr_module
+
+    captured: dict[str, Any] = {}
+
+    class FakeStdioClientController:
+        process = None
+
+        def __init__(self, command, args, env, working_dir):
+            captured["command"] = command
+            captured["args"] = args
+            captured["env"] = env
+            captured["working_dir"] = working_dir
+
+        async def run(self, new_connection_callback):
+            raise asyncio.CancelledError()
+
+    monkeypatch.setenv("PYTHONPATH", "/tmp/langbot-plugin-sdk/src")
+    monkeypatch.setattr(mgr_module, "get_platform", lambda: "linux")
+    monkeypatch.setattr(
+        mgr_module.stdio_client_controller,
+        "StdioClientController",
+        FakeStdioClientController,
+    )
+
+    manager = _manager()
+    await manager.launch_plugin(str(tmp_path))
+
+    assert captured["working_dir"] == str(tmp_path)
+    assert captured["env"] is not os.environ
+    assert captured["env"]["PYTHONPATH"] == "/tmp/langbot-plugin-sdk/src"
 
 
 class FakeControlHandler:
