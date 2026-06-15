@@ -260,7 +260,7 @@ class PluginManager:
             ctrl = stdio_client_controller.StdioClientController(
                 command=python_path,
                 args=args,
-                env={},
+                env=os.environ.copy(),
                 working_dir=plugin_path,
             )
 
