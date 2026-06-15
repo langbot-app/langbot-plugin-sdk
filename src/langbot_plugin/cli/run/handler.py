@@ -91,7 +91,9 @@ async def _iter_runner_results_with_deadline(
                 break
 
             sequence += 1
-            if getattr(result, "sequence", None) is None and hasattr(result, "model_copy"):
+            if getattr(result, "sequence", None) is None and hasattr(
+                result, "model_copy"
+            ):
                 result = result.model_copy(update={"sequence": sequence})
             yield result
     except asyncio.TimeoutError:

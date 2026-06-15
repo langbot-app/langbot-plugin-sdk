@@ -50,7 +50,9 @@ async def test_query_based_proxy_query_var_helpers():
             PluginToRuntimeAction.CREATE_NEW_CONVERSATION: {"uuid": "conv"},
         }
     )
-    proxy = QueryBasedAPIProxy.model_construct(query_id=7, plugin_runtime_handler=handler)
+    proxy = QueryBasedAPIProxy.model_construct(
+        query_id=7, plugin_runtime_handler=handler
+    )
 
     assert await proxy.get_bot_uuid() == "bot"
     await proxy.set_query_var("k", "v")
@@ -77,7 +79,9 @@ async def test_query_based_proxy_pipeline_knowledge_helpers():
             },
         }
     )
-    proxy = QueryBasedAPIProxy.model_construct(query_id=7, plugin_runtime_handler=handler)
+    proxy = QueryBasedAPIProxy.model_construct(
+        query_id=7, plugin_runtime_handler=handler
+    )
 
     assert await proxy.list_pipeline_knowledge_bases() == [{"uuid": "kb"}]
     assert await proxy.retrieve_knowledge("kb", "query", top_k=3) == [

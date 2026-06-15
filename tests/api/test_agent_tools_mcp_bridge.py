@@ -242,7 +242,10 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
             ]
             listed_tools = {tool["name"] for tool in responses[1]["result"]["tools"]}
             assert "langbot_history_page" in listed_tools
-            assert responses[2]["result"]["structuredContent"]["items"][0]["content"] == "older"
+            assert (
+                responses[2]["result"]["structuredContent"]["items"][0]["content"]
+                == "older"
+            )
             assert responses[2]["result"]["content"][0]["text"].startswith('{"items"')
             assert responses[3]["result"]["structuredContent"]["result"] == [
                 {"content": "kb:stdio"}
@@ -317,7 +320,7 @@ def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
                     "id": 1,
                     "method": "initialize",
                     "params": {"protocolVersion": "2025-06-18"},
-                }
+                },
             )
             tools = await asyncio.to_thread(
                 call,
@@ -326,7 +329,7 @@ def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
                     "id": 2,
                     "method": "tools/list",
                     "params": {},
-                }
+                },
             )
             history = await asyncio.to_thread(
                 call,
@@ -338,14 +341,18 @@ def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
                         "name": "langbot_history_page",
                         "arguments": {"limit": 2},
                     },
-                }
+                },
             )
 
             assert initialized["result"]["serverInfo"]["name"] == "langbot-agent"
-            assert {
-                tool["name"] for tool in tools["result"]["tools"]
-            } >= {"langbot_history_page", "langbot_retrieve_knowledge", "langbot_call_tool"}
-            assert history["result"]["structuredContent"]["items"][0]["content"] == "older"
+            assert {tool["name"] for tool in tools["result"]["tools"]} >= {
+                "langbot_history_page",
+                "langbot_retrieve_knowledge",
+                "langbot_call_tool",
+            }
+            assert (
+                history["result"]["structuredContent"]["items"][0]["content"] == "older"
+            )
             return api
         finally:
             bridge.stop()

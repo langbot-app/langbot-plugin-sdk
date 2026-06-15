@@ -316,9 +316,7 @@ async def test_create_session_success(handler, mock_runtime):
 
 
 async def test_create_session_invalid_spec(handler, mock_runtime):
-    resp = await _invoke(
-        handler, LangBotToBoxAction.CREATE_SESSION, {"cmd": "echo hi"}
-    )
+    resp = await _invoke(handler, LangBotToBoxAction.CREATE_SESSION, {"cmd": "echo hi"})
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
     mock_runtime.create_session.assert_not_awaited()
@@ -329,9 +327,7 @@ async def test_create_session_invalid_spec(handler, mock_runtime):
 
 async def test_get_session(handler, mock_runtime):
     mock_runtime.get_session.return_value = {"session_id": "abc"}
-    resp = await _invoke(
-        handler, LangBotToBoxAction.GET_SESSION, {"session_id": "abc"}
-    )
+    resp = await _invoke(handler, LangBotToBoxAction.GET_SESSION, {"session_id": "abc"})
     assert resp.code == 0
     assert resp.data == {"session_id": "abc"}
     mock_runtime.get_session.assert_called_once_with("abc")
@@ -480,9 +476,7 @@ async def test_update_skill_error(handler, mock_runtime):
 
 
 async def test_delete_skill_success(handler, mock_runtime):
-    resp = await _invoke(
-        handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"}
-    )
+    resp = await _invoke(handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"})
     assert resp.code == 0
     assert resp.data == {"deleted": True}
     mock_runtime.skill_store.delete_skill.assert_called_once_with("demo")
@@ -490,9 +484,7 @@ async def test_delete_skill_success(handler, mock_runtime):
 
 async def test_delete_skill_error(handler, mock_runtime):
     mock_runtime.skill_store.delete_skill.side_effect = RuntimeError("locked")
-    resp = await _invoke(
-        handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"}
-    )
+    resp = await _invoke(handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"})
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
 
@@ -516,9 +508,7 @@ async def test_scan_skill_directory_error(handler, mock_runtime):
 
 
 async def test_list_skill_files_uses_defaults(handler, mock_runtime):
-    resp = await _invoke(
-        handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"}
-    )
+    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"})
     assert resp.code == 0
     mock_runtime.skill_store.list_skill_files.assert_called_once_with(
         "demo", ".", include_hidden=False, max_entries=200
@@ -543,9 +533,7 @@ async def test_list_skill_files_passes_overrides(handler, mock_runtime):
 
 async def test_list_skill_files_error(handler, mock_runtime):
     mock_runtime.skill_store.list_skill_files.side_effect = ValueError("nope")
-    resp = await _invoke(
-        handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"}
-    )
+    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"})
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
 
@@ -730,10 +718,7 @@ def test_create_app_registers_routes_and_runtime(mock_runtime):
     assert isinstance(app, web.Application)
     assert app["runtime"] is mock_runtime
 
-    routes = {
-        (route.method, route.resource.canonical)
-        for route in app.router.routes()
-    }
+    routes = {(route.method, route.resource.canonical) for route in app.router.routes()}
     assert ("GET", "/rpc/ws") in routes
     assert (
         "GET",

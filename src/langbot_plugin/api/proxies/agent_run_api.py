@@ -147,7 +147,9 @@ class _AgentRunHandlerAdapter:
         timeout: float = 15.0,
     ):
         try:
-            async for item in self._handler.call_action_generator(action, data, timeout):
+            async for item in self._handler.call_action_generator(
+                action, data, timeout
+            ):
                 yield item
         except ActionCallError as error:
             raise _build_agent_api_exception(action, error) from error
@@ -304,7 +306,9 @@ class AgentRunAPIProxy:
     # ================= Permission Validation =================
 
     @staticmethod
-    def _normalize_operations(resource_type: str, operations: list[str] | None) -> frozenset[str]:
+    def _normalize_operations(
+        resource_type: str, operations: list[str] | None
+    ) -> frozenset[str]:
         if operations:
             return frozenset(str(operation) for operation in operations)
         return DEFAULT_RESOURCE_OPERATIONS[resource_type]
@@ -316,7 +320,9 @@ class AgentRunAPIProxy:
         operation: str,
         allowed_operations: frozenset[str] | None,
     ) -> None:
-        effective_operations = allowed_operations or DEFAULT_RESOURCE_OPERATIONS[resource_type]
+        effective_operations = (
+            allowed_operations or DEFAULT_RESOURCE_OPERATIONS[resource_type]
+        )
         if operation not in effective_operations:
             raise PermissionDeniedError(
                 f"{resource_type} '{resource_id}' is not authorized for operation '{operation}'. "

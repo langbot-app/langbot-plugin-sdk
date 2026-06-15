@@ -208,9 +208,7 @@ def test_generate_device_code_posts_to_token_generate(monkeypatch):
         "code": 0,
         "data": {"device_code": "d"},
     }
-    assert FakeClient.calls == [
-        ("https://cloud/api/v1/accounts/token/generate", {})
-    ]
+    assert FakeClient.calls == [("https://cloud/api/v1/accounts/token/generate", {})]
 
 
 def test_generate_device_code_reports_network_failure(monkeypatch):

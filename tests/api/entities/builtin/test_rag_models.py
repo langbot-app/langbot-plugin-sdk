@@ -47,11 +47,14 @@ def test_rag_file_and_parse_models_keep_metadata_isolated():
     assert FileObject(metadata=first, storage_path="files/a.txt").storage_path == (
         "files/a.txt"
     )
-    assert ParseContext(
-        file_content=b"abc",
-        mime_type="text/plain",
-        filename="a.txt",
-    ).metadata == {}
+    assert (
+        ParseContext(
+            file_content=b"abc",
+            mime_type="text/plain",
+            filename="a.txt",
+        ).metadata
+        == {}
+    )
 
 
 def test_rag_text_models_and_parse_result_defaults():

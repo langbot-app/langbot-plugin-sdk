@@ -66,7 +66,9 @@ def test_action_response_success_error_and_chunk_serialization():
 
 
 def test_action_response_normalizes_missing_chunk_status_to_continue():
-    response = ActionResponse(seq_id=1, code=0, message="ok", data={}, chunk_status=None)
+    response = ActionResponse(
+        seq_id=1, code=0, message="ok", data={}, chunk_status=None
+    )
     assert response.chunk_status is ChunkStatus.CONTINUE
 
 

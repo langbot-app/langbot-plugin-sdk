@@ -48,7 +48,7 @@ class I18nManager:
         if not locale_str:
             try:
                 locale_str = locale.getlocale()[0] or locale.getdefaultlocale()[0] or ""
-            except:
+            except Exception:
                 locale_str = ""
 
         # Determine language from locale string
@@ -86,7 +86,7 @@ class I18nManager:
         if args:
             try:
                 return message.format(*args)
-            except:
+            except Exception:
                 return message
         return message
 

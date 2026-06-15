@@ -190,7 +190,11 @@ class TestAgentRunContextV1:
         resources = AgentResources(
             models=[ModelResource(model_id="gpt-4", model_type="chat")],
             tools=[ToolResource(tool_name="search", tool_type="function")],
-            skills=[SkillResource(skill_name="pdf", display_name="PDF", description="Work with PDFs")],
+            skills=[
+                SkillResource(
+                    skill_name="pdf", display_name="PDF", description="Work with PDFs"
+                )
+            ],
             storage=StorageResource(plugin_storage=True, workspace_storage=True),
         )
         state = AgentRunState(

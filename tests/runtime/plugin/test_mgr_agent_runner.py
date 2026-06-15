@@ -776,7 +776,8 @@ async def test_plugin_runtime_runner_results_get_sequence_numbers():
     ctx = create_run_context()
 
     results = [
-        result async for result in _iter_runner_results_with_deadline(MockAgentRunner(), ctx)
+        result
+        async for result in _iter_runner_results_with_deadline(MockAgentRunner(), ctx)
     ]
 
     assert [result.sequence for result in results] == [1, 2]
