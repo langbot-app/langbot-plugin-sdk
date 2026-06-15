@@ -397,7 +397,9 @@ class TestPluginConnectionHandlerCallerIdentity:
         assert forwarded_payload["caller_plugin_identity"] == "test-author/test-plugin"
 
     @pytest.mark.anyio
-    async def test_spoofed_caller_plugin_identity_stripped_without_plugin_container(self):
+    async def test_spoofed_caller_plugin_identity_stripped_without_plugin_container(
+        self,
+    ):
         """caller_plugin_identity from an unregistered connection is stripped."""
         fake_context = make_fake_context()
         handler = PluginConnectionHandler(FakeConnection(), fake_context)

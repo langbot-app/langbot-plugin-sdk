@@ -187,9 +187,7 @@ async def test_plugin_handler_forwards_invoke_rerank_with_caller_identity():
             },
         )
 
-    assert response["data"] == {
-        "results": [{"index": 0, "relevance_score": 0.95}]
-    }
+    assert response["data"] == {"results": [{"index": 0, "relevance_score": 0.95}]}
     assert control.calls == [
         (
             PluginToRuntimeAction.INVOKE_RERANK,

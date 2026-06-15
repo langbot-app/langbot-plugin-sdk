@@ -28,34 +28,35 @@ from langbot_plugin.box.models import (
 
 @pytest.fixture
 def logger():
-    return logging.getLogger('test.nsjail')
+    return logging.getLogger("test.nsjail")
 
 
 @pytest.fixture
 def tmp_base(tmp_path: pathlib.Path):
-    return tmp_path / 'nsjail-base'
+    return tmp_path / "nsjail-base"
 
 
 @pytest.fixture
 def backend(logger, tmp_base):
     b = NsjailBackend(logger=logger, base_dir=str(tmp_base))
-    b.instance_id = 'test123'
+    b.instance_id = "test123"
     return b
 
 
 # ── is_available ──────────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_is_available_no_binary(backend):
-    with mock.patch('shutil.which', return_value=None):
+    with mock.patch("shutil.which", return_value=None):
         assert await backend.is_available() is False
 
 
 @pytest.mark.anyio
 async def test_is_available_binary_exists(backend, tmp_base):
     with (
-        mock.patch('shutil.which', return_value='/usr/bin/nsjail'),
-        mock.patch('asyncio.create_subprocess_exec') as mock_exec,
+        mock.patch("shutil.which", return_value="/usr/bin/nsjail"),
+        mock.patch("asyncio.create_subprocess_exec") as mock_exec,
     ):
         mock_proc = mock.AsyncMock()
         mock_proc.returncode = 0
@@ -69,23 +70,24 @@ async def test_is_available_binary_exists(backend, tmp_base):
 
 # ── start_session ─────────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_start_session_creates_directories(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    spec = BoxSpec(session_id='sess1', cmd='echo hi')
+    spec = BoxSpec(session_id="sess1", cmd="echo hi")
 
     info = await backend.start_session(spec)
 
     session_dir = pathlib.Path(info.backend_session_id)
     assert session_dir.exists()
-    assert (session_dir / 'root').is_dir()
-    assert (session_dir / 'workspace').is_dir()
-    assert (session_dir / 'tmp').is_dir()
-    assert (session_dir / 'home').is_dir()
-    assert (session_dir / 'meta.json').exists()
+    assert (session_dir / "root").is_dir()
+    assert (session_dir / "workspace").is_dir()
+    assert (session_dir / "tmp").is_dir()
+    assert (session_dir / "home").is_dir()
+    assert (session_dir / "meta.json").exists()
 
-    assert info.backend_name == 'nsjail'
-    assert info.session_id == 'sess1'
+    assert info.backend_name == "nsjail"
+    assert info.session_id == "sess1"
     assert info.image == spec.image
     assert info.read_only_rootfs is True
 
@@ -99,13 +101,13 @@ async def test_start_session_with_host_path(backend, tmp_base):
         cmd="ls",
         host_path=host_path,
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/project',
+        mount_path="/project",
     )
 
     info = await backend.start_session(spec)
     assert info.host_path == host_path
     assert info.host_path_mode == BoxHostMountMode.READ_WRITE
-    assert info.mount_path == '/project'
+    assert info.mount_path == "/project"
 
 
 @pytest.mark.anyio
@@ -151,10 +153,11 @@ async def test_start_session_does_not_create_ro_host_path(backend, tmp_base):
 
 # ── stop_session ──────────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_stop_session_removes_directory(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    spec = BoxSpec(session_id='sess-rm', cmd='echo')
+    spec = BoxSpec(session_id="sess-rm", cmd="echo")
 
     info = await backend.start_session(spec)
     session_dir = pathlib.Path(info.backend_session_id)
@@ -166,53 +169,54 @@ async def test_stop_session_removes_directory(backend, tmp_base):
 
 # ── nsjail argument construction ──────────────────────────────────────
 
+
 def test_build_nsjail_args_basic(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    session_dir = tmp_base / 'test_session'
-    for d in ('root', 'workspace', 'tmp', 'home'):
+    session_dir = tmp_base / "test_session"
+    for d in ("root", "workspace", "tmp", "home"):
         (session_dir / d).mkdir(parents=True)
 
-    spec = BoxSpec(session_id='s1', cmd='echo hello', env={'FOO': 'bar'})
+    spec = BoxSpec(session_id="s1", cmd="echo hello", env={"FOO": "bar"})
     session = BoxSessionInfo(
-        session_id='s1',
-        backend_name='nsjail',
+        session_id="s1",
+        backend_name="nsjail",
         backend_session_id=str(session_dir),
         image=spec.image,
         network=BoxNetworkMode.OFF,
-        created_at='2024-01-01T00:00:00+00:00',
-        last_used_at='2024-01-01T00:00:00+00:00',
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
     )
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
-    assert args[0] == 'nsjail'
-    assert '--mode' in args
-    assert args[args.index('--mode') + 1] == 'o'
-    assert '--chroot' in args
-    assert args[args.index('--chroot') + 1] == str(session_dir / 'root')
-    assert '--clone_newnet' not in args
-    assert '--clone_newuser' not in args
-    assert '--clone_newns' not in args
-    assert '--disable_clone_newnet' not in args
-    assert '--really_quiet' in args
+    assert args[0] == "nsjail"
+    assert "--mode" in args
+    assert args[args.index("--mode") + 1] == "o"
+    assert "--chroot" in args
+    assert args[args.index("--chroot") + 1] == str(session_dir / "root")
+    assert "--clone_newnet" not in args
+    assert "--clone_newuser" not in args
+    assert "--clone_newns" not in args
+    assert "--disable_clone_newnet" not in args
+    assert "--really_quiet" in args
 
     # Writable mounts should reference session directories.
-    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
-    workspace_mount = f'{session_dir}/workspace:/workspace'
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == "--bindmount"]
+    workspace_mount = f"{session_dir}/workspace:/workspace"
     assert workspace_mount in rw_binds
 
     # Custom env should be present.
-    env_values = [args[i + 1] for i, a in enumerate(args) if a == '--env']
-    assert 'FOO=bar' in env_values
+    env_values = [args[i + 1] for i, a in enumerate(args) if a == "--env"]
+    assert "FOO=bar" in env_values
 
     # Command is the last part after '--'.
-    separator_idx = args.index('--')
-    assert args[separator_idx + 1] == '/bin/sh'
+    separator_idx = args.index("--")
+    assert args[separator_idx + 1] == "/bin/sh"
 
     # Mount target directories are created under the per-session chroot root.
-    assert (session_dir / 'root' / 'workspace').is_dir()
-    assert (session_dir / 'root' / 'tmp').is_dir()
-    assert (session_dir / 'root' / 'home').is_dir()
+    assert (session_dir / "root" / "workspace").is_dir()
+    assert (session_dir / "root" / "tmp").is_dir()
+    assert (session_dir / "root" / "home").is_dir()
 
 
 def test_build_nsjail_args_binds_essential_dev_nodes(backend, tmp_base):
@@ -267,114 +271,116 @@ def test_build_nsjail_args_binds_essential_dev_nodes(backend, tmp_base):
 
 def test_build_nsjail_args_network_on(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    session_dir = tmp_base / 'test_session_net'
-    for d in ('root', 'workspace', 'tmp', 'home'):
+    session_dir = tmp_base / "test_session_net"
+    for d in ("root", "workspace", "tmp", "home"):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
-        session_id='s2',
-        backend_name='nsjail',
+        session_id="s2",
+        backend_name="nsjail",
         backend_session_id=str(session_dir),
-        image='host',
+        image="host",
         network=BoxNetworkMode.ON,
-        created_at='2024-01-01T00:00:00+00:00',
-        last_used_at='2024-01-01T00:00:00+00:00',
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
     )
-    spec = BoxSpec(session_id='s2', cmd='curl http://example.com', network=BoxNetworkMode.ON)
+    spec = BoxSpec(
+        session_id="s2", cmd="curl http://example.com", network=BoxNetworkMode.ON
+    )
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
-    assert '--disable_clone_newnet' in args
-    assert '--clone_newnet' not in args
+    assert "--disable_clone_newnet" in args
+    assert "--clone_newnet" not in args
 
 
 def test_build_nsjail_args_host_path_ro(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    session_dir = tmp_base / 'test_hp'
-    for d in ('root', 'workspace', 'tmp', 'home'):
+    session_dir = tmp_base / "test_hp"
+    for d in ("root", "workspace", "tmp", "home"):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
-        session_id='s3',
-        backend_name='nsjail',
+        session_id="s3",
+        backend_name="nsjail",
         backend_session_id=str(session_dir),
-        image='host',
+        image="host",
         network=BoxNetworkMode.OFF,
-        host_path='/data/project',
+        host_path="/data/project",
         host_path_mode=BoxHostMountMode.READ_ONLY,
-        created_at='2024-01-01T00:00:00+00:00',
-        last_used_at='2024-01-01T00:00:00+00:00',
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
     )
     spec = BoxSpec(
-        session_id='s3',
-        cmd='ls',
-        host_path='/data/project',
+        session_id="s3",
+        cmd="ls",
+        host_path="/data/project",
         host_path_mode=BoxHostMountMode.READ_ONLY,
     )
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
-    ro_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount_ro']
-    assert '/data/project:/workspace' in ro_binds
+    ro_binds = [args[i + 1] for i, a in enumerate(args) if a == "--bindmount_ro"]
+    assert "/data/project:/workspace" in ro_binds
 
 
 def test_build_nsjail_args_uses_custom_mount_path(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    session_dir = tmp_base / 'test_custom_mount'
-    for d in ('root', 'workspace', 'tmp', 'home'):
+    session_dir = tmp_base / "test_custom_mount"
+    for d in ("root", "workspace", "tmp", "home"):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
-        session_id='s4',
-        backend_name='nsjail',
+        session_id="s4",
+        backend_name="nsjail",
         backend_session_id=str(session_dir),
-        image='host',
+        image="host",
         network=BoxNetworkMode.OFF,
-        host_path='/data/project',
+        host_path="/data/project",
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/project',
-        created_at='2024-01-01T00:00:00+00:00',
-        last_used_at='2024-01-01T00:00:00+00:00',
+        mount_path="/project",
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
     )
     spec = BoxSpec(
-        session_id='s4',
-        cmd='pwd',
-        workdir='/project/src',
-        host_path='/data/project',
+        session_id="s4",
+        cmd="pwd",
+        workdir="/project/src",
+        host_path="/data/project",
         host_path_mode=BoxHostMountMode.READ_WRITE,
-        mount_path='/project',
+        mount_path="/project",
     )
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
-    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
-    assert '/data/project:/project' in rw_binds
-    assert args[args.index('--cwd') + 1] == '/project/src'
-    assert (session_dir / 'root' / 'project').is_dir()
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == "--bindmount"]
+    assert "/data/project:/project" in rw_binds
+    assert args[args.index("--cwd") + 1] == "/project/src"
+    assert (session_dir / "root" / "project").is_dir()
 
 
 def test_build_nsjail_args_extra_mounts_prepare_targets(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    session_dir = tmp_base / 'test_extra_mount'
-    for d in ('root', 'workspace', 'tmp', 'home'):
+    session_dir = tmp_base / "test_extra_mount"
+    for d in ("root", "workspace", "tmp", "home"):
         (session_dir / d).mkdir(parents=True)
 
     session = BoxSessionInfo(
-        session_id='s5',
-        backend_name='nsjail',
+        session_id="s5",
+        backend_name="nsjail",
         backend_session_id=str(session_dir),
-        image='host',
+        image="host",
         network=BoxNetworkMode.OFF,
-        created_at='2024-01-01T00:00:00+00:00',
-        last_used_at='2024-01-01T00:00:00+00:00',
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
     )
     spec = BoxSpec(
-        session_id='s5',
-        cmd='ls /workspace/.skills/demo',
+        session_id="s5",
+        cmd="ls /workspace/.skills/demo",
         extra_mounts=[
             BoxMountSpec(
-                host_path='/data/skills/demo',
-                mount_path='/workspace/.skills/demo',
+                host_path="/data/skills/demo",
+                mount_path="/workspace/.skills/demo",
                 mode=BoxHostMountMode.READ_WRITE,
             )
         ],
@@ -382,14 +388,14 @@ def test_build_nsjail_args_extra_mounts_prepare_targets(backend, tmp_base):
 
     args = backend._build_nsjail_args(session, spec, session_dir)
 
-    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == '--bindmount']
-    assert '/data/skills/demo:/workspace/.skills/demo' in rw_binds
-    assert (session_dir / 'root' / 'workspace' / '.skills' / 'demo').is_dir()
+    rw_binds = [args[i + 1] for i, a in enumerate(args) if a == "--bindmount"]
+    assert "/data/skills/demo:/workspace/.skills/demo" in rw_binds
+    assert (session_dir / "root" / "workspace" / ".skills" / "demo").is_dir()
 
 
 def test_build_resource_limits_cgroup(backend):
     backend._cgroup_v2_available = True
-    spec = BoxSpec(session_id='s', cmd='x', cpus=2.0, memory_mb=1024, pids_limit=256)
+    spec = BoxSpec(session_id="s", cmd="x", cpus=2.0, memory_mb=1024, pids_limit=256)
 
     args = backend._build_resource_limits(spec)
 
@@ -400,16 +406,16 @@ def test_build_resource_limits_cgroup(backend):
     mem_idx = args.index("--cgroup_mem_max")
     assert args[mem_idx + 1] == str(1024 * 1024 * 1024)
 
-    pids_idx = args.index('--cgroup_pids_max')
-    assert args[pids_idx + 1] == '256'
+    pids_idx = args.index("--cgroup_pids_max")
+    assert args[pids_idx + 1] == "256"
 
-    cpu_idx = args.index('--cgroup_cpu_ms_per_sec')
-    assert args[cpu_idx + 1] == '2000'
+    cpu_idx = args.index("--cgroup_cpu_ms_per_sec")
+    assert args[cpu_idx + 1] == "2000"
 
 
 def test_build_resource_limits_rlimit_fallback(backend):
     backend._cgroup_v2_available = False
-    spec = BoxSpec(session_id='s', cmd='x', memory_mb=512, pids_limit=128)
+    spec = BoxSpec(session_id="s", cmd="x", memory_mb=512, pids_limit=128)
 
     args = backend._build_resource_limits(spec)
 
@@ -421,8 +427,8 @@ def test_build_resource_limits_rlimit_fallback(backend):
     # the fallback runs without a hard memory cap by design.
     assert "--rlimit_as" not in args
 
-    nproc_idx = args.index('--rlimit_nproc')
-    assert args[nproc_idx + 1] == '128'
+    nproc_idx = args.index("--rlimit_nproc")
+    assert args[nproc_idx + 1] == "128"
 
     # Safe rlimits still apply.
     assert "--rlimit_fsize" in args
@@ -435,36 +441,39 @@ def test_build_resource_limits_rlimit_fallback(backend):
 
 # ── exec ──────────────────────────────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_exec_success(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    spec = BoxSpec(session_id='exec1', cmd='echo hello')
+    spec = BoxSpec(session_id="exec1", cmd="echo hello")
     info = await backend.start_session(spec)
 
-    with mock.patch.object(backend, '_run_nsjail') as mock_run:
+    with mock.patch.object(backend, "_run_nsjail") as mock_run:
         from langbot_plugin.box.backend import _CommandResult
+
         mock_run.return_value = _CommandResult(
-            return_code=0, stdout='hello\n', stderr='', timed_out=False
+            return_code=0, stdout="hello\n", stderr="", timed_out=False
         )
 
         result = await backend.exec(info, spec)
 
     assert result.status == BoxExecutionStatus.COMPLETED
     assert result.exit_code == 0
-    assert result.stdout == 'hello\n'
-    assert result.backend_name == 'nsjail'
+    assert result.stdout == "hello\n"
+    assert result.backend_name == "nsjail"
 
 
 @pytest.mark.anyio
 async def test_exec_timeout(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
-    spec = BoxSpec(session_id='exec2', cmd='sleep 100', timeout_sec=1)
+    spec = BoxSpec(session_id="exec2", cmd="sleep 100", timeout_sec=1)
     info = await backend.start_session(spec)
 
-    with mock.patch.object(backend, '_run_nsjail') as mock_run:
+    with mock.patch.object(backend, "_run_nsjail") as mock_run:
         from langbot_plugin.box.backend import _CommandResult
+
         mock_run.return_value = _CommandResult(
-            return_code=-1, stdout='', stderr='', timed_out=True
+            return_code=-1, stdout="", stderr="", timed_out=True
         )
 
         result = await backend.exec(info, spec)
@@ -475,8 +484,9 @@ async def test_exec_timeout(backend, tmp_base):
 
 # ── cgroup detection ──────────────────────────────────────────────────
 
+
 def test_detect_cgroup_v2_no_mount():
-    with mock.patch.object(pathlib.Path, 'exists', return_value=False):
+    with mock.patch.object(pathlib.Path, "exists", return_value=False):
         assert NsjailBackend._detect_cgroup_v2() is False
 
 
@@ -572,22 +582,25 @@ def test_detect_cgroup_v2_no_subtree_control_returns_false():
 
 # ── cleanup_orphaned_containers ───────────────────────────────────────
 
+
 @pytest.mark.anyio
 async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
 
     # Create a dir from a different instance.
-    old_dir = tmp_base / 'oldinst_sess1_abc'
+    old_dir = tmp_base / "oldinst_sess1_abc"
     old_dir.mkdir()
-    (old_dir / 'workspace').mkdir()
+    (old_dir / "workspace").mkdir()
 
     # Create a dir from current instance.
-    current_dir = tmp_base / 'test123_sess2_def'
+    current_dir = tmp_base / "test123_sess2_def"
     current_dir.mkdir()
-    (current_dir / 'workspace').mkdir()
+    (current_dir / "workspace").mkdir()
 
-    with mock.patch.object(backend, '_kill_session_processes', new_callable=mock.AsyncMock):
-        await backend.cleanup_orphaned_containers('test123')
+    with mock.patch.object(
+        backend, "_kill_session_processes", new_callable=mock.AsyncMock
+    ):
+        await backend.cleanup_orphaned_containers("test123")
 
     assert not old_dir.exists()
     assert current_dir.exists()
@@ -595,14 +608,15 @@ async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
 
 # ── output clipping ──────────────────────────────────────────────────
 
+
 def test_clip_captured_bytes_within_limit():
-    data = b'hello world'
+    data = b"hello world"
     result = NsjailBackend._clip_captured_bytes(data, len(data))
-    assert result == 'hello world'
+    assert result == "hello world"
 
 
 def test_clip_captured_bytes_exceeds_limit():
-    data = b'hello'
+    data = b"hello"
     result = NsjailBackend._clip_captured_bytes(data, 2_000_000, limit=1_000_000)
-    assert 'clipped' in result
-    assert '1000000' in result
+    assert "clipped" in result
+    assert "1000000" in result
