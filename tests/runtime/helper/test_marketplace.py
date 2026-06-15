@@ -78,7 +78,9 @@ class FakeAsyncClient:
 def fake_client(monkeypatch):
     FakeAsyncClient.requests = []
     monkeypatch.setattr(marketplace.httpx, "AsyncClient", FakeAsyncClient)
-    monkeypatch.setattr(marketplace.runtime_settings, "cloud_service_url", "https://cloud")
+    monkeypatch.setattr(
+        marketplace.runtime_settings, "cloud_service_url", "https://cloud"
+    )
     return FakeAsyncClient
 
 

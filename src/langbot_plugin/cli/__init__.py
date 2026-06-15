@@ -10,7 +10,7 @@ from langbot_plugin.cli.commands.buildplugin import build_plugin_process
 from langbot_plugin.cli.commands.login import login_process
 from langbot_plugin.cli.commands.logout import logout_process
 from langbot_plugin.cli.commands.publish import publish_process
-from langbot_plugin.cli.i18n import cli_print, t
+from langbot_plugin.cli.i18n import cli_print
 
 """
 Usage:
@@ -45,10 +45,10 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # help command
-    help_parser = subparsers.add_parser("help", help="Show the help of the CLI")
+    subparsers.add_parser("help", help="Show the help of the CLI")
 
     # ver command
-    ver_parser = subparsers.add_parser("ver", help="Show the version of the CLI")
+    subparsers.add_parser("ver", help="Show the version of the CLI")
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new plugin")
@@ -94,7 +94,7 @@ def main():
     )
 
     # logout command
-    logout_parser = subparsers.add_parser("logout", help="Logout from LangBot account")
+    subparsers.add_parser("logout", help="Logout from LangBot account")
 
     # build command
     build_parser = subparsers.add_parser("build", help="Build the plugin to a zip file")
@@ -150,9 +150,7 @@ def main():
 
     # box command
     box_parser = subparsers.add_parser("box", help="Run the sandbox box runtime")
-    box_parser.add_argument(
-        "--host", default="0.0.0.0", help="Bind address"
-    )
+    box_parser.add_argument("--host", default="0.0.0.0", help="Bind address")
     box_parser.add_argument(
         "-s",
         "--stdio-control",

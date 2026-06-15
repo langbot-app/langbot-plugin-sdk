@@ -1089,7 +1089,9 @@ class TestAgentRunAPIProxyFieldConsistency:
     async def test_action_timeout_is_wrapped_as_agent_api_exception(self):
         """Transport timeouts must not escape the runner-facing API contract."""
         mock_handler = MockHandler()
-        mock_handler.call_action_mock.side_effect = ActionCallTimeoutError("slow host action")
+        mock_handler.call_action_mock.side_effect = ActionCallTimeoutError(
+            "slow host action"
+        )
 
         ctx = create_mock_context(
             knowledge_bases=[{"kb_id": "kb_001"}],
@@ -1101,13 +1103,18 @@ class TestAgentRunAPIProxyFieldConsistency:
 
         assert exc_info.value.error.code == "deadline_exceeded"
         assert exc_info.value.error.retryable is True
-        assert exc_info.value.error.details["action"] == PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE.value
+        assert (
+            exc_info.value.error.details["action"]
+            == PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE.value
+        )
 
     @pytest.mark.anyio
     async def test_connection_closed_is_wrapped_as_agent_api_exception(self):
         """Connection failures must be normalized for runner error handling."""
         mock_handler = MockHandler()
-        mock_handler.call_action_mock.side_effect = ConnectionClosedError("connection closed")
+        mock_handler.call_action_mock.side_effect = ConnectionClosedError(
+            "connection closed"
+        )
 
         ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
@@ -1117,7 +1124,10 @@ class TestAgentRunAPIProxyFieldConsistency:
 
         assert exc_info.value.error.code == "runtime_error"
         assert exc_info.value.error.retryable is True
-        assert exc_info.value.error.details["action"] == PluginToRuntimeAction.CALL_TOOL.value
+        assert (
+            exc_info.value.error.details["action"]
+            == PluginToRuntimeAction.CALL_TOOL.value
+        )
 
     @pytest.mark.anyio
     async def test_expired_deadline_fails_fast_before_host_call(self):

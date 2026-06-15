@@ -13,7 +13,9 @@ async def _empty_generator():
 
 
 @pytest.mark.anyio
-async def test_anext_with_deadline_preserves_natural_exhaustion_after_deadline(monkeypatch):
+async def test_anext_with_deadline_preserves_natural_exhaustion_after_deadline(
+    monkeypatch,
+):
     """A naturally exhausted generator must not be reported as a timeout."""
     now = time.time()
     ticks = iter([now, now + 2])

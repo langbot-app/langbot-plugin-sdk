@@ -118,7 +118,9 @@ class AgentRunMCPBridge:
 
                 payload = self._read_json_payload()
                 if isinstance(payload, Exception):
-                    self._write_json(400, {"ok": False, "error": f"invalid JSON: {payload}"})
+                    self._write_json(
+                        400, {"ok": False, "error": f"invalid JSON: {payload}"}
+                    )
                     return
 
                 if self.path == "/mcp/http":
