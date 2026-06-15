@@ -4,16 +4,33 @@ from __future__ import annotations
 
 import json
 import typing
+import copy
 
 import pydantic
 
 from langbot_plugin.api.agent_tools.decorators import agent_tool, collect_agent_tools
+from langbot_plugin.api.agent_tools.decorators import AgentToolSpec
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 
 
 class EmptyArgs(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class ListAssetsArgs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    asset_types: list[
+        typing.Literal[
+            "event",
+            "history",
+            "knowledge_bases",
+            "tools",
+            "mcp_tools",
+        ]
+    ] = pydantic.Field(default_factory=list)
+    include_schemas: bool = False
 
 
 class HistoryPageArgs(pydantic.BaseModel):
@@ -44,6 +61,12 @@ class CallToolArgs(pydantic.BaseModel):
     parameters: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
 
+class GetToolDetailArgs(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    tool_name: str
+
+
 def _dump_jsonable(value: typing.Any) -> typing.Any:
     if value is None:
         return None
@@ -59,6 +82,33 @@ def _dump_jsonable(value: typing.Any) -> typing.Any:
     return str(value)
 
 
+def _operation_allowed(operations: list[str], operation: str) -> bool:
+    return not operations or operation in operations
+
+
+def _with_optional_run_token(tool: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    data = copy.deepcopy(tool)
+    schema = data.setdefault("inputSchema", {})
+    if not isinstance(schema, dict):
+        schema = {}
+        data["inputSchema"] = schema
+    properties = schema.setdefault("properties", {})
+    if not isinstance(properties, dict):
+        properties = {}
+        schema["properties"] = properties
+    properties.setdefault(
+        "run_token",
+        {
+            "type": "string",
+            "description": (
+                "Short-lived LangBot run token. Optional when the MCP request "
+                "already includes an Authorization bearer token."
+            ),
+        },
+    )
+    return data
+
+
 class AgentRunExternalTools:
     """Annotated tool surface backed by AgentRunAPIProxy."""
 
@@ -67,26 +117,62 @@ class AgentRunExternalTools:
         self.ctx = ctx
         self._tools = collect_agent_tools(self)
 
+    @classmethod
+    def all_mcp_tools(cls, *, include_run_token: bool = False) -> list[dict[str, typing.Any]]:
+        tools: list[dict[str, typing.Any]] = []
+        seen: set[str] = set()
+        for attr_name in dir(cls):
+            attr = getattr(cls, attr_name)
+            spec = getattr(attr, "__langbot_agent_tool__", None)
+            if not isinstance(spec, AgentToolSpec):
+                continue
+            if spec.name in seen:
+                raise ValueError(f"Duplicate Agent tool name: {spec.name}")
+            seen.add(spec.name)
+            tools.append(spec.to_mcp_tool())
+        if include_run_token:
+            return [_with_optional_run_token(tool) for tool in tools]
+        return tools
+
     def _available_tool_names(self) -> set[str]:
-        names = {"langbot_get_current_event"}
+        names = {"langbot_get_current_event", "langbot_list_assets"}
 
         available_apis = self.ctx.context.available_apis
         if available_apis.history_page:
             names.add("langbot_history_page")
-        if self.ctx.resources.knowledge_bases:
+        if any(
+            _operation_allowed(item.operations, "retrieve")
+            for item in self.ctx.resources.knowledge_bases
+        ):
             names.add("langbot_retrieve_knowledge")
-        if self.ctx.resources.tools:
+        if any(
+            _operation_allowed(item.operations, "detail")
+            for item in self.ctx.resources.tools
+        ):
+            names.add("langbot_get_tool_detail")
+        if any(
+            _operation_allowed(item.operations, "call")
+            for item in self.ctx.resources.tools
+        ):
             names.add("langbot_call_tool")
 
         return names
 
-    def mcp_tools(self) -> list[dict[str, typing.Any]]:
-        available_names = self._available_tool_names()
-        return [
+    def mcp_tools(
+        self,
+        *,
+        include_unavailable: bool = False,
+        include_run_token: bool = False,
+    ) -> list[dict[str, typing.Any]]:
+        available_names = self._available_tool_names() if not include_unavailable else None
+        tools = [
             tool.spec.to_mcp_tool()
             for name, tool in self._tools.items()
-            if name in available_names
+            if available_names is None or name in available_names
         ]
+        if include_run_token:
+            return [_with_optional_run_token(tool) for tool in tools]
+        return tools
 
     async def call_tool(
         self, name: str, arguments: dict[str, typing.Any] | None = None
@@ -125,6 +211,81 @@ class AgentRunExternalTools:
             ],
             "structuredContent": structured,
         }
+
+    def _asset_summary(
+        self,
+        *,
+        asset_types: list[str] | None = None,
+        include_schemas: bool = False,
+    ) -> dict[str, typing.Any]:
+        requested = set(asset_types or [])
+        include_all = not requested
+
+        data: dict[str, typing.Any] = {
+            "run_id": self.ctx.run_id,
+            "asset_types": sorted(
+                requested
+                or {
+                    "event",
+                    "history",
+                    "knowledge_bases",
+                    "tools",
+                    "mcp_tools",
+                }
+            ),
+        }
+        if include_all or "event" in requested:
+            data["event"] = {
+                "available": True,
+                "tool_name": "langbot_get_current_event",
+            }
+        if include_all or "history" in requested:
+            data["history"] = {
+                "available": bool(self.ctx.context.available_apis.history_page),
+                "tool_name": "langbot_history_page",
+            }
+        if include_all or "knowledge_bases" in requested:
+            data["knowledge_bases"] = [
+                {
+                    "kb_id": item.kb_id,
+                    "name": item.kb_name,
+                    "type": item.kb_type,
+                    "operations": list(item.operations),
+                }
+                for item in self.ctx.resources.knowledge_bases
+            ]
+        if include_all or "tools" in requested:
+            data["tools"] = [
+                {
+                    "tool_name": item.tool_name,
+                    "type": item.tool_type,
+                    "description": item.description,
+                    "operations": list(item.operations),
+                }
+                for item in self.ctx.resources.tools
+            ]
+        if include_all or "mcp_tools" in requested:
+            data["mcp_tools"] = [
+                {
+                    "tool_name": tool["name"],
+                    "description": tool.get("description"),
+                    **({"schema": tool.get("inputSchema", {})} if include_schemas else {}),
+                }
+                for tool in self.mcp_tools()
+            ]
+        return data
+
+    @agent_tool(
+        name="langbot_list_assets",
+        description="List the LangBot event, history, knowledge bases, tools, and MCP bridge tools authorized for the current run.",
+        args_model=ListAssetsArgs,
+        read_only=True,
+    )
+    async def list_assets(self, args: ListAssetsArgs) -> dict[str, typing.Any]:
+        return self._asset_summary(
+            asset_types=args.asset_types,
+            include_schemas=args.include_schemas,
+        )
 
     @agent_tool(
         name="langbot_get_current_event",
@@ -194,6 +355,15 @@ class AgentRunExternalTools:
             top_k=args.top_k,
             filters=args.filters,
         )
+
+    @agent_tool(
+        name="langbot_get_tool_detail",
+        description="Return the parameter schema and description for an authorized LangBot tool in the current run.",
+        args_model=GetToolDetailArgs,
+        read_only=True,
+    )
+    async def get_tool_detail(self, args: GetToolDetailArgs) -> dict[str, typing.Any]:
+        return await self.api.get_tool_detail(tool_name=args.tool_name)
 
     @agent_tool(
         name="langbot_call_tool",
