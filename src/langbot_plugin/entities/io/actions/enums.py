@@ -100,11 +100,13 @@ class PluginToRuntimeAction(ActionType):
     RUN_CLAIM = "run_claim"
     RUN_RENEW_CLAIM = "run_renew_claim"
     RUN_RELEASE_CLAIM = "run_release_claim"
+    RUNNER_LIST = "runner_list"
 
     """Agent Runtime Registry APIs (Host control-plane scoped)"""
     RUNTIME_REGISTER = "runtime_register"
     RUNTIME_HEARTBEAT = "runtime_heartbeat"
     RUNTIME_LIST = "runtime_list"
+    RUNTIME_RECONCILE = "runtime_reconcile"
 
     """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
     ARTIFACT_METADATA = "artifact_metadata"

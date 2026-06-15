@@ -85,6 +85,8 @@ class TestPluginConnectionHandlerPullAPIRegistration:
             PluginToRuntimeAction.RUN_CLAIM,
             PluginToRuntimeAction.RUN_RENEW_CLAIM,
             PluginToRuntimeAction.RUN_RELEASE_CLAIM,
+            PluginToRuntimeAction.RUNNER_LIST,
+            PluginToRuntimeAction.RUNTIME_RECONCILE,
         ]
 
         for action in expected_actions:
@@ -577,6 +579,8 @@ class TestPluginConnectionHandlerCallerIdentity:
                     "claim_token": "token",
                 },
             ),
+            (PluginToRuntimeAction.RUNNER_LIST, {}),
+            (PluginToRuntimeAction.RUNTIME_RECONCILE, {}),
         ]
 
         for action, payload in pull_actions:
@@ -616,6 +620,20 @@ class TestPluginConnectionHandlerCallerIdentity:
             (
                 PluginToRuntimeAction.RUNTIME_LIST,
                 {"caller_plugin_identity": "attacker/plugin", "statuses": ["online"]},
+            ),
+            (
+                PluginToRuntimeAction.RUNNER_LIST,
+                {
+                    "caller_plugin_identity": "attacker/plugin",
+                    "include_plugins": ["control-author/control-plugin"],
+                },
+            ),
+            (
+                PluginToRuntimeAction.RUNTIME_RECONCILE,
+                {
+                    "caller_plugin_identity": "attacker/plugin",
+                    "stale_after_seconds": 60.0,
+                },
             ),
         ]
 

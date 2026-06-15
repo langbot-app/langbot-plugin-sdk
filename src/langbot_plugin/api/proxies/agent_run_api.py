@@ -1727,6 +1727,58 @@ class AgentRunAdminAPIProxy:
         )
         return RuntimePage.model_validate(resp)
 
+    async def runner_list(
+        self,
+        include_plugins: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        resp = await self._call_action(
+            PluginToRuntimeAction.RUNNER_LIST,
+            {
+                "include_plugins": include_plugins,
+            },
+            15.0,
+        )
+        if isinstance(resp, list):
+            return resp
+        if isinstance(resp, dict) and isinstance(resp.get("items"), list):
+            return resp["items"]
+        raise AgentAPIException(
+            AgentAPIError(
+                code="host.malformed_response",
+                message=(
+                    f"{PluginToRuntimeAction.RUNNER_LIST.value} response must be "
+                    "a list or contain an items list"
+                ),
+                retryable=False,
+                details={"action": PluginToRuntimeAction.RUNNER_LIST.value},
+            )
+        )
+
+    async def runtime_reconcile(
+        self,
+        stale_after_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._call_action(
+            PluginToRuntimeAction.RUNTIME_RECONCILE,
+            {
+                "stale_after_seconds": stale_after_seconds,
+            },
+            30.0,
+        )
+        if isinstance(resp, dict):
+            return resp
+        raise AgentAPIException(
+            AgentAPIError(
+                code="host.malformed_response",
+                message=(
+                    f"{PluginToRuntimeAction.RUNTIME_RECONCILE.value} response "
+                    "must be a dict"
+                ),
+                retryable=False,
+                details={"action": PluginToRuntimeAction.RUNTIME_RECONCILE.value},
+            )
+        )
+
     async def run_claim(
         self,
         runtime_id: str,
