@@ -7,9 +7,7 @@ from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
 
 def test_parses_standard_log_line_level():
     buf = PluginLogBuffer()
-    buf.add_line(
-        "[06-13 10:30:00.123] main.py (45) - [INFO] : hello world"
-    )
+    buf.add_line("[06-13 10:30:00.123] main.py (45) - [INFO] : hello world")
     logs = buf.get_logs()
     assert len(logs) == 1
     assert logs[0]["level"] == "INFO"
@@ -18,9 +16,7 @@ def test_parses_standard_log_line_level():
 
 def test_continuation_line_inherits_level():
     buf = PluginLogBuffer()
-    buf.add_line(
-        "[06-13 10:30:00.123] main.py (45) - [ERROR] : boom"
-    )
+    buf.add_line("[06-13 10:30:00.123] main.py (45) - [ERROR] : boom")
     buf.add_line("Traceback (most recent call last):")
     buf.add_line('  File "x.py", line 1, in <module>')
     logs = buf.get_logs()
@@ -65,9 +61,7 @@ def test_empty_lines_skipped():
 def test_attach_stream_reads_to_eof():
     async def run():
         reader = asyncio.StreamReader()
-        reader.feed_data(
-            b"[06-13 10:30:00.1] a.py (1) - [INFO] : streamed\n"
-        )
+        reader.feed_data(b"[06-13 10:30:00.1] a.py (1) - [INFO] : streamed\n")
         reader.feed_eof()
         buf = PluginLogBuffer()
         await buf.attach_stream(reader)

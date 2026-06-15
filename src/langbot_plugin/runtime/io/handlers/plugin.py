@@ -66,10 +66,7 @@ class PluginConnectionHandler(handler.Handler):
         # Capture the plugin subprocess's stderr (Python `logging` output) into
         # a per-plugin ring buffer so LangBot can show logs on the detail page.
         self.log_buffer = PluginLogBuffer()
-        if (
-            self.stdio_process is not None
-            and self.stdio_process.stderr is not None
-        ):
+        if self.stdio_process is not None and self.stdio_process.stderr is not None:
             self.log_buffer.start_reader(self.stdio_process.stderr)
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
@@ -556,9 +553,7 @@ class PluginConnectionHandler(handler.Handler):
                     return handler.ActionResponse.success(
                         {"tool": tool.to_plain_dict()}
                     )
-            return handler.ActionResponse.error(
-                message=f"Tool not found: {tool_name}"
-            )
+            return handler.ActionResponse.error(message=f"Tool not found: {tool_name}")
 
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
@@ -569,9 +564,7 @@ class PluginConnectionHandler(handler.Handler):
             resp = await self.context.plugin_mgr.call_tool(
                 tool_name, tool_parameters, session, query_id
             )
-            return handler.ActionResponse.success(
-                {"tool_response": resp}
-            )
+            return handler.ActionResponse.success({"tool_response": resp})
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:

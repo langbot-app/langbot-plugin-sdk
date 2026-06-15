@@ -274,7 +274,9 @@ async def test_install_plugin_from_file_extracts_manifest_and_replaces_old_versi
 
 
 @pytest.mark.asyncio
-async def test_install_plugin_from_file_rejects_same_version_duplicate(tmp_path, monkeypatch):
+async def test_install_plugin_from_file_rejects_same_version_duplicate(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     manager = _manager()
     manager.plugins = [_plugin(name="demo")]
@@ -284,7 +286,9 @@ async def test_install_plugin_from_file_rejects_same_version_duplicate(tmp_path,
 
 
 @pytest.mark.asyncio
-async def test_install_plugin_raises_when_dependency_install_fails(tmp_path, monkeypatch):
+async def test_install_plugin_raises_when_dependency_install_fails(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     plugin_path = tmp_path / "data/plugins/tester__demo"
     plugin_path.mkdir(parents=True)
@@ -337,7 +341,9 @@ async def test_install_plugin_raises_when_dependency_install_fails(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_install_plugin_raises_verification_error_when_pip_lies(tmp_path, monkeypatch):
+async def test_install_plugin_raises_verification_error_when_pip_lies(
+    tmp_path, monkeypatch
+):
     """pip reports success but the dependency is still unsatisfiable."""
     monkeypatch.chdir(tmp_path)
     plugin_path = tmp_path / "data/plugins/tester__demo"
@@ -392,9 +398,9 @@ async def test_register_plugin_initializes_settings_and_refreshes_container():
     assert registered.install_source == PluginInstallSource.MARKETPLACE.value
     assert registered.install_info == {"plugin_version": "1.0.0"}
     assert registered.status is RuntimeContainerStatus.INITIALIZED
-    assert [component.manifest.metadata.name for component in registered.components] == [
-        "lookup"
-    ]
+    assert [
+        component.manifest.metadata.name for component in registered.components
+    ] == ["lookup"]
     assert handler.initialized_with["plugin_config"] == {"api_key": "secret"}
 
 

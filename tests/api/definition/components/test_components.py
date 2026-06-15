@@ -9,7 +9,11 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
     KnowledgeEngineCapability,
 )
-from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
+from langbot_plugin.api.definition.components.page import (
+    Page,
+    PageRequest,
+    PageResponse,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
@@ -42,9 +46,10 @@ def test_command_subcommand_decorator_records_metadata():
     async def handler(_ctx):
         yield CommandReturn(text="ok")
 
-    assert command.subcommand("run", help="Run", usage="/run", aliases=["r"])(
-        handler
-    ) is handler
+    assert (
+        command.subcommand("run", help="Run", usage="/run", aliases=["r"])(handler)
+        is handler
+    )
 
     registered = command.registered_subcommands["run"]
     assert registered.help == "Run"
@@ -85,7 +90,9 @@ async def test_page_default_handle_api_returns_not_implemented_failure():
 
 
 def test_knowledge_engine_default_capabilities():
-    assert KnowledgeEngine.get_capabilities() == [KnowledgeEngineCapability.DOC_INGESTION]
+    assert KnowledgeEngine.get_capabilities() == [
+        KnowledgeEngineCapability.DOC_INGESTION
+    ]
 
 
 def test_abstract_component_kinds_are_stable():

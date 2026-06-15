@@ -23,7 +23,11 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
-from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
+from langbot_plugin.api.definition.components.page import (
+    Page,
+    PageRequest,
+    PageResponse,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -137,7 +141,9 @@ class PluginRuntimeHandler(Handler):
             file_key = data["file_key"]
             file_path = _resolve_asset_path(file_key)
             if file_path is None:
-                return ActionResponse.success({"file_file_key": None, "mime_type": None})
+                return ActionResponse.success(
+                    {"file_file_key": None, "mime_type": None}
+                )
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
@@ -166,7 +172,9 @@ class PluginRuntimeHandler(Handler):
                     continue
                 if isinstance(component.component_instance, NoneComponent):
                     return ActionResponse.success(
-                        PageResponse.fail("Page component is not initialized").model_dump()
+                        PageResponse.fail(
+                            "Page component is not initialized"
+                        ).model_dump()
                     )
                 if not isinstance(component.component_instance, Page):
                     return ActionResponse.success(
