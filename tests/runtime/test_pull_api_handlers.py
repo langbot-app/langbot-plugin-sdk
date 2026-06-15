@@ -592,6 +592,46 @@ class TestPluginConnectionHandlerCallerIdentity:
                 forwarded_payload.get("caller_plugin_identity") == "my-author/my-plugin"
             ), f"caller_plugin_identity not injected for {action.value}"
 
+    @pytest.mark.anyio
+    async def test_admin_pull_apis_without_run_id_inject_real_plugin_identity(self):
+        """Admin pull APIs without run_id still use runtime-owned caller identity."""
+        fake_context = make_fake_context()
+        handler = PluginConnectionHandler(FakeConnection(), fake_context)
+        plugin_container = SimpleNamespace(
+            _runtime_plugin_handler=handler,
+            manifest=SimpleNamespace(
+                metadata=SimpleNamespace(
+                    author="control-author",
+                    name="control-plugin",
+                )
+            ),
+        )
+        fake_context.plugin_mgr.plugins = [plugin_container]
+
+        admin_actions = [
+            (
+                PluginToRuntimeAction.RUN_LIST,
+                {"caller_plugin_identity": "attacker/plugin", "statuses": ["running"]},
+            ),
+            (
+                PluginToRuntimeAction.RUNTIME_LIST,
+                {"caller_plugin_identity": "attacker/plugin", "statuses": ["online"]},
+            ),
+        ]
+
+        for action, payload in admin_actions:
+            fake_context.control_handler.call_action.reset_mock()
+
+            resp = await handler.actions[action.value](payload)
+
+            assert resp.code == 0
+            forwarded_payload = fake_context.control_handler.call_action.call_args[0][1]
+            assert "run_id" not in forwarded_payload
+            assert (
+                forwarded_payload["caller_plugin_identity"]
+                == "control-author/control-plugin"
+            )
+
 
 class TestAgentRunAPIProxyPullAPIPayloads:
     """Tests for pull API payload structure via AgentRunAPIProxy.

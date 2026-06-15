@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from langbot_plugin.api.proxies.agent_run_api import (
+    AgentRunAdminAPIProxy,
     AgentRunAPIProxy,
     AgentAPIException,
     PermissionDeniedError,
@@ -1623,6 +1624,127 @@ class TestAgentRunAPIProxyRuntimeLeaseAPI:
             "claim_token": "claim_token_1",
             "reason": "shutdown",
         }
+
+
+class TestAgentRunAdminAPIProxy:
+    """Tests for Host-authorized admin proxy methods."""
+
+    @pytest.mark.anyio
+    async def test_admin_run_list_omits_run_id(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            "items": [
+                {
+                    "id": 1,
+                    "run_id": "run_1",
+                    "runner_id": "plugin:test/plugin/default",
+                    "status": "completed",
+                    "metadata": {},
+                }
+            ],
+            "next_cursor": None,
+            "prev_cursor": None,
+            "has_more": False,
+        }
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        page = await proxy.run_list(statuses=["completed"], limit=10)
+
+        assert [run.run_id for run in page.items] == ["run_1"]
+        action, data, _timeout = mock_handler.call_action_mock.call_args.args
+        assert action == PluginToRuntimeAction.RUN_LIST
+        assert "run_id" not in data
+        assert data["statuses"] == ["completed"]
+        assert data["limit"] == 10
+
+    @pytest.mark.anyio
+    async def test_admin_run_get_and_events_use_target_run_id_only(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = [
+            {
+                "id": 1,
+                "run_id": "run_target",
+                "runner_id": "plugin:test/plugin/default",
+                "status": "completed",
+                "metadata": {},
+            },
+            {
+                "items": [
+                    {
+                        "id": 2,
+                        "run_id": "run_target",
+                        "sequence": 3,
+                        "type": "run.completed",
+                        "data": {},
+                        "artifact_refs": [],
+                        "metadata": {},
+                    }
+                ],
+                "next_cursor": None,
+                "prev_cursor": "3",
+                "has_more": False,
+            },
+        ]
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        run = await proxy.run_get("run_target")
+        events = await proxy.run_events_page("run_target", direction="backward", limit=5)
+
+        assert run.run_id == "run_target"
+        assert events.items[0].type == "run.completed"
+        first_call = mock_handler.call_action_mock.call_args_list[0].args
+        second_call = mock_handler.call_action_mock.call_args_list[1].args
+        assert first_call[0] == PluginToRuntimeAction.RUN_GET
+        assert first_call[1] == {"target_run_id": "run_target"}
+        assert second_call[0] == PluginToRuntimeAction.RUN_EVENTS_PAGE
+        assert "run_id" not in second_call[1]
+        assert second_call[1]["target_run_id"] == "run_target"
+
+    @pytest.mark.anyio
+    async def test_admin_runtime_and_claim_apis_omit_run_id(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = [
+            {
+                "items": [
+                    {
+                        "runtime_id": "runtime_1",
+                        "status": "online",
+                        "labels": {"region": "local"},
+                    }
+                ],
+                "next_cursor": None,
+                "prev_cursor": None,
+                "has_more": False,
+            },
+            {
+                "id": 1,
+                "run_id": "queued_run",
+                "runner_id": "plugin:test/plugin/default",
+                "status": "claimed",
+                "queue_name": "default",
+                "claimed_by_runtime_id": "runtime_1",
+                "claim_token": "claim_token_1",
+                "metadata": {},
+            },
+        ]
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        runtimes = await proxy.runtime_list(statuses=["online"], labels={"region": "local"})
+        claimed = await proxy.run_claim(
+            runtime_id="runtime_1",
+            queue_name="default",
+            runner_ids=["plugin:test/plugin/default"],
+        )
+
+        assert runtimes.items[0].runtime_id == "runtime_1"
+        assert claimed.run_id == "queued_run"
+        runtime_call = mock_handler.call_action_mock.call_args_list[0].args
+        claim_call = mock_handler.call_action_mock.call_args_list[1].args
+        assert runtime_call[0] == PluginToRuntimeAction.RUNTIME_LIST
+        assert "run_id" not in runtime_call[1]
+        assert claim_call[0] == PluginToRuntimeAction.RUN_CLAIM
+        assert "run_id" not in claim_call[1]
+        assert claim_call[1]["runner_ids"] == ["plugin:test/plugin/default"]
 
 
 class TestAgentRunAPIProxyStateAPI:
