@@ -1746,6 +1746,49 @@ class TestAgentRunAdminAPIProxy:
         assert "run_id" not in claim_call[1]
         assert claim_call[1]["runner_ids"] == ["plugin:test/plugin/default"]
 
+    @pytest.mark.anyio
+    async def test_admin_runner_list_omits_run_id(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = [
+            {
+                "runner_id": "plugin:test/plugin/default",
+                "plugin": "test/plugin",
+                "name": "default",
+            }
+        ]
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        runners = await proxy.runner_list(include_plugins=["test/plugin"])
+
+        assert runners == [
+            {
+                "runner_id": "plugin:test/plugin/default",
+                "plugin": "test/plugin",
+                "name": "default",
+            }
+        ]
+        action, data, _timeout = mock_handler.call_action_mock.call_args.args
+        assert action == PluginToRuntimeAction.RUNNER_LIST
+        assert "run_id" not in data
+        assert data == {"include_plugins": ["test/plugin"]}
+
+    @pytest.mark.anyio
+    async def test_admin_runtime_reconcile_omits_run_id(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            "stale_runtime_count": 2,
+            "updated_runtime_count": 1,
+        }
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        result = await proxy.runtime_reconcile(stale_after_seconds=60.5)
+
+        assert result == {"stale_runtime_count": 2, "updated_runtime_count": 1}
+        action, data, _timeout = mock_handler.call_action_mock.call_args.args
+        assert action == PluginToRuntimeAction.RUNTIME_RECONCILE
+        assert "run_id" not in data
+        assert data == {"stale_after_seconds": 60.5}
+
 
 class TestAgentRunAPIProxyStateAPI:
     """Tests for State API proxy methods."""
