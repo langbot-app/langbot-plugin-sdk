@@ -1835,3 +1835,76 @@ class AgentRunAdminAPIProxy:
             15.0,
         )
         return AgentRun.model_validate(resp)
+
+    async def run_stats(
+        self,
+        start_time: int | None = None,
+        end_time: int | None = None,
+        runner_id: str | None = None,
+    ) -> RunStats:
+        """Get run statistics within a time window.
+
+        Args:
+            start_time: Unix timestamp for start of window (optional, defaults to 1 hour ago)
+            end_time: Unix timestamp for end of window (optional, defaults to now)
+            runner_id: Filter by runner ID (optional)
+
+        Returns:
+            RunStats with counts, rates, and duration percentiles.
+        """
+        from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import RunStats
+
+        resp = await self._call_action(
+            PluginToRuntimeAction.RUN_STATS,
+            {
+                "start_time": start_time,
+                "end_time": end_time,
+                "runner_id": runner_id,
+            },
+            30.0,
+        )
+        return RunStats.model_validate(resp)
+
+    async def runtime_stats(self) -> RuntimeStats:
+        """Get runtime registry statistics.
+
+        Returns:
+            RuntimeStats with counts, heartbeat health, and capacity.
+        """
+        from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import RuntimeStats
+
+        resp = await self._call_action(
+            PluginToRuntimeAction.RUNTIME_STATS,
+            {},
+            15.0,
+        )
+        return RuntimeStats.model_validate(resp)
+
+    async def runner_stats(
+        self,
+        start_time: int | None = None,
+        end_time: int | None = None,
+        limit: int = 50,
+    ) -> RunnerStatsPage:
+        """Get runner-aggregated statistics.
+
+        Args:
+            start_time: Unix timestamp for start of window (optional, defaults to 1 hour ago)
+            end_time: Unix timestamp for end of window (optional, defaults to now)
+            limit: Maximum number of runners to return (default 50, max 100)
+
+        Returns:
+            RunnerStatsPage with per-runner statistics.
+        """
+        from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import RunnerStatsPage
+
+        resp = await self._call_action(
+            PluginToRuntimeAction.RUNNER_STATS,
+            {
+                "start_time": start_time,
+                "end_time": end_time,
+                "limit": limit,
+            },
+            30.0,
+        )
+        return RunnerStatsPage.model_validate(resp)

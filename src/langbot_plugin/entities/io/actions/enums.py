@@ -108,6 +108,11 @@ class PluginToRuntimeAction(ActionType):
     RUNTIME_LIST = "runtime_list"
     RUNTIME_RECONCILE = "runtime_reconcile"
 
+    """Agent Run Statistics APIs (Host control-plane scoped, admin-only)"""
+    RUN_STATS = "run_stats"
+    RUNTIME_STATS = "runtime_stats"
+    RUNNER_STATS = "runner_stats"
+
     """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
     ARTIFACT_METADATA = "artifact_metadata"
     ARTIFACT_READ = "artifact_read"

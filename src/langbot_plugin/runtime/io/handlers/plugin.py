@@ -892,6 +892,24 @@ class PluginConnectionHandler(handler.Handler):
                 PluginToRuntimeAction.RUNTIME_RECONCILE, data, timeout=30
             )
 
+        @self.action(PluginToRuntimeAction.RUN_STATS)
+        async def run_stats(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_STATS, data, timeout=30
+            )
+
+        @self.action(PluginToRuntimeAction.RUNTIME_STATS)
+        async def runtime_stats(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNTIME_STATS, data, timeout=15
+            )
+
+        @self.action(PluginToRuntimeAction.RUNNER_STATS)
+        async def runner_stats(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNNER_STATS, data, timeout=30
+            )
+
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
     ) -> dict[str, Any]:
