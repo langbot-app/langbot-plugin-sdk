@@ -14,12 +14,14 @@ from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.events import PersonCommandSent
+from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.plugin.container import (
     ComponentContainer,
     PluginContainer,
     RuntimeContainerStatus,
 )
 from langbot_plugin.runtime.plugin.mgr import PluginInstallSource, PluginManager
+from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
 from langbot_plugin.entities.io.errors import (
     DependencyInstallError,
     DependencyVerificationError,
@@ -129,6 +131,11 @@ class FakeConnection:
         self.closed = True
 
 
+class FakeLogBuffer:
+    def get_logs(self, limit=200, level=None):
+        return [{"limit": limit, "level": level, "text": "ready"}]
+
+
 class FakeHandler:
     def __init__(self, plugin: PluginContainer):
         self.plugin = plugin
@@ -137,6 +144,7 @@ class FakeHandler:
         self.stdio_process = None
         self.initialized_with = None
         self.shutdown_calls = 0
+        self.log_buffer = FakeLogBuffer()
         self.files = {
             "icon-key": b"<svg/>",
             "readme-key": b"# Demo",
@@ -199,6 +207,12 @@ class FakeHandler:
 
     async def get_rag_capabilities(self):
         return {"capabilities": ["ingest", "retrieve"]}
+
+    async def retrieve_knowledge(self, retriever_name, retrieval_context):
+        return {
+            "retriever_name": retriever_name,
+            "retrieval_context": retrieval_context,
+        }
 
     async def rag_ingest_document(self, context_data):
         return {"ingested": context_data["document_id"]}
@@ -405,6 +419,36 @@ async def test_register_plugin_initializes_settings_and_refreshes_container():
 
 
 @pytest.mark.asyncio
+async def test_register_debug_plugin_initializes_settings_first():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = SimpleNamespace(control_handler=control_handler)
+    plugin = _plugin(name="debug", status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+    handler.debug_plugin = True
+
+    await manager.register_plugin(handler, plugin.model_dump(), debug_plugin=True)
+
+    assert [call[0] for call in control_handler.calls] == [
+        RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
+        RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
+    ]
+    assert (
+        control_handler.calls[0][1]["install_source"] == PluginInstallSource.DEBUG.value
+    )
+    assert manager.plugins[0].debug is True
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_requires_control_handler():
+    manager = _manager()
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+
+    with pytest.raises(ValueError, match="Failed to get plugin settings"):
+        await manager.register_plugin(FakeHandler(plugin), plugin.model_dump())
+
+
+@pytest.mark.asyncio
 async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
     manager = _manager()
     plugin = _plugin(
@@ -441,6 +485,39 @@ async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
 
 
 @pytest.mark.asyncio
+async def test_call_tool_and_execute_command_return_empty_when_filtered_or_disconnected():
+    manager = _manager()
+    plugin = _plugin(
+        components=[
+            _component("Tool", "lookup"),
+            _component("Command", "admin"),
+        ]
+    )
+    manager.plugins = [plugin]
+
+    assert (
+        await manager.call_tool(
+            "lookup",
+            {},
+            {},
+            query_id=1,
+            include_plugins=["tester/other"],
+        )
+        == {}
+    )
+    assert await manager.call_tool("lookup", {}, {}, query_id=1) == {}
+    assert [
+        response
+        async for response in manager.execute_command(
+            SimpleNamespace(
+                command="admin",
+                model_dump=lambda mode="json": {"command": "admin"},
+            )
+        )
+    ] == []
+
+
+@pytest.mark.asyncio
 async def test_shutdown_plugin_closes_connection_and_removes_container():
     manager = _manager()
     plugin = _plugin()
@@ -455,6 +532,100 @@ async def test_shutdown_plugin_closes_connection_and_removes_container():
     assert manager.plugin_handlers == []
     assert handler.shutdown_calls == 1
     assert handler.conn.closed is True
+
+
+@pytest.mark.asyncio
+async def test_restart_plugin_debug_skips_relaunch_and_missing_plugin_errors():
+    manager = _manager()
+    plugin = _plugin(debug=True)
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    manager.plugin_handlers = [handler]
+
+    actions = [
+        item["current_action"]
+        async for item in manager.restart_plugin("tester", "demo")
+    ]
+
+    assert actions == [
+        "shutting down plugin",
+        "removing plugin container",
+        "plugin restarted",
+    ]
+    assert manager.plugin_run_tasks == []
+    assert manager.plugins == []
+
+    with pytest.raises(ValueError, match="Plugin tester/missing not found"):
+        async for _ in manager.restart_plugin("tester", "missing"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_delete_plugin_removes_files_and_rejects_debug_plugins(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    plugin_path = tmp_path / "data/plugins/tester__demo"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "manifest.yaml").write_text("kind: Plugin\n", encoding="utf-8")
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    manager.plugin_handlers = [handler]
+
+    actions = [
+        item["current_action"] async for item in manager.delete_plugin("tester", "demo")
+    ]
+
+    assert actions == [
+        "shutting down plugin",
+        "removing plugin container",
+        "deleting plugin files",
+        "plugin deleted",
+    ]
+    assert not plugin_path.exists()
+
+    debug = _plugin(debug=True)
+    manager.plugins = [debug]
+    with pytest.raises(ValueError, match="is a debugging plugin"):
+        async for _ in manager.delete_plugin("tester", "demo"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_upgrade_plugin_validates_source_and_reports_up_to_date(monkeypatch):
+    manager = _manager()
+    debug = _plugin(debug=True)
+    manager.plugins = [debug]
+
+    with pytest.raises(ValueError, match="is a debugging plugin"):
+        async for _ in manager.upgrade_plugin("tester", "demo"):
+            pass
+
+    local = _plugin()
+    manager.plugins = [local]
+    with pytest.raises(ValueError, match="not installed from marketplace"):
+        async for _ in manager.upgrade_plugin("tester", "demo"):
+            pass
+
+    marketplace = _plugin()
+    marketplace.install_source = PluginInstallSource.MARKETPLACE.value
+    manager.plugins = [marketplace]
+
+    async def fake_get_plugin_info(author, name):
+        return SimpleNamespace(latest_version="1.0.0")
+
+    monkeypatch.setattr(marketplace_helper, "get_plugin_info", fake_get_plugin_info)
+
+    actions = [
+        item["current_action"]
+        async for item in manager.upgrade_plugin("tester", "demo")
+    ]
+
+    assert actions == ["checking for latest version", "plugin is up to date"]
 
 
 @pytest.mark.asyncio
@@ -500,6 +671,34 @@ async def test_plugin_resource_and_page_methods_delegate_to_connected_handler():
         endpoint="/save",
         method="POST",
     ) == {"data": None, "error": "Plugin not found"}
+
+
+@pytest.mark.asyncio
+async def test_plugin_logs_and_resource_methods_handle_missing_connections():
+    manager = _manager()
+    assert await manager.get_plugin_logs("tester", "missing") == []
+    assert await manager.get_plugin_readme("tester", "missing") == b""
+    assert await manager.get_plugin_assets_file("tester", "missing", "asset.txt") == (
+        b"",
+        "",
+    )
+
+    plugin = _plugin()
+    manager.plugins = [plugin]
+    assert await manager.get_plugin_logs("tester", "demo") == []
+    assert await manager.handle_page_api(
+        "tester",
+        "demo",
+        page_id="settings",
+        endpoint="/save",
+        method="POST",
+    ) == {"data": None, "error": "Plugin is not connected"}
+
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    assert await manager.get_plugin_logs("tester", "demo", limit=3, level="INFO") == [
+        {"limit": 3, "level": "INFO", "text": "ready"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -551,6 +750,39 @@ async def test_knowledge_engine_methods_validate_components_and_delegate_to_hand
 
 
 @pytest.mark.asyncio
+async def test_knowledge_engine_errors_and_retrieve_knowledge_delegate():
+    manager = _manager()
+
+    with pytest.raises(ValueError, match="Plugin tester/missing not found"):
+        await manager.retrieve_knowledge("tester", "missing", "kb", {"query": "hi"})
+
+    plugin = _plugin(components=[_component("KnowledgeEngine", "kb")])
+    manager.plugins = [plugin]
+    with pytest.raises(ValueError, match="is not connected"):
+        await manager.retrieve_knowledge("tester", "demo", "kb", {"query": "hi"})
+
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    assert await manager.retrieve_knowledge(
+        "tester", "demo", "kb", {"query": "hi"}
+    ) == {
+        "retriever_name": "kb",
+        "retrieval_context": {"query": "hi"},
+    }
+    assert await manager.get_rag_creation_schema("tester", "missing") == {"schema": []}
+    assert await manager.get_rag_retrieval_schema("tester", "missing") == {"schema": []}
+
+    manager.plugins = [_plugin(components=[])]
+    with pytest.raises(ValueError, match="has no KnowledgeEngine component"):
+        await manager.rag_delete_document("tester", "demo", "kb-1", "doc-1")
+
+    plugin_without_handler = _plugin(components=[_component("KnowledgeEngine", "kb")])
+    manager.plugins = [plugin_without_handler]
+    with pytest.raises(ValueError, match="is not connected"):
+        await manager.rag_on_kb_create("tester", "demo", "kb-1", {})
+
+
+@pytest.mark.asyncio
 async def test_parser_methods_validate_components_and_delegate_to_handler():
     manager = _manager()
     parser = _component(
@@ -578,6 +810,18 @@ async def test_parser_methods_validate_components_and_delegate_to_handler():
 
 
 @pytest.mark.asyncio
+async def test_parser_errors_for_missing_plugin_and_component():
+    manager = _manager()
+
+    with pytest.raises(ValueError, match="Plugin tester/missing not found"):
+        await manager.parse_document("tester", "missing", {}, b"")
+
+    manager.plugins = [_plugin(components=[])]
+    with pytest.raises(ValueError, match="has no Parser component"):
+        await manager.parse_document("tester", "demo", {}, b"")
+
+
+@pytest.mark.asyncio
 async def test_emit_event_should_report_each_emitting_plugin_once():
     manager = _manager()
     plugin = _plugin()
@@ -600,3 +844,70 @@ async def test_emit_event_should_report_each_emitting_plugin_once():
     emitted_plugins, _ = await manager.emit_event(event_context)
 
     assert emitted_plugins == [plugin]
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_marketplace_streams_progress_and_launches(monkeypatch):
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = SimpleNamespace(control_handler=control_handler)
+
+    async def fake_download_plugin_streaming(author, name, version):
+        yield {
+            "done": False,
+            "downloaded": 5,
+            "total": 10,
+            "speed": 2,
+        }
+        yield {"done": True, "data": b"zip"}
+
+    async def fake_install_plugin_from_file(plugin_file):
+        assert plugin_file == b"zip"
+        return "data/plugins/tester__demo", "tester", "demo", "1.0.0"
+
+    launched = []
+
+    async def fake_launch_plugin(plugin_path):
+        launched.append(plugin_path)
+
+    monkeypatch.setattr(
+        marketplace_helper,
+        "download_plugin_streaming",
+        fake_download_plugin_streaming,
+    )
+    monkeypatch.setattr(
+        manager, "install_plugin_from_file", fake_install_plugin_from_file
+    )
+    monkeypatch.setattr(manager, "launch_plugin", fake_launch_plugin)
+
+    progress = [
+        item
+        async for item in manager.install_plugin(
+            PluginInstallSource.MARKETPLACE,
+            {
+                "plugin_author": "tester",
+                "plugin_name": "demo",
+                "plugin_version": "1.0.0",
+            },
+        )
+    ]
+    await asyncio.gather(*manager.plugin_run_tasks)
+
+    assert [item["current_action"] for item in progress] == [
+        "downloading plugin package",
+        "downloading plugin package",
+        "installing dependencies",
+        "initializing plugin settings",
+        "launching plugin",
+    ]
+    assert progress[1]["metadata"] == {
+        "download_current": 5,
+        "download_total": 10,
+        "download_speed": 2,
+    }
+    assert control_handler.calls[-1][1]["install_info"] == {
+        "plugin_author": "tester",
+        "plugin_name": "demo",
+        "plugin_version": "1.0.0",
+    }
+    assert launched == ["data/plugins/tester__demo"]
