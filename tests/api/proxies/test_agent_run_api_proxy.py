@@ -1688,7 +1688,9 @@ class TestAgentRunAdminAPIProxy:
         proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         run = await proxy.run_get("run_target")
-        events = await proxy.run_events_page("run_target", direction="backward", limit=5)
+        events = await proxy.run_events_page(
+            "run_target", direction="backward", limit=5
+        )
 
         assert run.run_id == "run_target"
         assert events.items[0].type == "run.completed"
@@ -1729,7 +1731,9 @@ class TestAgentRunAdminAPIProxy:
         ]
         proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
-        runtimes = await proxy.runtime_list(statuses=["online"], labels={"region": "local"})
+        runtimes = await proxy.runtime_list(
+            statuses=["online"], labels={"region": "local"}
+        )
         claimed = await proxy.run_claim(
             runtime_id="runtime_1",
             queue_name="default",

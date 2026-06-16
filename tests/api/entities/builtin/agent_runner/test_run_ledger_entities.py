@@ -111,6 +111,4 @@ def test_agent_runtime_accepts_host_registry_shape():
 
 def test_runtime_page_forbids_unexpected_fields():
     with pytest.raises(Exception):
-        RuntimePage.model_validate(
-            {"items": [], "has_more": False, "unexpected": True}
-        )
+        RuntimePage.model_validate({"items": [], "has_more": False, "unexpected": True})

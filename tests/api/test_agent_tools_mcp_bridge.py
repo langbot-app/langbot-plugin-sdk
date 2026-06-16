@@ -3,14 +3,22 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import urllib.request
 
 import pytest
 
 from langbot_plugin.api.agent_tools import (
     AgentAssetGateway,
+    AgentMCPServerConfig,
+    AgentRunMCPAccess,
     AgentRunExternalTools,
     AgentRunMCPBridge,
+    AgentRuntimeDaemonClient,
+    AgentRuntimeDaemonHub,
+    agent_runtime_daemon_config_from_plugin_config,
+    handle_agent_runtime_mcp_payload,
+    reverse_tunnel_for_endpoint,
 )
 from langbot_plugin.api.entities.builtin.agent_runner import (
     AgentEventContext,
@@ -418,6 +426,85 @@ def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
     ]
 
 
+def test_neutral_mcp_config_and_reverse_tunnel_helpers() -> None:
+    config = AgentMCPServerConfig.http(
+        name="langbot_agent",
+        url="http://127.0.0.1:8765/mcp",
+        headers={"Authorization": "Bearer token"},
+    )
+
+    assert config.to_dict() == {
+        "name": "langbot_agent",
+        "transport": "http",
+        "url": "http://127.0.0.1:8765/mcp",
+        "headers": {"Authorization": "Bearer token"},
+    }
+    assert config.to_dict(include_type=True)["type"] == "http"
+    assert AgentMCPServerConfig.from_dict(config.to_dict()).url == config.url
+
+    tunnel = reverse_tunnel_for_endpoint(config.url)
+
+    assert tunnel.spec == "127.0.0.1:8765:127.0.0.1:8765"
+    assert tunnel.ssh_args() == ["-R", "127.0.0.1:8765:127.0.0.1:8765"]
+
+
+def test_agent_run_mcp_access_returns_remote_http_config_and_tunnel() -> None:
+    async def run_probe() -> None:
+        api = FakeRunAPI()
+        access = AgentRunMCPAccess(
+            api,
+            _authorized_ctx(),
+            location="remote-ssh",
+            transport="auto",
+        )
+        access.start()
+        try:
+            server = access.server_config
+            tunnel = access.reverse_tunnel
+
+            assert server is not None
+            assert server.transport == "http"
+            assert server.url.endswith("/mcp/http")
+            assert tunnel is not None
+            assert tunnel.ssh_args()[0] == "-R"
+            assert tunnel.local_port == tunnel.remote_port
+        finally:
+            access.stop()
+
+    asyncio.run(run_probe())
+
+
+def test_agent_run_mcp_access_disabled_and_gateway_mode() -> None:
+    async def run_probe() -> None:
+        disabled = AgentRunMCPAccess(FakeRunAPI(), _authorized_ctx(), enabled=False)
+        disabled.start()
+        assert disabled.server_config is None
+        assert disabled.handle is None
+
+        api = FakeRunAPI()
+        access = AgentRunMCPAccess(
+            api,
+            _authorized_ctx(),
+            mode="gateway",
+            gateway_token_ttl=30,
+        )
+        access.start()
+        try:
+            server = access.server_config
+            assert server is not None
+            assert server.transport == "http"
+            assert server.url.endswith("/mcp")
+            assert server.headers["Authorization"].startswith("Bearer ")
+            assert access.reverse_tunnel is None
+        finally:
+            access.stop()
+
+        assert access.server_config is None
+        assert access.handle is None
+
+    asyncio.run(run_probe())
+
+
 def test_asset_gateway_uses_run_token_for_stable_mcp_tools() -> None:
     async def run_probe() -> FakeRunAPI:
         api = FakeRunAPI()
@@ -499,7 +586,10 @@ def test_asset_gateway_uses_run_token_for_stable_mcp_tools() -> None:
                 if tool["name"] == "langbot_list_assets"
             )["inputSchema"]["properties"]["run_token"]
             assert run_token_schema["type"] == "string"
-            assert listed["result"]["structuredContent"]["tools"][0]["tool_name"] == "weather"
+            assert (
+                listed["result"]["structuredContent"]["tools"][0]["tool_name"]
+                == "weather"
+            )
             assert detail["result"]["structuredContent"]["name"] == "weather"
             assert rejected["result"]["isError"] is True
             return api
@@ -517,3 +607,148 @@ def test_asset_gateway_uses_run_token_for_stable_mcp_tools() -> None:
             },
         )
     ]
+
+
+def test_asset_gateway_cleans_expired_registrations() -> None:
+    async def run_probe() -> None:
+        gateway = AgentAssetGateway()
+        registration = gateway.register_run(
+            FakeRunAPI(),
+            _authorized_ctx(),
+            token="expired-token",
+            ttl_seconds=30,
+        )
+        try:
+            assert gateway.has_active_registrations() is True
+            registration.expires_at = time.monotonic() - 1
+            assert gateway.has_active_registrations() is False
+
+            response = gateway.handle_http_mcp_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "langbot_list_assets",
+                        "arguments": {"run_token": "expired-token"},
+                    },
+                }
+            )
+            assert response["result"]["isError"] is True
+            assert "run_token" in response["result"]["content"][0]["text"]
+        finally:
+            gateway.stop()
+
+    asyncio.run(run_probe())
+
+
+def test_daemon_config_and_mcp_payload_edges(monkeypatch) -> None:
+    monkeypatch.setenv("LANGBOT_AGENT_RUNTIME_DAEMON_ENABLED", "true")
+    monkeypatch.setenv("LANGBOT_AGENT_RUNTIME_DAEMON_HOST", "0.0.0.0")
+    monkeypatch.setenv("LANGBOT_AGENT_RUNTIME_DAEMON_PORT", "9001")
+    monkeypatch.setenv("LANGBOT_AGENT_RUNTIME_DAEMON_TOKEN", "env-token")
+
+    config = agent_runtime_daemon_config_from_plugin_config(
+        {"daemon-port": "9100", "daemon-token": "plugin-token"}
+    )
+
+    assert config == {
+        "enabled": True,
+        "host": "0.0.0.0",
+        "port": 9100,
+        "token": "plugin-token",
+    }
+
+    async def run_probe() -> None:
+        tools = AgentRunExternalTools(FakeRunAPI(), _authorized_ctx())
+        assert await handle_agent_runtime_mcp_payload(tools, []) == {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "Invalid request"},
+        }
+        assert (
+            await handle_agent_runtime_mcp_payload(
+                tools,
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            )
+            is None
+        )
+        missing = await handle_agent_runtime_mcp_payload(
+            tools,
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "missing/method",
+            },
+        )
+        assert missing["error"]["code"] == -32601
+
+    asyncio.run(run_probe())
+
+
+def test_agent_runtime_daemon_relay_round_trips_mcp_tools() -> None:
+    class ProbeDaemon(AgentRuntimeDaemonClient):
+        async def run_job(self, job_id: str, payload: dict) -> None:
+            proxy = self.create_mcp_proxy(job_id, request_timeout=5)
+            proxy.start()
+            try:
+                config = proxy.mcp_server()
+
+                def call(message: dict) -> dict:
+                    request = urllib.request.Request(
+                        config.url,
+                        data=json.dumps(message).encode("utf-8"),
+                        method="POST",
+                        headers={"Content-Type": "application/json"},
+                    )
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        return json.loads(response.read().decode("utf-8"))
+
+                tools = await asyncio.to_thread(
+                    call,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/list",
+                        "params": {},
+                    },
+                )
+                await self.emit_event(job_id, {"type": "probe.tools", "data": tools})
+            finally:
+                proxy.stop()
+
+    async def run_probe() -> FakeRunAPI:
+        api = FakeRunAPI()
+        hub = AgentRuntimeDaemonHub()
+        await hub.start(host="127.0.0.1", port=0)
+        daemon = ProbeDaemon(
+            url=hub.endpoint,
+            daemon_id="probe",
+            reconnect_delay=0.1,
+        )
+        daemon_task = asyncio.create_task(daemon.run_forever())
+        try:
+            await hub.wait_for_daemon("probe", timeout=5)
+            events = []
+            async for event in hub.run_job(
+                daemon_id="probe",
+                payload={},
+                tools=AgentRunExternalTools(api, _authorized_ctx()),
+                timeout=10,
+            ):
+                events.append(event)
+
+            assert events
+            listed_tools = {
+                tool["name"] for tool in events[0]["data"]["result"]["tools"]
+            }
+            assert "langbot_history_page" in listed_tools
+            assert "langbot_call_tool" in listed_tools
+            return api
+        finally:
+            daemon_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await daemon_task
+            await hub.stop()
+
+    asyncio.run(run_probe())

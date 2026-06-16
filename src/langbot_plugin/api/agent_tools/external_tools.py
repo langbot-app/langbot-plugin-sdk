@@ -118,7 +118,9 @@ class AgentRunExternalTools:
         self._tools = collect_agent_tools(self)
 
     @classmethod
-    def all_mcp_tools(cls, *, include_run_token: bool = False) -> list[dict[str, typing.Any]]:
+    def all_mcp_tools(
+        cls, *, include_run_token: bool = False
+    ) -> list[dict[str, typing.Any]]:
         tools: list[dict[str, typing.Any]] = []
         seen: set[str] = set()
         for attr_name in dir(cls):
@@ -164,7 +166,9 @@ class AgentRunExternalTools:
         include_unavailable: bool = False,
         include_run_token: bool = False,
     ) -> list[dict[str, typing.Any]]:
-        available_names = self._available_tool_names() if not include_unavailable else None
+        available_names = (
+            self._available_tool_names() if not include_unavailable else None
+        )
         tools = [
             tool.spec.to_mcp_tool()
             for name, tool in self._tools.items()
@@ -269,7 +273,11 @@ class AgentRunExternalTools:
                 {
                     "tool_name": tool["name"],
                     "description": tool.get("description"),
-                    **({"schema": tool.get("inputSchema", {})} if include_schemas else {}),
+                    **(
+                        {"schema": tool.get("inputSchema", {})}
+                        if include_schemas
+                        else {}
+                    ),
                 }
                 for tool in self.mcp_tools()
             ]

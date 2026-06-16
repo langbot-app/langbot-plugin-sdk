@@ -810,59 +810,87 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.RUN_GET)
         async def run_get(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_GET, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_GET, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_LIST)
         async def run_list(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_LIST, data, timeout=30)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_LIST, data, timeout=30
+            )
 
         @self.action(PluginToRuntimeAction.RUN_EVENTS_PAGE)
         async def run_events_page(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_EVENTS_PAGE, data, timeout=30)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_EVENTS_PAGE, data, timeout=30
+            )
 
         @self.action(PluginToRuntimeAction.RUN_CANCEL)
         async def run_cancel(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_CANCEL, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_CANCEL, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_APPEND_RESULT)
         async def run_append_result(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_APPEND_RESULT, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_APPEND_RESULT, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_FINALIZE)
         async def run_finalize(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_FINALIZE, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_FINALIZE, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUNTIME_REGISTER)
         async def runtime_register(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_REGISTER, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNTIME_REGISTER, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUNTIME_HEARTBEAT)
         async def runtime_heartbeat(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_HEARTBEAT, data, timeout=10)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNTIME_HEARTBEAT, data, timeout=10
+            )
 
         @self.action(PluginToRuntimeAction.RUNTIME_LIST)
         async def runtime_list(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_LIST, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNTIME_LIST, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_CLAIM)
         async def run_claim(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_CLAIM, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_CLAIM, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_RENEW_CLAIM)
         async def run_renew_claim(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_RENEW_CLAIM, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_RENEW_CLAIM, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_RELEASE_CLAIM)
         async def run_release_claim(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUN_RELEASE_CLAIM, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_RELEASE_CLAIM, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUNNER_LIST)
         async def runner_list(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUNNER_LIST, data, timeout=15)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNNER_LIST, data, timeout=15
+            )
 
         @self.action(PluginToRuntimeAction.RUNTIME_RECONCILE)
         async def runtime_reconcile(data: dict[str, Any]) -> handler.ActionResponse:
-            return await _forward_to_host(PluginToRuntimeAction.RUNTIME_RECONCILE, data, timeout=30)
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUNTIME_RECONCILE, data, timeout=30
+            )
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
