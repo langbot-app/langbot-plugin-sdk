@@ -13,6 +13,7 @@ import typing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
+from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 
@@ -50,19 +51,31 @@ class AgentAssetGatewayRegistration:
         transport: str = "http",
         include_token_header: bool = True,
     ) -> dict[str, typing.Any]:
+        return self.mcp_server(
+            public_url=public_url,
+            transport=transport,
+            include_token_header=include_token_header,
+        ).to_dict(include_type=True)
+
+    def mcp_server(
+        self,
+        *,
+        public_url: str | None = None,
+        transport: str = "http",
+        include_token_header: bool = True,
+    ) -> AgentMCPServerConfig:
         headers = {}
         if include_token_header:
             headers = {
                 "Authorization": f"Bearer {self.token}",
                 "X-LangBot-Agent-Gateway-Token": self.token,
             }
-        return {
-            "name": self.server_name,
-            "url": (public_url or self.http_mcp_endpoint).strip(),
-            "type": transport,
-            "transport": transport,
-            "headers": headers,
-        }
+        return AgentMCPServerConfig.http(
+            name=self.server_name,
+            transport=transport,
+            url=(public_url or self.http_mcp_endpoint).strip(),
+            headers=headers,
+        )
 
     def stop(self) -> None:
         self.gateway.unregister_run(self.token)
@@ -93,7 +106,7 @@ class AgentAssetGateway:
         if self._server is None:
             raise RuntimeError("LangBot Agent Asset Gateway is not started")
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}"
+        return f"http://{str(host)}:{port}"
 
     @property
     def http_mcp_endpoint(self) -> str:
@@ -106,7 +119,7 @@ class AgentAssetGateway:
         gateway = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, format: str, *args: typing.Any) -> None:
+            def log_message(self, _format: str, *_args: typing.Any) -> None:
                 return
 
             def do_GET(self) -> None:
@@ -245,9 +258,7 @@ class AgentAssetGateway:
         server_name: str,
     ) -> bool:
         return (
-            self.host == host
-            and self.port == port
-            and self.server_name == server_name
+            self.host == host and self.port == port and self.server_name == server_name
         )
 
     def handle_http_mcp_request(

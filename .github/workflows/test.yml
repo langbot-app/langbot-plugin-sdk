@@ -35,7 +35,7 @@ jobs:
             --cov-fail-under=84
 
   test-lint:
-    name: Test Lint
+    name: Lint and Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,8 +59,27 @@ jobs:
         uses: astral-sh/setup-uv@v6
       - name: Set up Python
         run: uv python install 3.12
-      - name: Installed wheel CLI smoke
-        run: uv run --python 3.12 pytest -q tests/packaging
+      - name: Build and install wheel
+        run: |
+          uv build --wheel --out-dir dist
+          uv venv --python 3.12 .venv-wheel-smoke
+          WHEEL="$(ls dist/*.whl | head -n 1)"
+          uv pip install --python .venv-wheel-smoke/bin/python "$WHEEL"
+          .venv-wheel-smoke/bin/lbp --help >/dev/null
+          .venv-wheel-smoke/bin/python - <<'PY'
+          import importlib.resources as resources
+
+          from langbot_plugin.api.agent_tools import AgentMCPServerConfig
+
+          template = resources.files("langbot_plugin").joinpath(
+              "assets/templates/components/agent_runner/{runner_name}.py.example"
+          )
+          assert template.is_file(), template
+          assert AgentMCPServerConfig.stdio(
+              name="langbot_agent",
+              command="python",
+          ).to_dict()["command"] == "python"
+          PY
 
   scoped-type-check:
     name: Scoped Type Check
@@ -71,12 +90,18 @@ jobs:
           persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@v6
-      - name: Mypy stable protocol modules
+      - name: Mypy stable protocol and AgentRunner modules
         run: |
           uv run mypy \
             src/langbot_plugin/entities/io \
             src/langbot_plugin/runtime/plugin/logbuffer.py \
-            src/langbot_plugin/utils/platform.py
+            src/langbot_plugin/utils/platform.py \
+            src/langbot_plugin/api/entities/builtin/agent_runner \
+            src/langbot_plugin/api/agent_tools/mcp_config.py \
+            src/langbot_plugin/api/agent_tools/mcp_access.py \
+            src/langbot_plugin/api/agent_tools/mcp_bridge.py \
+            src/langbot_plugin/api/agent_tools/asset_gateway.py \
+            src/langbot_plugin/api/agent_tools/daemon.py
 
   action-consistency:
     name: Action Protocol Consistency

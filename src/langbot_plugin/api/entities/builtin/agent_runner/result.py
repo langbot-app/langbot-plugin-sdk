@@ -433,7 +433,7 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.RUN_COMPLETED,
             data=payload.model_dump(mode="json", exclude_none=True),
-            usage=usage,
+            usage=_coerce_usage(usage),
             sequence=sequence,
             timestamp=timestamp,
         )
@@ -464,7 +464,7 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.RUN_FAILED,
             data=payload.model_dump(mode="json"),
-            usage=usage,
+            usage=_coerce_usage(usage),
             sequence=sequence,
             timestamp=timestamp,
         )
@@ -496,3 +496,11 @@ class AgentRunResult(pydantic.BaseModel):
             sequence=sequence,
             timestamp=timestamp,
         )
+
+
+def _coerce_usage(
+    usage: LLMTokenUsage | dict[str, typing.Any] | None,
+) -> LLMTokenUsage | None:
+    if usage is None or isinstance(usage, LLMTokenUsage):
+        return usage
+    return LLMTokenUsage.model_validate(usage)

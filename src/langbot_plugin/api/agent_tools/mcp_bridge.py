@@ -12,6 +12,7 @@ import typing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
+from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
 
@@ -85,7 +86,7 @@ class AgentRunMCPBridge:
         if self._server is None:
             raise RuntimeError("LangBot Agent MCP bridge is not started")
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}"
+        return f"http://{str(host)}:{port}"
 
     @property
     def http_mcp_endpoint(self) -> str:
@@ -99,7 +100,7 @@ class AgentRunMCPBridge:
         bridge = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, format: str, *args: typing.Any) -> None:
+            def log_message(self, _format: str, *_args: typing.Any) -> None:
                 return
 
             def do_GET(self) -> None:
@@ -180,7 +181,7 @@ class AgentRunMCPBridge:
                 except Exception as e:
                     return e
 
-            def _write_json(self, status: int, payload: dict[str, typing.Any]) -> None:
+            def _write_json(self, status: int, payload: typing.Any) -> None:
                 data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -212,17 +213,36 @@ class AgentRunMCPBridge:
         if thread is not None:
             thread.join(timeout=2)
 
-    def mcp_server_config(self) -> dict[str, typing.Any]:
-        """Return stdio MCP config for external harnesses."""
+    def mcp_server(
+        self, *, transport: str = "stdio", public_url: str | None = None
+    ) -> AgentMCPServerConfig:
+        """Return neutral MCP server config for external runtimes."""
 
-        return {
-            "command": sys.executable,
-            "args": ["-m", "langbot_plugin.api.agent_tools.mcp_stdio"],
-            "env": {
+        if transport == "http":
+            return AgentMCPServerConfig.http(
+                name=self.server_name,
+                url=(public_url or self.http_mcp_endpoint).strip(),
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "X-LangBot-Agent-MCP-Token": self.token,
+                },
+            )
+        if transport != "stdio":
+            raise ValueError("MCP bridge transport must be stdio or http")
+        return AgentMCPServerConfig.stdio(
+            name=self.server_name,
+            command=sys.executable,
+            args=["-m", "langbot_plugin.api.agent_tools.mcp_stdio"],
+            env={
                 "LANGBOT_AGENT_MCP_ENDPOINT": self.endpoint,
                 "LANGBOT_AGENT_MCP_TOKEN": self.token,
             },
-        }
+        )
+
+    def mcp_server_config(self) -> dict[str, typing.Any]:
+        """Return stdio MCP config for external harnesses."""
+
+        return self.mcp_server().to_dict()
 
     def http_mcp_server_config(
         self,
@@ -232,17 +252,9 @@ class AgentRunMCPBridge:
     ) -> dict[str, typing.Any]:
         """Return HTTP MCP server config for external harnesses."""
 
-        url = (public_url or self.http_mcp_endpoint).strip()
-        return {
-            "name": self.server_name,
-            "url": url,
-            "type": transport,
-            "transport": transport,
-            "headers": {
-                "Authorization": f"Bearer {self.token}",
-                "X-LangBot-Agent-MCP-Token": self.token,
-            },
-        }
+        return self.mcp_server(transport=transport, public_url=public_url).to_dict(
+            include_type=True
+        )
 
     def merged_mcp_config(
         self, base_config: dict[str, typing.Any] | None = None
