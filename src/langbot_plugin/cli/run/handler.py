@@ -184,6 +184,8 @@ class PluginRuntimeHandler(Handler):
                     endpoint=data.get("endpoint", ""),
                     method=data.get("method", "POST"),
                     body=data.get("body"),
+                    caller=data.get("caller"),
+                    headers=data.get("headers") or {},
                 )
                 response = await component.component_instance.handle_api(request)
                 if not isinstance(response, PageResponse):

@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import Field
 
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
+from langbot_plugin.api.entities.builtin.rag.trace import TraceContext
 
 
 class RetrievalResultEntry(pydantic.BaseModel):
@@ -46,6 +47,9 @@ class RetrievalContext(pydantic.BaseModel):
 
     filters: dict[str, Any] = Field(default_factory=dict)
     """Metadata filters for retrieval."""
+
+    trace_context: TraceContext | None = None
+    """Optional host trace context for end-to-end observability."""
 
     def get_collection_id(self) -> str:
         """Get the collection ID, falling back to knowledge_base_id.

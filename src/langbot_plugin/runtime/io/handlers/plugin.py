@@ -614,6 +614,8 @@ class PluginConnectionHandler(handler.Handler):
         endpoint: str,
         method: str,
         body: Any = None,
+        caller: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         resp = await self.call_action(
             RuntimeToPluginAction.PAGE_API,
@@ -622,6 +624,8 @@ class PluginConnectionHandler(handler.Handler):
                 "endpoint": endpoint,
                 "method": method,
                 "body": body,
+                "caller": caller,
+                "headers": headers or {},
             },
             timeout=30,
         )

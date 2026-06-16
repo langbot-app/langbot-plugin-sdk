@@ -41,6 +41,7 @@ from .context import (
     RetrievalContext,
     RetrievalResponse,
 )
+from .trace import TraceContext
 
 __all__ = [
     # Enums
@@ -70,4 +71,5 @@ __all__ = [
     "RetrievalResultEntry",
     "RetrievalContext",
     "RetrievalResponse",
+    "TraceContext",
 ]

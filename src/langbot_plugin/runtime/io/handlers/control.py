@@ -163,6 +163,8 @@ class ControlConnectionHandler(handler.Handler):
                 data["endpoint"],
                 data["method"],
                 data.get("body"),
+                data.get("caller"),
+                data.get("headers") or {},
             )
             return handler.ActionResponse.success(result)
 

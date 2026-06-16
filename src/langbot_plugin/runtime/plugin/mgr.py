@@ -778,6 +778,8 @@ class PluginManager:
         endpoint: str,
         method: str,
         body: typing.Any = None,
+        caller: dict[str, typing.Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, typing.Any]:
         plugin = self.find_plugin(plugin_author, plugin_name)
         if plugin is None:
@@ -789,6 +791,8 @@ class PluginManager:
             endpoint=endpoint,
             method=method,
             body=body,
+            caller=caller,
+            headers=headers or {},
         )
 
     async def list_tools(

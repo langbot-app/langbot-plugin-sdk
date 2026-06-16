@@ -24,6 +24,7 @@ from langbot_plugin.api.entities.builtin.rag.models import (
     TextChunk,
     TextSection,
 )
+from langbot_plugin.api.entities.builtin.rag.trace import TraceContext
 
 
 def test_rag_file_and_parse_models_keep_metadata_isolated():
@@ -86,6 +87,34 @@ def test_ingestion_context_collection_id_falls_back_to_knowledge_base_id():
     assert context.get_collection_id() == "collection"
 
 
+def test_ingestion_context_accepts_trace_context():
+    trace_context = TraceContext(
+        trace_id="trace-ingest-1",
+        parent_span_id="span-ingest-1",
+        message_id="message-1",
+        query_id=7,
+        session_id="person_1",
+        bot_id="bot-1",
+        pipeline_id="pipe-1",
+        knowledge_base_id="kb",
+    )
+    metadata = FileMetadata(
+        filename="a.txt",
+        file_size=3,
+        mime_type="text/plain",
+        document_id="doc",
+        knowledge_base_id="kb",
+    )
+    context = IngestionContext(
+        file_object=FileObject(metadata=metadata, storage_path="files/a.txt"),
+        knowledge_base_id="kb",
+        trace_context=trace_context,
+    )
+
+    assert context.trace_context.trace_id == "trace-ingest-1"
+    assert context.trace_context.parent_span_id == "span-ingest-1"
+
+
 def test_ingestion_result_serializes_document_status_enum():
     result = IngestionResult(
         document_id="doc",
@@ -97,9 +126,24 @@ def test_ingestion_result_serializes_document_status_enum():
 
 
 def test_retrieval_context_collection_id_fallbacks_and_response_model():
-    context = RetrievalContext(query="hello", knowledge_base_id="kb")
+    trace_context = TraceContext(
+        trace_id="trace-1",
+        parent_span_id="span-1",
+        message_id="message-1",
+        query_id=7,
+        session_id="person_1",
+        bot_id="bot-1",
+        pipeline_id="pipe-1",
+        knowledge_base_id="kb",
+    )
+    context = RetrievalContext(
+        query="hello",
+        knowledge_base_id="kb",
+        trace_context=trace_context,
+    )
     assert context.get_collection_id() == "kb"
     assert RetrievalContext(query="hello").get_collection_id() == ""
+    assert context.trace_context.trace_id == "trace-1"
 
     entry = RetrievalResultEntry(
         id="chunk",

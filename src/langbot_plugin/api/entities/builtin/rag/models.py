@@ -7,6 +7,7 @@ import pydantic
 from pydantic import Field
 
 from .enums import DocumentStatus
+from .trace import TraceContext
 
 
 class FileMetadata(pydantic.BaseModel):
@@ -128,6 +129,9 @@ class IngestionContext(pydantic.BaseModel):
 
     parsed_content: ParseResult | None = None
     """Pre-parsed content from an external Parser plugin. If present, KnowledgeEngine can skip its own parsing."""
+
+    trace_context: TraceContext | None = None
+    """Optional host trace context for end-to-end observability."""
 
     def get_collection_id(self) -> str:
         """Get the collection ID, falling back to knowledge_base_id."""
