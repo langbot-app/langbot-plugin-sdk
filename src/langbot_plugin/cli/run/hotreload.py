@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import logging
 import importlib
+from pathlib import Path
 from typing import Callable, Coroutine, Any
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -97,7 +97,7 @@ def reload_plugin_modules(plugin_path: str):
     logger.info(f"Reloading plugin modules from {plugin_path}")
 
     # Get absolute path
-    abs_plugin_path = os.path.abspath(plugin_path)
+    abs_plugin_path = Path(plugin_path).resolve()
 
     # Find all modules that belong to this plugin
     modules_to_reload = []
@@ -111,8 +111,12 @@ def reload_plugin_modules(plugin_path: str):
             continue
 
         # Check if module belongs to this plugin
-        abs_module_path = os.path.abspath(module_file)
-        if abs_module_path.startswith(abs_plugin_path):
+        abs_module_path = Path(module_file).resolve()
+        try:
+            abs_module_path.relative_to(abs_plugin_path)
+        except ValueError:
+            continue
+        else:
             modules_to_reload.append((name, module))
 
     # Reload modules in reverse order (to handle dependencies)
