@@ -188,7 +188,6 @@ class MessageChunk(pydantic.BaseModel):
     is_final: bool = False
     """是否是结束"""
 
-
     msg_sequence: int = 0
     """消息迭代次数"""
 

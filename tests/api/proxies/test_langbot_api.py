@@ -123,9 +123,7 @@ async def test_invoke_llm_with_usage_preserves_provider_usage():
     assert result.message == Message(role="assistant", content="ok")
     assert result.usage is not None
     assert result.usage.total_tokens == 20
-    assert result.usage.model_dump()["prompt_tokens_details"] == {
-        "cached_tokens": 5
-    }
+    assert result.usage.model_dump()["prompt_tokens_details"] == {"cached_tokens": 5}
 
 
 @pytest.mark.asyncio
