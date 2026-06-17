@@ -194,13 +194,23 @@ class FakeHandler:
     async def delete_local_file(self, file_key):
         del self.files[file_key]
 
-    async def call_page_api(self, page_id, endpoint, method, body):
+    async def call_page_api(
+        self,
+        page_id,
+        endpoint,
+        method,
+        body,
+        caller=None,
+        headers=None,
+    ):
         return {
             "data": {
                 "page_id": page_id,
                 "endpoint": endpoint,
                 "method": method,
                 "body": body,
+                "caller": caller,
+                "headers": headers,
             },
             "error": None,
         }
@@ -661,9 +671,13 @@ async def test_plugin_resource_and_page_methods_delegate_to_connected_handler():
         endpoint="/save",
         method="POST",
         body={"enabled": True},
+        caller={"origin": "https://example.test"},
+        headers={"x-request-id": "req-1"},
     )
     assert page_response["data"]["page_id"] == "settings"
     assert page_response["data"]["body"] == {"enabled": True}
+    assert page_response["data"]["caller"] == {"origin": "https://example.test"}
+    assert page_response["data"]["headers"] == {"x-request-id": "req-1"}
     assert await manager.handle_page_api(
         "tester",
         "missing",

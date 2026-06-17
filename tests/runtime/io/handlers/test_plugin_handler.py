@@ -658,6 +658,8 @@ async def test_plugin_connection_handler_peer_call_helpers(monkeypatch):
             "endpoint": "/save",
             "method": "POST",
             "body": {"enabled": True},
+            "caller": None,
+            "headers": {},
         },
     }
     assert await handler.emit_event({"event_name": "PersonMessageReceived"}) == {

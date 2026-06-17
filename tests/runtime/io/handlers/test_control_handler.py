@@ -67,6 +67,8 @@ class FakePluginManager:
         endpoint,
         method,
         body,
+        caller=None,
+        headers=None,
     ):
         self.calls.append(
             (
@@ -77,6 +79,8 @@ class FakePluginManager:
                 endpoint,
                 method,
                 body,
+                caller,
+                headers,
             )
         )
         return {"data": {"ok": True}, "error": None}
@@ -449,6 +453,8 @@ async def test_control_handler_page_api_delegates_to_plugin_manager():
                 "endpoint": "/save",
                 "method": "POST",
                 "body": {"enabled": True},
+                "caller": {"origin": "https://example.test"},
+                "headers": {"x-request-id": "req-1"},
             },
         )
 
@@ -461,6 +467,8 @@ async def test_control_handler_page_api_delegates_to_plugin_manager():
             "/save",
             "POST",
             {"enabled": True},
+            {"origin": "https://example.test"},
+            {"x-request-id": "req-1"},
         )
     ]
     assert response["data"] == {"data": {"ok": True}, "error": None}
