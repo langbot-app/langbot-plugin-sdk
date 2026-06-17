@@ -32,7 +32,7 @@ jobs:
             --ignore=tests/packaging \
             --cov=langbot_plugin \
             --cov-report=term-missing \
-            --cov-fail-under=79
+            --cov-fail-under=84
 
   test-lint:
     name: Lint and Format
