@@ -57,7 +57,6 @@ def test_run_event_page_accepts_unknown_result_types():
                     "sequence": 1,
                     "type": "custom.progress",
                     "data": {"pct": 50},
-                    "artifact_refs": [],
                     "metadata": {},
                 }
             ],

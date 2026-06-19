@@ -49,12 +49,6 @@ class ContextAPICapabilities(pydantic.BaseModel):
     event_page: bool = False
     """Whether events.page API is available."""
 
-    artifact_metadata: bool = False
-    """Whether artifacts.metadata API is available."""
-
-    artifact_read: bool = False
-    """Whether artifacts.read_range API is available."""
-
     state: bool = False
     """Whether state API is available."""
 

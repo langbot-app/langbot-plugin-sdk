@@ -34,7 +34,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     ToolResource,
     KnowledgeBaseResource,
     StorageResource,
-    FileResource,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
@@ -75,7 +74,6 @@ def create_mock_context(
     tools: list[dict] | None = None,
     knowledge_bases: list[dict] | None = None,
     storage: dict | None = None,
-    files: list[dict] | None = None,
     available_apis: ContextAPICapabilities | None = None,
 ) -> AgentRunContext:
     """Create a mock AgentRunContext for testing."""
@@ -85,8 +83,6 @@ def create_mock_context(
             history_search=True,
             event_get=True,
             event_page=True,
-            artifact_metadata=True,
-            artifact_read=True,
             state=True,
             storage=True,
             steering_pull=True,
@@ -116,7 +112,6 @@ def create_mock_context(
             storage=StorageResource.model_validate(
                 storage or {"plugin_storage": False, "workspace_storage": False}
             ),
-            files=[FileResource.model_validate(f) for f in (files or [])],
         ),
     )
 
@@ -211,17 +206,15 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "get_config_file"), (
-            "AgentRunAPIProxy should not expose get_config_file (use get_file() with file access validation)"
+            "AgentRunAPIProxy should not expose get_config_file (use sandbox file tools)"
         )
 
-    def test_exposes_get_file_with_validation(self):
-        """AgentRunAPIProxy exposes get_file() with file access validation."""
+    def test_does_not_expose_get_file(self):
+        """AgentRunAPIProxy should NOT have Host file methods."""
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
-        assert hasattr(proxy, "get_file"), (
-            "AgentRunAPIProxy should expose get_file() for authorized file access"
-        )
+        assert not hasattr(proxy, "get_file")
 
     def test_exposes_allowed_resource_helpers(self):
         """AgentRunAPIProxy exposes resource helper methods."""
@@ -231,7 +224,6 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         assert hasattr(proxy, "get_allowed_models")
         assert hasattr(proxy, "get_allowed_tools")
         assert hasattr(proxy, "get_allowed_knowledge_bases")
-        assert hasattr(proxy, "get_allowed_files")
 
     def test_exposes_storage_methods_with_validation(self):
         """AgentRunAPIProxy exposes storage methods with permission validation."""
@@ -570,8 +562,6 @@ class TestAgentRunAPIProxyAvailableAPIGate:
             ("event_get", "event_get", ("event_1",)),
             ("event_page", "event_page", ()),
             ("get_prompt", "prompt_get", ()),
-            ("artifact_metadata", "artifact_metadata", ("artifact_1",)),
-            ("artifact_read", "artifact_read", ("artifact_1",)),
             ("state_get", "state", ("conversation", "external.key")),
             ("state_set", "state", ("conversation", "external.key", {"v": 1})),
             ("state_delete", "state", ("conversation", "external.key")),
@@ -785,42 +775,6 @@ class TestAgentRunAPIProxyStoragePermission:
             await proxy.get_plugin_storage("key")
 
         assert "plugin storage" in str(exc_info.value).lower()
-
-
-class TestAgentRunAPIProxyFileAccess:
-    """Tests for file access validation in AgentRunAPIProxy."""
-
-    @pytest.mark.anyio
-    async def test_get_file_with_authorized_file(self):
-        """get_file succeeds when file is in ctx.resources.files."""
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {"file_base64": "SGVsbG8="}
-
-        ctx = create_mock_context(
-            run_id="run_file_test", files=[{"file_id": "file_001"}]
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.get_file("file_001")
-
-        assert result == b"Hello"  # base64 decoded
-
-    @pytest.mark.anyio
-    async def test_get_file_with_unauthorized_file_raises_error(self):
-        """get_file raises PermissionDeniedError when file is NOT authorized."""
-        mock_handler = MockHandler()
-
-        ctx = create_mock_context(
-            run_id="run_unauth",
-            files=[{"file_id": "file_001"}],  # Only file_001 is authorized
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        with pytest.raises(PermissionDeniedError) as exc_info:
-            await proxy.get_file("file_999")  # file_999 NOT authorized
-
-        assert "file_999" in str(exc_info.value)
-        assert "not authorized" in str(exc_info.value)
 
 
 class TestAgentRunAPIProxyTimeoutValues:
@@ -1270,7 +1224,6 @@ class TestAgentRunAPIProxyRunLedgerAPI:
                     "sequence": 1,
                     "type": "message.completed",
                     "data": {},
-                    "artifact_refs": [],
                     "metadata": {},
                 }
             ],
@@ -1337,7 +1290,6 @@ class TestAgentRunAPIProxyRunLedgerAPI:
             "sequence": 3,
             "type": "run.completed",
             "data": {"finish_reason": "stop"},
-            "artifact_refs": [],
             "metadata": {},
         }
 
@@ -1676,7 +1628,6 @@ class TestAgentRunAdminAPIProxy:
                         "sequence": 3,
                         "type": "run.completed",
                         "data": {},
-                        "artifact_refs": [],
                         "metadata": {},
                     }
                 ],

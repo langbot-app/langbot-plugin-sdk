@@ -10,7 +10,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
 from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.agent_runner.input import (
     AgentInput,
-    ArtifactRef,
+    InputAttachment,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     AgentResources,
@@ -18,7 +18,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     ToolResource,
     KnowledgeBaseResource,
     SkillResource,
-    FileResource,
     StorageResource,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
@@ -47,8 +46,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.result import (
     ActionRequestedPayload,
     AgentRunResult,
     AgentRunResultType,
-    ArtifactCreatedPayload,
-    ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES,
     MessageCompletedPayload,
     MessageDeltaPayload,
     RunCompletedPayload,
@@ -72,10 +69,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import (
     RunEventPage,
     RunPage,
     RuntimePage,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
-    ArtifactMetadata,
-    ArtifactReadResult,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.errors import (
     AgentAPIError,
@@ -101,13 +94,12 @@ __all__ = [
     # Event and context
     "AgentTrigger",
     "AgentInput",
-    "ArtifactRef",
+    "InputAttachment",
     "AgentResources",
     "ModelResource",
     "ToolResource",
     "KnowledgeBaseResource",
     "SkillResource",
-    "FileResource",
     "StorageResource",
     "AgentRuntimeContext",
     "AgentRunState",
@@ -128,8 +120,6 @@ __all__ = [
     "ActionRequestedPayload",
     "AgentRunResult",
     "AgentRunResultType",
-    "ArtifactCreatedPayload",
-    "ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES",
     "MessageCompletedPayload",
     "MessageDeltaPayload",
     "RunCompletedPayload",
@@ -151,9 +141,6 @@ __all__ = [
     "RunEventPage",
     "RunPage",
     "RuntimePage",
-    # Artifact APIs
-    "ArtifactMetadata",
-    "ArtifactReadResult",
     # Steering API
     "SteeringInputItem",
     "SteeringPullResult",

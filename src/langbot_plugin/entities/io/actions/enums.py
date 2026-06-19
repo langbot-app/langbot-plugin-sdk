@@ -113,10 +113,6 @@ class PluginToRuntimeAction(ActionType):
     RUNTIME_STATS = "runtime_stats"
     RUNNER_STATS = "runner_stats"
 
-    """Agent Artifact APIs (run-scoped, requires run_id authorization)"""
-    ARTIFACT_METADATA = "artifact_metadata"
-    ARTIFACT_READ = "artifact_read"
-
     """Agent State APIs (run-scoped, requires run_id authorization)"""
     STATE_GET = "state_get"
     STATE_SET = "state_set"

@@ -5,8 +5,6 @@ from __future__ import annotations
 import typing
 import pydantic
 import enum
-import base64
-import binascii
 
 from langbot_plugin.api.entities.builtin.provider.message import (
     LLMTokenUsage,
@@ -18,9 +16,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.state import (
     STATE_SCOPE_LITERAL,
 )
 
-ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES = 1024 * 1024
-
-
 class AgentRunResultType(str, enum.Enum):
     """Type of AgentRunResult event."""
 
@@ -29,7 +24,6 @@ class AgentRunResultType(str, enum.Enum):
     TOOL_CALL_STARTED = "tool.call.started"
     TOOL_CALL_COMPLETED = "tool.call.completed"
     STATE_UPDATED = "state.updated"
-    ARTIFACT_CREATED = "artifact.created"
     ACTION_REQUESTED = "action.requested"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
@@ -68,40 +62,6 @@ class ToolCallCompletedPayload(pydantic.BaseModel):
     tool_name: str
     result: dict[str, typing.Any] | None = None
     error: str | None = None
-
-    model_config = pydantic.ConfigDict(extra="forbid")
-
-
-class ArtifactCreatedPayload(pydantic.BaseModel):
-    """Payload for artifact.created."""
-
-    artifact_id: str | None = None
-    artifact_type: str
-    mime_type: str | None = None
-    name: str | None = None
-    size_bytes: int | None = None
-    sha256: str | None = None
-    metadata: dict[str, typing.Any] | None = None
-    content_base64: str | None = None
-
-    @pydantic.field_validator("content_base64")
-    @classmethod
-    def validate_content_base64_size(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        try:
-            decoded = base64.b64decode(value, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise ValueError("content_base64 must be valid base64") from exc
-
-        if len(decoded) > ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES:
-            raise ValueError(
-                "content_base64 decoded content exceeds "
-                f"{ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES} bytes"
-            )
-
-        return value
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
@@ -284,69 +244,6 @@ class AgentRunResult(pydantic.BaseModel):
             run_id=run_id,
             type=AgentRunResultType.TOOL_CALL_COMPLETED,
             data=payload.model_dump(mode="json"),
-            sequence=sequence,
-            timestamp=timestamp,
-        )
-
-    @classmethod
-    def artifact_created(
-        cls,
-        run_id: str,
-        artifact_id: str | None = None,
-        artifact_type: str | None = None,
-        mime_type: str | None = None,
-        name: str | None = None,
-        *,
-        size_bytes: int | None = None,
-        sha256: str | None = None,
-        metadata: dict[str, typing.Any] | None = None,
-        content_base64: str | None = None,
-        sequence: int | None = None,
-        timestamp: int | None = None,
-    ) -> "AgentRunResult":
-        """Create an artifact.created result.
-
-        Runner created an artifact that should be persisted by Host.
-
-        Args:
-            run_id: Run identifier (must match current run)
-            artifact_id: Unique artifact identifier (recommended: UUID v4)
-            artifact_type: Type of artifact ('image', 'file', 'voice', 'tool_result', etc.)
-            mime_type: MIME type of the content
-            name: Original file name
-            size_bytes: Size in bytes
-            sha256: SHA256 hash of content
-            metadata: Additional metadata (platform-specific info, etc.)
-            content_base64: Base64-encoded content for small artifacts.
-                For large artifacts, use external storage and omit this field.
-                Host will decode and store in BinaryStorage.
-
-        Returns:
-            AgentRunResult with type="artifact.created"
-
-        Note:
-            - Host sets conversation_id, run_id, runner_id from current context.
-            - Do NOT pass conversation_id/run_id in data; Host ignores them for security.
-            - For large artifacts (>1MB), consider using external storage and omitting content_base64.
-        """
-        if not artifact_type:
-            raise ValueError("artifact_type is required")
-
-        payload = ArtifactCreatedPayload(
-            artifact_id=artifact_id,
-            artifact_type=artifact_type,
-            mime_type=mime_type,
-            name=name,
-            size_bytes=size_bytes,
-            sha256=sha256,
-            metadata=metadata,
-            content_base64=content_base64,
-        )
-
-        return cls(
-            run_id=run_id,
-            type=AgentRunResultType.ARTIFACT_CREATED,
-            data=payload.model_dump(mode="json", exclude_none=True),
             sequence=sequence,
             timestamp=timestamp,
         )

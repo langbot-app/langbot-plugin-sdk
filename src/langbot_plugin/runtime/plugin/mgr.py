@@ -1012,11 +1012,7 @@ class PluginManager:
                             "plugin_author": plugin.manifest.metadata.author,
                             "plugin_name": plugin.manifest.metadata.name,
                             "runner_name": runner_name,
-                            "runner_description": manifest_data["description"],
                             "manifest": manifest_data,
-                            "capabilities": manifest_data["capabilities"],
-                            "permissions": manifest_data["permissions"],
-                            "config": config_schema,
                         }
                     )
 

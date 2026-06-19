@@ -68,7 +68,6 @@ class AgentRunEvent(pydantic.BaseModel):
     usage: dict[str, typing.Any] | None = None
     created_at: int | None = None
     source: str | None = None
-    artifact_refs: list[dict[str, typing.Any]] = pydantic.Field(default_factory=list)
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
     model_config = pydantic.ConfigDict(extra="forbid")

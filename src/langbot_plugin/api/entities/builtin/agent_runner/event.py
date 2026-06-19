@@ -9,14 +9,15 @@ import pydantic
 class RawEventRef(pydantic.BaseModel):
     """Reference to raw event payload stored by Host.
 
-    Large platform payloads should be stored as artifacts and referenced here.
+    Large platform payloads should stay outside AgentRunContext and be
+    referenced here.
     """
 
-    artifact_id: str | None = None
-    """Artifact ID containing the raw payload."""
+    ref_id: str | None = None
+    """Host reference ID for the raw payload."""
 
     storage_key: str | None = None
-    """Storage key for raw payload (alternative to artifact)."""
+    """Storage key for the raw payload."""
 
 
 class ConversationContext(pydantic.BaseModel):
@@ -75,7 +76,7 @@ class AgentEventContext(pydantic.BaseModel):
     """Reference to raw event payload."""
 
     data: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
-    """Event payload. Large data should be in raw_ref/artifacts."""
+    """Event payload. Large data should be referenced via raw_ref."""
 
 
 class ActorContext(pydantic.BaseModel):

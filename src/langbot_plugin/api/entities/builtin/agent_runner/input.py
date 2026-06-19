@@ -7,17 +7,15 @@ import pydantic
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 
 
-class ArtifactRef(pydantic.BaseModel):
-    """Reference to an artifact (file, image, tool result, etc.).
+class InputAttachment(pydantic.BaseModel):
+    """Metadata for a current-event attachment.
 
-    Large content should be stored as artifacts and referenced here.
+    Current-run files should be accessed through authorized sandbox/workspace
+    tools. This model only carries lightweight event metadata.
     """
 
-    artifact_id: str
-    """Artifact identifier."""
-
-    artifact_type: str | None = None
-    """Artifact type (image, file, voice, tool_result, etc.)."""
+    type: str | None = None
+    """Attachment type, such as image, file, or voice."""
 
     mime_type: str | None = None
     """MIME type."""
@@ -26,13 +24,16 @@ class ArtifactRef(pydantic.BaseModel):
     """Size in bytes."""
 
     name: str | None = None
-    """File name (if applicable)."""
+    """File name, if available."""
 
     source: str | None = None
     """Attachment source, such as url, base64, or platform message-chain."""
 
     url: str | None = None
-    """External URL when the artifact is backed by a URL."""
+    """External URL when the attachment is backed by a URL."""
+
+    path: str | None = None
+    """Sandbox/workspace path when Host has staged the attachment as a file."""
 
     content: str | None = None
     """Base64 or data URL content for small current-event attachments."""
@@ -40,12 +41,14 @@ class ArtifactRef(pydantic.BaseModel):
     id: str | None = None
     """Platform-native attachment identifier when available."""
 
+    model_config = pydantic.ConfigDict(extra="forbid")
+
 
 class AgentInput(pydantic.BaseModel):
     """Input for an agent run.
 
     Contains the user's input in multiple formats for convenience.
-    Protocol v1: input is required; attachments use ArtifactRef.
+    Protocol v1: input is required; attachments are lightweight metadata.
     """
 
     text: str | None = None
@@ -54,8 +57,8 @@ class AgentInput(pydantic.BaseModel):
     contents: list[ContentElement] = pydantic.Field(default_factory=list)
     """Structured content elements (text, images, files, etc.)."""
 
-    attachments: list[ArtifactRef] = pydantic.Field(default_factory=list)
-    """Artifact references for files/images/attachments."""
+    attachments: list[InputAttachment] = pydantic.Field(default_factory=list)
+    """Current-event attachment metadata."""
 
     def to_text(self) -> str:
         """Extract plain text from input.

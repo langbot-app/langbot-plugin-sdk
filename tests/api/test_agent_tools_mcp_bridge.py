@@ -321,7 +321,7 @@ def test_mcp_stdio_proxy_round_trips_history_rag_and_tool_actions() -> None:
                 "after_cursor": None,
                 "limit": 3,
                 "direction": "backward",
-                "include_artifacts": False,
+                "include_attachments": False,
             },
         ),
         (
@@ -420,7 +420,7 @@ def test_mcp_http_endpoint_round_trips_langbot_actions() -> None:
                 "after_cursor": None,
                 "limit": 2,
                 "direction": "backward",
-                "include_artifacts": False,
+                "include_attachments": False,
             },
         ),
     ]

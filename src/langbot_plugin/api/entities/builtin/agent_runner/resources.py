@@ -73,27 +73,6 @@ class SkillResource(pydantic.BaseModel):
     """Skill description."""
 
 
-class FileResource(pydantic.BaseModel):
-    """File resource available to the agent."""
-
-    file_id: str
-    """File identifier."""
-
-    file_name: str | None = None
-    """File name."""
-
-    mime_type: str | None = None
-    """File MIME type."""
-
-    source: str | None = None
-    """File source (config, knowledge, etc.)."""
-
-    operations: list[typing.Literal["config", "knowledge"]] = pydantic.Field(
-        default_factory=list
-    )
-    """File access scopes authorized for this run."""
-
-
 class StorageResource(pydantic.BaseModel):
     """Storage resources available to the agent."""
 
@@ -122,9 +101,6 @@ class AgentResources(pydantic.BaseModel):
 
     skills: list[SkillResource] = pydantic.Field(default_factory=list)
     """Available skills."""
-
-    files: list[FileResource] = pydantic.Field(default_factory=list)
-    """Available files."""
 
     storage: StorageResource = pydantic.Field(default_factory=StorageResource)
     """Storage access."""

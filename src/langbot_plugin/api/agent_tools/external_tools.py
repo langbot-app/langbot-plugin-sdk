@@ -41,7 +41,7 @@ class HistoryPageArgs(pydantic.BaseModel):
     after_cursor: str | None = None
     limit: int = pydantic.Field(default=50, ge=1, le=100)
     direction: str = pydantic.Field(default="backward", pattern="^(backward|forward)$")
-    include_artifacts: bool = False
+    include_attachments: bool = False
 
 
 class RetrieveKnowledgeArgs(pydantic.BaseModel):
@@ -342,7 +342,7 @@ class AgentRunExternalTools:
             after_cursor=args.after_cursor,
             limit=args.limit,
             direction=args.direction,
-            include_artifacts=args.include_artifacts,
+            include_attachments=args.include_attachments,
         )
 
     @agent_tool(

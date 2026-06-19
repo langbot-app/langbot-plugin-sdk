@@ -30,7 +30,7 @@ class TestTranscriptItem:
         assert item.role == "user"
         assert item.content == "Hello"
         assert item.item_type == "message"  # default
-        assert item.artifact_refs == []
+        assert item.attachment_refs == []
         assert item.metadata == {}
 
     def test_transcript_item_serialization(self):
@@ -41,7 +41,7 @@ class TestTranscriptItem:
             conversation_id="c1",
             role="assistant",
             content="Hi there",
-            artifact_refs=[{"artifact_id": "a1", "artifact_type": "image"}],
+            attachment_refs=[{"id": "a1", "type": "image"}],
             seq=1,
             cursor="1",
             metadata={"sender_id": "user1"},
@@ -49,8 +49,8 @@ class TestTranscriptItem:
 
         data = item.model_dump(mode="json")
         assert data["transcript_id"] == "t1"
-        assert data["artifact_refs"] == [
-            {"artifact_id": "a1", "artifact_type": "image"}
+        assert data["attachment_refs"] == [
+            {"id": "a1", "type": "image"}
         ]
         assert data["seq"] == 1
 

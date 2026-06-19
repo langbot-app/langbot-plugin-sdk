@@ -655,7 +655,7 @@ class PluginConnectionHandler(handler.Handler):
                 }
             )
 
-        # ================= Agent History/Event/Artifact Pull API Handlers =================
+        # ================= Agent History/Event Pull API Handlers =================
         # These handlers forward pull API calls from plugin to LangBot Host with caller_plugin_identity injection.
 
         @self.action(PluginToRuntimeAction.HISTORY_PAGE)
@@ -727,30 +727,6 @@ class PluginConnectionHandler(handler.Handler):
                 PluginToRuntimeAction.STEERING_PULL,
                 data,
                 timeout=15,
-            )
-            return handler.ActionResponse.success(result)
-
-        @self.action(PluginToRuntimeAction.ARTIFACT_METADATA)
-        async def artifact_metadata(data: dict[str, Any]) -> handler.ActionResponse:
-            """Forward ARTIFACT_METADATA to LangBot Host with caller_plugin_identity injection."""
-            _inject_caller_identity(data)
-
-            result = await self.context.control_handler.call_action(
-                PluginToRuntimeAction.ARTIFACT_METADATA,
-                data,
-                timeout=15,
-            )
-            return handler.ActionResponse.success(result)
-
-        @self.action(PluginToRuntimeAction.ARTIFACT_READ)
-        async def artifact_read(data: dict[str, Any]) -> handler.ActionResponse:
-            """Forward ARTIFACT_READ to LangBot Host with caller_plugin_identity injection."""
-            _inject_caller_identity(data)
-
-            result = await self.context.control_handler.call_action(
-                PluginToRuntimeAction.ARTIFACT_READ,
-                data,
-                timeout=60,
             )
             return handler.ActionResponse.success(result)
 

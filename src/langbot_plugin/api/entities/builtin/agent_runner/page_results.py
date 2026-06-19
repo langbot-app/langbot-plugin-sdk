@@ -56,7 +56,7 @@ class AgentEventRecord(pydantic.BaseModel):
     """Event record returned by event.get and event.page APIs.
 
     This is a stable, auditable representation of events stored in EventLog.
-    It does not include large raw payloads; use artifact refs for those.
+    It does not include large raw payload bodies.
     """
 
     event_id: str
@@ -93,7 +93,7 @@ class AgentEventRecord(pydantic.BaseModel):
     """Actor display name."""
 
     subject_type: str | None = None
-    """Subject type (message, tool_call, artifact)."""
+    """Subject type (message, tool_call, attachment, etc.)."""
 
     subject_id: str | None = None
     """Subject identifier."""
@@ -102,10 +102,10 @@ class AgentEventRecord(pydantic.BaseModel):
     """Brief summary of input (truncated text)."""
 
     input_ref: str | None = None
-    """Reference to full input artifact if large."""
+    """Reference to full input payload if available."""
 
     raw_ref: str | None = None
-    """Reference to raw event payload in ArtifactStore."""
+    """Reference to raw event payload if available."""
 
     seq: int | None = None
     """Sequence number for pagination."""

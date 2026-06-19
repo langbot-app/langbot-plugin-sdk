@@ -24,10 +24,6 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.resource import tool as resource_tool
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.entities.builtin.agent_runner.artifact import (
-    ArtifactMetadata,
-    ArtifactReadResult,
-)
 from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
     AgentEventRecord,
     EventPage,
@@ -58,7 +54,6 @@ DEFAULT_RESOURCE_OPERATIONS: dict[str, frozenset[str]] = {
     "model": frozenset({"invoke", "stream", "rerank"}),
     "tool": frozenset({"detail", "call"}),
     "knowledge_base": frozenset({"list", "retrieve"}),
-    "file": frozenset({"config", "knowledge"}),
 }
 
 
@@ -180,13 +175,11 @@ class AgentRunAPIProxy:
     - retrieve_knowledge(): requires kb_id in ctx.resources.knowledge_bases
     - plugin_storage: requires ctx.resources.storage.plugin_storage=True
     - workspace_storage: requires ctx.resources.storage.workspace_storage=True
-    - get_file(): requires file_id in ctx.resources.files
 
     Helper methods (local read from ctx.resources):
     - get_allowed_models(): returns ctx.resources.models
     - get_allowed_tools(): returns ctx.resources.tools
     - get_allowed_knowledge_bases(): returns ctx.resources.knowledge_bases
-    - get_allowed_files(): returns ctx.resources.files
 
     Additional APIs (AgentRunner-specific):
     - invoke_rerank(): requires rerank model authorization in ctx.resources
@@ -207,11 +200,9 @@ class AgentRunAPIProxy:
     _allowed_model_ids: frozenset[str]
     _allowed_tool_names: frozenset[str]
     _allowed_kb_ids: frozenset[str]
-    _allowed_file_ids: frozenset[str]
     _allowed_model_operations: dict[str, frozenset[str]]
     _allowed_tool_operations: dict[str, frozenset[str]]
     _allowed_kb_operations: dict[str, frozenset[str]]
-    _allowed_file_operations: dict[str, frozenset[str]]
 
     def __init__(self, ctx: AgentRunContext, plugin_runtime_handler: Handler):
         self.ctx = ctx
@@ -220,7 +211,6 @@ class AgentRunAPIProxy:
         self._allowed_model_ids = frozenset(m.model_id for m in ctx.resources.models)
         self._allowed_tool_names = frozenset(t.tool_name for t in ctx.resources.tools)
         self._allowed_kb_ids = frozenset(k.kb_id for k in ctx.resources.knowledge_bases)
-        self._allowed_file_ids = frozenset(f.file_id for f in ctx.resources.files)
         self._allowed_model_operations = {
             m.model_id: self._normalize_operations("model", m.operations)
             for m in ctx.resources.models
@@ -232,10 +222,6 @@ class AgentRunAPIProxy:
         self._allowed_kb_operations = {
             k.kb_id: self._normalize_operations("knowledge_base", k.operations)
             for k in ctx.resources.knowledge_bases
-        }
-        self._allowed_file_operations = {
-            f.file_id: self._normalize_operations("file", f.operations)
-            for f in ctx.resources.files
         }
 
     @property
@@ -308,10 +294,6 @@ class AgentRunAPIProxy:
         """Get the list of knowledge bases authorized for this run."""
         return self.ctx.resources.knowledge_bases
 
-    def get_allowed_files(self) -> list[Any]:
-        """Get the list of files authorized for this run."""
-        return self.ctx.resources.files
-
     # ================= Permission Validation =================
 
     @staticmethod
@@ -375,19 +357,6 @@ class AgentRunAPIProxy:
             kb_id,
             operation,
             self._allowed_kb_operations.get(kb_id),
-        )
-
-    def _validate_file_access(self, file_key: str, operation: str) -> None:
-        if file_key not in self._allowed_file_ids:
-            raise PermissionDeniedError(
-                f"File '{file_key}' is not authorized. "
-                f"Allowed files: {list(self._allowed_file_ids)}"
-            )
-        self._validate_operation(
-            "file",
-            file_key,
-            operation,
-            self._allowed_file_operations.get(file_key),
         )
 
     def _validate_plugin_storage_access(self) -> None:
@@ -717,33 +686,6 @@ class AgentRunAPIProxy:
             self._bounded_timeout(default=15.0),
         )
 
-    # ================= File API (delegated with validation) =================
-
-    async def get_file(self, file_key: str) -> bytes:
-        """Get a file with permission validation.
-
-        Args:
-            file_key: The file key from ctx.resources.files
-
-        Returns:
-            The file content as bytes
-        """
-        self._validate_file_access(file_key, "config")
-        resp = await self._api.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.GET_CONFIG_FILE,
-            {
-                "run_id": self.run_id,
-                "file_key": file_key,
-            },
-            self._bounded_timeout(default=15.0),
-        )
-        encoded = self._expect_key(
-            resp,
-            "file_base64",
-            PluginToRuntimeAction.GET_CONFIG_FILE,
-        )
-        return base64.b64decode(encoded)
-
     # ================= Version API (no authorization needed, delegated) =================
 
     async def get_langbot_version(self) -> str:
@@ -832,7 +774,7 @@ class AgentRunAPIProxy:
         after_cursor: str | None = None,
         limit: int = 50,
         direction: str = "backward",
-        include_artifacts: bool = False,
+        include_attachments: bool = False,
     ) -> dict[str, Any]:
         """Page through transcript history for a conversation.
 
@@ -843,7 +785,7 @@ class AgentRunAPIProxy:
             after_cursor: Get items after this cursor (forward direction).
             limit: Maximum items to return. Has a hard cap on host side.
             direction: 'backward' (older items) or 'forward' (newer items).
-            include_artifacts: Whether to include artifact refs in items.
+            include_attachments: Whether to include attachment refs in items.
 
         Returns:
             HistoryPage with items, next_cursor, prev_cursor, has_more.
@@ -862,7 +804,7 @@ class AgentRunAPIProxy:
                 "after_cursor": after_cursor,
                 "limit": limit,
                 "direction": direction,
-                "include_artifacts": include_artifacts,
+                "include_attachments": include_attachments,
             },
             timeout,
         )
@@ -1314,102 +1256,6 @@ class AgentRunAPIProxy:
             timeout,
         )
         return SteeringPullResult.model_validate(resp)
-
-    # ================= Artifact APIs (run-scoped) =================
-
-    async def artifact_metadata(self, artifact_id: str) -> ArtifactMetadata:
-        """Get metadata for an artifact.
-
-        Args:
-            artifact_id: The artifact ID to retrieve metadata for.
-
-        Returns:
-            ArtifactMetadata with artifact_id, artifact_type, mime_type,
-            size_bytes, source, conversation_id, run_id, etc.
-
-        Raises:
-            PermissionDeniedError: If artifact not accessible by current run.
-        """
-        self._require_context_api("artifact_metadata")
-        timeout = self._bounded_timeout(default=15.0)
-        resp = await self._api.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.ARTIFACT_METADATA,
-            {
-                "run_id": self.run_id,
-                "artifact_id": artifact_id,
-            },
-            timeout,
-        )
-        return ArtifactMetadata.model_validate(resp)
-
-    async def artifact_read(
-        self,
-        artifact_id: str,
-        offset: int = 0,
-        limit: int | None = None,
-    ) -> ArtifactReadResult:
-        """Read artifact content.
-
-        For small artifacts, returns content_base64 directly.
-        For large artifacts, may return file_key for chunked transfer.
-
-        Args:
-            artifact_id: The artifact ID to read.
-            offset: Byte offset to start reading from (for range reads).
-            limit: Maximum bytes to read. Host may enforce a hard limit.
-
-        Returns:
-            ArtifactReadResult with:
-            - artifact_id: The artifact identifier
-            - mime_type: MIME type of content
-            - size_bytes: Total artifact size
-            - offset: Offset of this read
-            - length: Length of data read (or None for file_key mode)
-            - content_base64: Base64-encoded content (for inline mode)
-            - file_key: File key for chunked transfer (for large artifacts)
-            - has_more: Whether more data is available
-
-        Raises:
-            PermissionDeniedError: If artifact not accessible by current run.
-
-        Note:
-            Host may enforce max read size limits to prevent memory exhaustion.
-            For large artifacts, prefer using file_key and chunked transfer.
-        """
-        self._require_context_api("artifact_read")
-        timeout = self._bounded_timeout(default=60.0)
-        resp = await self._api.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.ARTIFACT_READ,
-            {
-                "run_id": self.run_id,
-                "artifact_id": artifact_id,
-                "offset": offset,
-                "limit": limit,
-            },
-            timeout,
-        )
-        return ArtifactReadResult.model_validate(resp)
-
-    # Alias for artifact_read with range semantics
-    async def artifact_read_range(
-        self,
-        artifact_id: str,
-        offset: int = 0,
-        length: int | None = None,
-    ) -> ArtifactReadResult:
-        """Read a range of artifact content.
-
-        Alias for artifact_read with clearer range semantics.
-
-        Args:
-            artifact_id: The artifact ID to read.
-            offset: Byte offset to start reading from.
-            length: Maximum bytes to read.
-
-        Returns:
-            ArtifactReadResult.
-        """
-        return await self.artifact_read(artifact_id, offset=offset, limit=length)
 
     # ================= State APIs (run-scoped, policy-enforced) =================
 
