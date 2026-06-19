@@ -40,7 +40,7 @@ class PluginToRuntimeAction(ActionType):
     GET_LLM_MODELS = "get_llm_models"
     # GET_LLM_MODEL_INFO = "get_llm_model_info"
     INVOKE_LLM = "invoke_llm"
-    # INVOKE_LLM_STREAMING = "invoke_llm_streaming"
+    INVOKE_LLM_STREAM = "invoke_llm_stream"
 
     SET_PLUGIN_STORAGE = "set_plugin_storage"
     GET_PLUGIN_STORAGE = "get_plugin_storage"
