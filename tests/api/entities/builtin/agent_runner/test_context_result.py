@@ -12,7 +12,6 @@ from langbot_plugin.api.entities.builtin.agent_runner.context import (
 from langbot_plugin.api.entities.builtin.agent_runner.result import (
     AgentRunResult,
     AgentRunResultType,
-    ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.errors import AgentAPIError
 from langbot_plugin.api.entities.builtin.agent_runner.steering import SteeringPullResult
@@ -335,101 +334,6 @@ class TestAgentRunResultV1:
         assert result.type == AgentRunResultType.MESSAGE_COMPLETED
         assert "message" in result.data
         assert result.data["message"]["role"] == "assistant"
-
-    def test_artifact_created_validate(self):
-        """Test artifact.created result."""
-        result = AgentRunResult.artifact_created(
-            run_id="run_1",
-            artifact_id="artifact_1",
-            artifact_type="image",
-            mime_type="image/png",
-        )
-
-        assert result.run_id == "run_1"
-        assert result.type == AgentRunResultType.ARTIFACT_CREATED
-        assert result.data["artifact_id"] == "artifact_1"
-
-    def test_artifact_created_allows_host_generated_id(self):
-        """artifact.created may omit artifact_id so Host can generate one."""
-        result = AgentRunResult.artifact_created(
-            run_id="run_1",
-            artifact_type="file",
-            mime_type="text/plain",
-        )
-
-        assert result.type == AgentRunResultType.ARTIFACT_CREATED
-        assert result.data["artifact_type"] == "file"
-        assert "artifact_id" not in result.data
-
-    def test_artifact_created_with_new_fields(self):
-        """Test artifact.created with all new fields."""
-        import base64
-
-        content = b"test image content"
-        result = AgentRunResult.artifact_created(
-            run_id="run_1",
-            artifact_id="artifact_1",
-            artifact_type="image",
-            mime_type="image/png",
-            name="test.png",
-            size_bytes=len(content),
-            sha256="abc123",
-            metadata={"source": "generated"},
-            content_base64=base64.b64encode(content).decode("utf-8"),
-        )
-
-        assert result.run_id == "run_1"
-        assert result.type == AgentRunResultType.ARTIFACT_CREATED
-        assert result.data["artifact_id"] == "artifact_1"
-        assert result.data["artifact_type"] == "image"
-        assert result.data["mime_type"] == "image/png"
-        assert result.data["name"] == "test.png"
-        assert result.data["size_bytes"] == len(content)
-        assert result.data["sha256"] == "abc123"
-        assert result.data["metadata"] == {"source": "generated"}
-        assert result.data["content_base64"] == base64.b64encode(content).decode(
-            "utf-8"
-        )
-
-    def test_artifact_created_metadata_only(self):
-        """Test artifact.created without content (metadata-only)."""
-        result = AgentRunResult.artifact_created(
-            run_id="run_1",
-            artifact_id="artifact_1",
-            artifact_type="file",
-            mime_type="application/pdf",
-            name="document.pdf",
-            size_bytes=1024,
-            sha256="abc123",
-            metadata={"source": "external"},
-        )
-
-        assert result.data["artifact_id"] == "artifact_1"
-        # content_base64 is not added when not provided
-        assert "content_base64" not in result.data
-
-    def test_artifact_created_rejects_invalid_content_base64(self):
-        """Test artifact.created validates inline content."""
-        with pytest.raises(pydantic.ValidationError, match="valid base64"):
-            AgentRunResult.artifact_created(
-                run_id="run_1",
-                artifact_id="artifact_1",
-                artifact_type="file",
-                content_base64="not base64",
-            )
-
-    def test_artifact_created_rejects_oversized_inline_content(self):
-        """Test artifact.created enforces inline content size."""
-        import base64
-
-        oversized = b"x" * (ARTIFACT_CREATED_CONTENT_BASE64_MAX_BYTES + 1)
-        with pytest.raises(pydantic.ValidationError, match="exceeds"):
-            AgentRunResult.artifact_created(
-                run_id="run_1",
-                artifact_id="artifact_1",
-                artifact_type="file",
-                content_base64=base64.b64encode(oversized).decode("utf-8"),
-            )
 
     def test_tool_call_started_validate(self):
         """Test tool.call.started result."""

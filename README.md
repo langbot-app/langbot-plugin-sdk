@@ -78,8 +78,8 @@ Plugins extend LangBot through six component types, scaffolded with
 The SDK provides AgentRunner component definitions, protocol entities, runtime
 dispatch, and run-scoped Host API helpers. It no longer ships a generic remote
 AgentRunner daemon; external harness execution should be implemented by the
-runner/plugin package or delegated to a managed platform such as LiteLLM Agent
-Platform.
+runner/plugin package or delegated to a deployment-owned remote daemon or
+managed agent platform.
 
 ## Documentation
 

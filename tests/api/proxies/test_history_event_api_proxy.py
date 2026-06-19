@@ -129,7 +129,7 @@ class TestHistoryPageMethod:
             before_cursor="10",
             limit=20,
             direction="forward",
-            include_artifacts=True,
+            include_attachments=True,
         )
 
         call_args = mock_handler.call_action.call_args
@@ -138,7 +138,7 @@ class TestHistoryPageMethod:
         assert data["before_cursor"] == "10"
         assert data["limit"] == 20
         assert data["direction"] == "forward"
-        assert data["include_artifacts"] is True
+        assert data["include_attachments"] is True
 
 
 class TestHistorySearchMethod:

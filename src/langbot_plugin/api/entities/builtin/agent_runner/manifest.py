@@ -97,20 +97,10 @@ class AgentRunnerPermissions(pydantic.BaseModel):
     events: list[typing.Literal["get", "page"]] = pydantic.Field(default_factory=list)
     """Event operations allowed."""
 
-    artifacts: list[typing.Literal["metadata", "read"]] = pydantic.Field(
-        default_factory=list
-    )
-    """Artifact operations allowed."""
-
     storage: list[typing.Literal["plugin", "workspace"]] = pydantic.Field(
         default_factory=list
     )
     """Storage scopes allowed."""
-
-    files: list[typing.Literal["config", "knowledge"]] = pydantic.Field(
-        default_factory=list
-    )
-    """File access scopes allowed."""
 
     model_config = pydantic.ConfigDict(extra="forbid")
 

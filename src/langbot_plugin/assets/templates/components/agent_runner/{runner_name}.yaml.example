@@ -22,9 +22,7 @@ spec:
     knowledge_bases: []
     history: []
     events: []
-    artifacts: []
     storage: []
-    files: []
   config: []
 execution:
   python:

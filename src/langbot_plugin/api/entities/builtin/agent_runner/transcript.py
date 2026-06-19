@@ -11,7 +11,7 @@ class TranscriptItem(pydantic.BaseModel):
 
     Transcript is the conversation-oriented view of events, designed for
     agent history retrieval and UI display. It does not include raw platform
-    payloads or large artifacts.
+    payloads or large attachment bodies.
     """
 
     transcript_id: str
@@ -44,8 +44,8 @@ class TranscriptItem(pydantic.BaseModel):
     content_json: dict[str, typing.Any] | None = None
     """Full structured content if available (Message model dump)."""
 
-    artifact_refs: list[dict[str, typing.Any]] = pydantic.Field(default_factory=list)
-    """References to artifacts (images, files) attached to this item."""
+    attachment_refs: list[dict[str, typing.Any]] = pydantic.Field(default_factory=list)
+    """Historical attachment references attached to this item."""
 
     seq: int | None = None
     """Sequence number within conversation (for cursor-based pagination)."""

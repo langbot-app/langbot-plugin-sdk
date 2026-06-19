@@ -3,7 +3,6 @@
 Tests focus on:
 - State API handlers (STATE_GET, STATE_SET, STATE_DELETE, STATE_LIST)
 - History/Event API handlers (HISTORY_PAGE, HISTORY_SEARCH, EVENT_GET, EVENT_PAGE)
-- Artifact API handlers (ARTIFACT_METADATA, ARTIFACT_READ)
 - caller_plugin_identity injection in all pull API handlers
 
 These tests instantiate real PluginConnectionHandler and verify:
@@ -67,8 +66,6 @@ class TestPluginConnectionHandlerPullAPIRegistration:
             PluginToRuntimeAction.EVENT_GET,
             PluginToRuntimeAction.EVENT_PAGE,
             PluginToRuntimeAction.STEERING_PULL,
-            PluginToRuntimeAction.ARTIFACT_METADATA,
-            PluginToRuntimeAction.ARTIFACT_READ,
             PluginToRuntimeAction.STATE_GET,
             PluginToRuntimeAction.STATE_SET,
             PluginToRuntimeAction.STATE_DELETE,
@@ -300,30 +297,6 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         assert call_args[1].get("timeout") == 30
 
     @pytest.mark.anyio
-    async def test_artifact_metadata_forwards_correctly(self):
-        """ARTIFACT_METADATA forwards to control_handler.call_action with correct parameters."""
-        fake_context = make_fake_context()
-        handler = PluginConnectionHandler(FakeConnection(), fake_context)
-
-        payload = {"run_id": "run_001", "artifact_id": "artifact_001"}
-        resp = await handler.actions[PluginToRuntimeAction.ARTIFACT_METADATA.value](
-            payload
-        )
-
-        assert resp.code == 0
-        fake_context.control_handler.call_action.assert_called_once()
-
-        call_args = fake_context.control_handler.call_action.call_args
-        assert call_args[0][0] == PluginToRuntimeAction.ARTIFACT_METADATA
-
-        forwarded_payload = call_args[0][1]
-        assert forwarded_payload["run_id"] == "run_001"
-        assert forwarded_payload["artifact_id"] == "artifact_001"
-
-        # timeout is passed as keyword argument
-        assert call_args[1].get("timeout") == 15
-
-    @pytest.mark.anyio
     async def test_steering_pull_forwards_correctly(self):
         """STEERING_PULL forwards to control_handler.call_action with correct parameters."""
         fake_context = make_fake_context()
@@ -343,35 +316,6 @@ class TestPluginConnectionHandlerPullAPIForwarding:
         assert forwarded_payload["mode"] == "one-at-a-time"
         assert forwarded_payload["limit"] == 1
         assert call_args[1].get("timeout") == 15
-
-    @pytest.mark.anyio
-    async def test_artifact_read_forwards_correctly(self):
-        """ARTIFACT_READ forwards to control_handler.call_action with correct parameters."""
-        fake_context = make_fake_context()
-        handler = PluginConnectionHandler(FakeConnection(), fake_context)
-
-        payload = {
-            "run_id": "run_001",
-            "artifact_id": "artifact_001",
-            "offset": 0,
-            "limit": 1024,
-        }
-        resp = await handler.actions[PluginToRuntimeAction.ARTIFACT_READ.value](payload)
-
-        assert resp.code == 0
-        fake_context.control_handler.call_action.assert_called_once()
-
-        call_args = fake_context.control_handler.call_action.call_args
-        assert call_args[0][0] == PluginToRuntimeAction.ARTIFACT_READ
-
-        forwarded_payload = call_args[0][1]
-        assert forwarded_payload["run_id"] == "run_001"
-        assert forwarded_payload["artifact_id"] == "artifact_001"
-        assert forwarded_payload["offset"] == 0
-        assert forwarded_payload["limit"] == 1024
-
-        # timeout is passed as keyword argument
-        assert call_args[1].get("timeout") == 60
 
 
 class TestPluginConnectionHandlerCallerIdentity:
@@ -523,14 +467,6 @@ class TestPluginConnectionHandlerCallerIdentity:
             (PluginToRuntimeAction.EVENT_GET, {"run_id": "r", "event_id": "e"}),
             (PluginToRuntimeAction.EVENT_PAGE, {"run_id": "r", "limit": 10}),
             (PluginToRuntimeAction.STEERING_PULL, {"run_id": "r"}),
-            (
-                PluginToRuntimeAction.ARTIFACT_METADATA,
-                {"run_id": "r", "artifact_id": "a"},
-            ),
-            (
-                PluginToRuntimeAction.ARTIFACT_READ,
-                {"run_id": "r", "artifact_id": "a", "offset": 0, "limit": 100},
-            ),
             (PluginToRuntimeAction.RUN_GET, {"run_id": "r"}),
             (PluginToRuntimeAction.RUN_LIST, {"run_id": "r"}),
             (PluginToRuntimeAction.RUN_EVENTS_PAGE, {"run_id": "r"}),

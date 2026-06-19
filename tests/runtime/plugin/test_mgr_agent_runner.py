@@ -249,8 +249,8 @@ class TestListAgentRunners:
         assert runners[0]["runner_name"] == "default"
         assert "protocol_version" not in runners[0]
         assert runners[0]["manifest"]["id"] == "plugin:test-author/test-plugin/default"
-        assert runners[0]["capabilities"]["streaming"] is False
-        assert runners[0]["permissions"]["models"] == []
+        assert runners[0]["manifest"]["capabilities"]["streaming"] is False
+        assert runners[0]["manifest"]["permissions"]["models"] == []
 
     @pytest.mark.anyio
     async def test_single_plugin_multiple_runners(self):
@@ -285,9 +285,8 @@ class TestListAgentRunners:
         # Discovery returns typed manifest plus extracted config.
         for runner in runners:
             assert "protocol_version" not in runner
-            assert runner["capabilities"]["streaming"] is True
-            assert runner["capabilities"]["tool_calling"] is True
             assert runner["manifest"]["capabilities"]["streaming"] is True
+            assert runner["manifest"]["capabilities"]["tool_calling"] is True
 
     @pytest.mark.anyio
     async def test_include_plugins_filter(self):
@@ -369,9 +368,10 @@ class TestListAgentRunners:
         runners = await mgr.list_agent_runners()
 
         assert len(runners) == 1
-        assert runners[0]["capabilities"]["streaming"] is False
-        assert runners[0]["permissions"]["models"] == []
-        assert runners[0]["config"] == [{"type": "llm-model-selector", "name": "model"}]
+        assert runners[0]["manifest"]["capabilities"]["streaming"] is False
+        assert runners[0]["manifest"]["permissions"]["models"] == []
+        assert runners[0]["manifest"]["config_schema"][0]["type"] == "llm-model-selector"
+        assert runners[0]["manifest"]["config_schema"][0]["name"] == "model"
 
     @pytest.mark.anyio
     async def test_skips_invalid_runner_manifest(self, caplog):
