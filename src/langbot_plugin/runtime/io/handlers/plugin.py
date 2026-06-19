@@ -302,6 +302,15 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.VECTOR_LIST)
+        async def vector_list(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.VECTOR_LIST,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM)
         async def get_knowledge_file_stream(
             data: dict[str, Any],
