@@ -450,7 +450,12 @@ async def test_plugin_handler_plugin_storage_actions_add_owner(action, expected_
     assert control.calls == [
         (
             expected_action,
-            {"key": "cache", "owner_type": "plugin", "owner": "tester/demo"},
+            {
+                "key": "cache",
+                "owner_type": "plugin",
+                "owner": "tester/demo",
+                "caller_plugin_identity": "tester/demo",
+            },
             15.0,
         )
     ]
@@ -613,8 +618,11 @@ async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
 
 
 async def test_plugin_handler_get_tool_detail_returns_matching_tool():
-    handler, manager, _control = _handler()
+    handler, manager, control = _handler()
     manager.tools = [FakeTool("weather")]
+    control.results[PluginToRuntimeAction.GET_TOOL_DETAIL] = {
+        "tool": {"name": "weather"}
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -623,6 +631,13 @@ async def test_plugin_handler_get_tool_detail_returns_matching_tool():
         )
 
     assert response["data"] == {"tool": {"name": "weather"}}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.GET_TOOL_DETAIL,
+            {"tool_name": "weather"},
+            30,
+        )
+    ]
 
 
 async def test_plugin_handler_calls_registered_runtime_tool():

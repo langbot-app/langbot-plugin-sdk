@@ -84,22 +84,43 @@ class LangBotAPIProxy:
         timeout: float | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model"""
-        effective_timeout = timeout if timeout is not None else 120.0
-        resp = (
-            await self.plugin_runtime_handler.call_action(
-                PluginToRuntimeAction.INVOKE_LLM,
-                {
-                    "llm_model_uuid": llm_model_uuid,
-                    "messages": [m.model_dump() for m in messages],
-                    "funcs": [f.model_dump() for f in funcs],
-                    "extra_args": extra_args,
-                    "timeout": effective_timeout,
-                },
-                timeout=effective_timeout,
-            )
-        )["message"]
+        result = await self.invoke_llm_with_usage(
+            llm_model_uuid=llm_model_uuid,
+            messages=messages,
+            funcs=funcs,
+            extra_args=extra_args,
+            timeout=timeout,
+        )
+        return result.message
 
-        return provider_message.Message.model_validate(resp)
+    async def invoke_llm_with_usage(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] = [],
+        extra_args: dict[str, Any] = {},
+        timeout: float | None = None,
+    ) -> provider_message.LLMInvokeResult:
+        """Invoke an LLM model and return the message plus optional provider usage."""
+        effective_timeout = timeout if timeout is not None else 120.0
+        resp = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.INVOKE_LLM,
+            {
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+                "timeout": effective_timeout,
+            },
+            timeout=effective_timeout,
+        )
+
+        return provider_message.LLMInvokeResult.model_validate(
+            {
+                "message": resp["message"],
+                "usage": resp.get("usage") if isinstance(resp, dict) else None,
+            }
+        )
 
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
