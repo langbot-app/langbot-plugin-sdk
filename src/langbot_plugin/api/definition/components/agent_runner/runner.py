@@ -10,7 +10,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunCon
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 
 if TYPE_CHECKING:
-    from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+    from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
     from langbot_plugin.runtime.io.handler import Handler
 
 
@@ -114,7 +114,7 @@ class AgentRunner(BaseComponent):
         Returns:
             AgentRunAPIProxy: API proxy with context for Host API calls.
         """
-        from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+        from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 
         if self._plugin_runtime_handler is None:
             raise RuntimeError("AgentRunner runtime is not bound")

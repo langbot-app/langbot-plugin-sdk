@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.entities.builtin.agent_runner.resources import (
     AgentResources,

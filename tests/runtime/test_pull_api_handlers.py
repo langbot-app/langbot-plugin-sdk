@@ -596,7 +596,7 @@ class TestAgentRunAPIProxyPullAPIPayloads:
     @pytest.mark.anyio
     async def test_state_api_payloads_via_proxy(self):
         """State API payloads are correctly forwarded via proxy."""
-        from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+        from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
         from langbot_plugin.api.entities.builtin.agent_runner.context import (
             AgentRunContext,
         )

@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 
 LANGBOT_AGENT_MCP_SERVER_NAME = "langbot_agent"
 MCP_SERVER_INFO = {"name": "langbot-agent", "version": "0.1.0"}

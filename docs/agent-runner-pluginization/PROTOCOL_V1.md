@@ -14,7 +14,7 @@ SDK 仓库不维护 AgentRunner Protocol v1 的 schema 副本。
 
 - `src/langbot_plugin/api/definition/components/agent_runner/runner.py`
 - `src/langbot_plugin/api/entities/builtin/agent_runner/`
-- `src/langbot_plugin/api/proxies/agent_run_api.py`
+- `src/langbot_plugin/api/proxies/agent_run/`
 - `src/langbot_plugin/runtime/plugin/mgr.py`
 - `src/langbot_plugin/runtime/io/handlers/control.py`
 - `src/langbot_plugin/assets/templates/components/agent_runner/`
