@@ -122,6 +122,49 @@ class LangBotAPIProxy:
             }
         )
 
+    async def invoke_llm_stream(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] = [],
+        extra_args: dict[str, Any] = {},
+    ):
+        """Invoke an LLM model with streaming response."""
+        async for event in self.invoke_llm_stream_events(
+            llm_model_uuid=llm_model_uuid,
+            messages=messages,
+            funcs=funcs,
+            extra_args=extra_args,
+        ):
+            if event.chunk is not None:
+                yield event.chunk
+
+    async def invoke_llm_stream_events(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] = [],
+        extra_args: dict[str, Any] = {},
+    ):
+        """Invoke an LLM model and yield chunks plus optional final usage events."""
+        async for chunk_data in self.plugin_runtime_handler.call_action_generator(
+            PluginToRuntimeAction.INVOKE_LLM_STREAM,
+            {
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+            },
+        ):
+            event_data: dict[str, Any] = {}
+            if isinstance(chunk_data, dict) and "chunk" in chunk_data:
+                event_data["chunk"] = chunk_data["chunk"]
+            if isinstance(chunk_data, dict) and "usage" in chunk_data:
+                event_data["usage"] = chunk_data["usage"]
+            if not event_data:
+                event_data["chunk"] = chunk_data["chunk"]
+            yield provider_message.LLMStreamEvent.model_validate(event_data)
+
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
         await self.plugin_runtime_handler.call_action(

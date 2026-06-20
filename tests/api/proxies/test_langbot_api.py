@@ -26,6 +26,12 @@ class FakeHandler:
             return response
         return {}
 
+    async def call_action_generator(self, action, data, timeout=None):
+        self.calls.append((action, data, timeout))
+        response = self.responses.get(action, [])
+        for item in response:
+            yield item
+
     async def read_local_file(self, file_key: str) -> bytes:
         return self.local_files[file_key]
 
@@ -124,6 +130,69 @@ async def test_invoke_llm_with_usage_preserves_provider_usage():
     assert result.usage is not None
     assert result.usage.total_tokens == 20
     assert result.usage.model_dump()["prompt_tokens_details"] == {"cached_tokens": 5}
+
+
+@pytest.mark.asyncio
+async def test_invoke_llm_stream_yields_chunks_only():
+    handler = FakeHandler(
+        {
+            PluginToRuntimeAction.INVOKE_LLM_STREAM: [
+                {"chunk": {"role": "assistant", "content": "hi"}},
+                {"usage": {"prompt_tokens": 3, "completion_tokens": 1}},
+            ]
+        }
+    )
+    proxy = LangBotAPIProxy(handler)
+
+    chunks = [
+        chunk
+        async for chunk in proxy.invoke_llm_stream(
+            "model",
+            [Message(role="user", content="hello")],
+            extra_args={"temperature": 0},
+        )
+    ]
+
+    assert len(chunks) == 1
+    assert chunks[0].content == "hi"
+    action, data, timeout = handler.calls[0]
+    assert action is PluginToRuntimeAction.INVOKE_LLM_STREAM
+    assert data["llm_model_uuid"] == "model"
+    assert data["extra_args"] == {"temperature": 0}
+    assert timeout is None
+
+
+@pytest.mark.asyncio
+async def test_invoke_llm_stream_events_preserves_usage_events():
+    handler = FakeHandler(
+        {
+            PluginToRuntimeAction.INVOKE_LLM_STREAM: [
+                {"chunk": {"role": "assistant", "content": "hi"}},
+                {
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 1,
+                        "total_tokens": 4,
+                    }
+                },
+            ]
+        }
+    )
+    proxy = LangBotAPIProxy(handler)
+
+    events = [
+        event
+        async for event in proxy.invoke_llm_stream_events(
+            "model",
+            [Message(role="user", content="hello")],
+        )
+    ]
+
+    assert events[0].chunk is not None
+    assert events[0].chunk.content == "hi"
+    assert events[1].chunk is None
+    assert events[1].usage is not None
+    assert events[1].usage.total_tokens == 4
 
 
 @pytest.mark.asyncio
