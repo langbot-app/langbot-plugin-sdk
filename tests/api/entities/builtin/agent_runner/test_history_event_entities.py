@@ -49,9 +49,7 @@ class TestTranscriptItem:
 
         data = item.model_dump(mode="json")
         assert data["transcript_id"] == "t1"
-        assert data["attachment_refs"] == [
-            {"id": "a1", "type": "image"}
-        ]
+        assert data["attachment_refs"] == [{"id": "a1", "type": "image"}]
         assert data["seq"] == 1
 
     def test_transcript_item_with_content_json(self):
