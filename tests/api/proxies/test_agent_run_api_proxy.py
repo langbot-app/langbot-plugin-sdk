@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from langbot_plugin.api.proxies.agent_run_api import (
+from langbot_plugin.api.proxies.agent_run import (
     AgentRunAdminAPIProxy,
     AgentRunAPIProxy,
-    AgentAPIException,
     PermissionDeniedError,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.errors import AgentAPIException
 from langbot_plugin.entities.io.errors import (
     ActionCallError,
     ActionCallTimeoutError,

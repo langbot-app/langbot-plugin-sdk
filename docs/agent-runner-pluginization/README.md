@@ -21,7 +21,7 @@
 
 - `src/langbot_plugin/api/definition/components/agent_runner/`
 - `src/langbot_plugin/api/entities/builtin/agent_runner/`
-- `src/langbot_plugin/api/proxies/agent_run_api.py`
+- `src/langbot_plugin/api/proxies/agent_run/`
 - `src/langbot_plugin/runtime/plugin/mgr.py`
 - `src/langbot_plugin/runtime/io/handlers/control.py`
 - `src/langbot_plugin/assets/templates/components/agent_runner/`

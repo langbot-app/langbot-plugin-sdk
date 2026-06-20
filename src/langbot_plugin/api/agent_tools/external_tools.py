@@ -11,7 +11,7 @@ import pydantic
 from langbot_plugin.api.agent_tools.decorators import agent_tool, collect_agent_tools
 from langbot_plugin.api.agent_tools.decorators import AgentToolSpec
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.proxies.agent_run_api import AgentRunAPIProxy
+from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 
 
 class EmptyArgs(pydantic.BaseModel):
