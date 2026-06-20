@@ -146,6 +146,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
 
         now = dt.datetime.now(dt.timezone.utc)
 
+        # Adapt paths for E2B environment
         mount_path = _adapt_path_for_e2b(spec.mount_path)
 
         # Build create parameters
