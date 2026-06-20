@@ -13,15 +13,12 @@ import time
 import zipfile
 import yaml
 import logging
-from langbot_plugin.utils.deadline import (
-    anext_with_deadline,
-    remaining_deadline_seconds,
-)
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
+from langbot_plugin.runtime.plugin.agent_runner_service import AgentRunnerRuntimeService
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
@@ -35,9 +32,7 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.entities.io.actions.enums import (
     RuntimeToLangBotAction,
-    RuntimeToPluginAction,
 )
-from langbot_plugin.entities.io.errors import ActionCallTimeoutError
 from langbot_plugin.api.entities.builtin.command.context import (
     ExecuteContext,
     CommandReturn,
@@ -50,30 +45,6 @@ from langbot_plugin.entities.io.errors import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _remaining_deadline_seconds(context: dict[str, typing.Any]) -> float | None:
-    return remaining_deadline_seconds((context.get("runtime") or {}).get("deadline_at"))
-
-
-def _runner_action_timeout(context: dict[str, typing.Any]) -> float:
-    remaining = _remaining_deadline_seconds(context)
-    if remaining is None:
-        return 300
-    if remaining <= 0:
-        return 0.001
-    return max(remaining + 1.0, 0.001)
-
-
-def _ensure_result_sequence(
-    result_data: dict[str, typing.Any],
-    sequence: int,
-) -> dict[str, typing.Any]:
-    if not isinstance(result_data, dict):
-        return result_data
-    result_data = dict(result_data)
-    result_data["sequence"] = sequence
-    return result_data
 
 
 class PluginInstallSource(enum.Enum):
@@ -99,12 +70,18 @@ class PluginManager:
 
     wait_for_control_connection: asyncio.Future[None] | None
 
+    agent_runner_runtime: AgentRunnerRuntimeService
+
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_handlers = []
         self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
+        self.agent_runner_runtime = AgentRunnerRuntimeService(
+            plugins=lambda: self.plugins,
+            find_plugin=self.find_plugin,
+        )
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
@@ -930,96 +907,7 @@ class PluginManager:
         Returns v1 protocol format with typed manifest data and transport fields.
         A plugin can have multiple AgentRunner components.
         """
-        from langbot_plugin.api.definition.components.agent_runner.runner import (
-            AgentRunner,
-        )
-        from langbot_plugin.api.entities.builtin.agent_runner.manifest import (
-            AgentRunnerManifest,
-        )
-
-        runners: list[dict[str, typing.Any]] = []
-
-        for plugin in self.plugins:
-            if (
-                plugin.status
-                != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
-            ):
-                continue
-
-            if not plugin.enabled:
-                continue
-
-            # Filter by include_plugins if specified
-            if include_plugins is not None:
-                plugin_id = (
-                    f"{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}"
-                )
-                if plugin_id not in include_plugins:
-                    continue
-
-            for component in plugin.components:
-                if component.manifest.kind == AgentRunner.__kind__:
-                    # Get spec from manifest, with defaults
-                    spec = component.manifest.spec or {}
-                    runner_cls = (
-                        type(component.component_instance)
-                        if isinstance(component.component_instance, AgentRunner)
-                        else AgentRunner
-                    )
-
-                    # Get config schema
-                    config_schema = spec.get("config") or runner_cls.get_config_schema()
-                    runner_name = component.manifest.metadata.name
-                    runner_id = (
-                        "plugin:"
-                        f"{plugin.manifest.metadata.author}/"
-                        f"{plugin.manifest.metadata.name}/"
-                        f"{runner_name}"
-                    )
-
-                    try:
-                        runner_manifest = AgentRunnerManifest(
-                            id=runner_id,
-                            name=runner_name,
-                            label=component.manifest.metadata.label.to_dict(),
-                            description=component.manifest.metadata.description.to_dict()
-                            if component.manifest.metadata.description is not None
-                            else None,
-                            capabilities=spec.get("capabilities") or {},
-                            permissions=spec.get("permissions") or {},
-                            config_schema=config_schema,
-                            metadata={
-                                "plugin_author": plugin.manifest.metadata.author,
-                                "plugin_name": plugin.manifest.metadata.name,
-                                "runner_name": runner_name,
-                            },
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Skipping invalid AgentRunner manifest %s/%s/%s: %s",
-                            plugin.manifest.metadata.author,
-                            plugin.manifest.metadata.name,
-                            runner_name,
-                            exc,
-                        )
-                        continue
-
-                    manifest_data = runner_manifest.model_dump(mode="json")
-
-                    runners.append(
-                        {
-                            "plugin_author": plugin.manifest.metadata.author,
-                            "plugin_name": plugin.manifest.metadata.name,
-                            "runner_name": runner_name,
-                            "runner_description": manifest_data["description"],
-                            "manifest": manifest_data,
-                            "capabilities": manifest_data["capabilities"],
-                            "permissions": manifest_data["permissions"],
-                            "config": config_schema,
-                        }
-                    )
-
-        return runners
+        return await self.agent_runner_runtime.list_agent_runners(include_plugins)
 
     async def run_agent(
         self,
@@ -1033,133 +921,13 @@ class PluginManager:
         Forwards the RUN_AGENT action to the plugin process and streams results back.
         All errors are converted to run.failed events.
         """
-        from langbot_plugin.api.definition.components.agent_runner.runner import (
-            AgentRunner,
-        )
-        from langbot_plugin.api.entities.builtin.agent_runner.result import (
-            AgentRunResult,
-        )
-
-        # Extract run_id from context for error responses
-        run_id = context.get("run_id", "unknown")
-
-        # Find the plugin
-        target_plugin = None
-        for plugin in self.plugins:
-            if (
-                plugin.manifest.metadata.author == plugin_author
-                and plugin.manifest.metadata.name == plugin_name
-            ):
-                target_plugin = plugin
-                break
-
-        if target_plugin is None:
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error=f"Plugin {plugin_author}/{plugin_name} not found",
-                code="runner.plugin_not_found",
-                sequence=1,
-            ).model_dump(mode="json")
-            return
-
-        if not target_plugin.enabled:
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error=f"Plugin {plugin_author}/{plugin_name} is disabled",
-                code="runner.plugin_disabled",
-                sequence=1,
-            ).model_dump(mode="json")
-            return
-
-        if (
-            target_plugin.status
-            != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+        async for result in self.agent_runner_runtime.run_agent(
+            plugin_author,
+            plugin_name,
+            runner_name,
+            context,
         ):
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error=f"Plugin {plugin_author}/{plugin_name} is not initialized",
-                code="runner.plugin_not_initialized",
-                sequence=1,
-            ).model_dump(mode="json")
-            return
-
-        # Find the component (supports multiple runners per plugin)
-        target_component = None
-        for component in target_plugin.components:
-            if (
-                component.manifest.kind == AgentRunner.__kind__
-                and component.manifest.metadata.name == runner_name
-            ):
-                target_component = component
-                break
-
-        if target_component is None:
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error=f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
-                code="runner.not_found",
-                sequence=1,
-            ).model_dump(mode="json")
-            return
-
-        # Check if plugin handler exists for forwarding
-        if target_plugin._runtime_plugin_handler is None:
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error=f"Plugin {plugin_author}/{plugin_name} has no runtime handler",
-                code="runner.handler_not_found",
-                sequence=1,
-            ).model_dump(mode="json")
-            return
-
-        # Forward RUN_AGENT action to the plugin process and stream results
-        try:
-            gen = target_plugin._runtime_plugin_handler.call_action_generator(
-                RuntimeToPluginAction.RUN_AGENT,
-                {
-                    "runner_name": runner_name,
-                    "context": context,
-                },
-                timeout=_runner_action_timeout(context),
-            )
-
-            # call_action_generator yields response.data directly on success,
-            # or raises ActionCallError on failure
-            sequence = 0
-            while True:
-                try:
-                    result_data = await anext_with_deadline(
-                        gen,
-                        (context.get("runtime") or {}).get("deadline_at"),
-                    )
-                except StopAsyncIteration:
-                    break
-                sequence += 1
-                yield _ensure_result_sequence(result_data, sequence)
-
-        except (asyncio.TimeoutError, ActionCallTimeoutError):
-            next_sequence = locals().get("sequence", 0) + 1
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error="Agent runner timed out",
-                code="runner.timeout",
-                retryable=True,
-                sequence=next_sequence,
-            ).model_dump(mode="json")
-        except Exception as e:
-            next_sequence = locals().get("sequence", 0) + 1
-            logger.exception(
-                "Error forwarding AgentRunner %s/%s:%s",
-                plugin_author,
-                plugin_name,
-                runner_name,
-            )
-            yield AgentRunResult.run_failed(
-                run_id=run_id,
-                error=f"Error forwarding to plugin: {e}",
-                code="runner.forward_exception",
-                sequence=next_sequence,
-            ).model_dump(mode="json")
+            yield result
 
     async def retrieve_knowledge(
         self,
