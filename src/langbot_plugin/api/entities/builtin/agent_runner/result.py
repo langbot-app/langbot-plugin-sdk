@@ -16,6 +16,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.state import (
     STATE_SCOPE_LITERAL,
 )
 
+
 class AgentRunResultType(str, enum.Enum):
     """Type of AgentRunResult event."""
 
