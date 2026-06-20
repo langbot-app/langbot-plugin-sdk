@@ -71,9 +71,8 @@ def _ensure_result_sequence(
 ) -> dict[str, typing.Any]:
     if not isinstance(result_data, dict):
         return result_data
-    if result_data.get("sequence") is None:
-        result_data = dict(result_data)
-        result_data["sequence"] = sequence
+    result_data = dict(result_data)
+    result_data["sequence"] = sequence
     return result_data
 
 
@@ -1012,7 +1011,11 @@ class PluginManager:
                             "plugin_author": plugin.manifest.metadata.author,
                             "plugin_name": plugin.manifest.metadata.name,
                             "runner_name": runner_name,
+                            "runner_description": manifest_data["description"],
                             "manifest": manifest_data,
+                            "capabilities": manifest_data["capabilities"],
+                            "permissions": manifest_data["permissions"],
+                            "config": config_schema,
                         }
                     )
 

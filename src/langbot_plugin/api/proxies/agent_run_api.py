@@ -36,7 +36,10 @@ from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import (
     AgentRuntime,
     RunEventPage,
     RunPage,
+    RunnerStatsPage,
+    RunStats,
     RuntimePage,
+    RuntimeStats,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 from langbot_plugin.api.entities.builtin.agent_runner.errors import (
@@ -744,7 +747,7 @@ class AgentRunAPIProxy:
             },
             timeout=effective_timeout,
         )
-        return resp.get("results", [])
+        return self._expect_key(resp, "results", PluginToRuntimeAction.INVOKE_RERANK)
 
     # ================= History APIs (run-scoped, conversation-scoped) =================
 
@@ -764,8 +767,20 @@ class AgentRunAPIProxy:
             },
             timeout,
         )
-        prompt = resp.get("prompt", [])
-        return prompt if isinstance(prompt, list) else []
+        prompt = self._expect_key(resp, "prompt", PluginToRuntimeAction.GET_PROMPT)
+        if not isinstance(prompt, list):
+            raise AgentAPIException(
+                AgentAPIError(
+                    code="host.malformed_response",
+                    message=f"{PluginToRuntimeAction.GET_PROMPT.value} response field prompt must be a list",
+                    retryable=False,
+                    details={
+                        "action": PluginToRuntimeAction.GET_PROMPT.value,
+                        "field": "prompt",
+                    },
+                )
+            )
+        return prompt
 
     async def history_page(
         self,
@@ -1698,8 +1713,6 @@ class AgentRunAdminAPIProxy:
         Returns:
             RunStats with counts, rates, and duration percentiles.
         """
-        from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import RunStats
-
         resp = await self._call_action(
             PluginToRuntimeAction.RUN_STATS,
             {
@@ -1717,8 +1730,6 @@ class AgentRunAdminAPIProxy:
         Returns:
             RuntimeStats with counts, heartbeat health, and capacity.
         """
-        from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import RuntimeStats
-
         resp = await self._call_action(
             PluginToRuntimeAction.RUNTIME_STATS,
             {},
@@ -1742,8 +1753,6 @@ class AgentRunAdminAPIProxy:
         Returns:
             RunnerStatsPage with per-runner statistics.
         """
-        from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import RunnerStatsPage
-
         resp = await self._call_action(
             PluginToRuntimeAction.RUNNER_STATS,
             {

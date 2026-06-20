@@ -91,9 +91,7 @@ async def _iter_runner_results_with_deadline(
                 break
 
             sequence += 1
-            if getattr(result, "sequence", None) is None and hasattr(
-                result, "model_copy"
-            ):
+            if hasattr(result, "model_copy"):
                 result = result.model_copy(update={"sequence": sequence})
             yield result
     except asyncio.TimeoutError:
@@ -103,6 +101,14 @@ async def _iter_runner_results_with_deadline(
             error="Agent runner timed out",
             code="runner.timeout",
             retryable=True,
+            sequence=sequence,
+        )
+    except Exception as e:
+        sequence += 1
+        yield AgentRunResult.run_failed(
+            run_id=run_context.run_id,
+            error=f"Error running agent: {e}",
+            code="runner.exception",
             sequence=sequence,
         )
     finally:
@@ -398,6 +404,7 @@ class PluginRuntimeHandler(Handler):
                         run_id=run_id,
                         error=f"Context validation failed: {e}",
                         code="runner.context_invalid",
+                        sequence=1,
                     ).model_dump(mode="json")
                 )
                 return
@@ -416,6 +423,7 @@ class PluginRuntimeHandler(Handler):
                         run_id=run_context.run_id,
                         error=f"AgentRunner {runner_name} not found",
                         code="runner.not_found",
+                        sequence=1,
                     ).model_dump(mode="json")
                 )
                 return
@@ -427,6 +435,7 @@ class PluginRuntimeHandler(Handler):
                         run_id=run_context.run_id,
                         error=f"AgentRunner {runner_name} not initialized",
                         code="runner.not_initialized",
+                        sequence=1,
                     ).model_dump(mode="json")
                 )
                 return
@@ -435,11 +444,17 @@ class PluginRuntimeHandler(Handler):
             assert isinstance(runner_instance, AgentRunner)
 
             # Run the agent and stream results
+            last_sequence = 0
             try:
                 async for result in _iter_runner_results_with_deadline(
                     runner_instance,
                     run_context,
                 ):
+                    result_sequence = getattr(result, "sequence", None)
+                    if isinstance(result_sequence, int) and result_sequence > 0:
+                        last_sequence = result_sequence
+                    else:
+                        last_sequence += 1
                     yield ActionResponse.success(result.model_dump(mode="json"))
             except Exception as e:
                 logger.exception("AgentRunner %s failed", runner_name)
@@ -448,6 +463,7 @@ class PluginRuntimeHandler(Handler):
                         run_id=run_context.run_id,
                         error=f"Error running agent: {e}",
                         code="runner.exception",
+                        sequence=last_sequence + 1,
                     ).model_dump(mode="json")
                 )
 

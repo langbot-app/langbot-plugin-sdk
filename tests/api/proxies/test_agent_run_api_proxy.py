@@ -988,6 +988,21 @@ class TestAgentRunAPIProxyFieldConsistency:
             await proxy.invoke_rerank("rerank_999", "query", ["doc"])
 
     @pytest.mark.anyio
+    async def test_invoke_rerank_rejects_malformed_response(self):
+        """INVOKE_RERANK requires Host to return results."""
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {"unexpected": []}
+
+        ctx = create_mock_context(models=[{"model_id": "rerank_001"}])
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+
+        with pytest.raises(AgentAPIException) as exc_info:
+            await proxy.invoke_rerank("rerank_001", "query", ["doc"])
+
+        assert exc_info.value.error.code == "host.malformed_response"
+        assert exc_info.value.error.details["missing_key"] == "results"
+
+    @pytest.mark.anyio
     async def test_call_tool_sends_correct_fields(self):
         """CALL_TOOL: SDK fields match Host handler expectations."""
         mock_handler = MockHandler()
