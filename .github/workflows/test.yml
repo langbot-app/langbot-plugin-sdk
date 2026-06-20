@@ -71,18 +71,8 @@ jobs:
           persist-credentials: false
       - name: Install uv
         uses: astral-sh/setup-uv@v6
-      - name: Mypy stable protocol and AgentRunner modules
-        run: |
-          uv run mypy \
-            src/langbot_plugin/entities/io \
-            src/langbot_plugin/runtime/plugin/logbuffer.py \
-            src/langbot_plugin/utils/platform.py \
-            src/langbot_plugin/api/entities/builtin/agent_runner \
-            src/langbot_plugin/api/agent_tools/mcp_config.py \
-            src/langbot_plugin/api/agent_tools/mcp_access.py \
-            src/langbot_plugin/api/agent_tools/mcp_bridge.py \
-            src/langbot_plugin/api/agent_tools/asset_gateway.py \
-            src/langbot_plugin/api/agent_tools/daemon.py
+      - name: Mypy scoped modules
+        run: uv run mypy
 
   action-consistency:
     name: Action Protocol Consistency
