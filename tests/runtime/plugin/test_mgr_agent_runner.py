@@ -74,6 +74,24 @@ class SlowAgentRunner(AgentRunner):
         yield AgentRunResult.run_completed(run_id=ctx.run_id, finish_reason="stop")
 
 
+class PresequencedAgentRunner(AgentRunner):
+    """AgentRunner that emits its own sequence values."""
+
+    async def run(
+        self, ctx: AgentRunContext
+    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+        yield AgentRunResult.message_completed(
+            run_id=ctx.run_id,
+            message=Message(role="assistant", content="presequenced"),
+            sequence=99,
+        )
+        yield AgentRunResult.run_completed(
+            run_id=ctx.run_id,
+            finish_reason="stop",
+            sequence=100,
+        )
+
+
 class ClassDeclaredAgentRunner(AgentRunner):
     """AgentRunner that declares runner metadata in Python class defaults."""
 
@@ -251,6 +269,10 @@ class TestListAgentRunners:
         assert runners[0]["manifest"]["id"] == "plugin:test-author/test-plugin/default"
         assert runners[0]["manifest"]["capabilities"]["streaming"] is False
         assert runners[0]["manifest"]["permissions"]["models"] == []
+        assert runners[0]["runner_description"] == {"en_US": "Test runner default"}
+        assert runners[0]["capabilities"] == runners[0]["manifest"]["capabilities"]
+        assert runners[0]["permissions"] == runners[0]["manifest"]["permissions"]
+        assert runners[0]["config"] == runners[0]["manifest"]["config_schema"]
 
     @pytest.mark.anyio
     async def test_single_plugin_multiple_runners(self):
@@ -370,7 +392,9 @@ class TestListAgentRunners:
         assert len(runners) == 1
         assert runners[0]["manifest"]["capabilities"]["streaming"] is False
         assert runners[0]["manifest"]["permissions"]["models"] == []
-        assert runners[0]["manifest"]["config_schema"][0]["type"] == "llm-model-selector"
+        assert (
+            runners[0]["manifest"]["config_schema"][0]["type"] == "llm-model-selector"
+        )
         assert runners[0]["manifest"]["config_schema"][0]["name"] == "model"
 
     @pytest.mark.anyio
@@ -449,6 +473,53 @@ class TestRunAgent:
         assert len(results) >= 2
         assert results[-1]["type"] == "run.completed"
         assert [result["sequence"] for result in results] == [1, 2, 3]
+
+    @pytest.mark.anyio
+    async def test_run_agent_overwrites_runner_supplied_sequences(self):
+        """Runtime owns result sequence numbers for forwarded runner streams."""
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mock_context = Mock(spec=RuntimeContext)
+        mgr = PluginManager(mock_context)
+        plugin = create_mock_plugin(
+            "test-author",
+            "test-plugin",
+            [("presequenced", None)],
+            mock_handler_responses=[
+                [
+                    {
+                        "type": "message.completed",
+                        "data": {
+                            "message": {
+                                "role": "assistant",
+                                "content": "presequenced",
+                            }
+                        },
+                        "sequence": 99,
+                    },
+                    {
+                        "type": "run.completed",
+                        "data": {"finish_reason": "stop"},
+                        "sequence": 100,
+                    },
+                ]
+            ],
+        )
+        mgr.plugins = [plugin]
+
+        ctx = create_run_context()
+        results = [
+            result
+            async for result in mgr.run_agent(
+                "test-author",
+                "test-plugin",
+                "presequenced",
+                ctx.model_dump(mode="json"),
+            )
+        ]
+
+        assert [result["sequence"] for result in results] == [1, 2]
 
     @pytest.mark.anyio
     async def test_run_agent_plugin_not_found(self):
@@ -784,6 +855,23 @@ async def test_plugin_runtime_runner_results_get_sequence_numbers():
 
 
 @pytest.mark.anyio
+async def test_plugin_runtime_runner_results_overwrite_sequence_numbers():
+    """The plugin-process RUN_AGENT helper owns result sequence numbers."""
+    from langbot_plugin.cli.run.handler import _iter_runner_results_with_deadline
+
+    ctx = create_run_context()
+
+    results = [
+        result
+        async for result in _iter_runner_results_with_deadline(
+            PresequencedAgentRunner(), ctx
+        )
+    ]
+
+    assert [result.sequence for result in results] == [1, 2]
+
+
+@pytest.mark.anyio
 async def test_plugin_runtime_runner_exception_includes_run_id():
     """The plugin-process RUN_AGENT handler must convert runner exceptions to run.failed."""
     from langbot_plugin.cli.run.handler import PluginRuntimeHandler
@@ -813,6 +901,7 @@ async def test_plugin_runtime_runner_exception_includes_run_id():
     assert results[-1]["run_id"] == "test_run"
     assert results[-1]["data"]["code"] == "runner.exception"
     assert "Intentional test failure" in results[-1]["data"]["error"]
+    assert [result["sequence"] for result in results] == [1, 2]
 
 
 @pytest.mark.anyio
@@ -843,6 +932,7 @@ async def test_plugin_runtime_context_validation_returns_structured_run_failed()
     assert responses[0].data["type"] == "run.failed"
     assert responses[0].data["run_id"] == "bad_run"
     assert responses[0].data["data"]["code"] == "runner.context_invalid"
+    assert responses[0].data["sequence"] == 1
 
 
 @pytest.mark.anyio
@@ -876,6 +966,7 @@ async def test_plugin_runtime_runner_not_found_returns_structured_run_failed():
     assert responses[0].data["type"] == "run.failed"
     assert responses[0].data["run_id"] == "test_run"
     assert responses[0].data["data"]["code"] == "runner.not_found"
+    assert responses[0].data["sequence"] == 1
 
 
 @pytest.mark.anyio
@@ -909,3 +1000,4 @@ async def test_plugin_runtime_uninitialized_runner_returns_structured_run_failed
     assert responses[0].data["type"] == "run.failed"
     assert responses[0].data["run_id"] == "test_run"
     assert responses[0].data["data"]["code"] == "runner.not_initialized"
+    assert responses[0].data["sequence"] == 1
