@@ -7,12 +7,15 @@ import pytest
 from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import (
     AgentRun,
     AgentRunEvent,
-    AgentRuntime,
     AgentRunStatus,
     RunEventPage,
     RunPage,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.runtime_registry import (
+    AgentRuntime,
     RuntimePage,
 )
+from langbot_plugin.api.entities.builtin.agent_runner.stats import RunStats
 
 
 def test_agent_run_accepts_host_ledger_shape():
@@ -111,3 +114,19 @@ def test_agent_runtime_accepts_host_registry_shape():
 def test_runtime_page_forbids_unexpected_fields():
     with pytest.raises(Exception):
         RuntimePage.model_validate({"items": [], "has_more": False, "unexpected": True})
+
+
+def test_run_stats_accepts_admin_shape():
+    stats = RunStats.model_validate(
+        {
+            "start_time": 1,
+            "end_time": 100,
+            "total_count": 10,
+            "completed_count": 8,
+            "failed_count": 2,
+            "success_rate": 0.8,
+        }
+    )
+
+    assert stats.total_count == 10
+    assert stats.success_rate == 0.8

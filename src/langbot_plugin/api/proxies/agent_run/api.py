@@ -20,7 +20,7 @@ class AgentRunAPIProxy(
 
     The public surface stays on one object for plugin ergonomics, while the
     implementation is split by host capability boundary: resources, context
-    pull, run ledger/runtime lease, and state.
+    pull, run ledger, and state.
     """
 
     pass

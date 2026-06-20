@@ -76,24 +76,6 @@ class ContextAPICapabilities(pydantic.BaseModel):
     run_finalize: bool = False
     """Whether run.finalize API is available."""
 
-    runtime_register: bool = False
-    """Whether runtime.register API is available."""
-
-    runtime_heartbeat: bool = False
-    """Whether runtime.heartbeat API is available."""
-
-    runtime_list: bool = False
-    """Whether runtime.list API is available."""
-
-    run_claim: bool = False
-    """Whether run.claim API is available."""
-
-    run_renew_claim: bool = False
-    """Whether run.renew_claim API is available."""
-
-    run_release_claim: bool = False
-    """Whether run.release_claim API is available."""
-
 
 class ContextAccess(pydantic.BaseModel):
     """Context access descriptor for the runner.

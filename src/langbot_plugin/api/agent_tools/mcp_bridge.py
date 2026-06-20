@@ -13,6 +13,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
+from langbot_plugin.api.agent_tools.mcp_protocol import (
+    AgentToolsMCPResolver,
+    MCPMethodNotFoundError,
+    handle_mcp_payload,
+    handle_mcp_tool_method,
+    jsonrpc_error,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 
@@ -53,6 +60,7 @@ class AgentRunMCPBridge:
         server_name: str = LANGBOT_AGENT_MCP_SERVER_NAME,
     ) -> None:
         self.tools = tools
+        self._mcp_resolver = AgentToolsMCPResolver(tools)
         self.host = host
         self.port = port
         self.request_timeout = request_timeout
@@ -133,7 +141,7 @@ class AgentRunMCPBridge:
                     try:
                         result = future.result(timeout=bridge.request_timeout)
                     except Exception as e:
-                        self._write_json(500, _jsonrpc_error(None, -32000, str(e)))
+                        self._write_json(500, jsonrpc_error(None, -32000, str(e)))
                         return
                     if result is None:
                         self._write_empty(202)
@@ -268,88 +276,16 @@ class AgentRunMCPBridge:
     async def handle_mcp_method(
         self, method: str, params: dict[str, typing.Any]
     ) -> dict[str, typing.Any]:
-        if method == "tools/list":
-            return {"tools": self.tools.mcp_tools()}
-        if method == "tools/call":
-            name = str(params.get("name") or "")
-            arguments = params.get("arguments") or {}
-            if not isinstance(arguments, dict):
-                arguments = {}
-            return await self.tools.call_mcp_tool(name, arguments)
-        raise ValueError(f"Unsupported MCP bridge method: {method}")
+        try:
+            return await handle_mcp_tool_method(method, params, self._mcp_resolver)
+        except MCPMethodNotFoundError as exc:
+            raise ValueError(f"Unsupported MCP bridge method: {method}") from exc
 
     async def handle_http_mcp_request(
         self, payload: typing.Any
     ) -> dict[str, typing.Any] | list[dict[str, typing.Any]] | None:
-        if isinstance(payload, list):
-            if not payload:
-                return _jsonrpc_error(None, -32600, "Invalid request")
-            responses: list[dict[str, typing.Any]] = []
-            for item in payload:
-                response = await self._handle_http_mcp_message(item)
-                if response is not None:
-                    responses.append(response)
-            return responses or None
-        return await self._handle_http_mcp_message(payload)
-
-    async def _handle_http_mcp_message(
-        self, message: typing.Any
-    ) -> dict[str, typing.Any] | None:
-        if not isinstance(message, dict):
-            return _jsonrpc_error(None, -32600, "Invalid request")
-
-        message_id = message.get("id")
-        method = str(message.get("method") or "")
-        params = message.get("params") or {}
-        if not isinstance(params, dict):
-            params = {}
-
-        if message_id is None:
-            return None
-
-        if method == "initialize":
-            return _jsonrpc_result(
-                message_id,
-                {
-                    "protocolVersion": str(
-                        params.get("protocolVersion") or "2025-06-18"
-                    ),
-                    "capabilities": {
-                        "tools": {
-                            "listChanged": False,
-                        }
-                    },
-                    "serverInfo": MCP_SERVER_INFO,
-                },
-            )
-        if method == "ping":
-            return _jsonrpc_result(message_id, {})
-        if method in {"tools/list", "tools/call"}:
-            try:
-                result = await self.handle_mcp_method(method, params)
-            except Exception as e:
-                return _jsonrpc_error(message_id, -32000, str(e))
-            return _jsonrpc_result(message_id, result)
-        return _jsonrpc_error(message_id, -32601, f"Method not found: {method}")
-
-
-def _jsonrpc_result(
-    message_id: typing.Any,
-    result: dict[str, typing.Any],
-) -> dict[str, typing.Any]:
-    return {"jsonrpc": "2.0", "id": message_id, "result": result}
-
-
-def _jsonrpc_error(
-    message_id: typing.Any,
-    code: int,
-    message: str,
-) -> dict[str, typing.Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": message_id,
-        "error": {
-            "code": code,
-            "message": message,
-        },
-    }
+        return await handle_mcp_payload(
+            payload,
+            self._mcp_resolver,
+            server_info=MCP_SERVER_INFO,
+        )
