@@ -333,6 +333,19 @@ async def test_create_session_sends_spec(client, handler):
 
 
 @pytest.mark.anyio
+async def test_create_session_uses_backend_startup_timeout(client, handler):
+    handler.call_action.return_value = {
+        "session_id": "new-sess",
+        "backend_name": "docker",
+    }
+    spec = BoxSpec(session_id="new-sess", cmd="", network=BoxNetworkMode.ON)
+
+    await client.create_session(spec)
+
+    assert handler.call_action.call_args.kwargs["timeout"] == 60.0
+
+
+@pytest.mark.anyio
 async def test_delete_session_sends_id_with_timeout(client, handler):
     handler.call_action.return_value = {}
     await client.delete_session("sess-del")

@@ -236,9 +236,44 @@ async def test_run_handles_streaming_action_response():
 
 
 @pytest.mark.asyncio
-async def test_run_cancels_active_streaming_action_on_disconnect():
+async def test_run_does_not_cancel_active_streaming_action_by_default():
     conn = QueueConnection()
     handler = Handler(conn)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+    finished = asyncio.Event()
+
+    @handler.action(SampleAction.STREAM)
+    async def stream(_data):
+        started.set()
+        try:
+            await release.wait()
+            yield ActionResponse.success({"part": "late"})
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        finally:
+            finished.set()
+
+    task = asyncio.create_task(handler.run())
+    await conn.incoming.put(json.dumps({"seq_id": 3, "action": "stream", "data": {}}))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    await conn.incoming.put(ConnectionClosedError("closed"))
+    await task
+
+    assert not cancelled.is_set()
+    assert handler._active_tasks == set()
+
+    release.set()
+    await asyncio.wait_for(finished.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_run_cancels_active_streaming_action_on_disconnect_when_enabled():
+    conn = QueueConnection()
+    handler = Handler(conn, cancel_active_tasks_on_close=True)
     started = asyncio.Event()
     cancelled = asyncio.Event()
 

@@ -57,6 +57,7 @@ class Handler(abc.ABC):
         connection: connection.Connection,
         disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]]
         | None = None,
+        cancel_active_tasks_on_close: bool = False,
     ):
         self.conn = connection
         self.actions = {}
@@ -64,6 +65,7 @@ class Handler(abc.ABC):
         self.resp_waiters = {}
         self.resp_queues = {}
         self._active_tasks: set[asyncio.Task[Any]] = set()
+        self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
 
         self._disconnect_callback = disconnect_callback
 
@@ -162,10 +164,11 @@ class Handler(abc.ABC):
                     continue
 
                 task = asyncio.create_task(handle_message(message))
-                self._active_tasks.add(task)
-                task.add_done_callback(self._active_tasks.discard)
+                if self._cancel_active_tasks_on_close:
+                    self._active_tasks.add(task)
+                    task.add_done_callback(self._active_tasks.discard)
         finally:
-            if self._active_tasks:
+            if self._cancel_active_tasks_on_close and self._active_tasks:
                 for task in list(self._active_tasks):
                     task.cancel()
                 await asyncio.gather(*self._active_tasks, return_exceptions=True)
