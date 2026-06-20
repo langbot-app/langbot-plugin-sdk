@@ -9,17 +9,19 @@ import urllib.request
 import pytest
 
 from langbot_plugin.api.agent_tools import (
-    AgentAssetGateway,
     AgentMCPServerConfig,
     AgentRunMCPAccess,
     AgentRunExternalTools,
     AgentRunMCPBridge,
+)
+from langbot_plugin.api.agent_tools.asset_gateway import AgentAssetGateway
+from langbot_plugin.api.agent_tools.daemon import (
     AgentRuntimeDaemonClient,
     AgentRuntimeDaemonHub,
     agent_runtime_daemon_config_from_plugin_config,
     handle_agent_runtime_mcp_payload,
-    reverse_tunnel_for_endpoint,
 )
+from langbot_plugin.api.agent_tools.mcp_config import reverse_tunnel_for_endpoint
 from langbot_plugin.api.entities.builtin.agent_runner import (
     AgentEventContext,
     AgentInput,
