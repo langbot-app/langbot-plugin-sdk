@@ -33,7 +33,6 @@ class PermissionDeniedError(Exception):
     pass
 
 
-
 def _build_agent_api_exception(
     action: PluginToRuntimeAction,
     error: ActionCallError,
@@ -130,7 +129,6 @@ class _AgentRunHandlerAdapter:
             raise _build_agent_api_exception(action, error) from error
         except (ActionCallTimeoutError, ConnectionClosedError) as error:
             raise _build_transport_api_exception(action, error) from error
-
 
 
 class AgentRunProxyBase:

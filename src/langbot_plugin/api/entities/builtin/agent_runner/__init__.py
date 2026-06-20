@@ -64,11 +64,19 @@ from langbot_plugin.api.entities.builtin.agent_runner.page_results import (
 from langbot_plugin.api.entities.builtin.agent_runner.run_ledger import (
     AgentRun,
     AgentRunEvent,
-    AgentRuntime,
     AgentRunStatus,
     RunEventPage,
     RunPage,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.runtime_registry import (
+    AgentRuntime,
     RuntimePage,
+)
+from langbot_plugin.api.entities.builtin.agent_runner.stats import (
+    RunnerStats,
+    RunnerStatsPage,
+    RunStats,
+    RuntimeStats,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.errors import (
     AgentAPIError,
@@ -136,11 +144,17 @@ __all__ = [
     # Run Ledger APIs
     "AgentRun",
     "AgentRunEvent",
-    "AgentRuntime",
     "AgentRunStatus",
     "RunEventPage",
     "RunPage",
+    # Runtime Registry APIs
+    "AgentRuntime",
     "RuntimePage",
+    # Admin Stats APIs
+    "RunStats",
+    "RuntimeStats",
+    "RunnerStats",
+    "RunnerStatsPage",
     # Steering API
     "SteeringInputItem",
     "SteeringPullResult",

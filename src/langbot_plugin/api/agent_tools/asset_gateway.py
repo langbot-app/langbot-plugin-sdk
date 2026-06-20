@@ -14,12 +14,42 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
+from langbot_plugin.api.agent_tools.mcp_protocol import (
+    handle_mcp_payload_sync,
+    jsonrpc_error,
+    mcp_tool_error,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 
 LANGBOT_AGENT_GATEWAY_SERVER_NAME = "langbot_agent"
 LANGBOT_AGENT_GATEWAY_INFO = {"name": "langbot-agent-gateway", "version": "0.1.0"}
+LANGBOT_AGENT_GATEWAY_INSTRUCTIONS = (
+    "Use langbot_list_assets to discover run-authorized LangBot assets. "
+    "Tool calls are scoped by the MCP Authorization header or by the run_token "
+    "argument."
+)
 DEFAULT_RUN_TOKEN_TTL_SECONDS = 3600.0
+
+
+class _GatewayMCPResolver:
+    def __init__(self, gateway: "AgentAssetGateway", header_token: str) -> None:
+        self._gateway = gateway
+        self._header_token = header_token
+
+    def list_tools(self) -> list[dict[str, typing.Any]]:
+        return AgentRunExternalTools.all_mcp_tools(include_run_token=True)
+
+    def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, typing.Any],
+    ) -> dict[str, typing.Any]:
+        return self._gateway._call_tool(
+            name,
+            arguments,
+            header_token=self._header_token,
+        )
 
 
 @dataclasses.dataclass
@@ -146,7 +176,7 @@ class AgentAssetGateway:
                         header_token=self._header_token(),
                     )
                 except Exception as e:
-                    self._write_json(500, _jsonrpc_error(None, -32000, str(e)))
+                    self._write_json(500, jsonrpc_error(None, -32000, str(e)))
                     return
                 if result is None:
                     self._write_empty(202)
@@ -267,88 +297,26 @@ class AgentAssetGateway:
         *,
         header_token: str = "",
     ) -> dict[str, typing.Any] | list[dict[str, typing.Any]] | None:
-        if isinstance(payload, list):
-            if not payload:
-                return _jsonrpc_error(None, -32600, "Invalid request")
-            responses: list[dict[str, typing.Any]] = []
-            for item in payload:
-                response = self._handle_http_mcp_message(
-                    item,
-                    header_token=header_token,
-                )
-                if response is not None:
-                    responses.append(response)
-            return responses or None
-        return self._handle_http_mcp_message(payload, header_token=header_token)
-
-    def _handle_http_mcp_message(
-        self,
-        message: typing.Any,
-        *,
-        header_token: str,
-    ) -> dict[str, typing.Any] | None:
-        if not isinstance(message, dict):
-            return _jsonrpc_error(None, -32600, "Invalid request")
-
-        message_id = message.get("id")
-        method = str(message.get("method") or "")
-        params = message.get("params") or {}
-        if not isinstance(params, dict):
-            params = {}
-
-        if message_id is None:
-            return None
-
-        if method == "initialize":
-            return _jsonrpc_result(
-                message_id,
-                {
-                    "protocolVersion": str(
-                        params.get("protocolVersion") or "2025-06-18"
-                    ),
-                    "capabilities": {
-                        "tools": {
-                            "listChanged": False,
-                        }
-                    },
-                    "serverInfo": LANGBOT_AGENT_GATEWAY_INFO,
-                    "instructions": (
-                        "Use langbot_list_assets to discover run-authorized "
-                        "LangBot assets. Tool calls are scoped by the MCP "
-                        "Authorization header or by the run_token argument."
-                    ),
-                },
-            )
-        if method == "ping":
-            return _jsonrpc_result(message_id, {})
-        if method == "tools/list":
-            return _jsonrpc_result(
-                message_id,
-                {"tools": AgentRunExternalTools.all_mcp_tools(include_run_token=True)},
-            )
-        if method == "tools/call":
-            return _jsonrpc_result(
-                message_id,
-                self._call_tool(params, header_token=header_token),
-            )
-        return _jsonrpc_error(message_id, -32601, f"Method not found: {method}")
+        return handle_mcp_payload_sync(
+            payload,
+            _GatewayMCPResolver(self, header_token),
+            server_info=LANGBOT_AGENT_GATEWAY_INFO,
+            instructions=LANGBOT_AGENT_GATEWAY_INSTRUCTIONS,
+        )
 
     def _call_tool(
         self,
-        params: dict[str, typing.Any],
+        name: str,
+        arguments: dict[str, typing.Any],
         *,
         header_token: str,
     ) -> dict[str, typing.Any]:
-        name = str(params.get("name") or "")
-        arguments = params.get("arguments") or {}
-        if not isinstance(arguments, dict):
-            arguments = {}
         arguments = dict(arguments)
         argument_token = str(arguments.pop("run_token", "") or "").strip()
         token = argument_token or header_token
         registration = self._registration_for_token(token)
         if registration is None:
-            return _mcp_tool_error("A valid LangBot run_token is required")
+            return mcp_tool_error("A valid LangBot run_token is required")
 
         future = asyncio.run_coroutine_threadsafe(
             registration.tools.call_mcp_tool(name, arguments),
@@ -357,7 +325,7 @@ class AgentAssetGateway:
         try:
             return future.result(timeout=self.request_timeout)
         except Exception as e:
-            return _mcp_tool_error(str(e))
+            return mcp_tool_error(str(e))
 
     def _registration_for_token(
         self, token: str
@@ -421,37 +389,3 @@ def get_default_agent_asset_gateway(
             _default_gateway.request_timeout = request_timeout
         _default_gateway.start()
         return _default_gateway
-
-
-def _mcp_tool_error(message: str) -> dict[str, typing.Any]:
-    return {
-        "isError": True,
-        "content": [
-            {
-                "type": "text",
-                "text": message,
-            }
-        ],
-    }
-
-
-def _jsonrpc_result(
-    message_id: typing.Any,
-    result: dict[str, typing.Any],
-) -> dict[str, typing.Any]:
-    return {"jsonrpc": "2.0", "id": message_id, "result": result}
-
-
-def _jsonrpc_error(
-    message_id: typing.Any,
-    code: int,
-    message: str,
-) -> dict[str, typing.Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": message_id,
-        "error": {
-            "code": code,
-            "message": message,
-        },
-    }

@@ -234,7 +234,7 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         assert hasattr(proxy, "get_plugin_storage")
 
     def test_exposes_run_ledger_methods(self):
-        """AgentRunAPIProxy exposes run ledger query methods."""
+        """AgentRunAPIProxy exposes run-scoped ledger methods."""
         ctx = create_mock_context()
         proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
@@ -244,16 +244,25 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         assert hasattr(proxy, "run_cancel")
         assert hasattr(proxy, "run_append_result")
         assert hasattr(proxy, "run_finalize")
-        assert hasattr(proxy, "runtime_register")
-        assert hasattr(proxy, "runtime_heartbeat")
-        assert hasattr(proxy, "runtime_list")
-        assert hasattr(proxy, "run_claim")
-        assert hasattr(proxy, "run_renew_claim")
-        assert hasattr(proxy, "run_release_claim")
         assert hasattr(proxy, "delete_plugin_storage")
         assert hasattr(proxy, "set_workspace_storage")
         assert hasattr(proxy, "get_workspace_storage")
         assert hasattr(proxy, "delete_workspace_storage")
+
+    def test_does_not_expose_control_plane_methods(self):
+        """AgentRunAPIProxy should not expose runtime/admin control-plane APIs."""
+        ctx = create_mock_context()
+        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+
+        assert not hasattr(proxy, "runtime_register")
+        assert not hasattr(proxy, "runtime_heartbeat")
+        assert not hasattr(proxy, "runtime_list")
+        assert not hasattr(proxy, "run_claim")
+        assert not hasattr(proxy, "run_renew_claim")
+        assert not hasattr(proxy, "run_release_claim")
+        assert not hasattr(proxy, "run_stats")
+        assert not hasattr(proxy, "runtime_stats")
+        assert not hasattr(proxy, "runner_stats")
 
     def test_exposes_version_api(self):
         """AgentRunAPIProxy exposes get_langbot_version (no authorization needed)."""
@@ -576,20 +585,6 @@ class TestAgentRunAPIProxyAvailableAPIGate:
                 (AgentRunResult.run_completed("test_run"),),
             ),
             ("run_finalize", "run_finalize", ()),
-            ("runtime_register", "runtime_register", ("runtime_1",)),
-            ("runtime_heartbeat", "runtime_heartbeat", ("runtime_1",)),
-            ("runtime_list", "runtime_list", ()),
-            ("run_claim", "run_claim", ("runtime_1",)),
-            (
-                "run_renew_claim",
-                "run_renew_claim",
-                ("run_target", "runtime_1", "claim_token_1"),
-            ),
-            (
-                "run_release_claim",
-                "run_release_claim",
-                ("run_target", "runtime_1", "claim_token_1"),
-            ),
         ],
     )
     async def test_pull_api_requires_available_api_before_forwarding(
@@ -1367,232 +1362,6 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         }
 
 
-class TestAgentRunAPIProxyRuntimeLeaseAPI:
-    """Tests for runtime registry and claim lease API proxy methods."""
-
-    @pytest.mark.anyio
-    async def test_runtime_register_sends_registry_payload(self):
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "runtime_id": "runtime_1",
-            "status": "online",
-            "display_name": "Runtime 1",
-            "endpoint": "http://runtime.local",
-            "version": "1.2.3",
-            "capabilities": {"queues": ["default"]},
-            "labels": {"region": "local"},
-            "metadata": {"owner": "test"},
-        }
-
-        ctx = create_mock_context(
-            available_apis=ContextAPICapabilities(runtime_register=True)
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.runtime_register(
-            runtime_id="runtime_1",
-            status="online",
-            display_name="Runtime 1",
-            endpoint="http://runtime.local",
-            version="1.2.3",
-            capabilities={"queues": ["default"]},
-            labels={"region": "local"},
-            metadata={"owner": "test"},
-            heartbeat_deadline_at=160,
-        )
-
-        assert result.runtime_id == "runtime_1"
-        action, data, _timeout = mock_handler.call_action_mock.call_args.args
-        assert action == PluginToRuntimeAction.RUNTIME_REGISTER
-        assert data == {
-            "run_id": "test_run",
-            "runtime_id": "runtime_1",
-            "status": "online",
-            "display_name": "Runtime 1",
-            "endpoint": "http://runtime.local",
-            "version": "1.2.3",
-            "capabilities": {"queues": ["default"]},
-            "labels": {"region": "local"},
-            "metadata": {"owner": "test"},
-            "heartbeat_deadline_at": 160,
-        }
-
-    @pytest.mark.anyio
-    async def test_runtime_heartbeat_sends_heartbeat_payload(self):
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "runtime_id": "runtime_1",
-            "status": "online",
-            "last_heartbeat_at": 100,
-        }
-
-        ctx = create_mock_context(
-            available_apis=ContextAPICapabilities(runtime_heartbeat=True)
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.runtime_heartbeat(
-            "runtime_1",
-            status="online",
-            heartbeat_deadline_at=160,
-        )
-
-        assert result.last_heartbeat_at == 100
-        action, data, _timeout = mock_handler.call_action_mock.call_args.args
-        assert action == PluginToRuntimeAction.RUNTIME_HEARTBEAT
-        assert data == {
-            "run_id": "test_run",
-            "runtime_id": "runtime_1",
-            "status": "online",
-            "capabilities": None,
-            "labels": None,
-            "metadata": None,
-            "heartbeat_deadline_at": 160,
-        }
-
-    @pytest.mark.anyio
-    async def test_runtime_list_sends_filters(self):
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "items": [
-                {
-                    "runtime_id": "runtime_1",
-                    "status": "online",
-                    "labels": {"region": "local"},
-                }
-            ],
-            "next_cursor": "next",
-            "prev_cursor": None,
-            "has_more": True,
-        }
-
-        ctx = create_mock_context(
-            available_apis=ContextAPICapabilities(runtime_list=True)
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.runtime_list(
-            statuses=["online"],
-            labels={"region": "local"},
-            cursor="cursor_1",
-            limit=5,
-        )
-
-        assert result.items[0].runtime_id == "runtime_1"
-        assert result.next_cursor == "next"
-        action, data, _timeout = mock_handler.call_action_mock.call_args.args
-        assert action == PluginToRuntimeAction.RUNTIME_LIST
-        assert data == {
-            "run_id": "test_run",
-            "statuses": ["online"],
-            "labels": {"region": "local"},
-            "cursor": "cursor_1",
-            "limit": 5,
-        }
-
-    @pytest.mark.anyio
-    async def test_run_claim_sends_runtime_and_queue_payload(self):
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "run_id": "run_target",
-            "status": "claimed",
-            "queue_name": "default",
-            "claimed_by_runtime_id": "runtime_1",
-            "claim_token": "claim_token_1",
-            "claim_lease_expires_at": 160,
-            "metadata": {},
-        }
-
-        ctx = create_mock_context(available_apis=ContextAPICapabilities(run_claim=True))
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.run_claim(
-            runtime_id="runtime_1",
-            queue_name="default",
-            lease_seconds=60,
-        )
-
-        assert result.status == "claimed"
-        assert result.claim_token == "claim_token_1"
-        action, data, _timeout = mock_handler.call_action_mock.call_args.args
-        assert action == PluginToRuntimeAction.RUN_CLAIM
-        assert data == {
-            "run_id": "test_run",
-            "runtime_id": "runtime_1",
-            "queue_name": "default",
-            "lease_seconds": 60,
-        }
-
-    @pytest.mark.anyio
-    async def test_run_renew_claim_sends_claim_token_payload(self):
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "run_id": "run_target",
-            "status": "claimed",
-            "claimed_by_runtime_id": "runtime_1",
-            "claim_token": "claim_token_1",
-            "claim_lease_expires_at": 220,
-            "metadata": {},
-        }
-
-        ctx = create_mock_context(
-            available_apis=ContextAPICapabilities(run_renew_claim=True)
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.run_renew_claim(
-            "run_target",
-            runtime_id="runtime_1",
-            claim_token="claim_token_1",
-            lease_seconds=120,
-        )
-
-        assert result.claim_lease_expires_at == 220
-        action, data, _timeout = mock_handler.call_action_mock.call_args.args
-        assert action == PluginToRuntimeAction.RUN_RENEW_CLAIM
-        assert data == {
-            "run_id": "test_run",
-            "target_run_id": "run_target",
-            "runtime_id": "runtime_1",
-            "claim_token": "claim_token_1",
-            "lease_seconds": 120,
-        }
-
-    @pytest.mark.anyio
-    async def test_run_release_claim_sends_reason_payload(self):
-        mock_handler = MockHandler()
-        mock_handler.call_action_mock.return_value = {
-            "run_id": "run_target",
-            "status": "queued",
-            "claimed_by_runtime_id": None,
-            "claim_token": None,
-            "metadata": {},
-        }
-
-        ctx = create_mock_context(
-            available_apis=ContextAPICapabilities(run_release_claim=True)
-        )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-
-        result = await proxy.run_release_claim(
-            "run_target",
-            runtime_id="runtime_1",
-            claim_token="claim_token_1",
-            reason="shutdown",
-        )
-
-        assert result.status == "queued"
-        action, data, _timeout = mock_handler.call_action_mock.call_args.args
-        assert action == PluginToRuntimeAction.RUN_RELEASE_CLAIM
-        assert data == {
-            "run_id": "test_run",
-            "target_run_id": "run_target",
-            "runtime_id": "runtime_1",
-            "claim_token": "claim_token_1",
-            "reason": "shutdown",
-        }
-
-
 class TestAgentRunAdminAPIProxy:
     """Tests for Host-authorized admin proxy methods."""
 
@@ -1715,6 +1484,129 @@ class TestAgentRunAdminAPIProxy:
         assert claim_call[0] == PluginToRuntimeAction.RUN_CLAIM
         assert "run_id" not in claim_call[1]
         assert claim_call[1]["runner_ids"] == ["plugin:test/plugin/default"]
+
+    @pytest.mark.anyio
+    async def test_admin_runtime_register_and_heartbeat_omit_run_id(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = [
+            {
+                "runtime_id": "runtime_1",
+                "status": "online",
+                "display_name": "Runtime 1",
+                "endpoint": "http://runtime.local",
+                "version": "1.2.3",
+                "capabilities": {"queues": ["default"]},
+                "labels": {"region": "local"},
+                "metadata": {"owner": "test"},
+            },
+            {
+                "runtime_id": "runtime_1",
+                "status": "online",
+                "last_heartbeat_at": 100,
+            },
+        ]
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        registered = await proxy.runtime_register(
+            runtime_id="runtime_1",
+            status="online",
+            display_name="Runtime 1",
+            endpoint="http://runtime.local",
+            version="1.2.3",
+            capabilities={"queues": ["default"]},
+            labels={"region": "local"},
+            metadata={"owner": "test"},
+            heartbeat_deadline_at=160,
+        )
+        heartbeat = await proxy.runtime_heartbeat(
+            "runtime_1",
+            status="online",
+            heartbeat_deadline_at=220,
+        )
+
+        assert registered.runtime_id == "runtime_1"
+        assert heartbeat.last_heartbeat_at == 100
+        register_call = mock_handler.call_action_mock.call_args_list[0].args
+        heartbeat_call = mock_handler.call_action_mock.call_args_list[1].args
+        assert register_call[0] == PluginToRuntimeAction.RUNTIME_REGISTER
+        assert "run_id" not in register_call[1]
+        assert register_call[1] == {
+            "runtime_id": "runtime_1",
+            "status": "online",
+            "display_name": "Runtime 1",
+            "endpoint": "http://runtime.local",
+            "version": "1.2.3",
+            "capabilities": {"queues": ["default"]},
+            "labels": {"region": "local"},
+            "metadata": {"owner": "test"},
+            "heartbeat_deadline_at": 160,
+        }
+        assert heartbeat_call[0] == PluginToRuntimeAction.RUNTIME_HEARTBEAT
+        assert "run_id" not in heartbeat_call[1]
+        assert heartbeat_call[1] == {
+            "runtime_id": "runtime_1",
+            "status": "online",
+            "capabilities": None,
+            "labels": None,
+            "metadata": None,
+            "heartbeat_deadline_at": 220,
+        }
+
+    @pytest.mark.anyio
+    async def test_admin_claim_renew_and_release_omit_run_id(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.side_effect = [
+            {
+                "run_id": "run_target",
+                "status": "claimed",
+                "claimed_by_runtime_id": "runtime_1",
+                "claim_token": "claim_token_1",
+                "claim_lease_expires_at": 220,
+                "metadata": {},
+            },
+            {
+                "run_id": "run_target",
+                "status": "queued",
+                "claimed_by_runtime_id": None,
+                "claim_token": None,
+                "metadata": {},
+            },
+        ]
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        renewed = await proxy.run_renew_claim(
+            "run_target",
+            runtime_id="runtime_1",
+            claim_token="claim_token_1",
+            lease_seconds=120,
+        )
+        released = await proxy.run_release_claim(
+            "run_target",
+            runtime_id="runtime_1",
+            claim_token="claim_token_1",
+            reason="shutdown",
+        )
+
+        assert renewed.claim_lease_expires_at == 220
+        assert released.status == "queued"
+        renew_call = mock_handler.call_action_mock.call_args_list[0].args
+        release_call = mock_handler.call_action_mock.call_args_list[1].args
+        assert renew_call[0] == PluginToRuntimeAction.RUN_RENEW_CLAIM
+        assert "run_id" not in renew_call[1]
+        assert renew_call[1] == {
+            "target_run_id": "run_target",
+            "runtime_id": "runtime_1",
+            "claim_token": "claim_token_1",
+            "lease_seconds": 120,
+        }
+        assert release_call[0] == PluginToRuntimeAction.RUN_RELEASE_CLAIM
+        assert "run_id" not in release_call[1]
+        assert release_call[1] == {
+            "target_run_id": "run_target",
+            "runtime_id": "runtime_1",
+            "claim_token": "claim_token_1",
+            "reason": "shutdown",
+        }
 
     @pytest.mark.anyio
     async def test_admin_runner_list_omits_run_id(self):

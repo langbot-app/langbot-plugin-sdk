@@ -18,12 +18,18 @@ import websockets
 
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
+from langbot_plugin.api.agent_tools.mcp_protocol import (
+    AgentToolsMCPResolver,
+    handle_mcp_payload,
+    jsonrpc_error,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DAEMON_HUB_HOST = "127.0.0.1"
 DEFAULT_DAEMON_HUB_PORT = 8766
 DEFAULT_DAEMON_CONNECT_TIMEOUT = 30.0
+DAEMON_MCP_SERVER_INFO = {"name": "langbot-agent-daemon", "version": "0.1.0"}
 
 
 class AgentRuntimeDaemonError(Exception):
@@ -108,76 +114,16 @@ def agent_runtime_daemon_config_from_plugin_config(
     }
 
 
-def _jsonrpc_result(
-    message_id: typing.Any, result: dict[str, typing.Any]
-) -> dict[str, typing.Any]:
-    return {"jsonrpc": "2.0", "id": message_id, "result": result}
-
-
-def _jsonrpc_error(
-    message_id: typing.Any, code: int, message: str
-) -> dict[str, typing.Any]:
-    return {
-        "jsonrpc": "2.0",
-        "id": message_id,
-        "error": {"code": code, "message": message},
-    }
-
-
 async def handle_agent_runtime_mcp_payload(
     tools: AgentRunExternalTools,
     payload: typing.Any,
 ) -> dict[str, typing.Any] | list[dict[str, typing.Any]] | None:
     """Handle HTTP MCP JSON-RPC payloads forwarded by a daemon."""
-
-    if isinstance(payload, list):
-        if not payload:
-            return _jsonrpc_error(None, -32600, "Invalid request")
-        responses: list[dict[str, typing.Any]] = []
-        for item in payload:
-            response = await _handle_mcp_message(tools, item)
-            if response is not None:
-                responses.append(response)
-        return responses or None
-    return await _handle_mcp_message(tools, payload)
-
-
-async def _handle_mcp_message(
-    tools: AgentRunExternalTools,
-    message: typing.Any,
-) -> dict[str, typing.Any] | None:
-    if not isinstance(message, dict):
-        return _jsonrpc_error(None, -32600, "Invalid request")
-
-    message_id = message.get("id")
-    method = str(message.get("method") or "")
-    params = message.get("params") or {}
-    if not isinstance(params, dict):
-        params = {}
-
-    if message_id is None:
-        return None
-
-    if method == "initialize":
-        return _jsonrpc_result(
-            message_id,
-            {
-                "protocolVersion": str(params.get("protocolVersion") or "2025-06-18"),
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "langbot-agent-daemon", "version": "0.1.0"},
-            },
-        )
-    if method == "ping":
-        return _jsonrpc_result(message_id, {})
-    if method == "tools/list":
-        return _jsonrpc_result(message_id, {"tools": tools.mcp_tools()})
-    if method == "tools/call":
-        name = str(params.get("name") or "")
-        arguments = params.get("arguments") or {}
-        if not isinstance(arguments, dict):
-            arguments = {}
-        return _jsonrpc_result(message_id, await tools.call_mcp_tool(name, arguments))
-    return _jsonrpc_error(message_id, -32601, f"Method not found: {method}")
+    return await handle_mcp_payload(
+        payload,
+        AgentToolsMCPResolver(tools),
+        server_info=DAEMON_MCP_SERVER_INFO,
+    )
 
 
 class AgentRuntimeDaemonHub:
@@ -495,7 +441,7 @@ class AgentRuntimeDaemonHub:
         tools = session.get("tools") if session is not None else None
 
         if tools is None:
-            payload: typing.Any = _jsonrpc_error(
+            payload: typing.Any = jsonrpc_error(
                 None, -32000, "LangBot assets are unavailable for this run"
             )
         else:
@@ -504,7 +450,7 @@ class AgentRuntimeDaemonHub:
                     tools, message.get("payload")
                 )
             except Exception as exc:
-                payload = _jsonrpc_error(None, -32000, str(exc))
+                payload = jsonrpc_error(None, -32000, str(exc))
 
         await self._send(
             daemon_id,
