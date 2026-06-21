@@ -28,6 +28,7 @@ class ListAssetsArgs(pydantic.BaseModel):
             "knowledge_bases",
             "tools",
             "mcp_tools",
+            "skills",
         ]
     ] = pydantic.Field(default_factory=list)
     include_schemas: bool = False
@@ -235,6 +236,7 @@ class AgentRunExternalTools:
                     "knowledge_bases",
                     "tools",
                     "mcp_tools",
+                    "skills",
                 }
             ),
         }
@@ -281,11 +283,20 @@ class AgentRunExternalTools:
                 }
                 for tool in self.mcp_tools()
             ]
+        if include_all or "skills" in requested:
+            data["skills"] = [
+                {
+                    "skill_name": item.skill_name,
+                    "display_name": item.display_name,
+                    "description": item.description,
+                }
+                for item in self.ctx.resources.skills
+            ]
         return data
 
     @agent_tool(
         name="langbot_list_assets",
-        description="List the LangBot event, history, knowledge bases, tools, and MCP bridge tools authorized for the current run.",
+        description="List the LangBot event, history, knowledge bases, tools, skills, and MCP bridge tools authorized for the current run.",
         args_model=ListAssetsArgs,
         read_only=True,
     )
