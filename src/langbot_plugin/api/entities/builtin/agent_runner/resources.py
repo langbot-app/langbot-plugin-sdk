@@ -41,6 +41,11 @@ class ToolResource(pydantic.BaseModel):
     )
     """Tool operations authorized for this run."""
 
+    parameters: dict[str, typing.Any] | None = None
+    """Full JSON schema of the tool's parameters. Prefilled by the host so the
+    runner can build LLM tool definitions without a separate get_tool_detail
+    round-trip. None when the host did not inline the schema."""
+
 
 class KnowledgeBaseResource(pydantic.BaseModel):
     """Knowledge base resource available to the agent."""
