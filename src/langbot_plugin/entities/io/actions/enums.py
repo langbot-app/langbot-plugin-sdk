@@ -41,7 +41,7 @@ class PluginToRuntimeAction(ActionType):
     GET_LLM_MODELS = "get_llm_models"
     # GET_LLM_MODEL_INFO = "get_llm_model_info"
     INVOKE_LLM = "invoke_llm"
-    # INVOKE_LLM_STREAMING = "invoke_llm_streaming"
+    INVOKE_LLM_STREAM = "invoke_llm_stream"
 
     SET_PLUGIN_STORAGE = "set_plugin_storage"
     GET_PLUGIN_STORAGE = "get_plugin_storage"
@@ -67,6 +67,9 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
     VECTOR_LIST = "vector_list"
+    # TODO: Keep the legacy misspelled enum member for now. Renaming this
+    # member is unrelated to the AgentRunner branch and should be handled in
+    # a separate compatibility cleanup.
     GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
 
     LIST_PARSERS = "list_parsers"
@@ -79,6 +82,43 @@ class PluginToRuntimeAction(ActionType):
     """Knowledge Base Query APIs (query-based, pipeline-scoped)"""
     LIST_PIPELINE_KNOWLEDGE_BASES = "list_pipeline_knowledge_bases"
     RETRIEVE_KNOWLEDGE_BASE = "retrieve_knowledge_base"
+
+    """Agent History/Event APIs (run-scoped, requires run_id authorization)"""
+    GET_PROMPT = "get_prompt"
+    HISTORY_PAGE = "history_page"
+    HISTORY_SEARCH = "history_search"
+    EVENT_GET = "event_get"
+    EVENT_PAGE = "event_page"
+    STEERING_PULL = "steering_pull"
+
+    """Agent Run Ledger APIs (run-scoped, requires run_id authorization)"""
+    RUN_GET = "run_get"
+    RUN_LIST = "run_list"
+    RUN_EVENTS_PAGE = "run_events_page"
+    RUN_CANCEL = "run_cancel"
+    RUN_APPEND_RESULT = "run_append_result"
+    RUN_FINALIZE = "run_finalize"
+    RUN_CLAIM = "run_claim"
+    RUN_RENEW_CLAIM = "run_renew_claim"
+    RUN_RELEASE_CLAIM = "run_release_claim"
+    RUNNER_LIST = "runner_list"
+
+    """Agent Runtime Registry APIs (Host control-plane scoped)"""
+    RUNTIME_REGISTER = "runtime_register"
+    RUNTIME_HEARTBEAT = "runtime_heartbeat"
+    RUNTIME_LIST = "runtime_list"
+    RUNTIME_RECONCILE = "runtime_reconcile"
+
+    """Agent Run Statistics APIs (Host control-plane scoped, admin-only)"""
+    RUN_STATS = "run_stats"
+    RUNTIME_STATS = "runtime_stats"
+    RUNNER_STATS = "runner_stats"
+
+    """Agent State APIs (run-scoped, requires run_id authorization)"""
+    STATE_GET = "state_get"
+    STATE_SET = "state_set"
+    STATE_DELETE = "state_delete"
+    STATE_LIST = "state_list"
 
 
 class RuntimeToPluginAction(ActionType):
@@ -93,6 +133,9 @@ class RuntimeToPluginAction(ActionType):
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
+
+    # AgentRunner actions
+    RUN_AGENT = "run_agent"
 
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
     INGEST_DOCUMENT = "ingest_document"
@@ -125,8 +168,12 @@ class LangBotToRuntimeAction(ActionType):
     LIST_COMMANDS = "list_commands"
     EXECUTE_COMMAND = "execute_command"
 
-    # RAG actions
+    # KnowledgeEngine retrieval action
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+
+    # AgentRunner actions
+    LIST_AGENT_RUNNERS = "list_agent_runners"
+    RUN_AGENT = "run_agent"
 
     # Knowledge Engine actions (LangBot -> Runtime -> Plugin)
     LIST_KNOWLEDGE_ENGINES = "list_knowledge_engines"

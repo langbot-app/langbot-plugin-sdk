@@ -148,7 +148,10 @@ async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch)
 
 async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
     handler, _manager, control = _handler()
-    control.results[PluginToRuntimeAction.INVOKE_LLM] = {"message": "ok"}
+    control.results[PluginToRuntimeAction.INVOKE_LLM] = {
+        "message": "ok",
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -156,7 +159,10 @@ async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
             {"messages": [], "timeout": -1},
         )
 
-    assert response["data"] == {"message": "ok"}
+    assert response["data"] == {
+        "message": "ok",
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
     assert control.calls == [
         (PluginToRuntimeAction.INVOKE_LLM, {"messages": []}, 120.0)
     ]
@@ -351,6 +357,45 @@ async def test_plugin_handler_forwards_invoke_llm_with_custom_timeout():
     assert control.calls == [(PluginToRuntimeAction.INVOKE_LLM, {"messages": []}, 30.0)]
 
 
+async def test_plugin_handler_forwards_invoke_rerank_with_caller_identity():
+    handler, manager, control = _handler()
+    manager.plugins = [FakePluginContainer(runtime_handler=handler)]
+    control.results[PluginToRuntimeAction.INVOKE_RERANK] = {
+        "results": [{"index": 0, "relevance_score": 0.95}]
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.INVOKE_RERANK.value,
+            {
+                "run_id": "run-1",
+                "rerank_model_uuid": "rerank-model",
+                "query": "query",
+                "documents": ["doc"],
+                "top_k": 1,
+                "extra_args": {},
+                "caller_plugin_identity": "spoofed/plugin",
+            },
+        )
+
+    assert response["data"] == {"results": [{"index": 0, "relevance_score": 0.95}]}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.INVOKE_RERANK,
+            {
+                "run_id": "run-1",
+                "rerank_model_uuid": "rerank-model",
+                "query": "query",
+                "documents": ["doc"],
+                "top_k": 1,
+                "extra_args": {},
+                "caller_plugin_identity": "tester/demo",
+            },
+            60,
+        )
+    ]
+
+
 async def test_plugin_handler_adds_plugin_owner_for_binary_storage():
     handler, manager, control = _handler()
     manager.plugins = [FakePluginContainer(runtime_handler=handler)]
@@ -370,6 +415,7 @@ async def test_plugin_handler_adds_plugin_owner_for_binary_storage():
                 "value_base64": "dmFsdWU=",
                 "owner_type": "plugin",
                 "owner": "tester/demo",
+                "caller_plugin_identity": "tester/demo",
             },
             15.0,
         )
@@ -404,7 +450,12 @@ async def test_plugin_handler_plugin_storage_actions_add_owner(action, expected_
     assert control.calls == [
         (
             expected_action,
-            {"key": "cache", "owner_type": "plugin", "owner": "tester/demo"},
+            {
+                "key": "cache",
+                "owner_type": "plugin",
+                "owner": "tester/demo",
+                "caller_plugin_identity": "tester/demo",
+            },
             15.0,
         )
     ]
@@ -481,7 +532,11 @@ async def test_plugin_handler_forwards_config_file_requests_to_langbot():
     assert control.calls == [
         (
             RuntimeToLangBotAction.GET_CONFIG_FILE,
-            {"file_key": "settings.yaml"},
+            {
+                "file_key": "settings.yaml",
+                "run_id": None,
+                "caller_plugin_identity": None,
+            },
             15.0,
         )
     ]
@@ -537,8 +592,11 @@ async def test_plugin_handler_get_knowledge_file_stream_returns_empty_result():
 
 
 async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
-    handler, manager, _control = _handler()
+    handler, manager, control = _handler()
     manager.tools = [FakeTool("weather")]
+    control.results[PluginToRuntimeAction.GET_TOOL_DETAIL] = {
+        "tool": {"name": "missing"},
+    }
 
     async with ProtocolSession(handler) as session:
         listed = await session.request(PluginToRuntimeAction.LIST_TOOLS.value, seq_id=1)
@@ -549,13 +607,22 @@ async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
         )
 
     assert listed["data"] == {"tools": [{"name": "weather"}]}
-    assert missing["code"] == 1
-    assert missing["message"] == "Tool not found: missing"
+    assert missing["data"] == {"tool": {"name": "missing"}}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.GET_TOOL_DETAIL,
+            {"tool_name": "missing"},
+            30,
+        )
+    ]
 
 
 async def test_plugin_handler_get_tool_detail_returns_matching_tool():
-    handler, manager, _control = _handler()
+    handler, manager, control = _handler()
     manager.tools = [FakeTool("weather")]
+    control.results[PluginToRuntimeAction.GET_TOOL_DETAIL] = {
+        "tool": {"name": "weather"}
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -564,10 +631,20 @@ async def test_plugin_handler_get_tool_detail_returns_matching_tool():
         )
 
     assert response["data"] == {"tool": {"name": "weather"}}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.GET_TOOL_DETAIL,
+            {"tool_name": "weather"},
+            30,
+        )
+    ]
 
 
 async def test_plugin_handler_calls_registered_runtime_tool():
-    handler, manager, _control = _handler()
+    handler, _manager, control = _handler()
+    control.results[PluginToRuntimeAction.CALL_TOOL] = {
+        "tool_response": {"text": "tool response"}
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -581,13 +658,46 @@ async def test_plugin_handler_calls_registered_runtime_tool():
         )
 
     assert response["data"] == {"tool_response": {"text": "tool response"}}
-    assert manager.calls == [
+    assert control.calls == [
         (
-            "call_tool",
-            "weather",
-            {"city": "Shanghai"},
-            {"id": "s"},
-            7,
+            PluginToRuntimeAction.CALL_TOOL,
+            {
+                "tool_name": "weather",
+                "tool_parameters": {"city": "Shanghai"},
+                "session": {"id": "s"},
+                "query_id": 7,
+            },
+            180.0,
+        )
+    ]
+
+
+async def test_plugin_handler_forwards_agent_runner_tool_envelope():
+    handler, _manager, control = _handler()
+    control.results[PluginToRuntimeAction.CALL_TOOL] = {
+        "result": {"text": "tool response"}
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.CALL_TOOL.value,
+            {
+                "run_id": "run-1",
+                "tool_name": "weather",
+                "parameters": {"city": "Shanghai"},
+            },
+        )
+
+    assert response["data"] == {"result": {"text": "tool response"}}
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.CALL_TOOL,
+            {
+                "run_id": "run-1",
+                "tool_name": "weather",
+                "parameters": {"city": "Shanghai"},
+            },
+            180.0,
         )
     ]
 

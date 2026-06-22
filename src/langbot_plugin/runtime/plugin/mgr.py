@@ -18,6 +18,7 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
+from langbot_plugin.runtime.plugin.agent_runner_service import AgentRunnerRuntimeService
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
@@ -61,13 +62,15 @@ class PluginManager:
 
     context: context_module.RuntimeContext
 
-    plugin_handlers: list[runtime_plugin_handler_cls.PluginConnectionHandler] = []
+    plugin_handlers: list[runtime_plugin_handler_cls.PluginConnectionHandler]
 
-    plugins: list[runtime_plugin_container.PluginContainer] = []
+    plugins: list[runtime_plugin_container.PluginContainer]
 
-    plugin_run_tasks: list[asyncio.Task] = []
+    plugin_run_tasks: list[asyncio.Task]
 
-    wait_for_control_connection: asyncio.Future[None] | None = None
+    wait_for_control_connection: asyncio.Future[None] | None
+
+    agent_runner_runtime: AgentRunnerRuntimeService
 
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
@@ -75,6 +78,10 @@ class PluginManager:
         self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
+        self.agent_runner_runtime = AgentRunnerRuntimeService(
+            plugins=lambda: self.plugins,
+            find_plugin=self.find_plugin,
+        )
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
@@ -172,7 +179,7 @@ class PluginManager:
             ctrl = stdio_client_controller.StdioClientController(
                 command=python_path,
                 args=args,
-                env={},
+                env=os.environ.copy(),
                 working_dir=plugin_path,
             )
 
@@ -890,6 +897,37 @@ class PluginManager:
                         yield CommandReturn.model_validate(resp["command_response"])
 
                     break
+
+    # AgentRunner methods (Protocol v1)
+    async def list_agent_runners(
+        self, include_plugins: list[str] | None = None
+    ) -> list[dict[str, typing.Any]]:
+        """List all available AgentRunner components from plugins.
+
+        Returns v1 protocol format with typed manifest data and transport fields.
+        A plugin can have multiple AgentRunner components.
+        """
+        return await self.agent_runner_runtime.list_agent_runners(include_plugins)
+
+    async def run_agent(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        runner_name: str,
+        context: dict[str, typing.Any],
+    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
+        """Run an AgentRunner component with Protocol v1.
+
+        Forwards the RUN_AGENT action to the plugin process and streams results back.
+        All errors are converted to run.failed events.
+        """
+        async for result in self.agent_runner_runtime.run_agent(
+            plugin_author,
+            plugin_name,
+            runner_name,
+            context,
+        ):
+            yield result
 
     async def retrieve_knowledge(
         self,

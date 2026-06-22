@@ -155,17 +155,7 @@ class LangBotAPIProxy:
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
     ):
-        """Invoke an LLM model with streaming response
-
-        Args:
-            llm_model_uuid: The UUID of the LLM model to use
-            messages: List of conversation messages
-            funcs: List of tools available to the LLM
-            extra_args: Extra arguments for the LLM provider
-
-        Yields:
-            MessageChunk: Streamed message chunks from the LLM
-        """
+        """Invoke an LLM model with streaming response."""
         async for event in self.invoke_llm_stream_events(
             llm_model_uuid=llm_model_uuid,
             messages=messages,
