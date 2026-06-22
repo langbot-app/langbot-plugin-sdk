@@ -1,12 +1,14 @@
 <div align="center">
-<img src="docs/langbot-plugin-social.png" alt="LangBot Plugin SDK" />
-</div>
 
-<div align="center">
+<h1>LangBot Plugin Infra</h1>
+
+<p>Plugin SDK, CLI, Plugin Runtime and Box sandbox runtime for <a href="https://github.com/langbot-app/LangBot">LangBot</a>.</p>
 
 [![PyPI](https://img.shields.io/pypi/v/langbot-plugin)](https://pypi.org/project/langbot-plugin/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+
+English / [简体中文](README_CN.md)
 
 [Documentation](https://docs.langbot.app/zh/plugin/dev/tutor) ·
 [Plugin Market](https://space.langbot.app) ·
@@ -14,7 +16,7 @@
 
 </div>
 
-## LangBot Plugin Infra
+## Overview
 
 This repository is the shared infrastructure powering LangBot's plugin and
 sandbox subsystems. It is published to PyPI as the single
@@ -77,26 +79,8 @@ Plugins extend LangBot through six component types, scaffolded with
 - Debugging the Runtime / CLI / SDK — https://docs.langbot.app/zh/develop/plugin-runtime
 - Dev environment setup — https://docs.langbot.app/zh/develop/dev-config
 
----
+## License
 
-## 简介（中文）
-
-此仓库是支撑 LangBot **插件系统**与**代码沙箱**的共享基础设施，以单一的
-[`langbot-plugin`](https://pypi.org/project/langbot-plugin/) 包发布到 PyPI，包含三部分：
-
-- **插件 SDK 与 CLI**（`lbp`）—— 插件开发的 Python API、基类，以及用于脚手架、
-  构建、调试和发布插件的 `lbp` 命令。
-- **插件运行时**（`lbp rt`）—— 负责发现、安装并运行插件的宿主进程，通过 stdio
-  或 WebSocket 与 LangBot 通信。
-- **Box 运行时**（`lbp box`）—— 支撑 LangBot Box 子系统的代码沙箱服务，通过
-  Docker / nsjail / E2B 后端执行不受信任的代码。
-
-LangBot 通过 `pyproject.toml` 中固定的 `langbot-plugin==<x.y.z>` 依赖此包；
-版本号以本仓库的 `pyproject.toml` 为准。
-
-> **运行时**组件（`src/langbot_plugin/runtime/`）单独采用 **AGPL** 许可证，
-> 本仓库其余部分采用 **Apache 2.0**，详见
-> [`src/langbot_plugin/runtime/README.md`](src/langbot_plugin/runtime/README.md)。
-
-更多关于使用、原理和教程，请参阅
-[LangBot 插件文档](https://docs.langbot.app/zh/plugin/dev/tutor)。
+Apache 2.0, except the Plugin Runtime (`src/langbot_plugin/runtime/`) which is
+AGPL. See [LICENSE](LICENSE) and the
+[Runtime README](src/langbot_plugin/runtime/README.md).
