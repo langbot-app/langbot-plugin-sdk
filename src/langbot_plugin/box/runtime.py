@@ -60,6 +60,28 @@ class _RuntimeSession:
     managed_processes: dict[str, _ManagedProcess] = dataclasses.field(
         default_factory=dict
     )
+    # Signature of the extra bind mounts the container was created with. Used
+    # to detect when a reused session would be missing newly-requested mounts.
+    extra_mounts_key: frozenset[tuple[str, str, str]] = frozenset()
+
+
+def _compute_extra_mounts_key(spec: BoxSpec) -> frozenset[tuple[str, str, str]]:
+    """Signature of a spec's effective extra bind mounts.
+
+    Mirrors the backend's mount filtering (``mode == "none"`` mounts are not
+    bind-mounted; see ``DockerBackend.start_session``) so two specs that produce
+    the same set of ``-v`` flags compare equal. A bind mount cannot be added to
+    an already-running container, so this is used to detect when a reused
+    session's container would be missing newly-requested mounts and must be
+    recreated.
+    """
+    key: set[tuple[str, str, str]] = set()
+    for mount in spec.extra_mounts:
+        mode_val = mount.mode.value if hasattr(mount.mode, "value") else str(mount.mode)
+        if mode_val == "none":
+            continue
+        key.add((mount.host_path, mount.mount_path, mode_val))
+    return frozenset(key)
 
 
 class BoxRuntime:
@@ -315,11 +337,31 @@ class BoxRuntime:
         async with self._lock:
             await self._reap_expired_sessions_locked()
 
+            new_extra_mounts_key = _compute_extra_mounts_key(spec)
+
             existing = self._sessions.get(spec.session_id)
             if existing is not None:
                 self._assert_session_compatible(existing.info, spec)
                 backend = await self._get_backend()
-                if not await backend.is_session_alive(existing.info):
+                if existing.extra_mounts_key != new_extra_mounts_key:
+                    # A bind mount cannot be added to an already-running
+                    # container, so a session whose mount set changed (e.g. a
+                    # skill registered and activated after the container was
+                    # first created) must be recreated for the new mounts to
+                    # take effect. Without this the activated skill path
+                    # /workspace/.skills/<name> stays empty in the reused
+                    # container.
+                    self.logger.info(
+                        "LangBot Box session extra_mounts changed, recreating: "
+                        f"session_id={spec.session_id} "
+                        f"backend_session_id={existing.info.backend_session_id} "
+                        f"backend={existing.info.backend_name} "
+                        f"old_mounts={sorted(existing.extra_mounts_key)} "
+                        f"new_mounts={sorted(new_extra_mounts_key)}"
+                    )
+                    await self._drop_session_locked(spec.session_id)
+                    existing = None
+                elif not await backend.is_session_alive(existing.info):
                     self.logger.warning(
                         "LangBot Box session backend disappeared, recreating: "
                         f"session_id={spec.session_id} "
@@ -341,7 +383,11 @@ class BoxRuntime:
 
             backend = await self._get_backend()
             info = await backend.start_session(spec)
-            runtime_session = _RuntimeSession(info=info, lock=asyncio.Lock())
+            runtime_session = _RuntimeSession(
+                info=info,
+                lock=asyncio.Lock(),
+                extra_mounts_key=new_extra_mounts_key,
+            )
             self._sessions[spec.session_id] = runtime_session
             self.logger.info(
                 "LangBot Box session created: "
