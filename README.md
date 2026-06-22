@@ -78,6 +78,9 @@ Plugins extend LangBot through six component types, scaffolded with
 The SDK provides AgentRunner component definitions, protocol entities, runtime
 dispatch, run-scoped Host API helpers, and low-level daemon relay primitives
 used by runner/plugin packages that need an outbound user-side runtime process.
+This includes run-scoped pull APIs on `AgentRunAPIProxy` (history, events, state,
+run ledger) and `steering_pull` for absorbing follow-up user input into an
+active run when the runner declares `capabilities.steering` in its manifest.
 The SDK does not provide a managed, generic remote AgentRunner product: external
 harness execution policy, process launch details, authentication, workspace
 selection, and provider-specific behavior belong to the runner/plugin package or
