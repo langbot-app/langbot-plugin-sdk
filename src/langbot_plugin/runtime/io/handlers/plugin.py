@@ -196,6 +196,16 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.CALL_PLATFORM_API)
+        async def call_platform_api(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.CALL_PLATFORM_API,
+                {
+                    **data,
+                },
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.GET_LLM_MODELS)
         async def get_llm_models(data: dict[str, Any]) -> handler.ActionResponse:
             result = await self.context.control_handler.call_action(
