@@ -1366,6 +1366,35 @@ class TestAgentRunAdminAPIProxy:
     """Tests for Host-authorized admin proxy methods."""
 
     @pytest.mark.anyio
+    async def test_admin_run_create_serializes_public_method_payload(self):
+        mock_handler = MockHandler()
+        mock_handler.call_action_mock.return_value = {
+            "run_id": "run_created",
+            "runner_id": "plugin:test/plugin/default",
+            "status": "created",
+            "metadata": {},
+        }
+        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+
+        run = await proxy.run_create(
+            runner_id="plugin:test/plugin/default",
+            input={"text": "ship it"},
+            conversation_id="conv_1",
+            wait_for_completion=False,
+        )
+
+        assert run.run_id == "run_created"
+        action, data, timeout = mock_handler.call_action_mock.call_args.args
+        assert action == PluginToRuntimeAction.RUN_CREATE
+        assert "run_id" in data
+        assert data["run_id"] is None
+        assert data["runner_id"] == "plugin:test/plugin/default"
+        assert data["input"] == {"text": "ship it"}
+        assert data["conversation_id"] == "conv_1"
+        assert data["wait_for_completion"] is False
+        assert timeout == 15.0
+
+    @pytest.mark.anyio
     async def test_admin_run_list_omits_run_id(self):
         mock_handler = MockHandler()
         mock_handler.call_action_mock.return_value = {

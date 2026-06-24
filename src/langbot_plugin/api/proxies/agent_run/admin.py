@@ -51,6 +51,51 @@ class AgentRunAdminAPIProxy:
     def __init__(self, plugin_runtime_handler: Handler):
         self.plugin_runtime_handler = plugin_runtime_handler
 
+    async def run_create(
+        self,
+        *,
+        runner_id: str,
+        input: dict[str, Any] | None = None,
+        event: dict[str, Any] | None = None,
+        binding: dict[str, Any] | None = None,
+        runner_config: dict[str, Any] | None = None,
+        resource_policy: dict[str, Any] | None = None,
+        state_policy: dict[str, Any] | None = None,
+        delivery_policy: dict[str, Any] | None = None,
+        delivery: dict[str, Any] | None = None,
+        agent_id: str | None = None,
+        conversation_id: str | None = None,
+        thread_id: str | None = None,
+        workspace_id: str | None = None,
+        bot_id: str | None = None,
+        run_id: str | None = None,
+        wait_for_completion: bool = False,
+    ) -> AgentRun:
+        payload: dict[str, Any] = {
+            "runner_id": runner_id,
+            "input": input,
+            "event": event,
+            "binding": binding,
+            "runner_config": runner_config,
+            "resource_policy": resource_policy,
+            "state_policy": state_policy,
+            "delivery_policy": delivery_policy,
+            "delivery": delivery,
+            "agent_id": agent_id,
+            "conversation_id": conversation_id,
+            "thread_id": thread_id,
+            "workspace_id": workspace_id,
+            "bot_id": bot_id,
+            "run_id": run_id,
+            "wait_for_completion": wait_for_completion,
+        }
+        resp = await self._call_action(
+            PluginToRuntimeAction.RUN_CREATE,
+            payload,
+            120.0 if wait_for_completion else 15.0,
+        )
+        return AgentRun.model_validate(resp)
+
     async def _call_action(
         self,
         action: PluginToRuntimeAction,

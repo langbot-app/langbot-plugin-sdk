@@ -794,6 +794,12 @@ class PluginConnectionHandler(handler.Handler):
         # ================= Agent Run Ledger and Runtime Registry Handlers =================
         # These handlers forward Host-owned run/runtime primitives with caller_plugin_identity injection.
 
+        @self.action(PluginToRuntimeAction.RUN_CREATE)
+        async def run_create(data: dict[str, Any]) -> handler.ActionResponse:
+            return await _forward_to_host(
+                PluginToRuntimeAction.RUN_CREATE, data, timeout=120
+            )
+
         @self.action(PluginToRuntimeAction.RUN_GET)
         async def run_get(data: dict[str, Any]) -> handler.ActionResponse:
             return await _forward_to_host(

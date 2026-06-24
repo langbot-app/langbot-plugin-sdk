@@ -396,6 +396,40 @@ async def test_plugin_handler_forwards_invoke_rerank_with_caller_identity():
     ]
 
 
+async def test_plugin_handler_forwards_run_create_with_caller_identity():
+    handler, manager, control = _handler()
+    manager.plugins = [FakePluginContainer(runtime_handler=handler)]
+    control.results[PluginToRuntimeAction.RUN_CREATE] = {
+        "run_id": "run-created",
+        "runner_id": "plugin:test/plugin/default",
+        "status": "created",
+        "metadata": {},
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.RUN_CREATE.value,
+            {
+                "runner_id": "plugin:test/plugin/default",
+                "input": {"text": "ship it"},
+                "caller_plugin_identity": "spoofed/plugin",
+            },
+        )
+
+    assert response["data"]["run_id"] == "run-created"
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.RUN_CREATE,
+            {
+                "runner_id": "plugin:test/plugin/default",
+                "input": {"text": "ship it"},
+                "caller_plugin_identity": "tester/demo",
+            },
+            120,
+        )
+    ]
+
+
 async def test_plugin_handler_adds_plugin_owner_for_binary_storage():
     handler, manager, control = _handler()
     manager.plugins = [FakePluginContainer(runtime_handler=handler)]
