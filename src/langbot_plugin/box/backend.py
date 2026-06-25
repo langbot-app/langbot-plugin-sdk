@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 import datetime as dt
 import logging
+import os
 import re
 import shlex
 import shutil
@@ -130,6 +131,7 @@ class CLISandboxBackend(BaseSandboxBackend):
             args.extend(["--tmpfs", "/tmp:size=64m"])
 
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
+            os.makedirs(spec.host_path, exist_ok=True)
             mount_spec = (
                 f"{spec.host_path}:{spec.mount_path}:{spec.host_path_mode.value}"
             )

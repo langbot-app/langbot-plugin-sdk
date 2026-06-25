@@ -229,6 +229,23 @@ def test_init_method_applies_docker_cpu_limit_config(logger):
     assert backend.cpu_limit_enabled is False
 
 
+def test_init_method_creates_default_workspace_on_box_runtime_host(logger, tmp_path):
+    """Default workspace is initialized by the Box runtime, not LangBot."""
+    host_root = tmp_path / "box"
+    backend = FakeBackend(logger, name="fake")
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    runtime.init(
+        {
+            "backend": "fake",
+            "local": {"host_root": str(host_root), "allowed_mount_roots": []},
+        }
+    )
+
+    assert (host_root / "default").is_dir()
+
+
 @pytest.mark.anyio
 async def test_init_method_keeps_backend_when_sessions_exist(logger):
     """init() must NOT reset backend while sessions are live."""
@@ -255,6 +272,25 @@ async def test_initialize_applies_config_selects_and_cleans_orphans(logger):
     backend.configure.assert_called_once_with({"cpus": 1})
     assert backend.instance_id == runtime.instance_id
     backend.cleanup_orphaned_containers.assert_awaited_once_with(runtime.instance_id)
+
+
+@pytest.mark.anyio
+async def test_initialize_creates_default_workspace_from_env_config(logger, tmp_path):
+    host_root = tmp_path / "box"
+    backend = FakeBackend(logger, name="fake")
+    backend.cleanup_orphaned_containers = mock.AsyncMock()
+    cfg = json.dumps(
+        {
+            "backend": "fake",
+            "local": {"host_root": str(host_root), "allowed_mount_roots": []},
+        }
+    )
+
+    with mock.patch("os.getenv", return_value=cfg):
+        runtime = BoxRuntime(logger, backends=[backend])
+        await runtime.initialize()
+
+    assert (host_root / "default").is_dir()
 
 
 @pytest.mark.anyio

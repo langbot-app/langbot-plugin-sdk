@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import logging
 import os
+from pathlib import Path
 import uuid
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,13 @@ if TYPE_CHECKING:
 
 _UTC = dt.timezone.utc
 _MANAGED_PROCESS_STDERR_PREVIEW_LIMIT = 4000
+
+
+def _resolve_local_path(path_value: str, *, base: str | None = None) -> str:
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = (Path(base).expanduser() / path) if base else (Path.cwd() / path)
+    return str(path.resolve())
 
 
 @dataclasses.dataclass(slots=True)
@@ -134,6 +142,7 @@ class BoxRuntime:
         # Apply configuration from env var to all backends
         if self._box_config:
             self._apply_config_to_backends(self._box_config)
+            self._ensure_default_workspace()
 
         self._backend = await self._select_backend()
         if self._backend is not None:
@@ -153,8 +162,78 @@ class BoxRuntime:
         self._box_config.update(config)
         self._apply_config_to_backends(config)
         self.skill_store.update_config(self._box_config)
+        self._ensure_default_workspace()
         if not self._sessions:
             self._backend = None
+
+    def _local_config(self) -> dict:
+        return self._box_config.get("local") or {}
+
+    def _host_root(self) -> str | None:
+        host_root = str(self._local_config().get("host_root", "") or "").strip()
+        if not host_root:
+            return None
+        return _resolve_local_path(host_root)
+
+    def _default_workspace(self) -> str | None:
+        host_root = self._host_root()
+        default_workspace = str(
+            self._local_config().get("default_workspace", "") or ""
+        ).strip()
+        if not default_workspace:
+            if host_root is None:
+                return None
+            default_workspace = "default"
+        return _resolve_local_path(default_workspace, base=host_root)
+
+    def _allowed_mount_roots(self) -> list[str]:
+        configured_roots = self._local_config().get("allowed_mount_roots", [])
+        if isinstance(configured_roots, str):
+            configured_roots = [
+                item.strip() for item in configured_roots.split(",") if item.strip()
+            ]
+
+        host_root = self._host_root()
+        roots: list[str] = []
+        for root in configured_roots or []:
+            root_value = str(root or "").strip()
+            if root_value:
+                roots.append(_resolve_local_path(root_value, base=host_root))
+
+        if not roots and host_root is not None:
+            roots.append(host_root)
+        return roots
+
+    def _ensure_default_workspace(self) -> None:
+        default_workspace = self._default_workspace()
+        if default_workspace is None:
+            return
+
+        if os.path.isdir(default_workspace):
+            return
+
+        if os.path.exists(default_workspace):
+            raise BoxValidationError(
+                "box.local.default_workspace must point to a directory on the Box runtime host"
+            )
+
+        allowed_roots = self._allowed_mount_roots()
+        if not allowed_roots:
+            raise BoxValidationError(
+                "box.local.default_workspace cannot be created because no allowed_mount_roots are configured"
+            )
+
+        for allowed_root in allowed_roots:
+            if default_workspace == allowed_root or default_workspace.startswith(
+                f"{allowed_root}{os.sep}"
+            ):
+                os.makedirs(default_workspace, exist_ok=True)
+                return
+
+        raise BoxValidationError(
+            "box.local.default_workspace is outside allowed_mount_roots: "
+            + ", ".join(allowed_roots)
+        )
 
     def _apply_config_to_backends(self, config: dict) -> None:
         """Apply configuration sections to corresponding backends."""
