@@ -698,6 +698,14 @@ class PluginConnectionHandler(handler.Handler):
         )
         return resp
 
+    async def notify_plugin_diagnostic(self, diagnostic: dict[str, Any]) -> dict[str, Any]:
+        resp = await self.call_action(
+            RuntimeToPluginAction.PLUGIN_DIAGNOSTIC,
+            diagnostic,
+            timeout=5,
+        )
+        return resp
+
     # ================= Knowledge Engine Methods =================
 
     async def rag_ingest_document(self, context_data: dict[str, Any]) -> dict[str, Any]:

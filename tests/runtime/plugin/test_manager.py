@@ -132,6 +132,14 @@ class FakeConnection:
 
 
 class FakeLogBuffer:
+    has_active_reader = False
+
+    def __init__(self):
+        self.entries = []
+
+    def add_entry(self, level, text):
+        self.entries.append((level, text))
+
     def get_logs(self, limit=200, level=None):
         return [{"limit": limit, "level": level, "text": "ready"}]
 
@@ -144,6 +152,7 @@ class FakeHandler:
         self.stdio_process = None
         self.initialized_with = None
         self.shutdown_calls = 0
+        self.diagnostics = []
         self.log_buffer = FakeLogBuffer()
         self.files = {
             "icon-key": b"<svg/>",
@@ -161,6 +170,10 @@ class FakeHandler:
 
     async def shutdown_plugin(self):
         self.shutdown_calls += 1
+
+    async def notify_plugin_diagnostic(self, diagnostic):
+        self.diagnostics.append(diagnostic)
+        return {"ok": True}
 
     async def emit_event(self, event_context):
         return {"emitted": True, "event_context": event_context}
@@ -261,6 +274,103 @@ def test_find_plugin_and_component_lists_respect_include_filters():
     assert [command.metadata.name for command in commands] == ["admin"]
     assert parsers[0]["plugin_id"] == "tester/demo"
     assert parsers[0]["supported_mime_types"] == ["application/pdf"]
+
+
+@pytest.mark.asyncio
+async def test_notify_plugin_diagnostic_routes_to_target_and_log_buffer():
+    manager = _manager()
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    diagnostic = {
+        "level": "ERROR",
+        "code": "deferred_response_delivery_failed",
+        "message": "Deferred response delivery failed",
+        "plugin": {"author": "tester", "name": "demo"},
+        "query": {
+            "query_id": 123,
+            "event_name": "GroupNormalMessageReceived",
+            "stage": "SendResponseBackStage",
+        },
+        "delivery": {
+            "error_type": "ActionFailed",
+            "error_message": "retcode=1200",
+        },
+        "message_chain": {
+            "component_types": ["Plain", "Image"],
+            "component_count": 2,
+        },
+    }
+
+    await manager.notify_plugin_diagnostic(diagnostic)
+
+    assert handler.diagnostics == [
+        {
+            "level": "ERROR",
+            "code": "deferred_response_delivery_failed",
+            "message": "Deferred response delivery failed",
+            "details": {
+                "query_id": 123,
+                "event_name": "GroupNormalMessageReceived",
+                "stage": "SendResponseBackStage",
+                "delivery_error": "ActionFailed: retcode=1200",
+                "message_chain": {
+                    "component_types": ["Plain", "Image"],
+                    "component_count": 2,
+                },
+            },
+        }
+    ]
+    assert handler.log_buffer.entries == [
+        (
+            "ERROR",
+            "[deferred_response_delivery_failed] Deferred response delivery failed"
+            " | query_id=123 | event=GroupNormalMessageReceived"
+            " | stage=SendResponseBackStage"
+            " | delivery_error=ActionFailed: retcode=1200",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notify_plugin_diagnostic_missing_target_only_warns(caplog):
+    manager = _manager()
+    manager.plugins = []
+    caplog.set_level("WARNING")
+
+    await manager.notify_plugin_diagnostic(
+        {
+            "level": "ERROR",
+            "code": "deferred_response_delivery_failed",
+            "message": "Deferred response delivery failed",
+            "plugin": {"author": "tester", "name": "missing"},
+        }
+    )
+
+    assert "Plugin diagnostic target not found (tester/missing)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_notify_plugin_diagnostic_skips_synthetic_log_with_active_reader():
+    manager = _manager()
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    handler.log_buffer.has_active_reader = True
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+
+    await manager.notify_plugin_diagnostic(
+        {
+            "level": "ERROR",
+            "code": "deferred_response_delivery_failed",
+            "message": "Deferred response delivery failed",
+            "plugin": {"author": "tester", "name": "demo"},
+        }
+    )
+
+    assert handler.diagnostics
+    assert handler.log_buffer.entries == []
 
 
 @pytest.mark.asyncio

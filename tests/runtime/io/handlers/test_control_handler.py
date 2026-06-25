@@ -55,6 +55,9 @@ class FakePluginManager:
         self.calls.append(("get_plugin_logs", author, plugin_name, limit, level))
         return [{"level": level, "text": "ready"}]
 
+    async def notify_plugin_diagnostic(self, diagnostic):
+        self.calls.append(("notify_plugin_diagnostic", diagnostic))
+
     async def get_plugin_assets_file(self, author, plugin_name, file_key):
         self.calls.append(("get_plugin_assets_file", author, plugin_name, file_key))
         return b"asset", "text/plain"
@@ -364,6 +367,25 @@ async def test_control_handler_get_plugin_logs_delegates_limit_and_level():
 
     assert manager.calls == [("get_plugin_logs", "tester", "demo", 5, "INFO")]
     assert response["data"] == {"logs": [{"level": "INFO", "text": "ready"}]}
+
+
+async def test_control_handler_plugin_diagnostic_delegates_to_plugin_manager():
+    handler, manager = _handler()
+    payload = {
+        "level": "ERROR",
+        "code": "deferred_response_delivery_failed",
+        "message": "Deferred response delivery failed",
+        "plugin": {"author": "tester", "name": "demo"},
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.PLUGIN_DIAGNOSTIC.value,
+            payload,
+        )
+
+    assert response["data"] == {}
+    assert manager.calls == [("notify_plugin_diagnostic", payload)]
 
 
 async def test_control_handler_get_plugin_assets_file_sends_file_key(monkeypatch):

@@ -99,6 +99,63 @@ class PluginManager:
                 return plugin
         return None
 
+    async def notify_plugin_diagnostic(self, diagnostic: dict[str, typing.Any]) -> None:
+        """Best-effort route a host-side diagnostic to a plugin process."""
+        plugin_ref = diagnostic.get("plugin")
+        if not isinstance(plugin_ref, dict):
+            logger.warning(
+                "Plugin diagnostic has no target plugin: "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        plugin_author = plugin_ref.get("author") or plugin_ref.get("plugin_author")
+        plugin_name = plugin_ref.get("name") or plugin_ref.get("plugin_name")
+        if not plugin_author or not plugin_name:
+            logger.warning(
+                "Plugin diagnostic target is incomplete: "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        plugin = self.find_plugin(str(plugin_author), str(plugin_name))
+        plugin_id = f"{plugin_author}/{plugin_name}"
+        if plugin is None:
+            logger.warning(
+                f"Plugin diagnostic target not found ({plugin_id}): "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        plugin_handler = plugin._runtime_plugin_handler
+        if plugin_handler is None:
+            logger.warning(
+                f"Plugin diagnostic target is not connected ({plugin_id}): "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        log_buffer = getattr(plugin_handler, "log_buffer", None)
+        plugin_diagnostic = _to_plugin_diagnostic(diagnostic)
+        has_log_reader = bool(getattr(log_buffer, "has_active_reader", False))
+        if (
+            log_buffer is not None
+            and not has_log_reader
+            and hasattr(log_buffer, "add_entry")
+        ):
+            try:
+                log_buffer.add_entry(
+                    str(diagnostic.get("level", "ERROR")),
+                    _format_plugin_diagnostic(diagnostic),
+                )
+            except Exception as e:  # noqa: BLE001 - diagnostics must stay best-effort
+                logger.debug(f"Failed to append plugin diagnostic log buffer: {e}")
+
+        try:
+            await plugin_handler.notify_plugin_diagnostic(plugin_diagnostic)
+        except Exception as e:  # noqa: BLE001 - diagnostics must stay best-effort
+            logger.warning(f"Failed to notify plugin diagnostic for {plugin_id}: {e}")
+
     async def ensure_all_plugins_dependencies_installed(self):
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
@@ -1160,3 +1217,70 @@ class PluginManager:
             context_data, file_bytes
         )
         return resp
+
+
+def _format_plugin_diagnostic(diagnostic: dict[str, typing.Any]) -> str:
+    code = diagnostic.get("code") or "plugin_diagnostic"
+    message = diagnostic.get("message") or "Plugin diagnostic"
+    query = diagnostic.get("query")
+    query_id = None
+    event_name = None
+    stage = None
+    if isinstance(query, dict):
+        query_id = query.get("query_id")
+        event_name = query.get("event_name")
+        stage = query.get("stage")
+
+    delivery = diagnostic.get("delivery")
+    error_type = None
+    error_message = None
+    if isinstance(delivery, dict):
+        error_type = delivery.get("error_type")
+        error_message = delivery.get("error_message")
+
+    parts = [f"[{code}] {message}"]
+    if query_id is not None:
+        parts.append(f"query_id={query_id}")
+    if event_name:
+        parts.append(f"event={event_name}")
+    if stage:
+        parts.append(f"stage={stage}")
+    if error_type or error_message:
+        error = f"{error_type}: {error_message}" if error_type else str(error_message)
+        parts.append(f"delivery_error={error}")
+
+    return " | ".join(parts)
+
+
+def _to_plugin_diagnostic(
+    diagnostic: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
+    details: dict[str, typing.Any] = {}
+    original_details = diagnostic.get("details")
+    if isinstance(original_details, dict):
+        details.update(original_details)
+
+    query = diagnostic.get("query")
+    if isinstance(query, dict):
+        for key in ("query_id", "event_name", "stage"):
+            if key in query and key not in details:
+                details[key] = query[key]
+
+    delivery = diagnostic.get("delivery")
+    if isinstance(delivery, dict) and "delivery_error" not in details:
+        error_type = delivery.get("error_type")
+        error_message = delivery.get("error_message")
+        if error_type and error_message:
+            details["delivery_error"] = f"{error_type}: {error_message}"
+        elif error_message:
+            details["delivery_error"] = error_message
+
+    if "message_chain" in diagnostic and "message_chain" not in details:
+        details["message_chain"] = diagnostic["message_chain"]
+
+    return {
+        "level": diagnostic.get("level", "ERROR"),
+        "code": diagnostic.get("code", "plugin_diagnostic"),
+        "message": diagnostic.get("message", "Plugin diagnostic"),
+        "details": details,
+    }
