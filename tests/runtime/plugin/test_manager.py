@@ -13,7 +13,11 @@ from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 from langbot_plugin.api.entities.context import EventContext
-from langbot_plugin.api.entities.events import PersonCommandSent
+from langbot_plugin.api.entities.builtin.platform import message as platform_message
+from langbot_plugin.api.entities.events import (
+    PersonCommandSent,
+    PersonNormalMessageReceived,
+)
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.plugin.container import (
     ComponentContainer,
@@ -241,6 +245,14 @@ class FakeHandler:
 
     async def parse_document(self, context_data, file_bytes):
         return {"context": context_data, "text": file_bytes.decode()}
+
+
+class ReplyChangingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context["event"]["reply_message_chain"] = [
+            {"type": "Plain", "text": "plugin reply"}
+        ]
+        return {"emitted": True, "event_context": event_context}
 
 
 def test_plugin_manager_instances_should_not_share_plugin_state():
@@ -951,9 +963,51 @@ async def test_emit_event_should_report_each_emitting_plugin_once():
         ),
     )
 
-    emitted_plugins, _ = await manager.emit_event(event_context)
+    emitted_plugins, _, _ = await manager.emit_event(event_context)
 
     assert emitted_plugins == [plugin]
+
+
+@pytest.mark.asyncio
+async def test_emit_event_reports_only_plugins_that_changed_reply_message_chain():
+    manager = _manager()
+    observer = _plugin(name="observer")
+    responder = _plugin(name="responder")
+    observer._runtime_plugin_handler = FakeHandler(observer)
+    responder._runtime_plugin_handler = ReplyChangingFakeHandler(responder)
+    manager.plugins = [observer, responder]
+    event_context = EventContext(
+        query_id=1,
+        event_name="PersonNormalMessageReceived",
+        event=PersonNormalMessageReceived(
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            text_message="hello",
+            message_event={
+                "time": 0.0,
+                "self_id": "bot",
+                "sender": {"id": "sender", "nickname": "Sender", "remark": ""},
+                "message_chain": [{"type": "Plain", "text": "hello"}],
+            },
+            message_chain=platform_message.MessageChain(
+                [platform_message.Plain(text="hello")]
+            ),
+        ),
+    )
+
+    emitted_plugins, event_context, response_sources = await manager.emit_event(
+        event_context
+    )
+
+    assert emitted_plugins == [observer, responder]
+    assert response_sources == [
+        {
+            "kind": "reply_message_chain",
+            "plugin": {"author": "tester", "name": "responder"},
+        }
+    ]
+    assert str(event_context.event.reply_message_chain) == "plugin reply"
 
 
 @pytest.mark.asyncio

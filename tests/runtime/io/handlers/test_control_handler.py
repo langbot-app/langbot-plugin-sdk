@@ -104,7 +104,18 @@ class FakePluginManager:
     async def emit_event(self, event_context, include_plugins=None):
         self.calls.append(("emit_event", event_context, include_plugins))
         event_context.prevent_postorder()
-        return [self.plugins[0]], event_context
+        return (
+            [
+                self.plugins[0],
+            ],
+            event_context,
+            [
+                {
+                    "kind": "reply_message_chain",
+                    "plugin": {"author": "tester", "name": "demo"},
+                }
+            ],
+        )
 
     async def list_tools(self, include_plugins=None):
         self.calls.append(("list_tools", include_plugins))
@@ -642,6 +653,12 @@ async def test_control_handler_emit_event_delegates_and_serializes_result():
     assert include_plugins == ["tester/demo"]
     assert response["data"]["emitted_plugins"] == [
         {"manifest": {"author": "tester", "name": "demo"}}
+    ]
+    assert response["data"]["response_sources"] == [
+        {
+            "kind": "reply_message_chain",
+            "plugin": {"author": "tester", "name": "demo"},
+        }
     ]
     assert response["data"]["event_context"]["is_prevent_postorder"] is True
 
