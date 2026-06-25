@@ -717,9 +717,7 @@ async def test_plugin_connection_handler_notify_plugin_diagnostic_helper(monkeyp
     result = await handler.notify_plugin_diagnostic({"level": "ERROR"})
 
     assert result == {"ok": True}
-    assert calls == [
-        (RuntimeToPluginAction.PLUGIN_DIAGNOSTIC, {"level": "ERROR"}, 5)
-    ]
+    assert calls == [(RuntimeToPluginAction.PLUGIN_DIAGNOSTIC, {"level": "ERROR"}, 5)]
 
 
 async def test_plugin_connection_handler_execute_command_and_parse_document_helpers(
