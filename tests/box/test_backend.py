@@ -134,6 +134,14 @@ def test_backend_name_and_command(backend):
     assert backend.command == "docker"
 
 
+def test_configure_logs_when_docker_cpu_limit_is_disabled(backend, caplog):
+    with caplog.at_level(logging.WARNING, logger=backend.logger.name):
+        backend.configure({"cpu_limit_enabled": False})
+
+    assert "Docker sandbox CPU limit is disabled by config" in caplog.text
+    assert "containers will be started without --cpus" in caplog.text
+
+
 # ── is_available ──────────────────────────────────────────────────────
 
 
@@ -281,6 +289,38 @@ async def test_start_session_custom_resource_limits(backend):
     assert info.cpus == 2.5
     assert info.memory_mb == 1024
     assert info.pids_limit == 256
+
+
+@pytest.mark.anyio
+async def test_start_session_can_disable_docker_cpu_limit(backend):
+    backend.configure({"cpu_limit_enabled": False})
+    proc = _FakeProcess(returncode=0)
+    patcher, mock_exec = _patch_exec(proc)
+    spec = BoxSpec(session_id="no-cpu-limit", cmd="x")
+
+    with patcher:
+        await backend.start_session(spec)
+
+    argv = _argv_of(mock_exec)
+    assert "--cpus" not in argv
+    assert _value_after(argv, "--memory") == "512m"
+    assert _value_after(argv, "--pids-limit") == "128"
+
+
+@pytest.mark.anyio
+async def test_start_session_can_disable_docker_cpu_limit_from_string_config(backend):
+    backend.configure({"cpu_limit_enabled": "false"})
+    proc = _FakeProcess(returncode=0)
+    patcher, mock_exec = _patch_exec(proc)
+    spec = BoxSpec(session_id="no-cpu-limit-env", cmd="x")
+
+    with patcher:
+        await backend.start_session(spec)
+
+    argv = _argv_of(mock_exec)
+    assert "--cpus" not in argv
+    assert _value_after(argv, "--memory") == "512m"
+    assert _value_after(argv, "--pids-limit") == "128"
 
 
 @pytest.mark.anyio

@@ -16,7 +16,7 @@ from unittest import mock
 
 import pytest
 
-from langbot_plugin.box.backend import BaseSandboxBackend
+from langbot_plugin.box.backend import BaseSandboxBackend, DockerBackend
 from langbot_plugin.box.errors import (
     BoxBackendUnavailableError,
     BoxManagedProcessNotFoundError,
@@ -216,6 +216,17 @@ def test_init_method_applies_config_and_resets_backend(logger):
     backend.configure.assert_called_once_with({"cpus": 2})
     # No active sessions → backend reset so it re-selects with new config.
     assert runtime._backend is None
+
+
+def test_init_method_applies_docker_cpu_limit_config(logger):
+    """box.docker.cpu_limit_enabled is forwarded to the Docker backend."""
+    backend = DockerBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    runtime.init({"docker": {"cpu_limit_enabled": "false"}})
+
+    assert backend.cpu_limit_enabled is False
 
 
 @pytest.mark.anyio
