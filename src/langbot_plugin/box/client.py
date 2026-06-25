@@ -198,8 +198,8 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         if self._handler is not None:
             try:
                 await self._call(LangBotToBoxAction.SHUTDOWN, {})
-            except Exception:
-                pass
+            except Exception as exc:
+                self._logger.debug("Box runtime shutdown action failed during cleanup: %s", exc, exc_info=True)
             self._handler = None
 
     async def get_status(self) -> dict:
