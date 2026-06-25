@@ -22,6 +22,8 @@ from .models import (
 )
 from .security import validate_sandbox_security
 
+_LOGGER = logging.getLogger(__name__)
+
 # System directories to mount read-only inside the sandbox.
 # Only well-known paths needed for running Python/Node/shell commands.
 _READONLY_SYSTEM_MOUNTS: list[str] = [
@@ -623,8 +625,13 @@ class NsjailBackend(BaseSandboxBackend):
                 subtree_control.write_text(f"+{probe_controller}")
                 try:
                     subtree_control.write_text(f"-{probe_controller}")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "Failed to restore cgroup controller delegation after probe: controller=%s error=%s",
+                        probe_controller,
+                        exc,
+                    )
+                    return False
         except Exception:
             return False
         return True

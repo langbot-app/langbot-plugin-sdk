@@ -114,8 +114,8 @@ async def _iter_runner_results_with_deadline(
     finally:
         try:
             await result_gen.aclose()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to close AgentRunner result generator: %s", exc, exc_info=True)
 
 
 class PluginRuntimeHandler(Handler):

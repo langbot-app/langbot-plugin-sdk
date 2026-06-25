@@ -38,23 +38,27 @@ def _build_agent_api_exception(
     error: ActionCallError,
 ) -> AgentAPIException:
     data = error.data or {}
+    parse_error: str | None = None
     raw_error = data.get("error") if isinstance(data, dict) else None
     if isinstance(raw_error, dict):
         try:
             return AgentAPIException(AgentAPIError.model_validate(raw_error))
-        except Exception:
-            pass
+        except Exception as exc:
+            parse_error = str(exc)
     if isinstance(data, dict) and {"code", "message"}.issubset(data.keys()):
         try:
             return AgentAPIException(AgentAPIError.model_validate(data))
-        except Exception:
-            pass
+        except Exception as exc:
+            parse_error = str(exc)
+    details = {"action": action.value, "response_data": data}
+    if parse_error:
+        details["parse_error"] = parse_error
     return AgentAPIException(
         AgentAPIError(
             code="host.action_error",
             message=str(error),
             retryable=False,
-            details={"action": action.value, "response_data": data},
+            details=details,
         )
     )
 
