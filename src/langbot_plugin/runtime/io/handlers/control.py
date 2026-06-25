@@ -241,6 +241,11 @@ class ControlConnectionHandler(handler.Handler):
                 }
             )
 
+        @self.action(LangBotToRuntimeAction.PLUGIN_DIAGNOSTIC)
+        async def plugin_diagnostic(data: dict[str, Any]) -> handler.ActionResponse:
+            await self.context.plugin_mgr.notify_plugin_diagnostic(data)
+            return handler.ActionResponse.success({})
+
         @self.action(LangBotToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
             include_plugins = data.get("include_plugins")

@@ -58,6 +58,34 @@ def test_empty_lines_skipped():
     assert buf.get_logs() == []
 
 
+def test_add_entry_appends_synthetic_log():
+    buf = PluginLogBuffer()
+    buf.add_entry("ERROR", "deferred response failed")
+
+    logs = buf.get_logs()
+
+    assert logs == [
+        {
+            "ts": logs[0]["ts"],
+            "level": "ERROR",
+            "text": "deferred response failed",
+        }
+    ]
+
+
+def test_has_active_reader_reports_reader_state():
+    async def run():
+        reader = asyncio.StreamReader()
+        buf = PluginLogBuffer()
+        buf.start_reader(reader)
+        assert buf.has_active_reader is True
+        reader.feed_eof()
+        await asyncio.sleep(0)
+        return buf.has_active_reader
+
+    assert asyncio.run(run()) is False
+
+
 def test_attach_stream_reads_to_eof():
     async def run():
         reader = asyncio.StreamReader()

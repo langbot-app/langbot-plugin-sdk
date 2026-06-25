@@ -704,6 +704,22 @@ async def test_plugin_connection_handler_peer_call_helpers(monkeypatch):
     assert calls[-1] == (RuntimeToPluginAction.GET_RAG_CAPABILITIES, {}, 10)
 
 
+async def test_plugin_connection_handler_notify_plugin_diagnostic_helper(monkeypatch):
+    handler, _manager, _control = _handler()
+    calls = []
+
+    async def fake_call_action(action, data, timeout=15.0):
+        calls.append((action, data, timeout))
+        return {"ok": True}
+
+    monkeypatch.setattr(handler, "call_action", fake_call_action)
+
+    result = await handler.notify_plugin_diagnostic({"level": "ERROR"})
+
+    assert result == {"ok": True}
+    assert calls == [(RuntimeToPluginAction.PLUGIN_DIAGNOSTIC, {"level": "ERROR"}, 5)]
+
+
 async def test_plugin_connection_handler_execute_command_and_parse_document_helpers(
     monkeypatch,
 ):
