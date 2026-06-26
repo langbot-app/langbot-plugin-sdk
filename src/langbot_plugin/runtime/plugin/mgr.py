@@ -719,8 +719,13 @@ class PluginManager:
 
     async def emit_event(
         self, event_context: EventContext, include_plugins: list[str] | None = None
-    ) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
+    ) -> tuple[
+        list[runtime_plugin_container.PluginContainer],
+        EventContext,
+        list[dict[str, typing.Any]],
+    ]:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
+        response_sources: list[dict[str, typing.Any]] = []
 
         for plugin in self.plugins:
             if (
@@ -743,6 +748,7 @@ class PluginManager:
                 if plugin_id not in include_plugins:
                     continue
 
+            reply_message_chain_before = _dump_reply_message_chain(event_context)
             resp = await plugin._runtime_plugin_handler.emit_event(
                 event_context.model_dump()
             )
@@ -751,11 +757,19 @@ class PluginManager:
                 emitted_plugins.append(plugin)
 
             event_context = EventContext.model_validate(resp["event_context"])
+            reply_message_chain_after = _dump_reply_message_chain(event_context)
+            if reply_message_chain_after != reply_message_chain_before:
+                response_sources.append(
+                    {
+                        "kind": "reply_message_chain",
+                        "plugin": _plugin_ref(plugin),
+                    }
+                )
 
             if event_context.is_prevented_postorder():
                 break
 
-        return emitted_plugins, event_context
+        return emitted_plugins, event_context, response_sources
 
     async def get_plugin_icon(
         self, plugin_author: str, plugin_name: str
@@ -1283,4 +1297,22 @@ def _to_plugin_diagnostic(
         "code": diagnostic.get("code", "plugin_diagnostic"),
         "message": diagnostic.get("message", "Plugin diagnostic"),
         "details": details,
+    }
+
+
+def _dump_reply_message_chain(
+    event_context: EventContext,
+) -> list[dict[str, typing.Any]] | None:
+    reply_message_chain = getattr(event_context.event, "reply_message_chain", None)
+    if reply_message_chain is None:
+        return None
+    return reply_message_chain.model_dump()
+
+
+def _plugin_ref(
+    plugin: runtime_plugin_container.PluginContainer,
+) -> dict[str, str]:
+    return {
+        "author": str(plugin.manifest.metadata.author),
+        "name": str(plugin.manifest.metadata.name),
     }
