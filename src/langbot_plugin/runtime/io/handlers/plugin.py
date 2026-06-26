@@ -265,6 +265,23 @@ class PluginConnectionHandler(handler.Handler):
         #     )
         #     return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.COUNT_TOKENS)
+        async def count_tokens(data: dict[str, Any]) -> handler.ActionResponse:
+            timeout = data.pop("timeout", 30.0)
+            if not isinstance(timeout, (int, float)) or timeout <= 0:
+                timeout = 30.0
+
+            _inject_caller_identity(data)
+
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.COUNT_TOKENS,
+                {
+                    **data,
+                },
+                timeout=float(timeout),
+            )
+            return handler.ActionResponse.success(result)
+
         @self.action(PluginToRuntimeAction.INVOKE_LLM)
         async def invoke_llm(data: dict[str, Any]) -> handler.ActionResponse:
             timeout = data.pop("timeout", 120.0)

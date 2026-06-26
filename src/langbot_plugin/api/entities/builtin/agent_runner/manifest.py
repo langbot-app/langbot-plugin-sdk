@@ -76,7 +76,7 @@ class AgentRunnerPermissions(pydantic.BaseModel):
     They do not constrain native capabilities of an external harness.
     """
 
-    models: list[typing.Literal["invoke", "stream", "rerank"]] = pydantic.Field(
+    models: list[typing.Literal["invoke", "stream", "rerank", "count_tokens"]] = pydantic.Field(
         default_factory=list
     )
     """Model operations allowed."""

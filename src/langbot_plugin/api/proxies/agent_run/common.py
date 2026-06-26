@@ -21,7 +21,7 @@ from langbot_plugin.utils.deadline import remaining_deadline_seconds
 
 
 DEFAULT_RESOURCE_OPERATIONS: dict[str, frozenset[str]] = {
-    "model": frozenset({"invoke", "stream", "rerank"}),
+    "model": frozenset({"invoke", "stream", "rerank", "count_tokens"}),
     "tool": frozenset({"detail", "call"}),
     "knowledge_base": frozenset({"list", "retrieve"}),
 }
