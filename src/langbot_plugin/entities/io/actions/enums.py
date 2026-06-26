@@ -40,6 +40,7 @@ class PluginToRuntimeAction(ActionType):
 
     GET_LLM_MODELS = "get_llm_models"
     # GET_LLM_MODEL_INFO = "get_llm_model_info"
+    COUNT_TOKENS = "count_tokens"
     INVOKE_LLM = "invoke_llm"
     INVOKE_LLM_STREAM = "invoke_llm_stream"
 

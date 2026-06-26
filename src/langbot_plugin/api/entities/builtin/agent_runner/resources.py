@@ -18,7 +18,7 @@ class ModelResource(pydantic.BaseModel):
     provider: str | None = None
     """Model provider name."""
 
-    operations: list[typing.Literal["invoke", "stream", "rerank"]] = pydantic.Field(
+    operations: list[typing.Literal["invoke", "stream", "rerank", "count_tokens"]] = pydantic.Field(
         default_factory=list
     )
     """Model operations authorized for this run."""

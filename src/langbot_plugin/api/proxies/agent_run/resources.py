@@ -25,6 +25,36 @@ class AgentRunResourceAPIMixin:
 
     # ================= Permission Validation =================
 
+    async def count_tokens(
+        self,
+        llm_model_uuid: str,
+        messages: list[provider_message.Message],
+        funcs: list[resource_tool.LLMTool] | None = None,
+        extra_args: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> int:
+        """Count model input tokens with Host provider/tokenizer settings."""
+        self._validate_model_access(llm_model_uuid, "count_tokens")
+        effective_timeout = self._bounded_timeout(default=30.0, requested=timeout)
+        funcs = funcs or []
+        extra_args = extra_args or {}
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.COUNT_TOKENS,
+            {
+                "run_id": self.run_id,
+                "llm_model_uuid": llm_model_uuid,
+                "messages": [m.model_dump() for m in messages],
+                "funcs": [f.model_dump() for f in funcs],
+                "extra_args": extra_args,
+                "timeout": effective_timeout,
+            },
+            effective_timeout,
+        )
+        tokens = self._expect_key(resp, "tokens", PluginToRuntimeAction.COUNT_TOKENS)
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+            raise ValueError(f"{PluginToRuntimeAction.COUNT_TOKENS.value} response field tokens must be an integer")
+        return tokens
+
     async def invoke_llm(
         self,
         llm_model_uuid: str,
