@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pydantic
+from langbot_plugin.api.entities.builtin.agent_runner.compat import HOST_RESPONSE_MODEL_CONFIG
 
 
 class RunStats(pydantic.BaseModel):
@@ -31,7 +32,7 @@ class RunStats(pydantic.BaseModel):
     p99_duration_seconds: float | None = None
     avg_queue_wait_seconds: float | None = None
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class RuntimeStats(pydantic.BaseModel):
@@ -47,7 +48,7 @@ class RuntimeStats(pydantic.BaseModel):
     active_runs: int = 0
     claimed_runs: int = 0
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class RunnerStats(pydantic.BaseModel):
@@ -65,7 +66,7 @@ class RunnerStats(pydantic.BaseModel):
     success_rate: float | None = None
     avg_duration_seconds: float | None = None
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class RunnerStatsPage(pydantic.BaseModel):
@@ -75,4 +76,4 @@ class RunnerStatsPage(pydantic.BaseModel):
     total_count: int = 0
     has_more: bool = False
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG

@@ -573,6 +573,20 @@ class TestAgentRunAPIContractEntities:
         assert error.code == "history.unauthorized"
         assert error.details["scope"] == "conversation"
 
+    def test_agent_api_error_ignores_unknown_host_fields(self):
+        error = AgentAPIError.model_validate(
+            {
+                "code": "history.unauthorized",
+                "message": "not allowed",
+                "retryable": False,
+                "details": {},
+                "request_id": "req_1",
+            }
+        )
+
+        assert error.code == "history.unauthorized"
+        assert "request_id" not in error.model_dump()
+
     def test_steering_pull_result_validate(self):
         result = SteeringPullResult.model_validate(
             {
@@ -580,6 +594,7 @@ class TestAgentRunAPIContractEntities:
                     {
                         "claimed_run_id": "run_1",
                         "runner_id": "plugin:test/demo/default",
+                        "future_item_field": True,
                         "event": {
                             "event_id": "evt_1",
                             "event_type": "message.received",
@@ -587,11 +602,14 @@ class TestAgentRunAPIContractEntities:
                         },
                         "input": {"text": "follow up"},
                     }
-                ]
+                ],
+                "future_page_field": True,
             }
         )
 
         assert result.items[0].input.text == "follow up"
+        assert "future_item_field" not in result.items[0].model_dump()
+        assert "future_page_field" not in result.model_dump()
 
     def test_llm_usage_results_preserve_provider_details(self):
         result = LLMInvokeResult.model_validate(

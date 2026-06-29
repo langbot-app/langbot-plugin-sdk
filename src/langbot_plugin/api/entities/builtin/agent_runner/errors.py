@@ -5,6 +5,7 @@ from __future__ import annotations
 import typing
 
 import pydantic
+from langbot_plugin.api.entities.builtin.agent_runner.compat import HOST_RESPONSE_MODEL_CONFIG
 
 
 class AgentAPIError(pydantic.BaseModel):
@@ -15,7 +16,7 @@ class AgentAPIError(pydantic.BaseModel):
     retryable: bool = False
     details: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class AgentAPIException(Exception):

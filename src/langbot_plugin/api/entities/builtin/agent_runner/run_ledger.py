@@ -6,6 +6,7 @@ import enum
 import typing
 
 import pydantic
+from langbot_plugin.api.entities.builtin.agent_runner.compat import HOST_RESPONSE_MODEL_CONFIG
 
 
 class AgentRunStatus(str, enum.Enum):
@@ -54,7 +55,7 @@ class AgentRun(pydantic.BaseModel):
     cost: dict[str, typing.Any] | None = None
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class AgentRunEvent(pydantic.BaseModel):
@@ -70,7 +71,7 @@ class AgentRunEvent(pydantic.BaseModel):
     source: str | None = None
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class RunPage(pydantic.BaseModel):
@@ -82,7 +83,7 @@ class RunPage(pydantic.BaseModel):
     has_more: bool = False
     total_count: int = 0
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class RunEventPage(pydantic.BaseModel):
@@ -94,4 +95,4 @@ class RunEventPage(pydantic.BaseModel):
     has_more: bool = False
     total_count: int | None = None
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
