@@ -474,6 +474,7 @@ async def _run_server(host: str, port: int, mode: str) -> None:
             await stop_event.wait()
     finally:
         await runtime.shutdown()
+        await runtime.stop_background_reaper()
         if runner is not None:
             await runner.cleanup()
 
