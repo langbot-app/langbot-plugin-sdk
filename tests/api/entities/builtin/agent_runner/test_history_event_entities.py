@@ -79,6 +79,22 @@ class TestTranscriptItem:
         assert item.bot_id == "bot1"
         assert item.workspace_id == "ws1"
 
+    def test_transcript_item_ignores_unknown_host_fields(self):
+        """Test TranscriptItem ignores future Host response fields."""
+        item = TranscriptItem.model_validate(
+            {
+                "transcript_id": "t4",
+                "event_id": "e4",
+                "conversation_id": "c1",
+                "role": "user",
+                "content": "Hi",
+                "future_field": True,
+            }
+        )
+
+        assert item.transcript_id == "t4"
+        assert "future_field" not in item.model_dump()
+
 
 class TestHistoryPage:
     """Test HistoryPage serialization."""
@@ -140,6 +156,13 @@ class TestHistoryPage:
         assert data["items"][0]["transcript_id"] == "t1"
         assert data["items"][0]["bot_id"] == "bot1"
         assert data["items"][0]["workspace_id"] == "ws1"
+
+    def test_history_page_ignores_unknown_host_fields(self):
+        """Test HistoryPage ignores future Host response fields."""
+        page = HistoryPage.model_validate({"items": [], "has_more": False, "future_cursor": "x"})
+
+        assert page.items == []
+        assert "future_cursor" not in page.model_dump()
 
 
 class TestHistorySearchResult:
@@ -219,6 +242,20 @@ class TestAgentEventRecord:
         assert data["event_type"] == "tool.call.started"
         assert data["metadata"]["tool_name"] == "search"
 
+    def test_event_record_ignores_unknown_host_fields(self):
+        """Test AgentEventRecord ignores future Host response fields."""
+        record = AgentEventRecord.model_validate(
+            {
+                "event_id": "e2",
+                "event_type": "message.received",
+                "source": "platform",
+                "correlation_id": "issue_123",
+            }
+        )
+
+        assert record.event_id == "e2"
+        assert "correlation_id" not in record.model_dump()
+
 
 class TestEventPage:
     """Test EventPage serialization."""
@@ -250,3 +287,10 @@ class TestEventPage:
 
         assert len(page.items) == 3
         assert page.has_more is True
+
+    def test_event_page_ignores_unknown_host_fields(self):
+        """Test EventPage ignores future Host response fields."""
+        page = EventPage.model_validate({"items": [], "has_more": False, "future_cursor": "x"})
+
+        assert page.items == []
+        assert "future_cursor" not in page.model_dump()

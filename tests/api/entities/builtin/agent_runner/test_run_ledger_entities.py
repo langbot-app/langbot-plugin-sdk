@@ -15,7 +15,7 @@ from langbot_plugin.api.entities.builtin.agent_runner.runtime_registry import (
     AgentRuntime,
     RuntimePage,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.stats import RunStats
+from langbot_plugin.api.entities.builtin.agent_runner.stats import RunStats, RunnerStatsPage
 
 
 def test_agent_run_accepts_host_ledger_shape():
@@ -73,12 +73,40 @@ def test_run_event_page_accepts_unknown_result_types():
     assert page.items[0].data == {"pct": 50}
 
 
-def test_run_page_forbids_unexpected_fields():
-    with pytest.raises(Exception):
-        RunPage.model_validate({"items": [], "has_more": False, "unexpected": True})
+def test_run_page_ignores_unknown_host_fields_for_forward_compatibility():
+    page = RunPage.model_validate({"items": [], "has_more": False, "unexpected": True})
+
+    assert page.items == []
+    assert "unexpected" not in page.model_dump()
 
 
-def test_agent_run_event_requires_sequence():
+def test_agent_run_ignores_unknown_host_fields_for_forward_compatibility():
+    run = AgentRun.model_validate(
+        {
+            "run_id": "run_1",
+            "status": "running",
+            "runner_id": "plugin:test/plugin/default",
+            "correlation_id": "issue_123",
+        }
+    )
+
+    assert run.run_id == "run_1"
+    assert "correlation_id" not in run.model_dump()
+
+
+def test_agent_run_event_ignores_unknown_host_fields_but_still_requires_sequence():
+    event = AgentRunEvent.model_validate(
+        {
+            "run_id": "run_1",
+            "sequence": 1,
+            "type": "message.completed",
+            "delivery_surface": "board",
+        }
+    )
+
+    assert event.sequence == 1
+    assert "delivery_surface" not in event.model_dump()
+
     with pytest.raises(Exception):
         AgentRunEvent.model_validate(
             {
@@ -111,9 +139,11 @@ def test_agent_runtime_accepts_host_registry_shape():
     assert runtime.labels["region"] == "local"
 
 
-def test_runtime_page_forbids_unexpected_fields():
-    with pytest.raises(Exception):
-        RuntimePage.model_validate({"items": [], "has_more": False, "unexpected": True})
+def test_runtime_page_ignores_unknown_host_fields_for_forward_compatibility():
+    page = RuntimePage.model_validate({"items": [], "has_more": False, "unexpected": True})
+
+    assert page.items == []
+    assert "unexpected" not in page.model_dump()
 
 
 def test_run_stats_accepts_admin_shape():
@@ -130,3 +160,26 @@ def test_run_stats_accepts_admin_shape():
 
     assert stats.total_count == 10
     assert stats.success_rate == 0.8
+
+
+def test_stats_pages_ignore_unknown_host_fields_for_forward_compatibility():
+    stats = RunStats.model_validate({"total_count": 1, "new_rate": 0.5})
+    page = RunnerStatsPage.model_validate(
+        {
+            "items": [
+                {
+                    "runner_id": "plugin:test/plugin/default",
+                    "total_runs": 1,
+                    "new_metric": 2,
+                }
+            ],
+            "total_count": 1,
+            "new_page_field": True,
+        }
+    )
+
+    assert stats.total_count == 1
+    assert "new_rate" not in stats.model_dump()
+    assert page.items[0].runner_id == "plugin:test/plugin/default"
+    assert "new_metric" not in page.items[0].model_dump()
+    assert "new_page_field" not in page.model_dump()

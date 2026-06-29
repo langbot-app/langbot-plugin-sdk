@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typing
 import pydantic
+from langbot_plugin.api.entities.builtin.agent_runner.compat import HOST_RESPONSE_MODEL_CONFIG
 
 
 class TranscriptItem(pydantic.BaseModel):
@@ -59,4 +60,4 @@ class TranscriptItem(pydantic.BaseModel):
     metadata: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Additional metadata (sender_id, platform, etc.)."""
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG

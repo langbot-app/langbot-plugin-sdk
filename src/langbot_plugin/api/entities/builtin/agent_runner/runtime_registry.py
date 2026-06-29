@@ -5,6 +5,7 @@ from __future__ import annotations
 import typing
 
 import pydantic
+from langbot_plugin.api.entities.builtin.agent_runner.compat import HOST_RESPONSE_MODEL_CONFIG
 
 
 class AgentRuntime(pydantic.BaseModel):
@@ -23,7 +24,7 @@ class AgentRuntime(pydantic.BaseModel):
     created_at: int | None = None
     updated_at: int | None = None
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
 
 
 class RuntimePage(pydantic.BaseModel):
@@ -35,4 +36,4 @@ class RuntimePage(pydantic.BaseModel):
     has_more: bool = False
     total_count: int = 0
 
-    model_config = pydantic.ConfigDict(extra="forbid")
+    model_config = HOST_RESPONSE_MODEL_CONFIG
