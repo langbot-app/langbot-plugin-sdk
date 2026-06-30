@@ -802,22 +802,22 @@ class BoxRuntime:
         try:
             if process.stdin is not None:
                 process.stdin.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.logger.debug("Failed to close managed process stdin: %s", exc, exc_info=True)
 
         try:
             if process.returncode is None:
                 try:
                     process.terminate()
-                except ProcessLookupError:
-                    pass
+                except ProcessLookupError as exc:
+                    self.logger.debug("Managed process exited before terminate: %s", exc)
             await asyncio.wait_for(asyncio.shield(process.wait()), timeout=5)
         except asyncio.TimeoutError:
             if process.returncode is None:
                 try:
                     process.kill()
-                except ProcessLookupError:
-                    pass
+                except ProcessLookupError as exc:
+                    self.logger.debug("Managed process exited before kill: %s", exc)
             await process.wait()
         finally:
             managed_process.exit_code = process.returncode

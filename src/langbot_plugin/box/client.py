@@ -198,8 +198,8 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         if self._handler is not None:
             try:
                 await self._call(LangBotToBoxAction.SHUTDOWN, {})
-            except Exception:
-                pass
+            except Exception as exc:
+                self._logger.debug("Box runtime shutdown action failed during cleanup: %s", exc, exc_info=True)
             self._handler = None
 
     async def get_status(self) -> dict:
@@ -224,7 +224,12 @@ class ActionRPCBoxClient(BoxRuntimeClient):
 
     async def create_session(self, spec: BoxSpec) -> dict:
         return await self._call(
-            LangBotToBoxAction.CREATE_SESSION, spec.model_dump(mode="json")
+            LangBotToBoxAction.CREATE_SESSION,
+            spec.model_dump(mode="json"),
+            # Backend session startup may run a full sandbox/container create
+            # path. The Docker backend itself allows up to 30s, so the RPC
+            # client must wait longer than the backend's own operation limit.
+            timeout=60.0,
         )
 
     async def start_managed_process(

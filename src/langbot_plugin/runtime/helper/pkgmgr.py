@@ -1,6 +1,7 @@
 import asyncio
 import importlib.metadata
 import importlib.util
+import logging
 import os
 import re
 import subprocess
@@ -13,6 +14,7 @@ from pip._internal import main as pipmain
 PYPI_INDEX_URL_ENV = "LANGBOT_PLUGIN_PYPI_INDEX_URL"
 PYPI_TRUSTED_HOST_ENV = "LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"
 DEFAULT_PYPI_INDEX_URL = "https://pypi.org/simple"
+logger = logging.getLogger(__name__)
 
 
 def get_pip_index_args() -> list[str]:
@@ -182,8 +184,8 @@ def _resolve_import_names(pkg_name: str) -> set[str]:
                 for dist_name in dist_names:
                     key = dist_name.lower().replace("_", "-")
                     _dist_to_packages.setdefault(key, set()).add(top_pkg)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to load package distribution metadata: %s", exc, exc_info=True)
 
     key = pkg_name.lower().replace("_", "-")
     names = _dist_to_packages.get(key, set()).copy()

@@ -57,12 +57,15 @@ class Handler(abc.ABC):
         connection: connection.Connection,
         disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]]
         | None = None,
+        cancel_active_tasks_on_close: bool = False,
     ):
         self.conn = connection
         self.actions = {}
         self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
+        self._active_tasks: set[asyncio.Task[Any]] = set()
+        self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
 
         self._disconnect_callback = disconnect_callback
 
@@ -92,74 +95,84 @@ class Handler(abc.ABC):
         self._disconnect_callback = disconnect_callback
 
     async def run(self) -> None:
-        while True:
-            message = None
-            try:
-                message = await self.conn.receive()
-            except ConnectionClosedError:
-                if self._disconnect_callback is not None:
-                    reconnected = await self._disconnect_callback(self)
-                    if reconnected:
-                        continue
-                break
-            if message is None:
-                continue
+        async def handle_message(message: str):
+            # sh*t, i dont really know how to use generic type here
+            # so just use dict[str, Any] for now
+            # 2025/07/02: i know now, learned from dify-plugin-sdk, but maybe i will implement it later
+            req_data = json.loads(message)
+            seq_id = req_data["seq_id"] if "seq_id" in req_data else -1
 
-            async def handle_message(message: str):
-                # sh*t, i dont really know how to use generic type here
-                # so just use dict[str, Any] for now
-                # 2025/07/02: i know now, learned from dify-plugin-sdk, but maybe i will implement it later
-                req_data = json.loads(message)
-                seq_id = req_data["seq_id"] if "seq_id" in req_data else -1
+            if "action" in req_data:  # action request from peer
+                try:
+                    if req_data["action"] not in self.actions:
+                        raise ValueError(f"Action {req_data['action']} not found")
 
-                if "action" in req_data:  # action request from peer
-                    try:
-                        if req_data["action"] not in self.actions:
-                            raise ValueError(f"Action {req_data['action']} not found")
+                    response = self.actions[req_data["action"]](req_data["data"])
 
-                        response = self.actions[req_data["action"]](req_data["data"])
+                    if not isinstance(response, AsyncGenerator):
+                        if isinstance(response, Coroutine):
+                            response = await response
 
-                        if not isinstance(response, AsyncGenerator):
-                            if isinstance(response, Coroutine):
-                                response = await response
+                        response.seq_id = seq_id
+                        await self.conn.send(json.dumps(response.model_dump()))
+                    elif isinstance(response, AsyncGenerator):
+                        response_generator = response
+                        async for chunk in response_generator:
+                            assert isinstance(chunk, ActionResponse)
+                            chunk.seq_id = seq_id
+                            chunk.chunk_status = ChunkStatus.CONTINUE
+                            await self.conn.send(json.dumps(chunk.model_dump()))
 
-                            response.seq_id = seq_id
-                            await self.conn.send(json.dumps(response.model_dump()))
-                        elif isinstance(response, AsyncGenerator):
-                            response_generator = response
-                            async for chunk in response_generator:
-                                assert isinstance(chunk, ActionResponse)
-                                chunk.seq_id = seq_id
-                                chunk.chunk_status = ChunkStatus.CONTINUE
-                                await self.conn.send(json.dumps(chunk.model_dump()))
+                        end_response = ActionResponse.success({})
+                        end_response.seq_id = seq_id
+                        end_response.chunk_status = ChunkStatus.END
+                        await self.conn.send(json.dumps(end_response.model_dump()))
+                except Exception as e:
+                    traceback.print_exc()
+                    error_response = ActionResponse.error(
+                        f"{e.__class__.__name__}: {str(e)}"
+                    )
+                    error_response.seq_id = seq_id
+                    await self.conn.send(json.dumps(error_response.model_dump()))
+                finally:
+                    if not req_data["action"].startswith("__"):
+                        logger.info(f"[Action] {req_data['action']}")
 
-                            end_response = ActionResponse.success({})
-                            end_response.seq_id = seq_id
-                            end_response.chunk_status = ChunkStatus.END
-                            await self.conn.send(json.dumps(end_response.model_dump()))
-                    except Exception as e:
-                        traceback.print_exc()
-                        error_response = ActionResponse.error(
-                            f"{e.__class__.__name__}: {str(e)}"
-                        )
-                        error_response.seq_id = seq_id
-                        await self.conn.send(json.dumps(error_response.model_dump()))
-                    finally:
-                        if not req_data["action"].startswith("__"):
-                            logger.info(f"[Action] {req_data['action']}")
+            elif "code" in req_data:  # action response from peer
+                response = ActionResponse.model_validate(req_data)
 
-                elif "code" in req_data:  # action response from peer
-                    response = ActionResponse.model_validate(req_data)
+                # Handle single response (for call_action)
+                if seq_id in self.resp_waiters:
+                    self.resp_waiters[seq_id].set_result(response)
 
-                    # Handle single response (for call_action)
-                    if seq_id in self.resp_waiters:
-                        self.resp_waiters[seq_id].set_result(response)
+                # Handle streaming response (for call_action_generator)
+                if seq_id in self.resp_queues:
+                    await self.resp_queues[seq_id].put(response)
 
-                    # Handle streaming response (for call_action_generator)
-                    if seq_id in self.resp_queues:
-                        await self.resp_queues[seq_id].put(response)
+        try:
+            while True:
+                message = None
+                try:
+                    message = await self.conn.receive()
+                except ConnectionClosedError:
+                    if self._disconnect_callback is not None:
+                        reconnected = await self._disconnect_callback(self)
+                        if reconnected:
+                            continue
+                    break
+                if message is None:
+                    continue
 
-            asyncio.create_task(handle_message(message))
+                task = asyncio.create_task(handle_message(message))
+                if self._cancel_active_tasks_on_close:
+                    self._active_tasks.add(task)
+                    task.add_done_callback(self._active_tasks.discard)
+        finally:
+            if self._cancel_active_tasks_on_close and self._active_tasks:
+                for task in list(self._active_tasks):
+                    task.cancel()
+                await asyncio.gather(*self._active_tasks, return_exceptions=True)
+                self._active_tasks.clear()
 
     async def call_action(
         self, action: ActionType, data: dict[str, Any], timeout: float = 15.0
@@ -175,7 +188,7 @@ class Handler(abc.ABC):
         try:
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
-                raise ActionCallError(f"{response.message}")
+                raise ActionCallError(f"{response.message}", response.data)
             return response.data
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
@@ -207,14 +220,14 @@ class Handler(abc.ABC):
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
                     if response.code != 0:
-                        raise ActionCallError(f"{response.message}")
+                        raise ActionCallError(f"{response.message}", response.data)
 
                     if response.chunk_status == ChunkStatus.CONTINUE:
                         yield response.data
                     elif response.chunk_status == ChunkStatus.END:
                         break
                 except asyncio.CancelledError:
-                    break
+                    raise
                 except asyncio.TimeoutError:
                     raise ActionCallTimeoutError(
                         f"Action {action.value} call timed out"

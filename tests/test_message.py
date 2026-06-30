@@ -6,6 +6,7 @@ from langbot_plugin.api.entities.builtin.platform.message import (
     At,
     AtAll,
     Image,
+    Face,
     Source,
     Quote,
     Forward,
@@ -119,6 +120,7 @@ def test_message_chain_serialization():
             At(target=123456),
             AtAll(),
             Image(image_id="test_image_id", url="http://example.com/image.jpg"),
+            Face(face_id=14, face_name="smile"),
             Quote(
                 id=12345,
                 group_id=67890,
@@ -155,13 +157,16 @@ def test_message_chain_serialization():
     assert deserialized_chain[4].image_id == "test_image_id"
     assert str(deserialized_chain[4].url) == "http://example.com/image.jpg"
 
-    assert isinstance(deserialized_chain[5], Quote)
-    assert deserialized_chain[5].id == 12345
-    assert deserialized_chain[5].group_id == 67890
-    assert deserialized_chain[5].sender_id == 11111
-    assert deserialized_chain[5].target_id == 22222
-    assert isinstance(deserialized_chain[5].origin, MessageChain)
-    assert deserialized_chain[5].origin[0].text == "Original message"
+    assert isinstance(deserialized_chain[5], Face)
+    assert deserialized_chain[5].face_id == 14
+
+    assert isinstance(deserialized_chain[6], Quote)
+    assert deserialized_chain[6].id == 12345
+    assert deserialized_chain[6].group_id == 67890
+    assert deserialized_chain[6].sender_id == 11111
+    assert deserialized_chain[6].target_id == 22222
+    assert isinstance(deserialized_chain[6].origin, MessageChain)
+    assert deserialized_chain[6].origin[0].text == "Original message"
 
 
 def test_message_chain_contains():
