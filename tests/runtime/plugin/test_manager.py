@@ -16,7 +16,11 @@ from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResu
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.context import EventContext
-from langbot_plugin.api.entities.events import PersonCommandSent
+from langbot_plugin.api.entities.builtin.platform import message as platform_message
+from langbot_plugin.api.entities.events import (
+    PersonCommandSent,
+    PersonNormalMessageReceived,
+)
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.plugin.container import (
     ComponentContainer,
@@ -169,6 +173,14 @@ class FakeConnection:
 
 
 class FakeLogBuffer:
+    has_active_reader = False
+
+    def __init__(self):
+        self.entries = []
+
+    def add_entry(self, level, text):
+        self.entries.append((level, text))
+
     def get_logs(self, limit=200, level=None):
         return [{"limit": limit, "level": level, "text": "ready"}]
 
@@ -181,6 +193,7 @@ class FakeHandler:
         self.stdio_process = None
         self.initialized_with = None
         self.shutdown_calls = 0
+        self.diagnostics = []
         self.log_buffer = FakeLogBuffer()
         self.agent_run_calls: list[tuple[Any, dict[str, Any], float]] = []
         self.files = {
@@ -199,6 +212,10 @@ class FakeHandler:
 
     async def shutdown_plugin(self):
         self.shutdown_calls += 1
+
+    async def notify_plugin_diagnostic(self, diagnostic):
+        self.diagnostics.append(diagnostic)
+        return {"ok": True}
 
     async def emit_event(self, event_context):
         return {"emitted": True, "event_context": event_context}
@@ -280,6 +297,14 @@ class FakeHandler:
         return {"context": context_data, "text": file_bytes.decode()}
 
 
+class ReplyChangingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context["event"]["reply_message_chain"] = [
+            {"type": "Plain", "text": "plugin reply"}
+        ]
+        return {"emitted": True, "event_context": event_context}
+
+
 def test_plugin_manager_instances_should_not_share_plugin_state():
     PluginManager.plugins = []
     first = PluginManager(SimpleNamespace())
@@ -311,6 +336,103 @@ def test_find_plugin_and_component_lists_respect_include_filters():
     assert [command.metadata.name for command in commands] == ["admin"]
     assert parsers[0]["plugin_id"] == "tester/demo"
     assert parsers[0]["supported_mime_types"] == ["application/pdf"]
+
+
+@pytest.mark.asyncio
+async def test_notify_plugin_diagnostic_routes_to_target_and_log_buffer():
+    manager = _manager()
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    diagnostic = {
+        "level": "ERROR",
+        "code": "deferred_response_delivery_failed",
+        "message": "Deferred response delivery failed",
+        "plugin": {"author": "tester", "name": "demo"},
+        "query": {
+            "query_id": 123,
+            "event_name": "GroupNormalMessageReceived",
+            "stage": "SendResponseBackStage",
+        },
+        "delivery": {
+            "error_type": "ActionFailed",
+            "error_message": "retcode=1200",
+        },
+        "message_chain": {
+            "component_types": ["Plain", "Image"],
+            "component_count": 2,
+        },
+    }
+
+    await manager.notify_plugin_diagnostic(diagnostic)
+
+    assert handler.diagnostics == [
+        {
+            "level": "ERROR",
+            "code": "deferred_response_delivery_failed",
+            "message": "Deferred response delivery failed",
+            "details": {
+                "query_id": 123,
+                "event_name": "GroupNormalMessageReceived",
+                "stage": "SendResponseBackStage",
+                "delivery_error": "ActionFailed: retcode=1200",
+                "message_chain": {
+                    "component_types": ["Plain", "Image"],
+                    "component_count": 2,
+                },
+            },
+        }
+    ]
+    assert handler.log_buffer.entries == [
+        (
+            "ERROR",
+            "[deferred_response_delivery_failed] Deferred response delivery failed"
+            " | query_id=123 | event=GroupNormalMessageReceived"
+            " | stage=SendResponseBackStage"
+            " | delivery_error=ActionFailed: retcode=1200",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_notify_plugin_diagnostic_missing_target_only_warns(caplog):
+    manager = _manager()
+    manager.plugins = []
+    caplog.set_level("WARNING")
+
+    await manager.notify_plugin_diagnostic(
+        {
+            "level": "ERROR",
+            "code": "deferred_response_delivery_failed",
+            "message": "Deferred response delivery failed",
+            "plugin": {"author": "tester", "name": "missing"},
+        }
+    )
+
+    assert "Plugin diagnostic target not found (tester/missing)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_notify_plugin_diagnostic_skips_synthetic_log_with_active_reader():
+    manager = _manager()
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    handler.log_buffer.has_active_reader = True
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+
+    await manager.notify_plugin_diagnostic(
+        {
+            "level": "ERROR",
+            "code": "deferred_response_delivery_failed",
+            "message": "Deferred response delivery failed",
+            "plugin": {"author": "tester", "name": "demo"},
+        }
+    )
+
+    assert handler.diagnostics
+    assert handler.log_buffer.entries == []
 
 
 @pytest.mark.asyncio
@@ -987,9 +1109,51 @@ async def test_emit_event_should_report_each_emitting_plugin_once():
         ),
     )
 
-    emitted_plugins, _ = await manager.emit_event(event_context)
+    emitted_plugins, _, _ = await manager.emit_event(event_context)
 
     assert emitted_plugins == [plugin]
+
+
+@pytest.mark.asyncio
+async def test_emit_event_reports_only_plugins_that_changed_reply_message_chain():
+    manager = _manager()
+    observer = _plugin(name="observer")
+    responder = _plugin(name="responder")
+    observer._runtime_plugin_handler = FakeHandler(observer)
+    responder._runtime_plugin_handler = ReplyChangingFakeHandler(responder)
+    manager.plugins = [observer, responder]
+    event_context = EventContext(
+        query_id=1,
+        event_name="PersonNormalMessageReceived",
+        event=PersonNormalMessageReceived(
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            text_message="hello",
+            message_event={
+                "time": 0.0,
+                "self_id": "bot",
+                "sender": {"id": "sender", "nickname": "Sender", "remark": ""},
+                "message_chain": [{"type": "Plain", "text": "hello"}],
+            },
+            message_chain=platform_message.MessageChain(
+                [platform_message.Plain(text="hello")]
+            ),
+        ),
+    )
+
+    emitted_plugins, event_context, response_sources = await manager.emit_event(
+        event_context
+    )
+
+    assert emitted_plugins == [observer, responder]
+    assert response_sources == [
+        {
+            "kind": "reply_message_chain",
+            "plugin": {"author": "tester", "name": "responder"},
+        }
+    ]
+    assert str(event_context.event.reply_message_chain) == "plugin reply"
 
 
 @pytest.mark.asyncio

@@ -66,6 +66,25 @@ class PluginLogBuffer:
             }
         )
 
+    def add_entry(self, level: str, text: str) -> None:
+        """Append a synthetic log entry not read from the plugin stderr stream."""
+        normalized_level = level.upper()
+        if normalized_level not in _KNOWN_LEVELS:
+            normalized_level = "INFO"
+        self._last_level = normalized_level
+        self._buffer.append(
+            {
+                "ts": time.time(),
+                "level": normalized_level,
+                "text": text,
+            }
+        )
+
+    @property
+    def has_active_reader(self) -> bool:
+        """Whether this buffer is currently reading a plugin stderr stream."""
+        return self._reader_task is not None and not self._reader_task.done()
+
     def get_logs(
         self,
         limit: int = 200,

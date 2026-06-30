@@ -55,6 +55,9 @@ class FakePluginManager:
         self.calls.append(("get_plugin_logs", author, plugin_name, limit, level))
         return [{"level": level, "text": "ready"}]
 
+    async def notify_plugin_diagnostic(self, diagnostic):
+        self.calls.append(("notify_plugin_diagnostic", diagnostic))
+
     async def get_plugin_assets_file(self, author, plugin_name, file_key):
         self.calls.append(("get_plugin_assets_file", author, plugin_name, file_key))
         return b"asset", "text/plain"
@@ -101,7 +104,18 @@ class FakePluginManager:
     async def emit_event(self, event_context, include_plugins=None):
         self.calls.append(("emit_event", event_context, include_plugins))
         event_context.prevent_postorder()
-        return [self.plugins[0]], event_context
+        return (
+            [
+                self.plugins[0],
+            ],
+            event_context,
+            [
+                {
+                    "kind": "reply_message_chain",
+                    "plugin": {"author": "tester", "name": "demo"},
+                }
+            ],
+        )
 
     async def list_tools(self, include_plugins=None):
         self.calls.append(("list_tools", include_plugins))
@@ -366,6 +380,25 @@ async def test_control_handler_get_plugin_logs_delegates_limit_and_level():
     assert response["data"] == {"logs": [{"level": "INFO", "text": "ready"}]}
 
 
+async def test_control_handler_plugin_diagnostic_delegates_to_plugin_manager():
+    handler, manager = _handler()
+    payload = {
+        "level": "ERROR",
+        "code": "deferred_response_delivery_failed",
+        "message": "Deferred response delivery failed",
+        "plugin": {"author": "tester", "name": "demo"},
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.PLUGIN_DIAGNOSTIC.value,
+            payload,
+        )
+
+    assert response["data"] == {}
+    assert manager.calls == [("notify_plugin_diagnostic", payload)]
+
+
 async def test_control_handler_get_plugin_assets_file_sends_file_key(monkeypatch):
     handler, manager = _handler()
 
@@ -620,6 +653,12 @@ async def test_control_handler_emit_event_delegates_and_serializes_result():
     assert include_plugins == ["tester/demo"]
     assert response["data"]["emitted_plugins"] == [
         {"manifest": {"author": "tester", "name": "demo"}}
+    ]
+    assert response["data"]["response_sources"] == [
+        {
+            "kind": "reply_message_chain",
+            "plugin": {"author": "tester", "name": "demo"},
+        }
     ]
     assert response["data"]["event_context"]["is_prevent_postorder"] is True
 

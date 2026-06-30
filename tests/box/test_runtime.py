@@ -16,7 +16,7 @@ from unittest import mock
 
 import pytest
 
-from langbot_plugin.box.backend import BaseSandboxBackend
+from langbot_plugin.box.backend import BaseSandboxBackend, DockerBackend
 from langbot_plugin.box.errors import (
     BoxBackendUnavailableError,
     BoxManagedProcessNotFoundError,
@@ -175,6 +175,14 @@ def _make_spec(session_id: str = "s1", **kwargs) -> BoxSpec:
     return BoxSpec(**base)
 
 
+async def _wait_until(predicate, *, timeout: float = 1.0) -> None:
+    async def _poll():
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_poll(), timeout=timeout)
+
+
 # ── construction / config handling ─────────────────────────────────────
 
 
@@ -218,6 +226,34 @@ def test_init_method_applies_config_and_resets_backend(logger):
     assert runtime._backend is None
 
 
+def test_init_method_applies_docker_cpu_limit_config(logger):
+    """box.docker.cpu_limit_enabled is forwarded to the Docker backend."""
+    backend = DockerBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    runtime.init({"docker": {"cpu_limit_enabled": "false"}})
+
+    assert backend.cpu_limit_enabled is False
+
+
+def test_init_method_creates_default_workspace_on_box_runtime_host(logger, tmp_path):
+    """Default workspace is initialized by the Box runtime, not LangBot."""
+    host_root = tmp_path / "box"
+    backend = FakeBackend(logger, name="fake")
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    runtime.init(
+        {
+            "backend": "fake",
+            "local": {"host_root": str(host_root), "allowed_mount_roots": []},
+        }
+    )
+
+    assert (host_root / "default").is_dir()
+
+
 @pytest.mark.anyio
 async def test_init_method_keeps_backend_when_sessions_exist(logger):
     """init() must NOT reset backend while sessions are live."""
@@ -240,10 +276,37 @@ async def test_initialize_applies_config_selects_and_cleans_orphans(logger):
         runtime = BoxRuntime(logger, backends=[backend])
         await runtime.initialize()
 
-    assert runtime._backend is backend
-    backend.configure.assert_called_once_with({"cpus": 1})
-    assert backend.instance_id == runtime.instance_id
-    backend.cleanup_orphaned_containers.assert_awaited_once_with(runtime.instance_id)
+    try:
+        assert runtime._backend is backend
+        backend.configure.assert_called_once_with({"cpus": 1})
+        assert backend.instance_id == runtime.instance_id
+        backend.cleanup_orphaned_containers.assert_awaited_once_with(
+            runtime.instance_id
+        )
+    finally:
+        await runtime.stop_background_reaper()
+
+
+@pytest.mark.anyio
+async def test_initialize_creates_default_workspace_from_env_config(logger, tmp_path):
+    host_root = tmp_path / "box"
+    backend = FakeBackend(logger, name="fake")
+    backend.cleanup_orphaned_containers = mock.AsyncMock()
+    cfg = json.dumps(
+        {
+            "backend": "fake",
+            "local": {"host_root": str(host_root), "allowed_mount_roots": []},
+        }
+    )
+
+    with mock.patch("os.getenv", return_value=cfg):
+        runtime = BoxRuntime(logger, backends=[backend])
+        await runtime.initialize()
+
+    try:
+        assert (host_root / "default").is_dir()
+    finally:
+        await runtime.stop_background_reaper()
 
 
 @pytest.mark.anyio
@@ -256,7 +319,10 @@ async def test_initialize_orphan_cleanup_failure_is_swallowed(logger):
     with mock.patch("os.getenv", return_value=""):
         runtime = BoxRuntime(logger, backends=[backend])
         await runtime.initialize()  # should not raise
-    assert runtime._backend is backend
+    try:
+        assert runtime._backend is backend
+    finally:
+        await runtime.stop_background_reaper()
 
 
 # ── _get_or_create_session: create vs reuse ─────────────────────────────
@@ -419,6 +485,7 @@ async def test_reap_expired_sessions(logger):
 
         # Touching another session triggers reaping of expired ones.
         await runtime.create_session(_make_spec("fresh"))
+        await _wait_until(lambda: backend.stop_session.await_count == 1)
 
     assert "old" not in runtime._sessions
     assert "fresh" in runtime._sessions
@@ -459,6 +526,227 @@ async def test_reap_disabled_when_ttl_non_positive(logger):
     backend.stop_session.assert_not_awaited()
 
 
+@pytest.mark.anyio
+async def test_background_reaper_drops_idle_session_without_new_request(logger):
+    """The background reaper cleans idle sessions without another RPC call."""
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], session_ttl_sec=0.05)
+        await runtime.initialize()
+
+    try:
+        await runtime.create_session(_make_spec("idle"))
+        runtime._sessions["idle"].info.last_used_at = dt.datetime.now(
+            _UTC
+        ) - dt.timedelta(seconds=1)
+
+        await _wait_until(
+            lambda: (
+                "idle" not in runtime._sessions
+                and backend.stop_session.await_count == 1
+            )
+        )
+
+        backend.stop_session.assert_awaited_once()
+    finally:
+        await runtime.stop_background_reaper()
+
+
+@pytest.mark.anyio
+async def test_slow_reaper_cleanup_only_blocks_same_session_id(logger):
+    """Slow backend cleanup should not hold the global runtime lock."""
+    backend = FakeBackend(logger)
+    stop_started = asyncio.Event()
+    release_stop = asyncio.Event()
+
+    async def slow_stop_session(session: BoxSessionInfo):
+        stop_started.set()
+        await release_stop.wait()
+        backend.stopped_sessions += 1
+
+    backend.stop_session = mock.AsyncMock(side_effect=slow_stop_session)
+
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], session_ttl_sec=0.05)
+        runtime.start_background_reaper()
+
+    same_id_task: asyncio.Task[dict] | None = None
+    try:
+        await runtime.create_session(_make_spec("slow"))
+        runtime._sessions["slow"].info.last_used_at = dt.datetime.now(
+            _UTC
+        ) - dt.timedelta(seconds=1)
+
+        await asyncio.wait_for(stop_started.wait(), timeout=1)
+        assert "slow" not in runtime._sessions
+        assert "slow" in runtime._closing_session_tasks
+
+        fresh = await asyncio.wait_for(
+            runtime.create_session(_make_spec("fresh", persistent=True)),
+            timeout=0.2,
+        )
+        assert fresh["session_id"] == "fresh"
+
+        same_id_task = asyncio.create_task(runtime.create_session(_make_spec("slow")))
+        await asyncio.sleep(0.05)
+        assert not same_id_task.done()
+
+        release_stop.set()
+        recreated = await asyncio.wait_for(same_id_task, timeout=1)
+
+        assert recreated["session_id"] == "slow"
+        assert recreated["backend_session_id"] == "fake-3"
+        assert "slow" not in runtime._closing_session_tasks
+        backend.stop_session.assert_awaited_once()
+    finally:
+        release_stop.set()
+        if same_id_task is not None and not same_id_task.done():
+            same_id_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await same_id_task
+        await runtime.stop_background_reaper()
+
+
+@pytest.mark.anyio
+async def test_background_reaper_skips_active_execute(logger):
+    """An in-flight execute() protects its session from TTL cleanup."""
+    backend = FakeBackend(logger)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocking_exec(
+        session: BoxSessionInfo, spec: BoxSpec
+    ) -> BoxExecutionResult:
+        backend.exec_calls.append((session.backend_session_id, spec.cmd))
+        started.set()
+        await release.wait()
+        return BoxExecutionResult(
+            session_id=session.session_id,
+            backend_name=backend.name,
+            status=BoxExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="done",
+            stderr="",
+            duration_ms=100,
+        )
+
+    backend.exec = blocking_exec
+
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], session_ttl_sec=0.05)
+        runtime.start_background_reaper()
+
+    task = asyncio.create_task(runtime.execute(_make_spec("busy", cmd="sleep")))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        async with runtime._lock:
+            runtime._sessions["busy"].info.last_used_at = dt.datetime.now(
+                _UTC
+            ) - dt.timedelta(seconds=1)
+            assert runtime._active_exec_counts["busy"] == 1
+
+        await asyncio.sleep(0.15)
+
+        assert "busy" in runtime._sessions
+        backend.stop_session.assert_not_awaited()
+
+        release.set()
+        result = await task
+        assert result.status == BoxExecutionStatus.COMPLETED
+        assert not runtime._active_exec_counts
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        await runtime.stop_background_reaper()
+
+
+@pytest.mark.anyio
+async def test_execute_cancel_clears_active_counter(logger):
+    """execute() must release active counters even on asyncio cancellation."""
+    backend = FakeBackend(logger)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocking_exec(
+        session: BoxSessionInfo, spec: BoxSpec
+    ) -> BoxExecutionResult:
+        started.set()
+        await release.wait()
+        return BoxExecutionResult(
+            session_id=session.session_id,
+            backend_name=backend.name,
+            status=BoxExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=0,
+        )
+
+    backend.exec = blocking_exec
+
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    task = asyncio.create_task(runtime.execute(_make_spec("cancel", cmd="sleep")))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert runtime._active_exec_counts["cancel"] == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not runtime._active_exec_counts
+
+
+@pytest.mark.anyio
+async def test_background_reaper_skips_running_managed_process(logger):
+    """An idle session with a running managed process is not TTL-reaped."""
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], session_ttl_sec=0.05)
+        runtime.start_background_reaper()
+
+    try:
+        await runtime.create_session(_make_spec("managed"))
+        await runtime.start_managed_process(
+            "managed", BoxManagedProcessSpec(command="daemon")
+        )
+        await _settle()
+        runtime._sessions["managed"].info.last_used_at = dt.datetime.now(
+            _UTC
+        ) - dt.timedelta(seconds=1)
+
+        await asyncio.sleep(0.15)
+
+        assert "managed" in runtime._sessions
+        backend.stop_session.assert_not_awaited()
+
+        await runtime.stop_managed_process("managed", "default")
+        if "managed" in runtime._sessions:
+            runtime._sessions["managed"].info.last_used_at = dt.datetime.now(
+                _UTC
+            ) - dt.timedelta(seconds=1)
+
+        await _wait_until(
+            lambda: (
+                "managed" not in runtime._sessions
+                and backend.stop_session.await_count == 1
+            )
+        )
+        backend.stop_session.assert_awaited_once()
+    finally:
+        if "managed" in runtime._sessions:
+            managed_process = runtime._sessions["managed"].managed_processes.get(
+                "default"
+            )
+            if managed_process is not None and managed_process.is_running:
+                await runtime.stop_managed_process("managed", "default")
+        await runtime.stop_background_reaper()
+
+
 # ── delete_session / shutdown ───────────────────────────────────────────
 
 
@@ -495,6 +783,39 @@ async def test_shutdown_drops_non_persistent_keeps_persistent(logger):
     assert "ephemeral" not in runtime._sessions
     assert "persist" in runtime._sessions
     assert backend.stopped_sessions == 1
+
+
+@pytest.mark.anyio
+async def test_shutdown_does_not_stop_background_reaper(logger):
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], session_ttl_sec=0.05)
+        await runtime.initialize()
+
+    try:
+        reaper_task = runtime._reaper_task
+        assert reaper_task is not None
+
+        await runtime.create_session(_make_spec("before-shutdown"))
+        await runtime.shutdown()
+
+        assert runtime._reaper_task is reaper_task
+        assert not reaper_task.done()
+
+        await runtime.create_session(_make_spec("after-shutdown"))
+        runtime._sessions["after-shutdown"].info.last_used_at = dt.datetime.now(
+            _UTC
+        ) - dt.timedelta(seconds=1)
+
+        await _wait_until(
+            lambda: (
+                "after-shutdown" not in runtime._sessions
+                and backend.stopped_sessions == 2
+            )
+        )
+        assert backend.stopped_sessions == 2
+    finally:
+        await runtime.stop_background_reaper()
 
 
 # ── get_status / get_backend_info / get_session(s) ──────────────────────

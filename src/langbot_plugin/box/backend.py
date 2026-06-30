@@ -5,6 +5,7 @@ import asyncio
 import dataclasses
 import datetime as dt
 import logging
+import os
 import re
 import shlex
 import shutil
@@ -26,6 +27,7 @@ from .security import validate_sandbox_security
 # produce large output within the time limit.  After this many bytes the
 # remaining output is discarded before decoding.
 _MAX_RAW_OUTPUT_BYTES = 1_048_576  # 1 MB per stream
+_FALSE_VALUES = {"0", "false"}
 
 
 @dataclasses.dataclass(slots=True)
@@ -80,6 +82,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         super().__init__(logger)
         self.command = command
         self.name = backend_name
+        self.cpu_limit_enabled = True
 
     async def is_available(self) -> bool:
         if shutil.which(self.command) is None:
@@ -121,16 +124,14 @@ class CLISandboxBackend(BaseSandboxBackend):
         if spec.network == BoxNetworkMode.OFF:
             args.extend(["--network", "none"])
 
-        # Resource limits
-        args.extend(["--cpus", str(spec.cpus)])
-        args.extend(["--memory", f"{spec.memory_mb}m"])
-        args.extend(["--pids-limit", str(spec.pids_limit)])
+        args.extend(self._build_resource_limit_args(spec))
 
         if spec.read_only_rootfs:
             args.append("--read-only")
             args.extend(["--tmpfs", "/tmp:size=64m"])
 
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
+            os.makedirs(spec.host_path, exist_ok=True)
             mount_spec = (
                 f"{spec.host_path}:{spec.mount_path}:{spec.host_path_mode.value}"
             )
@@ -149,7 +150,8 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"session_id={spec.session_id} container_name={container_name} "
             f"image={spec.image} network={spec.network.value} "
             f"host_path={spec.host_path} host_path_mode={spec.host_path_mode.value} mount_path={spec.mount_path} "
-            f"cpus={spec.cpus} memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} "
+            f"cpus={spec.cpus} cpu_limit_enabled={self.cpu_limit_enabled} "
+            f"memory_mb={spec.memory_mb} pids_limit={spec.pids_limit} "
             f"read_only_rootfs={spec.read_only_rootfs} workspace_quota_mb={spec.workspace_quota_mb}"
         )
 
@@ -333,6 +335,14 @@ class CLISandboxBackend(BaseSandboxBackend):
         suffix = uuid.uuid4().hex[:8]
         return f"langbot-box-{normalized[:32]}-{suffix}"
 
+    def _build_resource_limit_args(self, spec: BoxSpec) -> list[str]:
+        args: list[str] = []
+        if self.cpu_limit_enabled:
+            args.extend(["--cpus", str(spec.cpus)])
+        args.extend(["--memory", f"{spec.memory_mb}m"])
+        args.extend(["--pids-limit", str(spec.pids_limit)])
+        return args
+
     def _build_exec_command(self, workdir: str, cmd: str) -> str:
         quoted_workdir = shlex.quote(workdir)
         return f"mkdir -p {quoted_workdir} && cd {quoted_workdir} && {cmd}"
@@ -430,3 +440,16 @@ class CLISandboxBackend(BaseSandboxBackend):
 class DockerBackend(CLISandboxBackend):
     def __init__(self, logger: logging.Logger):
         super().__init__(logger=logger, command="docker", backend_name="docker")
+
+    def configure(self, config: dict) -> None:
+        raw_value = config.get("cpu_limit_enabled", True)
+        if isinstance(raw_value, bool):
+            enabled = raw_value
+        else:
+            enabled = str(raw_value).strip().lower() not in _FALSE_VALUES
+        self.cpu_limit_enabled = enabled
+        if not enabled:
+            self.logger.warning(
+                "Docker sandbox CPU limit is disabled by config "
+                "(box.docker.cpu_limit_enabled=false); containers will be started without --cpus."
+            )

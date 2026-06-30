@@ -134,6 +134,14 @@ def test_backend_name_and_command(backend):
     assert backend.command == "docker"
 
 
+def test_configure_logs_when_docker_cpu_limit_is_disabled(backend, caplog):
+    with caplog.at_level(logging.WARNING, logger=backend.logger.name):
+        backend.configure({"cpu_limit_enabled": False})
+
+    assert "Docker sandbox CPU limit is disabled by config" in caplog.text
+    assert "containers will be started without --cpus" in caplog.text
+
+
 # ── is_available ──────────────────────────────────────────────────────
 
 
@@ -284,13 +292,46 @@ async def test_start_session_custom_resource_limits(backend):
 
 
 @pytest.mark.anyio
-async def test_start_session_host_path_mount(backend):
+async def test_start_session_can_disable_docker_cpu_limit(backend):
+    backend.configure({"cpu_limit_enabled": False})
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
+    spec = BoxSpec(session_id="no-cpu-limit", cmd="x")
+
+    with patcher:
+        await backend.start_session(spec)
+
+    argv = _argv_of(mock_exec)
+    assert "--cpus" not in argv
+    assert _value_after(argv, "--memory") == "512m"
+    assert _value_after(argv, "--pids-limit") == "128"
+
+
+@pytest.mark.anyio
+async def test_start_session_can_disable_docker_cpu_limit_from_string_config(backend):
+    backend.configure({"cpu_limit_enabled": "false"})
+    proc = _FakeProcess(returncode=0)
+    patcher, mock_exec = _patch_exec(proc)
+    spec = BoxSpec(session_id="no-cpu-limit-env", cmd="x")
+
+    with patcher:
+        await backend.start_session(spec)
+
+    argv = _argv_of(mock_exec)
+    assert "--cpus" not in argv
+    assert _value_after(argv, "--memory") == "512m"
+    assert _value_after(argv, "--pids-limit") == "128"
+
+
+@pytest.mark.anyio
+async def test_start_session_host_path_mount(backend, tmp_path):
+    proc = _FakeProcess(returncode=0)
+    patcher, mock_exec = _patch_exec(proc)
+    host_path = tmp_path / "data" / "project"
     spec = BoxSpec(
         session_id="hp",
         cmd="ls",
-        host_path="/data/project",
+        host_path=str(host_path),
         host_path_mode=BoxHostMountMode.READ_WRITE,
         mount_path="/project",
         workdir="/project",
@@ -301,20 +342,21 @@ async def test_start_session_host_path_mount(backend):
 
     argv = _argv_of(mock_exec)
     binds = _all_values_after(argv, "-v")
-    assert "/data/project:/project:rw" in binds
-    assert info.host_path == "/data/project"
+    assert f"{host_path}:/project:rw" in binds
+    assert info.host_path == str(host_path)
     assert info.host_path_mode == BoxHostMountMode.READ_WRITE
     assert info.mount_path == "/project"
 
 
 @pytest.mark.anyio
-async def test_start_session_host_path_readonly_mount(backend):
+async def test_start_session_host_path_readonly_mount(backend, tmp_path):
     proc = _FakeProcess(returncode=0)
     patcher, mock_exec = _patch_exec(proc)
+    host_path = tmp_path / "data" / "source"
     spec = BoxSpec(
         session_id="hp-ro",
         cmd="cat f",
-        host_path="/data/source",
+        host_path=str(host_path),
         host_path_mode=BoxHostMountMode.READ_ONLY,
     )
 
@@ -323,7 +365,20 @@ async def test_start_session_host_path_readonly_mount(backend):
 
     argv = _argv_of(mock_exec)
     binds = _all_values_after(argv, "-v")
-    assert "/data/source:/workspace:ro" in binds
+    assert f"{host_path}:/workspace:ro" in binds
+
+
+@pytest.mark.anyio
+async def test_start_session_creates_host_path_before_mounting(backend, tmp_path):
+    proc = _FakeProcess(returncode=0)
+    patcher, _mock_exec = _patch_exec(proc)
+    host_path = tmp_path / "box" / "default"
+    spec = BoxSpec(session_id="create-host-path", cmd="x", host_path=str(host_path))
+
+    with patcher:
+        await backend.start_session(spec)
+
+    assert host_path.is_dir()
 
 
 @pytest.mark.anyio

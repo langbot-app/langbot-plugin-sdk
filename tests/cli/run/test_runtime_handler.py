@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 
 from langbot_plugin.api.definition.components.base import NoneComponent
@@ -641,3 +642,31 @@ async def test_plugin_runtime_handler_shutdown_schedules_callback():
         await asyncio.wait_for(called.wait(), timeout=1)
 
     assert response["data"] == {}
+
+
+async def test_plugin_runtime_handler_plugin_diagnostic_logs(caplog):
+    handler, _initialized = _handler()
+    caplog.set_level(logging.ERROR, logger="langbot_plugin.cli.run.handler")
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            RuntimeToPluginAction.PLUGIN_DIAGNOSTIC.value,
+            {
+                "level": "ERROR",
+                "code": "deferred_response_delivery_failed",
+                "message": "Deferred response delivery failed",
+                "details": {
+                    "query_id": 123,
+                    "event_name": "GroupNormalMessageReceived",
+                    "stage": "SendResponseBackStage",
+                    "delivery_error": "ActionFailed: retcode=1200",
+                },
+            },
+        )
+
+    assert response["data"] == {}
+    assert "[deferred_response_delivery_failed]" in caplog.text
+    assert "query_id=123" in caplog.text
+    assert "event=GroupNormalMessageReceived" in caplog.text
+    assert "stage=SendResponseBackStage" in caplog.text
+    assert "delivery_error=ActionFailed: retcode=1200" in caplog.text

@@ -296,6 +296,11 @@ class PluginRuntimeHandler(Handler):
                 }
             )
 
+        @self.action(RuntimeToPluginAction.PLUGIN_DIAGNOSTIC)
+        async def plugin_diagnostic(data: dict[str, typing.Any]) -> ActionResponse:
+            _log_plugin_diagnostic(data)
+            return ActionResponse.success({})
+
         @self.action(RuntimeToPluginAction.CALL_TOOL)
         async def call_tool(data: dict[str, typing.Any]) -> ActionResponse:
             """Call a tool."""
@@ -689,6 +694,35 @@ class PluginRuntimeHandler(Handler):
     async def get_plugin_container(self) -> dict[str, typing.Any]:
         """Get the current plugin container data."""
         return self.plugin_container.model_dump()
+
+
+def _log_plugin_diagnostic(data: dict[str, typing.Any]) -> None:
+    level_name = str(data.get("level", "ERROR")).upper()
+    level = logging.getLevelName(level_name)
+    if not isinstance(level, int):
+        level = logging.ERROR
+
+    code = data.get("code") or "plugin_diagnostic"
+    message = data.get("message") or "Plugin diagnostic"
+    details = data.get("details")
+    if not isinstance(details, dict):
+        details = {}
+
+    parts = [f"[{code}] {message}"]
+    event_name = details.get("event_name")
+    stage = details.get("stage")
+    delivery_error = details.get("delivery_error")
+    query_id = details.get("query_id")
+    if query_id is not None:
+        parts.append(f"query_id={query_id}")
+    if event_name:
+        parts.append(f"event={event_name}")
+    if stage:
+        parts.append(f"stage={stage}")
+    if delivery_error:
+        parts.append(f"delivery_error={delivery_error}")
+
+    logger.log(level, " | ".join(parts))
 
 
 # {"action": "get_plugin_container", "data": {}, "seq_id": 1}

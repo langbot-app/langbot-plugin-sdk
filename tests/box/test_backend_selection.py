@@ -225,12 +225,15 @@ async def test_init_config_reselects_backend_before_sessions(logger):
 
     with mock.patch("os.getenv", return_value=None):
         await runtime.initialize()
-        assert runtime._backend is backend_docker
+        try:
+            assert runtime._backend is backend_docker
 
-        runtime.init({"backend": "e2b"})
-        assert runtime._backend is None
+            runtime.init({"backend": "e2b"})
+            assert runtime._backend is None
 
-        selected = await runtime._get_backend()
+            selected = await runtime._get_backend()
+        finally:
+            await runtime.stop_background_reaper()
 
     assert selected is backend_e2b
 

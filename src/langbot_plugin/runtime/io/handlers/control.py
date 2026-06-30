@@ -226,9 +226,11 @@ class ControlConnectionHandler(handler.Handler):
             event_context = EventContext.model_validate(event_context_data)
             include_plugins = data.get("include_plugins")
 
-            emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(
-                event_context, include_plugins
-            )
+            (
+                emitted_plugins,
+                event_context,
+                response_sources,
+            ) = await self.context.plugin_mgr.emit_event(event_context, include_plugins)
 
             event_context_dump = event_context.model_dump()
 
@@ -237,9 +239,15 @@ class ControlConnectionHandler(handler.Handler):
                     "emitted_plugins": [
                         plugin.model_dump() for plugin in emitted_plugins
                     ],
+                    "response_sources": response_sources,
                     "event_context": event_context_dump,
                 }
             )
+
+        @self.action(LangBotToRuntimeAction.PLUGIN_DIAGNOSTIC)
+        async def plugin_diagnostic(data: dict[str, Any]) -> handler.ActionResponse:
+            await self.context.plugin_mgr.notify_plugin_diagnostic(data)
+            return handler.ActionResponse.success({})
 
         @self.action(LangBotToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
