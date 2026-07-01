@@ -1,9 +1,10 @@
 # handle connection from LangBot
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncGenerator
 
-from langbot_plugin.runtime.io import handler, connection
+from langbot_plugin.runtime.io import connection, handler
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
     LangBotToRuntimeAction,
@@ -12,6 +13,8 @@ from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
+
+logger = logging.getLogger(__name__)
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -29,6 +32,21 @@ class ControlConnectionHandler(handler.Handler):
         @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
             return handler.ActionResponse.success({"message": "pong"})
+
+        @self.action(LangBotToRuntimeAction.SET_RUNTIME_CONFIG)
+        async def set_runtime_config(data: dict[str, Any]) -> handler.ActionResponse:
+            # LangBot pushes its configured marketplace (Space) URL so the
+            # runtime downloads plugins from the same place LangBot is bound to,
+            # instead of relying on the runtime's own env/default.
+            from langbot_plugin.runtime.settings import settings as runtime_settings
+
+            cloud_service_url = data.get("cloud_service_url")
+            if cloud_service_url:
+                runtime_settings.cloud_service_url = cloud_service_url.rstrip("/")
+                logger.info(
+                    f"Runtime cloud_service_url set by LangBot: {runtime_settings.cloud_service_url}"
+                )
+            return handler.ActionResponse.success({})
 
         @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
         async def list_plugins(data: dict[str, Any]) -> handler.ActionResponse:
@@ -88,6 +106,17 @@ class ControlConnectionHandler(handler.Handler):
             else:
                 return handler.ActionResponse.success({"readme_file_key": None})
 
+        @self.action(LangBotToRuntimeAction.GET_PLUGIN_LOGS)
+        async def get_plugin_logs(data: dict[str, Any]) -> handler.ActionResponse:
+            author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            limit = int(data.get("limit", 200))
+            level = data.get("level") or None
+            logs = await self.context.plugin_mgr.get_plugin_logs(
+                author, plugin_name, limit=limit, level=level
+            )
+            return handler.ActionResponse.success({"logs": logs})
+
         @self.action(LangBotToRuntimeAction.GET_PLUGIN_ASSETS_FILE)
         async def get_plugin_assets_file(
             data: dict[str, Any],
@@ -116,7 +145,13 @@ class ControlConnectionHandler(handler.Handler):
         async def page_api(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            for field in ("plugin_author", "plugin_name", "page_id", "endpoint", "method"):
+            for field in (
+                "plugin_author",
+                "plugin_name",
+                "page_id",
+                "endpoint",
+                "method",
+            ):
                 if field not in data:
                     return handler.ActionResponse.success(
                         {"data": None, "error": f"Missing required field: {field}"}
@@ -191,9 +226,11 @@ class ControlConnectionHandler(handler.Handler):
             event_context = EventContext.model_validate(event_context_data)
             include_plugins = data.get("include_plugins")
 
-            emitted_plugins, event_context = await self.context.plugin_mgr.emit_event(
-                event_context, include_plugins
-            )
+            (
+                emitted_plugins,
+                event_context,
+                response_sources,
+            ) = await self.context.plugin_mgr.emit_event(event_context, include_plugins)
 
             event_context_dump = event_context.model_dump()
 
@@ -202,9 +239,15 @@ class ControlConnectionHandler(handler.Handler):
                     "emitted_plugins": [
                         plugin.model_dump() for plugin in emitted_plugins
                     ],
+                    "response_sources": response_sources,
                     "event_context": event_context_dump,
                 }
             )
+
+        @self.action(LangBotToRuntimeAction.PLUGIN_DIAGNOSTIC)
+        async def plugin_diagnostic(data: dict[str, Any]) -> handler.ActionResponse:
+            await self.context.plugin_mgr.notify_plugin_diagnostic(data)
+            return handler.ActionResponse.success({})
 
         @self.action(LangBotToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:

@@ -5,6 +5,7 @@ import os
 import mimetypes
 import typing
 import aiofiles
+import logging
 from copy import deepcopy
 from pathlib import Path
 
@@ -23,7 +24,11 @@ from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
 )
-from langbot_plugin.api.definition.components.page import Page, PageRequest, PageResponse
+from langbot_plugin.api.definition.components.page import (
+    Page,
+    PageRequest,
+    PageResponse,
+)
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
@@ -32,6 +37,8 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 )
 from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_asset_path(file_key: str) -> Path | None:
@@ -137,7 +144,9 @@ class PluginRuntimeHandler(Handler):
             file_key = data["file_key"]
             file_path = _resolve_asset_path(file_key)
             if file_path is None:
-                return ActionResponse.success({"file_file_key": None, "mime_type": None})
+                return ActionResponse.success(
+                    {"file_file_key": None, "mime_type": None}
+                )
 
             async with aiofiles.open(file_path, "rb") as f:
                 file_bytes = await f.read()
@@ -166,7 +175,9 @@ class PluginRuntimeHandler(Handler):
                     continue
                 if isinstance(component.component_instance, NoneComponent):
                     return ActionResponse.success(
-                        PageResponse.fail("Page component is not initialized").model_dump()
+                        PageResponse.fail(
+                            "Page component is not initialized"
+                        ).model_dump()
                     )
                 if not isinstance(component.component_instance, Page):
                     return ActionResponse.success(
@@ -236,6 +247,11 @@ class PluginRuntimeHandler(Handler):
                     "event_context": event_context.model_dump(),
                 }
             )
+
+        @self.action(RuntimeToPluginAction.PLUGIN_DIAGNOSTIC)
+        async def plugin_diagnostic(data: dict[str, typing.Any]) -> ActionResponse:
+            _log_plugin_diagnostic(data)
+            return ActionResponse.success({})
 
         @self.action(RuntimeToPluginAction.CALL_TOOL)
         async def call_tool(data: dict[str, typing.Any]) -> ActionResponse:
@@ -535,6 +551,35 @@ class PluginRuntimeHandler(Handler):
     async def get_plugin_container(self) -> dict[str, typing.Any]:
         """Get the current plugin container data."""
         return self.plugin_container.model_dump()
+
+
+def _log_plugin_diagnostic(data: dict[str, typing.Any]) -> None:
+    level_name = str(data.get("level", "ERROR")).upper()
+    level = logging.getLevelName(level_name)
+    if not isinstance(level, int):
+        level = logging.ERROR
+
+    code = data.get("code") or "plugin_diagnostic"
+    message = data.get("message") or "Plugin diagnostic"
+    details = data.get("details")
+    if not isinstance(details, dict):
+        details = {}
+
+    parts = [f"[{code}] {message}"]
+    event_name = details.get("event_name")
+    stage = details.get("stage")
+    delivery_error = details.get("delivery_error")
+    query_id = details.get("query_id")
+    if query_id is not None:
+        parts.append(f"query_id={query_id}")
+    if event_name:
+        parts.append(f"event={event_name}")
+    if stage:
+        parts.append(f"stage={stage}")
+    if delivery_error:
+        parts.append(f"delivery_error={delivery_error}")
+
+    logger.log(level, " | ".join(parts))
 
 
 # {"action": "get_plugin_container", "data": {}, "seq_id": 1}

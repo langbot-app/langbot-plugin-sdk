@@ -1,6 +1,6 @@
 import argparse
 import sys
-import asyncio
+
 from langbot_plugin.version import __version__
 from langbot_plugin.runtime import app as runtime_app
 from langbot_plugin.cli.commands.initplugin import init_plugin_process
@@ -10,7 +10,7 @@ from langbot_plugin.cli.commands.buildplugin import build_plugin_process
 from langbot_plugin.cli.commands.login import login_process
 from langbot_plugin.cli.commands.logout import logout_process
 from langbot_plugin.cli.commands.publish import publish_process
-from langbot_plugin.cli.i18n import cli_print, t
+from langbot_plugin.cli.i18n import cli_print
 
 """
 Usage:
@@ -33,6 +33,10 @@ Commands:
         - [--stdio-control -s]: Use stdio for control connection
         - [--ws-control-port]: The port for control connection
         - [--ws-debug-port]: The port for debug connection
+    box: Run the sandbox box runtime
+        - [--host]: Bind address, default is 0.0.0.0
+        - [--stdio-control]: Use stdio for control connection
+        - [--ws-control-port]: The port for control connection, default is 5410
 """
 
 
@@ -41,10 +45,10 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # help command
-    help_parser = subparsers.add_parser("help", help="Show the help of the CLI")
+    subparsers.add_parser("help", help="Show the help of the CLI")
 
     # ver command
-    ver_parser = subparsers.add_parser("ver", help="Show the version of the CLI")
+    subparsers.add_parser("ver", help="Show the version of the CLI")
 
     # init command
     init_parser = subparsers.add_parser("init", help="Initialize a new plugin")
@@ -90,7 +94,7 @@ def main():
     )
 
     # logout command
-    logout_parser = subparsers.add_parser("logout", help="Logout from LangBot account")
+    subparsers.add_parser("logout", help="Logout from LangBot account")
 
     # build command
     build_parser = subparsers.add_parser("build", help="Build the plugin to a zip file")
@@ -144,6 +148,22 @@ def main():
         default="",
     )
 
+    # box command
+    box_parser = subparsers.add_parser("box", help="Run the sandbox box runtime")
+    box_parser.add_argument("--host", default="0.0.0.0", help="Bind address")
+    box_parser.add_argument(
+        "-s",
+        "--stdio-control",
+        action="store_true",
+        help="Use stdio for control connection",
+    )
+    box_parser.add_argument(
+        "--ws-control-port",
+        type=int,
+        default=5410,
+        help="The port for control connection",
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -178,6 +198,10 @@ def main():
             publish_process()
         case "rt":
             runtime_app.main(args)
+        case "box":
+            from langbot_plugin.box.server import main as box_main
+
+            box_main(args)
         case _:
             cli_print("unknown_command", args.command)
             sys.exit(1)

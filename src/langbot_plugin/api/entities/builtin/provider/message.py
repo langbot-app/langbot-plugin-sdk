@@ -13,11 +13,22 @@ class FunctionCall(pydantic.BaseModel):
 
 
 class ToolCall(pydantic.BaseModel):
+    """Tool call from LLM.
+
+    The `provider_specific_fields` dict carries provider-specific metadata
+    that must be round-tripped between requests and responses. For example,
+    Gemini models require `thought_signature` in function call parts for
+    tool calls to work correctly.
+    """
+
     id: str
 
     type: str
 
     function: FunctionCall
+
+    provider_specific_fields: typing.Optional[dict[str, typing.Any]] = None
+    """Provider-specific fields (e.g., Gemini thought_signature) to round-trip."""
 
 
 class ImageURLContentObject(pydantic.BaseModel):
@@ -79,7 +90,13 @@ class ContentElement(pydantic.BaseModel):
 
 
 class Message(pydantic.BaseModel):
-    """Message for AI"""
+    """Message for AI.
+
+    The `provider_specific_fields` dict carries provider-specific metadata
+    that must be round-tripped between requests and responses. For example,
+    Gemini models require `thought_signatures` to be preserved across
+    conversation turns for tool calls to work correctly.
+    """
 
     role: str  # user, system, assistant, tool, command, plugin
     """Role of the message"""
@@ -97,6 +114,12 @@ class Message(pydantic.BaseModel):
 
     usage: typing.Optional[dict[str, typing.Any]] = None
     """Token usage info from LLM call (input_tokens, output_tokens, total_tokens)"""
+
+    resp_message_id: typing.Optional[str] = None
+    """Response message ID for tracking"""
+
+    provider_specific_fields: typing.Optional[dict[str, typing.Any]] = None
+    """Provider-specific fields (e.g., Gemini thought_signatures) to round-trip."""
 
     def readable_str(self) -> str:
         if self.content is not None:
@@ -191,6 +214,9 @@ class MessageChunk(pydantic.BaseModel):
     msg_sequence: int = 0
     """消息迭代次数"""
 
+    provider_specific_fields: typing.Optional[dict[str, typing.Any]] = None
+    """Provider-specific fields (e.g., Gemini thought_signatures) to round-trip."""
+
     def readable_str(self) -> str:
         if self.content is not None:
             return (
@@ -265,3 +291,43 @@ class ToolCallChunk(pydantic.BaseModel):
 
     function: FunctionCall
     """函数调用"""
+
+    provider_specific_fields: typing.Optional[dict[str, typing.Any]] = None
+    """Provider-specific fields (e.g., Gemini thought_signature) to round-trip."""
+
+
+class LLMTokenUsage(pydantic.BaseModel):
+    """Token usage returned by an LLM provider.
+
+    The standard OpenAI-compatible counters are normalized when available.
+    Provider-specific fields such as prompt/completion token details or cache
+    counters are preserved as extra fields.
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+
+class LLMInvokeResult(pydantic.BaseModel):
+    """Non-streaming LLM invoke result with optional provider usage."""
+
+    message: Message
+    usage: LLMTokenUsage | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class LLMStreamEvent(pydantic.BaseModel):
+    """Streaming LLM event.
+
+    Most events carry a message chunk. A final provider usage event may carry
+    usage without a chunk when the upstream API reports usage after completion.
+    """
+
+    chunk: MessageChunk | None = None
+    usage: LLMTokenUsage | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid")

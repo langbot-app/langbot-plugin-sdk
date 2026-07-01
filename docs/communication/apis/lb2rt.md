@@ -39,12 +39,33 @@
 ### Request
 
 ```json
+{
+    "event_context": {},
+    "include_plugins": ["author/name"]
+}
 ```
 
 ### Response
 
 ```json
+{
+    "emitted_plugins": [],
+    "response_sources": [
+        {
+            "kind": "reply_message_chain",
+            "plugin": {
+                "author": "plugin_author",
+                "name": "plugin_name"
+            }
+        }
+    ],
+    "event_context": {}
+}
 ```
+
+`emitted_plugins` contains plugins whose event handlers ran. `response_sources`
+contains plugins that changed a deferred response field on the event context, such
+as `reply_message_chain`.
 
 ## `list_tools`
 

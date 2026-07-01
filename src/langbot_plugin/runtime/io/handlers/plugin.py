@@ -13,6 +13,7 @@ from langbot_plugin.entities.io.actions.enums import (
 from langbot_plugin.runtime import context as context_module
 import asyncio
 from langbot_plugin.runtime.settings import settings as runtime_settings
+from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ class PluginConnectionHandler(handler.Handler):
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
+
+    log_buffer: PluginLogBuffer
+    """Ring buffer holding recent log lines (from the plugin's stderr)."""
 
     subprocess_on_windows_task: asyncio.Task | None = None
     """The task for the subprocess on Windows."""
@@ -58,6 +62,12 @@ class PluginConnectionHandler(handler.Handler):
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
         self.stdio_process = stdio_process
+
+        # Capture the plugin subprocess's stderr (Python `logging` output) into
+        # a per-plugin ring buffer so LangBot can show logs on the detail page.
+        self.log_buffer = PluginLogBuffer()
+        if self.stdio_process is not None and self.stdio_process.stderr is not None:
+            self.log_buffer.start_reader(self.stdio_process.stderr)
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
@@ -232,6 +242,17 @@ class PluginConnectionHandler(handler.Handler):
             )
             return handler.ActionResponse.success(result)
 
+        @self.action(PluginToRuntimeAction.INVOKE_RERANK)
+        async def invoke_rerank(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await self.context.control_handler.call_action(
+                PluginToRuntimeAction.INVOKE_RERANK,
+                {
+                    **data,
+                },
+                timeout=60,
+            )
+            return handler.ActionResponse.success(result)
+
         # ================= RAG Capability Handlers (Plugin -> Runtime -> Host) =================
 
         async def _proxy_rag_action(
@@ -276,6 +297,15 @@ class PluginConnectionHandler(handler.Handler):
         async def vector_delete(data: dict[str, Any]) -> handler.ActionResponse:
             result = await _proxy_rag_action(
                 PluginToRuntimeAction.VECTOR_DELETE,
+                data,
+                timeout=30,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(PluginToRuntimeAction.VECTOR_LIST)
+        async def vector_list(data: dict[str, Any]) -> handler.ActionResponse:
+            result = await _proxy_rag_action(
+                PluginToRuntimeAction.VECTOR_LIST,
                 data,
                 timeout=30,
             )
@@ -532,9 +562,7 @@ class PluginConnectionHandler(handler.Handler):
                     return handler.ActionResponse.success(
                         {"tool": tool.to_plain_dict()}
                     )
-            return handler.ActionResponse.error(
-                message=f"Tool not found: {tool_name}"
-            )
+            return handler.ActionResponse.error(message=f"Tool not found: {tool_name}")
 
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
@@ -545,9 +573,7 @@ class PluginConnectionHandler(handler.Handler):
             resp = await self.context.plugin_mgr.call_tool(
                 tool_name, tool_parameters, session, query_id
             )
-            return handler.ActionResponse.success(
-                {"tool_response": resp}
-            )
+            return handler.ActionResponse.success({"tool_response": resp})
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:
@@ -669,6 +695,16 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.SHUTDOWN,
             {},
+        )
+        return resp
+
+    async def notify_plugin_diagnostic(
+        self, diagnostic: dict[str, Any]
+    ) -> dict[str, Any]:
+        resp = await self.call_action(
+            RuntimeToPluginAction.PLUGIN_DIAGNOSTIC,
+            diagnostic,
+            timeout=5,
         )
         return resp
 

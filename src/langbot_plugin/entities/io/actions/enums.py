@@ -61,6 +61,7 @@ class PluginToRuntimeAction(ActionType):
     CALL_TOOL = "call_tool"
 
     INVOKE_EMBEDDING = "invoke_embedding"
+    INVOKE_RERANK = "invoke_rerank"
     VECTOR_UPSERT = "vector_upsert"
     VECTOR_SEARCH = "vector_search"
     VECTOR_DELETE = "vector_delete"
@@ -88,6 +89,7 @@ class RuntimeToPluginAction(ActionType):
     GET_PLUGIN_README = "get_plugin_readme"
     GET_PLUGIN_ASSETS_FILE = "get_plugin_assets_file"
     EMIT_EVENT = "emit_event"
+    PLUGIN_DIAGNOSTIC = "plugin_diagnostic"
     CALL_TOOL = "call_tool"
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
@@ -111,12 +113,14 @@ class LangBotToRuntimeAction(ActionType):
     GET_PLUGIN_INFO = "get_plugin_info"
     GET_PLUGIN_ICON = "get_plugin_icon"
     GET_PLUGIN_README = "get_plugin_readme"
+    GET_PLUGIN_LOGS = "get_plugin_logs"
     GET_PLUGIN_ASSETS_FILE = "get_plugin_assets_file"
     INSTALL_PLUGIN = "install_plugin"
     RESTART_PLUGIN = "restart_plugin"
     DELETE_PLUGIN = "delete_plugin"
     UPGRADE_PLUGIN = "upgrade_plugin"
     EMIT_EVENT = "emit_event"
+    PLUGIN_DIAGNOSTIC = "plugin_diagnostic"
     LIST_TOOLS = "list_tools"
     CALL_TOOL = "call_tool"
     LIST_COMMANDS = "list_commands"
@@ -140,6 +144,11 @@ class LangBotToRuntimeAction(ActionType):
 
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"
+
+    # Runtime configuration pushed by LangBot at connection init (e.g. the
+    # marketplace / cloud service URL), so the runtime does not rely on its own
+    # env/default.
+    SET_RUNTIME_CONFIG = "set_runtime_config"
 
     # Page API
     PAGE_API = "page_api"

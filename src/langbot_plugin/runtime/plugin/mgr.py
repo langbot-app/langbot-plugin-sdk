@@ -38,6 +38,10 @@ from langbot_plugin.api.entities.builtin.command.context import (
 )
 from langbot_plugin.runtime.helper import marketplace as marketplace_helper
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
+from langbot_plugin.entities.io.errors import (
+    DependencyInstallError,
+    DependencyVerificationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +98,63 @@ class PluginManager:
             ):
                 return plugin
         return None
+
+    async def notify_plugin_diagnostic(self, diagnostic: dict[str, typing.Any]) -> None:
+        """Best-effort route a host-side diagnostic to a plugin process."""
+        plugin_ref = diagnostic.get("plugin")
+        if not isinstance(plugin_ref, dict):
+            logger.warning(
+                "Plugin diagnostic has no target plugin: "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        plugin_author = plugin_ref.get("author") or plugin_ref.get("plugin_author")
+        plugin_name = plugin_ref.get("name") or plugin_ref.get("plugin_name")
+        if not plugin_author or not plugin_name:
+            logger.warning(
+                "Plugin diagnostic target is incomplete: "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        plugin = self.find_plugin(str(plugin_author), str(plugin_name))
+        plugin_id = f"{plugin_author}/{plugin_name}"
+        if plugin is None:
+            logger.warning(
+                f"Plugin diagnostic target not found ({plugin_id}): "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        plugin_handler = plugin._runtime_plugin_handler
+        if plugin_handler is None:
+            logger.warning(
+                f"Plugin diagnostic target is not connected ({plugin_id}): "
+                f"{_format_plugin_diagnostic(diagnostic)}"
+            )
+            return
+
+        log_buffer = getattr(plugin_handler, "log_buffer", None)
+        plugin_diagnostic = _to_plugin_diagnostic(diagnostic)
+        has_log_reader = bool(getattr(log_buffer, "has_active_reader", False))
+        if (
+            log_buffer is not None
+            and not has_log_reader
+            and hasattr(log_buffer, "add_entry")
+        ):
+            try:
+                log_buffer.add_entry(
+                    str(diagnostic.get("level", "ERROR")),
+                    _format_plugin_diagnostic(diagnostic),
+                )
+            except Exception as e:  # noqa: BLE001 - diagnostics must stay best-effort
+                logger.debug(f"Failed to append plugin diagnostic log buffer: {e}")
+
+        try:
+            await plugin_handler.notify_plugin_diagnostic(plugin_diagnostic)
+        except Exception as e:  # noqa: BLE001 - diagnostics must stay best-effort
+            logger.warning(f"Failed to notify plugin diagnostic for {plugin_id}: {e}")
 
     async def ensure_all_plugins_dependencies_installed(self):
         for plugin_path in glob.glob("data/plugins/*"):
@@ -312,49 +373,113 @@ class PluginManager:
         yield {"current_action": "installing dependencies"}
         requirements_file = os.path.join(plugin_path, "requirements.txt")
         if os.path.exists(requirements_file):
-            deps = pkgmgr_helper.parse_requirements(requirements_file)
+            precheck_result = await pkgmgr_helper.precheck_dependencies(
+                requirements_file
+            )
+            deps = precheck_result["deps"]
+            to_install = precheck_result["to_install"]
+            already_installed = precheck_result["already_installed"]
+
+            logger.info(
+                f"Dependency precheck: {len(already_installed)} already installed, "
+                f"{len(to_install)} to install"
+            )
+
             total_deps = len(deps)
             total_downloaded = 0
             start_time = time.time()
+            # Requirement specs pip could not install even after retries,
+            # mapped to the tail of pip's stderr for diagnostics.
+            install_failures: dict[str, str] = {}
+            already_installed_count = len(already_installed)
+            to_install_count = len(to_install)
 
-            for i, dep in enumerate(deps):
+            for i, dep in enumerate(to_install):
                 elapsed = time.time() - start_time
                 yield {
                     "current_action": "installing dependencies",
                     "metadata": {
                         "deps_total": total_deps,
-                        "deps_installed": i,
-                        "deps_remaining": total_deps - i,
+                        "deps_installed": already_installed_count + i,
+                        "deps_remaining": to_install_count - i,
                         "current_dep": dep,
                         "deps_downloaded_size": total_downloaded,
                         "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
+                        "already_installed": already_installed_count,
+                        "to_install": to_install_count,
                     },
                 }
 
-                returncode, downloaded_bytes, output = (
-                    await pkgmgr_helper.install_single_async(dep)
-                )
+                (
+                    returncode,
+                    downloaded_bytes,
+                    error_msg,
+                ) = await pkgmgr_helper.install_with_retry(dep, max_retries=3)
                 total_downloaded += downloaded_bytes
 
                 if returncode != 0:
-                    error_message = f"Failed to install dependency: {dep}"
-                    if output:
-                        error_message = f"{error_message}\n{output.strip()}"
-                    logger.error(error_message)
-                    raise RuntimeError(error_message)
+                    logger.error(
+                        f"Failed to install dependency after retries: {dep}, "
+                        f"error: {error_msg}"
+                    )
+                    install_failures[dep] = error_msg
+
+            # Verification: pip may report success while the distribution is
+            # still unimportable or the installed version violates the
+            # specifier. Only verify deps that pip did not already flag as a
+            # hard install failure, so the two error classes stay distinct.
+            verified_targets = [d for d in deps if d not in install_failures]
+            missing_deps, version_mismatch = (
+                pkgmgr_helper.classify_unsatisfied_dependencies(verified_targets)
+            )
+
+            failed_deps = (
+                list(install_failures.keys()) + missing_deps + version_mismatch
+            )
 
             elapsed = time.time() - start_time
             yield {
                 "current_action": "installing dependencies",
                 "metadata": {
                     "deps_total": total_deps,
-                    "deps_installed": total_deps,
+                    "deps_installed": total_deps - len(failed_deps),
                     "deps_remaining": 0,
+                    "deps_failed": len(failed_deps),
+                    "failed_deps": failed_deps,
                     "current_dep": "",
                     "deps_downloaded_size": total_downloaded,
                     "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
                 },
             }
+
+            plugin_ref = f"{plugin_author}/{plugin_name}"
+
+            # pip-level install failures take priority — they are the root
+            # cause and carry the actual pip stderr for debugging.
+            if install_failures:
+                logger.error(
+                    f"Plugin {plugin_ref} failed to install "
+                    f"{len(install_failures)} dependencies: "
+                    f"{list(install_failures.keys())}"
+                )
+                raise DependencyInstallError(
+                    failed=list(install_failures.keys()),
+                    plugin=plugin_ref,
+                    details=install_failures,
+                )
+
+            # pip succeeded but the result cannot be verified — surface which
+            # deps are missing vs. version-mismatched so callers can react.
+            if missing_deps or version_mismatch:
+                logger.error(
+                    f"Plugin {plugin_ref} dependency verification failed — "
+                    f"missing: {missing_deps}, version mismatch: {version_mismatch}"
+                )
+                raise DependencyVerificationError(
+                    missing=missing_deps,
+                    version_mismatch=version_mismatch,
+                    plugin=plugin_ref,
+                )
 
         # initialize plugin settings
         yield {"current_action": "initializing plugin settings"}
@@ -429,7 +554,9 @@ class PluginManager:
 
         # refresh plugin container from plugin (components may have changed)
         plugin_container_data = await handler.get_plugin_container()
-        refreshed = runtime_plugin_container.PluginContainer.from_dict(plugin_container_data)
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(
+            plugin_container_data
+        )
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
         plugin_container.status = refreshed.status
@@ -592,8 +719,13 @@ class PluginManager:
 
     async def emit_event(
         self, event_context: EventContext, include_plugins: list[str] | None = None
-    ) -> tuple[list[runtime_plugin_container.PluginContainer], EventContext]:
+    ) -> tuple[
+        list[runtime_plugin_container.PluginContainer],
+        EventContext,
+        list[dict[str, typing.Any]],
+    ]:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
+        response_sources: list[dict[str, typing.Any]] = []
 
         for plugin in self.plugins:
             if (
@@ -616,6 +748,7 @@ class PluginManager:
                 if plugin_id not in include_plugins:
                     continue
 
+            reply_message_chain_before = _dump_reply_message_chain(event_context)
             resp = await plugin._runtime_plugin_handler.emit_event(
                 event_context.model_dump()
             )
@@ -624,11 +757,19 @@ class PluginManager:
                 emitted_plugins.append(plugin)
 
             event_context = EventContext.model_validate(resp["event_context"])
+            reply_message_chain_after = _dump_reply_message_chain(event_context)
+            if reply_message_chain_after != reply_message_chain_before:
+                response_sources.append(
+                    {
+                        "kind": "reply_message_chain",
+                        "plugin": _plugin_ref(plugin),
+                    }
+                )
 
             if event_context.is_prevented_postorder():
                 break
 
-        return emitted_plugins, event_context
+        return emitted_plugins, event_context, response_sources
 
     async def get_plugin_icon(
         self, plugin_author: str, plugin_name: str
@@ -662,6 +803,25 @@ class PluginManager:
             return readme_bytes
 
         return b""
+
+    async def get_plugin_logs(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        limit: int = 200,
+        level: str | None = None,
+    ) -> list[dict[str, typing.Any]]:
+        """Return recent log entries captured from the plugin's stderr.
+
+        Each entry: {"ts": float, "level": str, "text": str}.
+        Returns an empty list if the plugin is not running.
+        """
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is not None and plugin._runtime_plugin_handler is not None:
+            log_buffer = getattr(plugin._runtime_plugin_handler, "log_buffer", None)
+            if log_buffer is not None:
+                return log_buffer.get_logs(limit=limit, level=level)
+        return []
 
     async def get_plugin_assets_file(
         self, plugin_author: str, plugin_name: str, file_key: str
@@ -1071,3 +1231,88 @@ class PluginManager:
             context_data, file_bytes
         )
         return resp
+
+
+def _format_plugin_diagnostic(diagnostic: dict[str, typing.Any]) -> str:
+    code = diagnostic.get("code") or "plugin_diagnostic"
+    message = diagnostic.get("message") or "Plugin diagnostic"
+    query = diagnostic.get("query")
+    query_id = None
+    event_name = None
+    stage = None
+    if isinstance(query, dict):
+        query_id = query.get("query_id")
+        event_name = query.get("event_name")
+        stage = query.get("stage")
+
+    delivery = diagnostic.get("delivery")
+    error_type = None
+    error_message = None
+    if isinstance(delivery, dict):
+        error_type = delivery.get("error_type")
+        error_message = delivery.get("error_message")
+
+    parts = [f"[{code}] {message}"]
+    if query_id is not None:
+        parts.append(f"query_id={query_id}")
+    if event_name:
+        parts.append(f"event={event_name}")
+    if stage:
+        parts.append(f"stage={stage}")
+    if error_type or error_message:
+        error = f"{error_type}: {error_message}" if error_type else str(error_message)
+        parts.append(f"delivery_error={error}")
+
+    return " | ".join(parts)
+
+
+def _to_plugin_diagnostic(
+    diagnostic: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
+    details: dict[str, typing.Any] = {}
+    original_details = diagnostic.get("details")
+    if isinstance(original_details, dict):
+        details.update(original_details)
+
+    query = diagnostic.get("query")
+    if isinstance(query, dict):
+        for key in ("query_id", "event_name", "stage"):
+            if key in query and key not in details:
+                details[key] = query[key]
+
+    delivery = diagnostic.get("delivery")
+    if isinstance(delivery, dict) and "delivery_error" not in details:
+        error_type = delivery.get("error_type")
+        error_message = delivery.get("error_message")
+        if error_type and error_message:
+            details["delivery_error"] = f"{error_type}: {error_message}"
+        elif error_message:
+            details["delivery_error"] = error_message
+
+    if "message_chain" in diagnostic and "message_chain" not in details:
+        details["message_chain"] = diagnostic["message_chain"]
+
+    return {
+        "level": diagnostic.get("level", "ERROR"),
+        "code": diagnostic.get("code", "plugin_diagnostic"),
+        "message": diagnostic.get("message", "Plugin diagnostic"),
+        "details": details,
+    }
+
+
+def _dump_reply_message_chain(
+    event_context: EventContext,
+) -> list[dict[str, typing.Any]] | None:
+    reply_message_chain = getattr(event_context.event, "reply_message_chain", None)
+    if reply_message_chain is None:
+        return None
+    return reply_message_chain.model_dump()
+
+
+def _plugin_ref(
+    plugin: runtime_plugin_container.PluginContainer,
+) -> dict[str, str]:
+    return {
+        "author": str(plugin.manifest.metadata.author),
+        "name": str(plugin.manifest.metadata.name),
+    }
