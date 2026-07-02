@@ -50,7 +50,6 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
         async def list_plugins(data: dict[str, Any]) -> handler.ActionResponse:
-
             result = {
                 "plugins": [
                     plugin.model_dump() for plugin in self.context.plugin_mgr.plugins

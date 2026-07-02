@@ -71,7 +71,6 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
-
             if "prod_mode" in data and data["prod_mode"]:
                 self.debug_plugin = False
 
