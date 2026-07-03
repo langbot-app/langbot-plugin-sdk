@@ -304,6 +304,13 @@ class BoxServerHandler(Handler):
             return ActionResponse.success({})
 
 
+# Server-driven WebSocket keepalive interval (seconds) for the managed-process
+# stdio relay. The Box runtime is lightly loaded and answers pings reliably;
+# emitting pings from the server keeps a long-idle relay alive even when the
+# LangBot client's event loop stalls briefly (which would otherwise trip the
+# mcp websocket client's 20s ping/pong timeout and drop the connection).
+_MANAGED_PROCESS_WS_HEARTBEAT_SEC = 30.0
+
 # ── Managed process WebSocket relay ──────────────────────────────────
 
 
@@ -339,7 +346,10 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
             )
         )
 
-    ws = web.WebSocketResponse(protocols=("mcp",))
+    ws = web.WebSocketResponse(
+        protocols=("mcp",),
+        heartbeat=_MANAGED_PROCESS_WS_HEARTBEAT_SEC,
+    )
     await ws.prepare(request)
 
     async with managed_process.attach_lock:
