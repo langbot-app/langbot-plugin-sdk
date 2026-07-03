@@ -412,6 +412,13 @@ def test_build_resource_limits_cgroup(backend):
     cpu_idx = args.index("--cgroup_cpu_ms_per_sec")
     assert args[cpu_idx + 1] == "2000"
 
+    # Virtual address space must be raised to the hard limit so node/V8 WASM
+    # (and other runtimes reserving large vaddr) can boot; physical memory is
+    # still bounded by --cgroup_mem_max above.
+    assert "--rlimit_as" in args
+    ras_idx = args.index("--rlimit_as")
+    assert args[ras_idx + 1] == "hard"
+
 
 def test_build_resource_limits_rlimit_fallback(backend):
     backend._cgroup_v2_available = False
@@ -419,13 +426,16 @@ def test_build_resource_limits_rlimit_fallback(backend):
 
     args = backend._build_resource_limits(spec)
 
-    # Bug regression: --rlimit_as must NOT be used as the memory cap. It limits
-    # virtual address space, which uv/node/Rust/JVM reserve in huge amounts, so
-    # a small --rlimit_as aborts them instantly ("memory allocation failed",
-    # exit 255) and silently broke every uvx stdio MCP server. There is no
-    # RSS-based rlimit on modern Linux, so memory capping requires cgroups;
-    # the fallback runs without a hard memory cap by design.
-    assert "--rlimit_as" not in args
+    # Bug regression: --rlimit_as must be set to "hard" (the current hard
+    # limit), NOT a small value. A small RLIMIT_AS caps *virtual* address space,
+    # which uv/node/Rust/JVM reserve in huge amounts, so it aborts them
+    # instantly ("memory allocation failed" / node WASM "Cannot allocate Wasm
+    # memory") and silently broke every uvx/npx stdio MCP server. "hard" leaves
+    # virtual address space uncapped; resident memory is bounded by cgroups
+    # (cgroup branch) or the container mem_limit (fallback branch).
+    assert "--rlimit_as" in args
+    ras_idx = args.index("--rlimit_as")
+    assert args[ras_idx + 1] == "hard"
 
     nproc_idx = args.index("--rlimit_nproc")
     assert args[nproc_idx + 1] == "128"
