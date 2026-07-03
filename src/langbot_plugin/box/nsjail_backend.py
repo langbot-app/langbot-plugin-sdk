@@ -501,11 +501,12 @@ class NsjailBackend(BaseSandboxBackend):
             # rlimit fallback – used whenever cgroup v2 delegation is not usable
             # (private cgroup namespace -> EBUSY, or read-only /sys/fs/cgroup).
             #
-            # We deliberately do NOT set --rlimit_as for the memory cap.
-            # RLIMIT_AS limits *virtual* address space, not resident memory, and
-            # modern runtimes reserve huge virtual mappings up front: uv/Rust
-            # (and Go/JVM/Node) mmap gigabytes of address space even to do tiny
-            # work, so a 512 MB --rlimit_as aborts them instantly with
+            # We do NOT set a SMALL --rlimit_as as a memory cap (see the
+            # --rlimit_as hard note below). RLIMIT_AS limits *virtual* address
+            # space, not resident memory, and modern runtimes reserve huge
+            # virtual mappings up front: uv/Rust (and Go/JVM/Node) mmap
+            # gigabytes of address space even to do tiny work, so a 512 MB
+            # --rlimit_as aborts them instantly with
             # "memory allocation of N bytes failed" (exit 255) — which is what
             # silently broke every uvx-based stdio MCP server in containerized
             # nsjail deployments. There is no RSS-based rlimit on modern Linux
@@ -517,8 +518,27 @@ class NsjailBackend(BaseSandboxBackend):
             # which is a real rlimit that does not break runtimes.
             args.extend(["--rlimit_nproc", str(spec.pids_limit)])
 
+        # nsjail defaults --rlimit_as to 512 MB. RLIMIT_AS caps *virtual*
+        # address space, and modern runtimes reserve huge virtual mappings up
+        # front regardless of actual memory use: Node.js/V8 alone reserves well
+        # over 512 MB of address space at startup, and its built-in undici HTTP
+        # client instantiates an llhttp WebAssembly module during boot. Under
+        # the default 512 MB RLIMIT_AS that WASM allocation fails with
+        # "WebAssembly.instantiate(): Out of memory: Cannot allocate Wasm
+        # memory for new instance", crashing every node/npx-based stdio MCP
+        # server (e.g. firecrawl-mcp) even when cgroup_mem_max is generous.
+        # Python/uvx servers reserve far less address space and were unaffected,
+        # which made this look like "npx isn't supported".
+        #
+        # So we explicitly raise RLIMIT_AS to the current hard limit ("hard")
+        # rather than leaving it at nsjail's small default. Real memory pressure
+        # is still bounded by --cgroup_mem_max (cgroup v2 branch) or by the
+        # container-level mem_limit (rlimit fallback branch) — both of which cap
+        # RESIDENT memory, the thing that actually matters.
+        args.extend(["--rlimit_as", "hard"])
+
         # Always set these rlimits regardless of cgroup mode. These are safe
-        # for modern runtimes (unlike RLIMIT_AS).
+        # for modern runtimes (unlike a small RLIMIT_AS).
         args.extend(["--rlimit_fsize", "512"])  # max file size 512 MB
         args.extend(["--rlimit_nofile", "256"])  # max open fds
 
