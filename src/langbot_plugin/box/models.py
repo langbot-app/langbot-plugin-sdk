@@ -278,6 +278,8 @@ class BoxManagedProcessSpec(pydantic.BaseModel):
     args: list[str] = pydantic.Field(default_factory=list)
     env: dict[str, str] = pydantic.Field(default_factory=dict)
     cwd: str = DEFAULT_BOX_MOUNT_PATH
+    # Per-process memory override. 0 (default) means inherit the session value.
+    memory_mb: int = 0
 
     @pydantic.field_validator("command")
     @classmethod
