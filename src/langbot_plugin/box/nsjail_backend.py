@@ -282,7 +282,11 @@ class NsjailBackend(BaseSandboxBackend):
             host_path_mode=session.host_path_mode,
             mount_path=session.mount_path,
             cpus=session.cpus,
-            memory_mb=session.memory_mb,
+            # Allow per-process memory override: if the ManagedProcessSpec
+            # sets a memory_mb > 0 it wins; otherwise fall back to the session
+            # default.  This lets node/npx processes request more RAM than the
+            # shared session default without requiring a separate session.
+            memory_mb=spec.memory_mb if spec.memory_mb > 0 else session.memory_mb,
             pids_limit=session.pids_limit,
             read_only_rootfs=session.read_only_rootfs,
         )
