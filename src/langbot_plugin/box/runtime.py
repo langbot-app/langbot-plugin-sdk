@@ -729,7 +729,6 @@ class BoxRuntime:
             "mount_path",
             "persistent",
             "cpus",
-            "memory_mb",
             "pids_limit",
             "read_only_rootfs",
             "workspace_quota_mb",

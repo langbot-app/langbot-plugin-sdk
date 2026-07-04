@@ -379,7 +379,6 @@ async def test_reuse_recreates_when_backend_session_dead(logger):
     "field,changed",
     [
         ("image", "other/image:latest"),
-        ("memory_mb", 1024),
         ("cpus", 2.0),
         ("pids_limit", 64),
         ("workspace_quota_mb", 50),
