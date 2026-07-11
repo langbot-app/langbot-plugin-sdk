@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-import httpx
-
 from langbot_plugin.cli.commands import logout, publish
 
 
@@ -84,13 +82,22 @@ def test_logout_process_removes_file_when_last_nested_credential_is_deleted(
 
 
 class FakeResponse:
-    def __init__(self, json_data, *, raise_error=False):
+    def __init__(
+        self,
+        json_data,
+        *,
+        status_code=200,
+        text="",
+        reason_phrase="OK",
+    ):
         self._json_data = json_data
-        self.raise_error = raise_error
+        self.status_code = status_code
+        self.text = text
+        self.reason_phrase = reason_phrase
 
-    def raise_for_status(self):
-        if self.raise_error:
-            raise httpx.HTTPStatusError("bad", request=None, response=None)
+    @property
+    def is_error(self):
+        return self.status_code >= 400
 
     def json(self):
         return self._json_data
@@ -157,6 +164,43 @@ def test_publish_plugin_reports_api_failure(tmp_path, monkeypatch):
     publish.publish_plugin(str(package), "", "token")
 
     assert prints == [("publish_failed", "nope")]
+
+
+def test_publish_plugin_reports_http_error_message(tmp_path, monkeypatch):
+    package = tmp_path / "plugin.lbpkg"
+    package.write_bytes(b"package")
+    prints = []
+    FakeClient.calls = []
+    FakeClient.response = FakeResponse(
+        {"code": 400, "msg": "author name must match your GitHub username"},
+        status_code=400,
+        reason_phrase="Bad Request",
+    )
+    monkeypatch.setattr(publish.httpx, "Client", FakeClient)
+    monkeypatch.setattr(publish, "cli_print", lambda *args: prints.append(args))
+
+    publish.publish_plugin(str(package), "", "token")
+
+    assert prints == [("publish_failed", "author name must match your GitHub username")]
+
+
+def test_publish_plugin_falls_back_to_plain_http_error_body(tmp_path, monkeypatch):
+    package = tmp_path / "plugin.lbpkg"
+    package.write_bytes(b"package")
+    prints = []
+    FakeClient.calls = []
+    FakeClient.response = FakeResponse(
+        None,
+        status_code=502,
+        text="upstream unavailable",
+        reason_phrase="Bad Gateway",
+    )
+    monkeypatch.setattr(publish.httpx, "Client", FakeClient)
+    monkeypatch.setattr(publish, "cli_print", lambda *args: prints.append(args))
+
+    publish.publish_plugin(str(package), "", "token")
+
+    assert prints == [("publish_failed", "upstream unavailable")]
 
 
 def test_publish_process_requires_login(monkeypatch):
