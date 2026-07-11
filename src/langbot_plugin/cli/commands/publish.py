@@ -14,6 +14,19 @@ SERVER_URL = get_cloud_service_url()
 TMP_DIR = "dist/tmp"
 
 
+def _get_http_error_message(response: httpx.Response) -> str:
+    """Return the API's actionable message for an unsuccessful response."""
+    try:
+        result = response.json()
+        if isinstance(result, dict) and result.get("msg"):
+            return str(result["msg"])
+    except (ValueError, TypeError):
+        pass
+
+    body = response.text.strip()
+    return body or f"HTTP {response.status_code} {response.reason_phrase}"
+
+
 def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
     """
     Publish the plugin to LangBot Marketplace
@@ -37,7 +50,9 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
                 timeout=300,
             )
 
-            response.raise_for_status()
+            if response.is_error:
+                cli_print("publish_failed", _get_http_error_message(response))
+                return
 
             result = response.json()
             if result["code"] != 0:
