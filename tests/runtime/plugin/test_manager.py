@@ -649,6 +649,7 @@ async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
     await manager.register_plugin(handler, plugin.model_dump())
 
     assert [tool.metadata.name for tool in await manager.list_tools()] == ["lookup"]
+    assert [tool.owner for tool in await manager.list_tools()] == ["tester/toy"]
     assert [command.metadata.name for command in await manager.list_commands()] == [
         "admin"
     ]

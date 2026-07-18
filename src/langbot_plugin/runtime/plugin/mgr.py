@@ -518,6 +518,7 @@ class PluginManager:
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
         )
+        self._normalize_component_owners(plugin_container)
 
         try:
             if not hasattr(self.context, "control_handler"):
@@ -564,9 +565,21 @@ class PluginManager:
         refreshed = runtime_plugin_container.PluginContainer.from_dict(
             plugin_container_data
         )
+        self._normalize_component_owners(refreshed)
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
         plugin_container.status = refreshed.status
+
+    @staticmethod
+    def _normalize_component_owners(
+        plugin_container: runtime_plugin_container.PluginContainer,
+    ) -> None:
+        plugin_id = (
+            f"{plugin_container.manifest.metadata.author}/"
+            f"{plugin_container.manifest.metadata.name}"
+        )
+        for component in plugin_container.components:
+            component.manifest.owner = plugin_id
 
     async def remove_plugin_container(
         self,
