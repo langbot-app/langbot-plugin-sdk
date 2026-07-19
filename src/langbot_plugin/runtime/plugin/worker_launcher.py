@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import importlib.metadata
+import json
 import os
 import pathlib
 import shutil
@@ -15,6 +19,13 @@ from langbot_plugin.runtime.plugin.artifact import (
     PluginArtifact,
     PluginInstallationPaths,
 )
+from langbot_plugin.runtime.plugin.dependency_environment import (
+    DependencyEnvironmentPreparationError,
+    DependencyEnvironmentStaging,
+    PluginDependencyEnvironment,
+    PluginDependencyEnvironmentStore,
+)
+from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 from langbot_plugin.runtime.security import (
     PLUGIN_REGISTRATION_CAPABILITY_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
@@ -36,6 +47,8 @@ _READONLY_ETC_FILES = (
     "/etc/ssl",
 )
 _DEV_NODES = ("/dev/null", "/dev/random", "/dev/urandom")
+_DEPENDENCY_INSTALL_TIMEOUT_SECONDS = 600
+_DEPENDENCY_INSTALLER_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +57,7 @@ class PluginWorkerLaunchSpec:
     artifact: PluginArtifact
     paths: PluginInstallationPaths
     registration_capability: str
+    dependency_environment: PluginDependencyEnvironment | None = None
 
 
 class PluginWorkerLauncher:
@@ -133,10 +147,176 @@ class PluginWorkerLauncher:
             working_dir=str(launch_spec.artifact.code_path),
         )
 
+    async def prepare_dependency_environment(
+        self,
+        store: PluginDependencyEnvironmentStore,
+        artifact: PluginArtifact,
+    ) -> PluginDependencyEnvironment:
+        """Prepare shared dependencies before issuing a worker capability."""
+
+        _, profile = self._require_configuration()
+        if profile != "shared":
+            raise RuntimeError(
+                "Immutable dependency environments require the shared Runtime profile"
+            )
+        return await store.prepare(
+            artifact,
+            runtime_fingerprint=self.dependency_runtime_fingerprint(),
+            installer=self._install_dependency_environment,
+        )
+
+    def dependency_runtime_fingerprint(self) -> str:
+        """Key environments by the worker ABI and Runtime dependency contract."""
+
+        try:
+            sdk_version = importlib.metadata.version("langbot-plugin")
+        except importlib.metadata.PackageNotFoundError:  # pragma: no cover - dev tree
+            sdk_version = "uninstalled"
+        payload = {
+            "installer_schema": _DEPENDENCY_INSTALLER_SCHEMA_VERSION,
+            "python_cache_tag": sys.implementation.cache_tag,
+            "python_implementation": sys.implementation.name,
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+            "sdk_version": sdk_version,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    async def _install_dependency_environment(
+        self,
+        staging: DependencyEnvironmentStaging,
+        requirements: tuple[str, ...] | list[str],
+    ) -> None:
+        if not requirements:
+            return
+        args = self.build_dependency_prepare_nsjail_args(staging, requirements)
+        process = await asyncio.create_subprocess_exec(
+            str(self.nsjail_path),
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env={},
+            cwd="/",
+        )
+        try:
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=_DEPENDENCY_INSTALL_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise DependencyEnvironmentPreparationError(
+                "Plugin dependency installation timed out"
+            ) from exc
+        if process.returncode != 0:
+            # Never reflect pip output: configured indexes and backend errors
+            # can contain credentials. The exit code is stable and sufficient
+            # for the desired-state failure; detailed logs belong in a
+            # separately redacted operator channel.
+            raise DependencyEnvironmentPreparationError(
+                f"Plugin dependency installer exited with code {process.returncode}"
+            )
+
+    def build_dependency_prepare_nsjail_args(
+        self,
+        staging: DependencyEnvironmentStaging,
+        requirements: tuple[str, ...] | list[str],
+    ) -> list[str]:
+        policy, profile = self._require_configuration()
+        if profile != "shared" or not self.nsjail_path:
+            raise RuntimeError(
+                "Dependency preparation requires the shared Runtime profile"
+            )
+
+        requirements_path = staging.tmp_path / "requirements.txt"
+        requirements_path.write_text(
+            "".join(f"{requirement}\n" for requirement in requirements),
+            encoding="utf-8",
+        )
+        requirements_path.chmod(0o600)
+
+        runtime_prefix_mount = self._python_prefix_mount()
+        self._ensure_jail_mount_targets(
+            staging.jail_root_path,
+            extra_targets=(runtime_prefix_mount,) if runtime_prefix_mount else (),
+        )
+        (staging.jail_root_path / "dependency-env").mkdir(exist_ok=True)
+        args = ["--mode", "o", "--chroot", str(staging.jail_root_path)]
+        args.append("--disable_clone_newnet")
+        self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
+        args.extend(
+            [
+                "--bindmount",
+                f"{staging.site_packages_path}:/dependency-env",
+                "--bindmount",
+                f"{staging.tmp_path}:/tmp",
+                "--mount",
+                "none:/proc:proc:rw",
+                "--mount",
+                "none:/dev:tmpfs:rw",
+            ]
+        )
+        self._append_device_mounts(args)
+        args.extend(
+            [
+                "--cwd",
+                "/tmp",
+                "--env",
+                "HOME=/tmp",
+                "--env",
+                "TMPDIR=/tmp",
+                "--env",
+                "PIP_CACHE_DIR=/tmp/pip-cache",
+                "--env",
+                "PIP_DISABLE_PIP_VERSION_CHECK=1",
+                "--env",
+                "PYTHONDONTWRITEBYTECODE=1",
+                "--env",
+                "PYTHONUNBUFFERED=1",
+                "--env",
+                "PATH=/usr/local/bin:/usr/bin:/bin",
+            ]
+        )
+        self._append_policy_limits(args, policy)
+        args.extend(
+            [
+                "--really_quiet",
+                "--",
+                str(self.python_executable),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--ignore-installed",
+                "--no-cache-dir",
+                "--no-compile",
+                "--no-input",
+                "--no-warn-script-location",
+                "--target",
+                "/dependency-env",
+                *pkgmgr_helper.get_pip_index_args(),
+                "-r",
+                "/tmp/requirements.txt",
+            ]
+        )
+        return args
+
     def build_nsjail_args(self, launch_spec: PluginWorkerLaunchSpec) -> list[str]:
         policy, profile = self._require_configuration()
         if profile != "shared" or not self.nsjail_path:
             raise RuntimeError("nsjail arguments require the shared Runtime profile")
+
+        dependency_environment = launch_spec.dependency_environment
+        if dependency_environment is None:
+            raise RuntimeError("Shared plugin worker dependency environment is missing")
+        if dependency_environment.artifact_digest != launch_spec.artifact.digest:
+            raise RuntimeError(
+                "Shared plugin worker dependency environment does not match artifact"
+            )
 
         runtime_prefix_mount = self._python_prefix_mount()
         self._ensure_jail_mount_targets(
@@ -145,7 +325,69 @@ class PluginWorkerLauncher:
         )
         args = ["--mode", "o", "--chroot", str(launch_spec.paths.jail_root_path)]
         args.append("--disable_clone_newnet")
+        self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
 
+        args.extend(
+            [
+                "--bindmount_ro",
+                f"{launch_spec.artifact.code_path}:/plugin",
+                "--bindmount_ro",
+                f"{dependency_environment.site_packages_path}:/plugin-dependencies",
+                "--bindmount",
+                f"{launch_spec.paths.home_path}:/home",
+                "--bindmount",
+                f"{launch_spec.paths.tmp_path}:/tmp",
+                "--bindmount",
+                f"{launch_spec.paths.data_path}:/data",
+                "--mount",
+                "none:/proc:proc:rw",
+                "--mount",
+                "none:/dev:tmpfs:rw",
+            ]
+        )
+        self._append_device_mounts(args)
+
+        args.extend(
+            [
+                "--cwd",
+                "/plugin",
+                "--env",
+                "HOME=/home",
+                "--env",
+                "TMPDIR=/tmp",
+                "--env",
+                "PYTHONUNBUFFERED=1",
+                "--env",
+                "PYTHONDONTWRITEBYTECODE=1",
+                "--env",
+                "PYTHONPATH=/plugin-dependencies",
+                "--env",
+                f"{PLUGIN_RUNTIME_PROFILE_ENV}=shared",
+                "--env",
+                f"{PLUGIN_REGISTRATION_CAPABILITY_ENV}={launch_spec.registration_capability}",
+            ]
+        )
+
+        self._append_policy_limits(args, policy)
+        args.extend(
+            [
+                "--really_quiet",
+                "--",
+                str(self.python_executable),
+                "-m",
+                "langbot_plugin.cli.__init__",
+                "run",
+                "-s",
+                "--prod",
+            ]
+        )
+        return args
+
+    def _append_readonly_runtime_mounts(
+        self,
+        args: list[str],
+        runtime_prefix_mount: pathlib.Path | None,
+    ) -> None:
         for path in _READONLY_SYSTEM_MOUNTS:
             if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
@@ -160,43 +402,17 @@ class PluginWorkerLauncher:
                 ]
             )
 
-        args.extend(
-            [
-                "--bindmount_ro",
-                f"{launch_spec.artifact.code_path}:/plugin",
-                "--bindmount",
-                f"{launch_spec.paths.home_path}:/home",
-                "--bindmount",
-                f"{launch_spec.paths.tmp_path}:/tmp",
-                "--bindmount",
-                f"{launch_spec.paths.data_path}:/data",
-                "--mount",
-                "none:/proc:proc:rw",
-                "--mount",
-                "none:/dev:tmpfs:rw",
-            ]
-        )
+    @staticmethod
+    def _append_device_mounts(args: list[str]) -> None:
         for device in _DEV_NODES:
             if os.path.exists(device):
                 args.extend(["--bindmount", f"{device}:{device}"])
 
-        args.extend(
-            [
-                "--cwd",
-                "/plugin",
-                "--env",
-                "HOME=/home",
-                "--env",
-                "TMPDIR=/tmp",
-                "--env",
-                "PYTHONUNBUFFERED=1",
-                "--env",
-                f"{PLUGIN_RUNTIME_PROFILE_ENV}=shared",
-                "--env",
-                f"{PLUGIN_REGISTRATION_CAPABILITY_ENV}={launch_spec.registration_capability}",
-            ]
-        )
-
+    def _append_policy_limits(
+        self,
+        args: list[str],
+        policy: PluginWorkerPolicy,
+    ) -> None:
         if self.cgroup_v2_available:
             args.extend(
                 [
@@ -219,17 +435,8 @@ class PluginWorkerLauncher:
                 str(policy.max_open_files),
                 "--rlimit_fsize",
                 str(policy.max_file_size_mb),
-                "--really_quiet",
-                "--",
-                str(self.python_executable),
-                "-m",
-                "langbot_plugin.cli.__init__",
-                "run",
-                "-s",
-                "--prod",
             ]
         )
-        return args
 
     def _require_configuration(
         self,
@@ -246,6 +453,7 @@ class PluginWorkerLauncher:
     ) -> None:
         targets = {
             "/plugin",
+            "/plugin-dependencies",
             "/home",
             "/tmp",
             "/data",

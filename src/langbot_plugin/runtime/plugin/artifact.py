@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pathlib
+import posixpath
 import re
 import shutil
 import stat
@@ -18,7 +19,11 @@ from langbot_plugin.entities.io.context import InstallationBinding
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_COMPONENT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _VERIFIED_MARKER = ".verified-sha256"
-_MAX_ARTIFACT_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+_MAX_ARTIFACT_ENTRIES = 512
+_MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
+_MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_MAX_ARTIFACT_COMPRESSION_RATIO = 100.0
+_ARTIFACT_COPY_CHUNK_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,26 +170,172 @@ class PluginArtifactStore:
     def _extract_verified_zip(package: bytes, destination: pathlib.Path) -> None:
         from io import BytesIO
 
-        total_size = 0
         with zipfile.ZipFile(BytesIO(package), "r") as archive:
-            for info in archive.infolist():
-                member = pathlib.PurePosixPath(info.filename)
-                if member.is_absolute() or ".." in member.parts:
-                    raise ValueError("Plugin artifact contains an unsafe path")
-                unix_mode = info.external_attr >> 16
-                if stat.S_ISLNK(unix_mode):
-                    raise ValueError("Plugin artifact must not contain symbolic links")
-                total_size += info.file_size
-                if total_size > _MAX_ARTIFACT_UNCOMPRESSED_BYTES:
-                    raise ValueError("Plugin artifact exceeds the extraction limit")
+            members = archive.infolist()
+            if len(members) > _MAX_ARTIFACT_ENTRIES:
+                raise ValueError(
+                    "Plugin artifact contains too many entries "
+                    f"(maximum {_MAX_ARTIFACT_ENTRIES})"
+                )
 
-                target = destination.joinpath(*member.parts)
-                if info.is_dir():
+            destination_root = destination.resolve()
+            validated: list[tuple[zipfile.ZipInfo, pathlib.Path, bool]] = []
+            seen_paths: set[str] = set()
+            regular_paths: set[str] = set()
+            total_compressed = 0
+            total_uncompressed = 0
+
+            for info in members:
+                member_name = str(info.filename or "")
+                if not member_name or "\x00" in member_name:
+                    raise ValueError("Plugin artifact contains an unsafe empty or NUL path")
+
+                portable_name = member_name.replace("\\", "/")
+                normalized = posixpath.normpath(portable_name)
+                first_component = normalized.split("/", 1)[0]
+                raw_parts = tuple(part for part in portable_name.split("/") if part)
+                if (
+                    portable_name.startswith("/")
+                    or normalized in {"", ".", ".."}
+                    or normalized.startswith("../")
+                    or ".." in raw_parts
+                    or (len(first_component) >= 2 and first_component[1] == ":")
+                ):
+                    raise ValueError(f"Plugin artifact contains an unsafe path: {member_name}")
+
+                target = destination_root.joinpath(*normalized.split("/"))
+                try:
+                    target.relative_to(destination_root)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Plugin artifact contains an unsafe path: {member_name}"
+                    ) from exc
+
+                target_key = os.path.normcase(str(target))
+                if target_key in seen_paths:
+                    raise ValueError(f"Plugin artifact contains a duplicate path: {member_name}")
+                seen_paths.add(target_key)
+
+                unix_mode = (info.external_attr >> 16) & 0xFFFF
+                file_type = stat.S_IFMT(unix_mode)
+                is_directory = info.is_dir() or portable_name.endswith("/")
+                if file_type == stat.S_IFLNK:
+                    raise ValueError(
+                        f"Plugin artifact must not contain symbolic links: {member_name}"
+                    )
+                if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+                    raise ValueError(
+                        f"Plugin artifact contains a non-regular entry: {member_name}"
+                    )
+                if is_directory and file_type not in {0, stat.S_IFDIR}:
+                    raise ValueError(
+                        f"Plugin artifact directory has an invalid file type: {member_name}"
+                    )
+                if not is_directory and file_type not in {0, stat.S_IFREG}:
+                    raise ValueError(
+                        f"Plugin artifact contains a non-regular entry: {member_name}"
+                    )
+                for parent in target.parents:
+                    if parent == destination_root:
+                        break
+                    if os.path.normcase(str(parent)) in regular_paths:
+                        raise ValueError(
+                            f"Plugin artifact path conflicts with a file: {member_name}"
+                        )
+                if is_directory:
+                    if info.file_size != 0:
+                        raise ValueError(
+                            f"Plugin artifact directory has unexpected content: {member_name}"
+                        )
+                    validated.append((info, target, True))
+                    continue
+
+                target_prefix = f"{target_key}{os.sep}"
+                if any(path.startswith(target_prefix) for path in seen_paths):
+                    raise ValueError(
+                        f"Plugin artifact path conflicts with a directory: {member_name}"
+                    )
+                regular_paths.add(target_key)
+
+                if info.file_size < 0 or info.compress_size < 0:
+                    raise ValueError(
+                        f"Plugin artifact contains invalid size metadata: {member_name}"
+                    )
+                if info.file_size > _MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES:
+                    raise ValueError(
+                        f"Plugin artifact entry exceeds the uncompressed size limit: {member_name}"
+                    )
+                if info.file_size and (
+                    info.compress_size == 0
+                    or info.file_size / info.compress_size
+                    > _MAX_ARTIFACT_COMPRESSION_RATIO
+                ):
+                    raise ValueError(
+                        f"Plugin artifact entry exceeds the compression ratio limit: {member_name}"
+                    )
+                total_compressed += info.compress_size
+                total_uncompressed += info.file_size
+                if total_uncompressed > _MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES:
+                    raise ValueError(
+                        "Plugin artifact exceeds the total uncompressed size limit"
+                    )
+                validated.append((info, target, False))
+
+            if total_uncompressed and (
+                total_compressed == 0
+                or total_uncompressed / total_compressed
+                > _MAX_ARTIFACT_COMPRESSION_RATIO
+            ):
+                raise ValueError(
+                    "Plugin artifact exceeds the aggregate compression ratio limit"
+                )
+
+            extracted_total = 0
+            for info, target, is_directory in validated:
+                if is_directory:
                     target.mkdir(parents=True, exist_ok=True)
                     continue
+
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(info, "r") as source, target.open("wb") as output:
-                    shutil.copyfileobj(source, output)
+                extracted_entry = 0
+                try:
+                    with archive.open(info, "r") as source, target.open("xb") as output:
+                        while True:
+                            chunk = source.read(_ARTIFACT_COPY_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            extracted_entry += len(chunk)
+                            extracted_total += len(chunk)
+                            if (
+                                extracted_entry
+                                > _MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES
+                            ):
+                                raise ValueError(
+                                    "Plugin artifact entry exceeds the uncompressed size "
+                                    f"limit: {info.filename}"
+                                )
+                            if (
+                                extracted_total
+                                > _MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES
+                            ):
+                                raise ValueError(
+                                    "Plugin artifact exceeds the total uncompressed size limit"
+                                )
+                            output.write(chunk)
+                except Exception:
+                    try:
+                        target.unlink()
+                    except OSError:
+                        pass
+                    raise
+                if extracted_entry != info.file_size:
+                    try:
+                        target.unlink()
+                    except OSError:
+                        pass
+                    raise ValueError(
+                        f"Plugin artifact entry size changed while extracting: {info.filename}"
+                    )
 
     @staticmethod
     def _read_manifest(code_path: pathlib.Path) -> tuple[str, str, str]:

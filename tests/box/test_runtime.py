@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import logging
+import os
 from unittest import mock
 
 import pytest
@@ -23,6 +25,7 @@ from langbot_plugin.box.errors import (
     BoxManagedProcessNotFoundError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
+    BoxReadinessError,
     BoxValidationError,
 )
 from langbot_plugin.box.models import (
@@ -225,6 +228,65 @@ def test_init_method_applies_config_and_resets_backend(logger):
     backend.configure.assert_called_once_with({"cpus": 2})
     # No active sessions → backend reset so it re-selects with new config.
     assert runtime._backend is None
+
+
+def test_verify_shared_workspace_reads_only_valid_nofollow_marker(
+    logger, tmp_path
+):
+    runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+    root = tmp_path / "box"
+    runtime.init(
+        {
+            "local": {
+                "host_root": str(root),
+                "default_workspace": "shared",
+                "allowed_mount_roots": [str(root)],
+            }
+        }
+    )
+    marker_name = ".langbot-box-volume-probe-" + "a" * 32
+    marker = root / "shared" / marker_name
+    payload = os.urandom(64)
+    marker.write_bytes(payload)
+
+    result = runtime.verify_shared_workspace(marker_name)
+
+    assert result == {
+        "marker_name": marker_name,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size": len(payload),
+    }
+    with pytest.raises(ValueError, match="probe basename"):
+        runtime.verify_shared_workspace("../shared/secret")
+
+
+def test_verify_shared_workspace_rejects_missing_and_symlink_markers(
+    logger, tmp_path
+):
+    runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+    root = tmp_path / "box"
+    runtime.init(
+        {
+            "local": {
+                "host_root": str(root),
+                "default_workspace": "shared",
+                "allowed_mount_roots": [str(root)],
+            }
+        }
+    )
+    marker_name = ".langbot-box-volume-probe-" + "b" * 32
+    with pytest.raises(BoxReadinessError, match="cannot read"):
+        runtime.verify_shared_workspace(marker_name)
+
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"not the shared marker")
+    marker = root / "shared" / marker_name
+    try:
+        marker.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this platform")
+    with pytest.raises(BoxReadinessError, match="cannot read"):
+        runtime.verify_shared_workspace(marker_name)
 
 
 def test_init_method_applies_docker_cpu_limit_config(logger):

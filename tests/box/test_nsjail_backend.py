@@ -97,6 +97,10 @@ async def test_strict_readiness_reports_cgroup_namespace_mount_and_network(
     assert readiness == {
         "available": True,
         "cgroup_v2": True,
+        "hard_workspace_quota": False,
+        "hard_skill_storage_quota": False,
+        "bounded_ephemeral_storage": False,
+        "inode_quota": False,
         **expected_probe,
     }
     probe.assert_awaited_once_with(str(tmp_path))

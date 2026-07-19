@@ -5,10 +5,12 @@ import collections
 import contextlib
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
 from pathlib import Path
+import stat
 import time
 import uuid
 import weakref
@@ -39,6 +41,7 @@ from .models import (
     BoxManagedProcessInfo,
     BoxManagedProcessSpec,
     BoxManagedProcessStatus,
+    BoxMountSpec,
     BoxSessionInfo,
     BoxSpec,
     BoxHostMountMode,
@@ -48,6 +51,7 @@ from .models import (
     SandboxAdmissionRevocation,
 )
 from .skill_store import BoxSkillStore
+from .security import validate_shared_workspace_probe_name
 from .tenancy import (
     box_namespace,
     namespace_session_id,
@@ -389,6 +393,63 @@ class BoxRuntime:
             raise BoxReadinessError("Managed sandbox workspace path is not writable")
         return resolved_default
 
+    def verify_shared_workspace(self, marker_name: str) -> dict:
+        """Digest one Core-created marker from the canonical shared root.
+
+        This host-control operation intentionally accepts only an opaque
+        basename. It never accepts a caller-supplied directory and never follows
+        the marker if an attacker replaces it with a symlink.
+        """
+
+        marker_name = validate_shared_workspace_probe_name(marker_name)
+        workspace_root = self._managed_workspace_root()
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        root_fd = os.open(workspace_root, directory_flags | nofollow)
+        marker_fd: int | None = None
+        try:
+            marker_fd = os.open(marker_name, os.O_RDONLY | nofollow, dir_fd=root_fd)
+            marker_stat = os.fstat(marker_fd)
+            if not stat.S_ISREG(marker_stat.st_mode):
+                raise BoxReadinessError(
+                    "Box shared Workspace probe is not a regular file"
+                )
+            if marker_stat.st_size <= 0 or marker_stat.st_size > 1024:
+                raise BoxReadinessError(
+                    "Box shared Workspace probe has an invalid size"
+                )
+            digest = hashlib.sha256()
+            total = 0
+            while True:
+                chunk = os.read(marker_fd, min(1024 - total + 1, 1024))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 1024:
+                    raise BoxReadinessError(
+                        "Box shared Workspace probe exceeds the size limit"
+                    )
+                digest.update(chunk)
+            if total != marker_stat.st_size:
+                raise BoxReadinessError(
+                    "Box shared Workspace probe changed while being verified"
+                )
+            return {
+                "marker_name": marker_name,
+                "sha256": digest.hexdigest(),
+                "size": total,
+            }
+        except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+            if isinstance(exc, BoxReadinessError):
+                raise
+            raise BoxReadinessError(
+                "Box Runtime cannot read the Core shared Workspace probe"
+            ) from exc
+        finally:
+            if marker_fd is not None:
+                os.close(marker_fd)
+            os.close(root_fd)
+
     def _canonical_workspace_path(self, context: ActionContext) -> str:
         context = ActionContext.model_validate(context).without_installation()
         default_workspace = self._managed_workspace_root()
@@ -433,6 +494,23 @@ class BoxRuntime:
             if submitted_host_path != workspace_path:
                 raise BoxAdmissionError("Managed sandbox host_path is runtime-owned")
 
+        extra_mounts: list[BoxMountSpec] = []
+        if spec.skill_name is not None:
+            scoped_store = self.skill_store.scoped(box_namespace(context))
+            try:
+                package_root = scoped_store.resolve_skill_package_root(spec.skill_name)
+            except ValueError as exc:
+                raise BoxAdmissionError(
+                    "Managed sandbox skill is unavailable in this Workspace"
+                ) from exc
+            extra_mounts.append(
+                BoxMountSpec(
+                    host_path=package_root,
+                    mount_path=f"{DEFAULT_BOX_MOUNT_PATH}/.skills/{spec.skill_name}",
+                    mode=BoxHostMountMode.READ_ONLY,
+                )
+            )
+
         return spec.model_copy(
             update={
                 "session_id": namespace_session_id(
@@ -443,7 +521,7 @@ class BoxRuntime:
                 "host_path": workspace_path,
                 "host_path_mode": BoxHostMountMode.READ_WRITE,
                 "mount_path": DEFAULT_BOX_MOUNT_PATH,
-                "extra_mounts": [],
+                "extra_mounts": extra_mounts,
                 "persistent": True,
                 "timeout_sec": min(spec.timeout_sec, policy.max_timeout_sec),
                 "cpus": policy.cpus,
@@ -550,6 +628,7 @@ class BoxRuntime:
         key = grant.workspace_key
         context = self._grant_context(grant)
         cleanup_tasks: list[asyncio.Task[None]] = []
+        installed_grant = grant
         async with self._lock:
             cleanup_tasks.extend(self._reap_expired_admissions_locked(now))
             revoked_revision = self._revoked_admission_revisions.get(key, 0)
@@ -581,39 +660,43 @@ class BoxRuntime:
                 and grant.execution_generation == current.execution_generation
                 and grant.expires_at < current.expires_at
             ):
-                raise BoxAdmissionError("Sandbox admission grant renewal shortens its lifetime")
-
-            self._admission_grants[key] = grant
-            self._admission_revisions[key] = grant.entitlement_revision
-            self._admission_generations[key] = grant.execution_generation
-            self._admission_limit_fingerprints[key] = limit_fingerprint
-
-            if (
-                current is None
-                or current.execution_generation != grant.execution_generation
-                or grant.max_sessions == 0
-            ):
-                cleanup_tasks.extend(self._drop_workspace_sessions_locked(context))
+                # Two Core replicas can renew the same immutable entitlement
+                # with slightly different wall clocks. A shorter duplicate is
+                # idempotent; rejecting it would invite the losing replica to
+                # revoke a grant that remains valid for the whole Workspace.
+                installed_grant = current
             else:
-                canonical_session_id = namespace_session_id(
-                    context, policy.logical_session_id
-                )
-                for session_id in self._workspace_session_ids_locked(context):
-                    if session_id == canonical_session_id:
-                        continue
-                    cleanup_task = self._drop_session_locked(session_id)
-                    if cleanup_task is not None:
-                        cleanup_tasks.append(cleanup_task)
+                self._admission_grants[key] = grant
+                self._admission_revisions[key] = grant.entitlement_revision
+                self._admission_generations[key] = grant.execution_generation
+                self._admission_limit_fingerprints[key] = limit_fingerprint
+
+                if (
+                    current is None
+                    or current.execution_generation != grant.execution_generation
+                    or grant.max_sessions == 0
+                ):
+                    cleanup_tasks.extend(self._drop_workspace_sessions_locked(context))
+                else:
+                    canonical_session_id = namespace_session_id(
+                        context, policy.logical_session_id
+                    )
+                    for session_id in self._workspace_session_ids_locked(context):
+                        if session_id == canonical_session_id:
+                            continue
+                        cleanup_task = self._drop_session_locked(session_id)
+                        if cleanup_task is not None:
+                            cleanup_tasks.append(cleanup_task)
 
         await self._wait_for_session_cleanups(cleanup_tasks)
         return {
             "installed": True,
-            "workspace_uuid": grant.workspace_uuid,
-            "execution_generation": grant.execution_generation,
-            "entitlement_revision": grant.entitlement_revision,
-            "max_sessions": grant.max_sessions,
-            "max_managed_processes": grant.max_managed_processes,
-            "expires_at": grant.expires_at.isoformat(),
+            "workspace_uuid": installed_grant.workspace_uuid,
+            "execution_generation": installed_grant.execution_generation,
+            "entitlement_revision": installed_grant.entitlement_revision,
+            "max_sessions": installed_grant.max_sessions,
+            "max_managed_processes": installed_grant.max_managed_processes,
+            "expires_at": installed_grant.expires_at.isoformat(),
         }
 
     async def revoke_sandbox_admission_grant(
@@ -1013,6 +1096,10 @@ class BoxRuntime:
             "namespace_isolation": False,
             "mount_isolation": False,
             "network_isolation": False,
+            "hard_workspace_quota": False,
+            "hard_skill_storage_quota": False,
+            "bounded_ephemeral_storage": False,
+            "inode_quota": False,
             "session_cap": self._admission_policy.max_sessions <= 1,
             "managed_process_cap": self._admission_policy.max_managed_processes
             == 0,
@@ -1042,6 +1129,10 @@ class BoxRuntime:
                 "namespace_isolation",
                 "mount_isolation",
                 "network_isolation",
+                "hard_workspace_quota",
+                "hard_skill_storage_quota",
+                "bounded_ephemeral_storage",
+                "inode_quota",
             ):
                 checks[name] = backend_readiness.get(name) is True
             readiness_error = backend_readiness.get("error") or readiness_error

@@ -93,7 +93,14 @@ no context envelope.
 {
   "applied": ["installation-id"],
   "removed": [],
-  "missing_artifacts": ["installation-id"]
+  "missing_artifacts": ["installation-id"],
+  "failed_installations": [
+    {
+      "installation_uuid": "installation-id",
+      "error_code": "dependency_prepare_failed",
+      "message": "Plugin dependency installer exited with code 1"
+    }
+  ]
 }
 ```
 
@@ -124,8 +131,12 @@ using the same context and pass the resulting opaque file key.
 }
 ```
 
-`state` is `starting`, `disabled`, or `artifact_missing`. The artifact path is
-omitted for `artifact_missing`.
+`state` is `starting`, `disabled`, `artifact_missing`, `failed`, or `superseded`.
+The artifact path is omitted for `artifact_missing`. `superseded` means a newer
+concurrent desired-state transition fenced the apply while its dependencies were
+being prepared. A dependency preparation failure returns the stable
+`error_code=dependency_prepare_failed` plus a safe message and never launches a
+worker. Reapplying the same desired revision retries the preparation.
 
 ## `remove_plugin_installation`
 

@@ -353,6 +353,7 @@ class BoxServerHandler(Handler):
             LangBotToBoxAction.INIT.value,
             LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT.value,
             LangBotToBoxAction.REVOKE_SANDBOX_ADMISSION_GRANT.value,
+            LangBotToBoxAction.VERIFY_SHARED_WORKSPACE.value,
             LangBotToBoxAction.SHUTDOWN.value,
         }
     )
@@ -684,6 +685,15 @@ class BoxServerHandler(Handler):
             result = await self._runtime.revoke_sandbox_admission_grant(
                 revocation
             )
+            return ActionResponse.success(result)
+
+        @self.action(LangBotToBoxAction.VERIFY_SHARED_WORKSPACE)
+        async def verify_shared_workspace(data: dict[str, Any]) -> ActionResponse:
+            self._require_host_control()
+            try:
+                result = self._runtime.verify_shared_workspace(data.get("marker_name", ""))
+            except Exception as exc:
+                return ActionResponse.error(f"BoxReadinessError: {exc}")
             return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.LIST_SKILLS)

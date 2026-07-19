@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import stat
+import zipfile
+
+import pytest
+
+from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
+from langbot_plugin.runtime.plugin.dependency_environment import (
+    DependencyEnvironmentPreparationError,
+    PluginDependencyEnvironmentStore,
+)
+
+
+def _package(requirements: str = "third-party-demo==1.0.0\n") -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(
+            "manifest.yaml",
+            """
+kind: Plugin
+metadata:
+  author: tester
+  name: dependency-demo
+  version: 1.0.0
+spec: {}
+""",
+        )
+        archive.writestr("requirements.txt", requirements)
+    return output.getvalue()
+
+
+def _artifact(tmp_path, requirements: str = "third-party-demo==1.0.0\n"):
+    package = _package(requirements)
+    digest = hashlib.sha256(package).hexdigest()
+    artifact_store = PluginArtifactStore(tmp_path / "plugin-runtime")
+    return artifact_store.install_package(package, digest)
+
+
+def _publish_fake_distribution(staging, requirements):
+    assert requirements == ("third-party-demo==1.0.0",)
+    (staging.site_packages_path / "third_party_demo.py").write_text(
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+    metadata_path = staging.site_packages_path / "third_party_demo-1.0.0.dist-info"
+    metadata_path.mkdir()
+    (metadata_path / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: third-party-demo\nVersion: 1.0.0\n",
+        encoding="utf-8",
+    )
+
+
+async def test_missing_requirement_is_prepared_once_and_reused(tmp_path):
+    artifact = _artifact(tmp_path)
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    install_count = 0
+
+    async def installer(staging, requirements):
+        nonlocal install_count
+        install_count += 1
+        _publish_fake_distribution(staging, requirements)
+
+    first = await store.prepare(
+        artifact,
+        runtime_fingerprint="runtime-v1",
+        installer=installer,
+    )
+    second = await store.prepare(
+        artifact,
+        runtime_fingerprint="runtime-v1",
+        installer=installer,
+    )
+
+    assert first == second
+    assert install_count == 1
+    assert first.site_packages_path.joinpath("third_party_demo.py").is_file()
+    assert stat.S_IMODE(first.root_path.stat().st_mode) == 0o555
+    assert stat.S_IMODE(first.site_packages_path.stat().st_mode) == 0o555
+    assert (
+        stat.S_IMODE(
+            first.site_packages_path.joinpath("third_party_demo.py").stat().st_mode
+        )
+        & 0o222
+        == 0
+    )
+
+
+async def test_concurrent_preparation_runs_installer_once(tmp_path):
+    artifact = _artifact(tmp_path)
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    install_started = asyncio.Event()
+    release_install = asyncio.Event()
+    install_count = 0
+
+    async def installer(staging, requirements):
+        nonlocal install_count
+        install_count += 1
+        install_started.set()
+        await release_install.wait()
+        _publish_fake_distribution(staging, requirements)
+
+    first_task = asyncio.create_task(
+        store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+    )
+    await install_started.wait()
+    second_task = asyncio.create_task(
+        store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+    )
+    await asyncio.sleep(0)
+    release_install.set()
+
+    first, second = await asyncio.gather(first_task, second_task)
+
+    assert first == second
+    assert install_count == 1
+
+
+async def test_failure_removes_staging_and_does_not_poison_digest(tmp_path):
+    artifact = _artifact(tmp_path)
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+
+    async def failing_installer(staging, requirements):
+        (staging.site_packages_path / "half-installed.py").write_text(
+            "BROKEN = True\n",
+            encoding="utf-8",
+        )
+        raise DependencyEnvironmentPreparationError("dependency download failed")
+
+    with pytest.raises(
+        DependencyEnvironmentPreparationError,
+        match="dependency download failed",
+    ):
+        await store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=failing_installer,
+        )
+
+    assert list(store.environments_path.iterdir()) == []
+
+    async def successful_installer(staging, requirements):
+        _publish_fake_distribution(staging, requirements)
+
+    ready = await store.prepare(
+        artifact,
+        runtime_fingerprint="runtime-v1",
+        installer=successful_installer,
+    )
+    assert ready.site_packages_path.is_dir()
+
+
+async def test_shared_requirements_reject_pip_control_options(tmp_path):
+    artifact = _artifact(tmp_path, "--extra-index-url https://attacker.invalid\n")
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+
+    async def installer(staging, requirements):  # pragma: no cover - must not run
+        raise AssertionError("installer must not receive pip control options")
+
+    with pytest.raises(
+        DependencyEnvironmentPreparationError,
+        match="cannot contain pip options",
+    ):
+        await store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )

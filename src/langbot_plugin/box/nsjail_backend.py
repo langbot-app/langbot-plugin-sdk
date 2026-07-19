@@ -139,6 +139,16 @@ class NsjailBackend(BaseSandboxBackend):
             "namespace_isolation": None,
             "mount_isolation": None,
             "network_isolation": None,
+            # nsjail itself does not provide byte/inode accounting for bind
+            # mounts, the shared tenant skill store, or its private
+            # root/tmp/home. A future operator-owned project/subvolume quota
+            # provider may override these only after it can attest both the
+            # workspace and skills/tenants/<scope> backing filesystems.
+            # Runtime/Core payloads are intentionally not consulted.
+            "hard_workspace_quota": False,
+            "hard_skill_storage_quota": False,
+            "bounded_ephemeral_storage": False,
+            "inode_quota": False,
         }
         if not strict:
             return readiness
@@ -149,6 +159,10 @@ class NsjailBackend(BaseSandboxBackend):
                     "namespace_isolation": False,
                     "mount_isolation": False,
                     "network_isolation": False,
+                    "hard_workspace_quota": False,
+                    "hard_skill_storage_quota": False,
+                    "bounded_ephemeral_storage": False,
+                    "inode_quota": False,
                 }
             )
             return readiness
@@ -159,6 +173,10 @@ class NsjailBackend(BaseSandboxBackend):
                     "namespace_isolation": False,
                     "mount_isolation": False,
                     "network_isolation": False,
+                    "hard_workspace_quota": False,
+                    "hard_skill_storage_quota": False,
+                    "bounded_ephemeral_storage": False,
+                    "inode_quota": False,
                     "error": "managed nsjail readiness requires a durable workspace path",
                 }
             )
@@ -172,6 +190,10 @@ class NsjailBackend(BaseSandboxBackend):
                 "namespace_isolation": False,
                 "mount_isolation": False,
                 "network_isolation": False,
+                "hard_workspace_quota": False,
+                "hard_skill_storage_quota": False,
+                "bounded_ephemeral_storage": False,
+                "inode_quota": False,
                 "error": str(exc),
             }
         readiness.update(probe)

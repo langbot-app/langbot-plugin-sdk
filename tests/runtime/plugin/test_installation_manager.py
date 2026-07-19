@@ -14,10 +14,18 @@ from langbot_plugin.entities.io.context import (
 )
 from langbot_plugin.runtime.context import RuntimeContext
 from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
+from langbot_plugin.runtime.plugin.dependency_environment import (
+    DependencyEnvironmentPreparationError,
+    PluginDependencyEnvironment,
+)
 from langbot_plugin.runtime.plugin.mgr import PluginManager
 
 
-def _package(*, body: str = "VALUE = 1") -> bytes:
+def _package(
+    *,
+    body: str = "VALUE = 1",
+    requirements: str | None = None,
+) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         archive.writestr(
@@ -32,6 +40,8 @@ spec: {}
 """,
         )
         archive.writestr("main.py", body)
+        if requirements is not None:
+            archive.writestr("requirements.txt", requirements)
     return output.getvalue()
 
 
@@ -205,3 +215,211 @@ def test_registration_capability_is_one_use_and_bound_to_complete_tuple(tmp_path
             plugin_author="tester",
             plugin_name="demo",
         )
+
+
+async def test_shared_apply_prepares_dependency_environment_before_worker_launch(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package(requirements="third-party-demo==1.0.0\n")
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    order: list[str] = []
+
+    async def prepare(store, artifact):
+        order.append("prepare")
+        root = store.base_path / "test-environment"
+        site_packages = root / "site-packages"
+        site_packages.mkdir(parents=True)
+        return PluginDependencyEnvironment(
+            digest="b" * 64,
+            artifact_digest=artifact.digest,
+            requirements_digest="c" * 64,
+            runtime_fingerprint="d" * 64,
+            root_path=root,
+            site_packages_path=site_packages,
+        )
+
+    def schedule(runtime):
+        assert runtime.dependency_environment is not None
+        order.append("launch")
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        prepare,
+    )
+    monkeypatch.setattr(manager, "_schedule_installation_worker", schedule)
+
+    result = await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=True,
+    )
+
+    assert order == ["prepare", "launch"]
+    assert result["state"] == "starting"
+    assert result["dependency_environment_digest"] == "b" * 64
+
+
+async def test_shared_dependency_failure_is_explicit_and_same_revision_can_retry(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package(requirements="third-party-demo==1.0.0\n")
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    launch_count = 0
+
+    async def fail_prepare(store, artifact):
+        raise DependencyEnvironmentPreparationError("dependency download failed")
+
+    def schedule(runtime):
+        nonlocal launch_count
+        launch_count += 1
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        fail_prepare,
+    )
+    monkeypatch.setattr(manager, "_schedule_installation_worker", schedule)
+
+    failed = await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=True,
+    )
+
+    assert failed == {
+        "installation_uuid": "installation-a",
+        "state": "failed",
+        "artifact_path": failed["artifact_path"],
+        "error_code": "dependency_prepare_failed",
+        "message": "dependency download failed",
+    }
+    assert launch_count == 0
+    runtime = manager.installation_runtimes[binding]
+    assert runtime.launch_task is None
+    assert runtime.dependency_environment is None
+
+    async def successful_prepare(store, artifact):
+        root = store.base_path / "retry-environment"
+        site_packages = root / "site-packages"
+        site_packages.mkdir(parents=True)
+        return PluginDependencyEnvironment(
+            digest="e" * 64,
+            artifact_digest=artifact.digest,
+            requirements_digest="f" * 64,
+            runtime_fingerprint="1" * 64,
+            root_path=root,
+            site_packages_path=site_packages,
+        )
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        successful_prepare,
+    )
+    retried = await manager.apply_plugin_installation(binding, enabled=True)
+
+    assert retried["state"] == "starting"
+    assert retried["dependency_environment_digest"] == "e" * 64
+    assert launch_count == 1
+
+
+async def test_reconcile_reports_dependency_failure_without_worker_launch(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package(requirements="third-party-demo==1.0.0\n")
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+
+    async def fail_prepare(store, artifact):
+        raise DependencyEnvironmentPreparationError("dependency download failed")
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        fail_prepare,
+    )
+
+    result = await manager.reconcile_plugin_installations(
+        (PluginInstallationDesiredState(binding=binding),)
+    )
+
+    assert result["failed_installations"] == [
+        {
+            "installation_uuid": "installation-a",
+            "error_code": "dependency_prepare_failed",
+            "message": "dependency download failed",
+        }
+    ]
+    assert manager.installation_runtimes[binding].launch_task is None
+
+
+async def test_oss_desired_state_keeps_legacy_worker_without_shared_environment(
+    tmp_path,
+    monkeypatch,
+):
+    context = RuntimeContext()
+    context.bind_runtime(
+        RuntimeIdentity(instance_uuid="instance-1", runtime_id="runtime-1"),
+        PluginWorkerPolicy(
+            max_cpus=1.0,
+            max_memory_mb=512,
+            max_pids=128,
+            max_open_files=256,
+            max_file_size_mb=512,
+            require_hard_limits=False,
+        ),
+        "oss_dev",
+    )
+    manager = PluginManager(context)
+    manager.artifact_store = PluginArtifactStore(tmp_path / "plugin-runtime")
+    context.plugin_mgr = manager
+    package = _package(requirements="third-party-demo==1.0.0\n")
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    scheduled = []
+
+    def schedule(runtime):
+        scheduled.append(runtime)
+
+    monkeypatch.setattr(manager, "_schedule_installation_worker", schedule)
+
+    result = await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=True,
+    )
+
+    assert result["state"] == "starting"
+    assert "dependency_environment_digest" not in result
+    assert len(scheduled) == 1
+    assert scheduled[0].dependency_environment is None

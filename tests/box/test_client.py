@@ -193,6 +193,26 @@ async def test_initialize_wraps_failure_in_unavailable(client, handler):
 
 
 @pytest.mark.anyio
+async def test_verify_shared_workspace_uses_host_control_action(client, handler):
+    marker_name = ".langbot-box-volume-probe-" + "a" * 32
+    handler.call_action.return_value = {
+        "marker_name": marker_name,
+        "sha256": "b" * 64,
+        "size": 64,
+    }
+
+    result = await client.verify_shared_workspace(marker_name)
+
+    assert result["sha256"] == "b" * 64
+    args, kwargs = handler.call_action.call_args
+    assert args == (
+        LangBotToBoxAction.VERIFY_SHARED_WORKSPACE,
+        {"marker_name": marker_name},
+    )
+    assert kwargs["action_context"] is None
+
+
+@pytest.mark.anyio
 async def test_upsert_sandbox_admission_grant_uses_host_control_action(
     client, handler
 ):

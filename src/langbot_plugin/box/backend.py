@@ -86,6 +86,10 @@ class BaseSandboxBackend(abc.ABC):
             "namespace_isolation": False if strict else None,
             "mount_isolation": False if strict else None,
             "network_isolation": False if strict else None,
+            "hard_workspace_quota": False if strict else None,
+            "hard_skill_storage_quota": False if strict else None,
+            "bounded_ephemeral_storage": False if strict else None,
+            "inode_quota": False if strict else None,
         }
 
     async def start_managed_process(self, session: BoxSessionInfo, spec):

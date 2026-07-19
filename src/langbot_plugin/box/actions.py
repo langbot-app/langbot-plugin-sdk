@@ -11,6 +11,7 @@ class LangBotToBoxAction(ActionType):
     INIT = "box_init"  # Initialize with full box config (highest priority)
     UPSERT_SANDBOX_ADMISSION_GRANT = "box_upsert_sandbox_admission_grant"
     REVOKE_SANDBOX_ADMISSION_GRANT = "box_revoke_sandbox_admission_grant"
+    VERIFY_SHARED_WORKSPACE = "box_verify_shared_workspace"
     HEALTH = "box_health"
     STATUS = "box_status"
     EXEC = "box_exec"

@@ -4,10 +4,12 @@ import hashlib
 import io
 import stat
 import zipfile
+from contextlib import nullcontext
 
 import pytest
 
 from langbot_plugin.entities.io.context import InstallationBinding
+from langbot_plugin.runtime.plugin import artifact as artifact_module
 from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
 
 
@@ -95,3 +97,147 @@ def test_artifact_digest_mismatch_and_zip_slip_fail_closed(tmp_path):
             malicious_package,
             hashlib.sha256(malicious_package).hexdigest(),
         )
+
+
+def _package_with_members(
+    members: list[tuple[str | zipfile.ZipInfo, bytes]],
+    *,
+    compression: int = zipfile.ZIP_STORED,
+) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=compression) as archive:
+        archive.writestr(
+            "manifest.yaml",
+            "kind: Plugin\nmetadata:\n  author: tester\n  name: demo\n  version: 1.0.0\n",
+        )
+        for name, body in members:
+            archive.writestr(name, body)
+    return output.getvalue()
+
+
+def _install_untrusted_package(tmp_path, package: bytes) -> None:
+    PluginArtifactStore(tmp_path / "plugin-runtime").install_package(
+        package,
+        hashlib.sha256(package).hexdigest(),
+    )
+
+
+def test_artifact_rejects_entry_count_per_file_and_total_limits(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module, "_MAX_ARTIFACT_ENTRIES", 2)
+    with pytest.raises(ValueError, match="too many entries"):
+        _install_untrusted_package(
+            tmp_path,
+            _package_with_members([("one.py", b"1"), ("two.py", b"2")]),
+        )
+
+    monkeypatch.setattr(artifact_module, "_MAX_ARTIFACT_ENTRIES", 512)
+    monkeypatch.setattr(
+        artifact_module,
+        "_MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES",
+        4,
+    )
+    with pytest.raises(ValueError, match="entry exceeds the uncompressed size"):
+        _install_untrusted_package(
+            tmp_path,
+            _package_with_members([("large.py", b"12345")]),
+        )
+
+    monkeypatch.setattr(
+        artifact_module,
+        "_MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES",
+        1024,
+    )
+    monkeypatch.setattr(
+        artifact_module,
+        "_MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES",
+        90,
+    )
+    with pytest.raises(ValueError, match="total uncompressed size"):
+        _install_untrusted_package(
+            tmp_path,
+            _package_with_members([("one.py", b"1" * 32), ("two.py", b"2" * 32)]),
+        )
+
+
+def test_artifact_rejects_compression_bombs(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module, "_MAX_ARTIFACT_COMPRESSION_RATIO", 2.0)
+    package = _package_with_members(
+        [("compressed.py", b"a" * 4096)],
+        compression=zipfile.ZIP_DEFLATED,
+    )
+
+    with pytest.raises(ValueError, match="compression ratio"):
+        _install_untrusted_package(tmp_path, package)
+
+
+@pytest.mark.parametrize("file_type", [stat.S_IFLNK, stat.S_IFIFO, stat.S_IFDIR])
+def test_artifact_rejects_links_and_nonregular_entries(tmp_path, file_type):
+    unsafe = zipfile.ZipInfo("unsafe-entry")
+    unsafe.create_system = 3
+    unsafe.external_attr = (file_type | 0o777) << 16
+    package = _package_with_members([(unsafe, b"target")])
+
+    expected = "symbolic links" if file_type == stat.S_IFLNK else "non-regular entry"
+    with pytest.raises(ValueError, match=expected):
+        _install_untrusted_package(tmp_path, package)
+
+
+def test_artifact_rejects_duplicate_and_conflicting_paths(tmp_path):
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        duplicate = _package_with_members([("same.py", b"1"), ("same.py", b"2")])
+    with pytest.raises(ValueError, match="duplicate path"):
+        _install_untrusted_package(tmp_path, duplicate)
+
+    conflict = _package_with_members([("parent", b"file"), ("parent/child", b"child")])
+    with pytest.raises(ValueError, match="conflicts with a file"):
+        _install_untrusted_package(tmp_path, conflict)
+
+
+def test_failed_artifact_extraction_removes_atomic_staging_tree(tmp_path):
+    package = _package_with_members([("../escape.py", b"bad")])
+    store = PluginArtifactStore(tmp_path / "plugin-runtime")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        store.install_package(package, hashlib.sha256(package).hexdigest())
+
+    assert not list(store.artifacts_path.glob("*"))
+
+
+def test_artifact_counts_actual_streamed_bytes(tmp_path, monkeypatch):
+    class FakeInfo:
+        filename = "main.py"
+        external_attr = 0
+        file_size = 1
+        compress_size = 1
+
+        @staticmethod
+        def is_dir() -> bool:
+            return False
+
+    class FakeArchive:
+        @staticmethod
+        def __enter__():
+            return FakeArchive()
+
+        @staticmethod
+        def __exit__(*args):
+            return None
+
+        @staticmethod
+        def infolist():
+            return [FakeInfo()]
+
+        @staticmethod
+        def open(_info, _mode):
+            return nullcontext(io.BytesIO(b"actual-bytes"))
+
+    monkeypatch.setattr(artifact_module.zipfile, "ZipFile", lambda *_args, **_kwargs: FakeArchive())
+    monkeypatch.setattr(
+        artifact_module,
+        "_MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES",
+        4,
+    )
+
+    with pytest.raises(ValueError, match="entry exceeds the uncompressed size"):
+        PluginArtifactStore._extract_verified_zip(b"fake", tmp_path / "destination")
+    assert not (tmp_path / "destination" / "main.py").exists()

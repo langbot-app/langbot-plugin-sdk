@@ -266,6 +266,10 @@ class BoxSpec(pydantic.BaseModel):
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
     mount_path: str = DEFAULT_BOX_MOUNT_PATH
     extra_mounts: list[BoxMountSpec] = pydantic.Field(default_factory=list)
+    # Optional logical package selection. In grant-enforced mode the Runtime
+    # resolves this name through the trusted Workspace-scoped BoxSkillStore and
+    # constructs the read-only host mount itself. Callers never provide a path.
+    skill_name: str | None = None
     persistent: bool = False
     # Resource limits
     cpus: float = 1.0
@@ -341,6 +345,20 @@ class BoxSpec(pydantic.BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("session_id must not be empty")
+        return value
+
+    @pydantic.field_validator("skill_name")
+    @classmethod
+    def validate_skill_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) > 64 or not value.replace("-", "").replace("_", "").isalnum():
+            raise ValueError(
+                "skill_name can only contain up to 64 letters, numbers, hyphens and underscores"
+            )
         return value
 
     @pydantic.field_validator("env")

@@ -139,6 +139,13 @@ def mock_runtime():
     )
     runtime.stop_managed_process = mock.AsyncMock()
     runtime.init = mock.MagicMock()
+    runtime.verify_shared_workspace = mock.MagicMock(
+        return_value={
+            "marker_name": ".langbot-box-volume-probe-" + "a" * 32,
+            "sha256": "b" * 64,
+            "size": 64,
+        }
+    )
     runtime.shutdown = mock.AsyncMock()
 
     skill_store = mock.MagicMock()
@@ -500,6 +507,33 @@ async def test_unauthenticated_handler_rejects_init_and_exec(
 
 
 # ── PING / HEALTH / STATUS / GET_BACKEND_INFO ────────────────────────
+
+
+async def test_verify_shared_workspace_is_authenticated_host_control(
+    mock_connection, mock_runtime
+):
+    marker_name = ".langbot-box-volume-probe-" + "a" * 32
+    authenticated = _new_handler(mock_connection, mock_runtime)
+
+    response = await _invoke(
+        authenticated,
+        LangBotToBoxAction.VERIFY_SHARED_WORKSPACE,
+        {"marker_name": marker_name},
+    )
+
+    assert response.code == 0
+    assert response.data["sha256"] == "b" * 64
+    mock_runtime.verify_shared_workspace.assert_called_once_with(marker_name)
+
+    unauthenticated = _new_handler(
+        mock_connection, mock_runtime, authenticated=False
+    )
+    with pytest.raises(PermissionError, match="authentication"):
+        await _invoke(
+            unauthenticated,
+            LangBotToBoxAction.VERIFY_SHARED_WORKSPACE,
+            {"marker_name": marker_name},
+        )
 
 
 async def test_ping(handler):

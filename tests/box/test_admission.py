@@ -46,6 +46,10 @@ class AdmissionBackend(BaseSandboxBackend):
             "namespace_isolation": True,
             "mount_isolation": True,
             "network_isolation": True,
+            "hard_workspace_quota": True,
+            "hard_skill_storage_quota": True,
+            "bounded_ephemeral_storage": True,
+            "inode_quota": True,
         }
 
     async def is_available(self) -> bool:
@@ -248,6 +252,53 @@ async def test_network_and_arbitrary_host_mount_requests_fail_closed(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_managed_skill_mount_is_resolved_by_runtime_and_read_only(tmp_path):
+    runtime, backend = _runtime(tmp_path)
+    context = _context()
+    scoped_store = runtime.skill_store.scoped(box_namespace(context))
+    skill = scoped_store.create_skill(
+        {"name": "demo", "instructions": "Run scripts/demo.py"}
+    )
+    scoped_store.write_skill_file("demo", "scripts/demo.py", "print('ok')")
+    await runtime.upsert_sandbox_admission_grant(_grant(context))
+
+    await runtime.execute(
+        BoxSpec(
+            session_id="caller-owned",
+            cmd="python /workspace/.skills/demo/scripts/demo.py",
+            skill_name="demo",
+        ),
+        context,
+    )
+
+    effective = backend.started_specs[0]
+    assert len(effective.extra_mounts) == 1
+    mount = effective.extra_mounts[0]
+    assert mount.host_path == skill["package_root"]
+    assert mount.mount_path == "/workspace/.skills/demo"
+    assert mount.mode.value == "ro"
+
+
+@pytest.mark.anyio
+async def test_managed_skill_mount_cannot_cross_workspace_scope(tmp_path):
+    runtime, backend = _runtime(tmp_path)
+    first = _context(workspace="workspace-a")
+    second = _context(workspace="workspace-b")
+    runtime.skill_store.scoped(box_namespace(second)).create_skill(
+        {"name": "private", "instructions": "secret"}
+    )
+    await runtime.upsert_sandbox_admission_grant(_grant(first))
+
+    with pytest.raises(BoxAdmissionError, match="unavailable in this Workspace"):
+        await runtime.execute(
+            BoxSpec(session_id="global", cmd="true", skill_name="private"),
+            first,
+        )
+
+    assert backend.started_specs == []
+
+
+@pytest.mark.anyio
 async def test_managed_process_is_denied_before_backend_process_start(tmp_path):
     runtime, _ = _runtime(tmp_path)
     context = _context()
@@ -320,6 +371,19 @@ async def test_same_entitlement_revision_cannot_change_limits(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_same_revision_shorter_replica_renewal_is_idempotent(tmp_path):
+    runtime, _ = _runtime(tmp_path)
+    context = _context()
+    longer = _grant(context, revision=9, expires_in=240)
+    shorter = _grant(context, revision=9, expires_in=120)
+
+    first = await runtime.upsert_sandbox_admission_grant(longer)
+    second = await runtime.upsert_sandbox_admission_grant(shorter)
+
+    assert second == first
+
+
+@pytest.mark.anyio
 async def test_strict_readiness_blocks_execution_when_cgroup_is_unavailable(
     tmp_path,
 ):
@@ -332,6 +396,32 @@ async def test_strict_readiness_blocks_execution_when_cgroup_is_unavailable(
     assert readiness["ready"] is False
     assert readiness["checks"]["cgroup_v2"] is False
     with pytest.raises(BoxReadinessError, match="cgroup_v2"):
+        await runtime.execute(BoxSpec(session_id="global", cmd="true"), context)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "hard_workspace_quota",
+        "hard_skill_storage_quota",
+        "bounded_ephemeral_storage",
+        "inode_quota",
+    ],
+)
+async def test_managed_readiness_fails_closed_without_hard_storage_capability(
+    tmp_path, capability
+):
+    runtime, backend = _runtime(tmp_path)
+    context = _context()
+    await runtime.upsert_sandbox_admission_grant(_grant(context))
+    backend.readiness[capability] = False
+
+    readiness = await runtime.get_readiness(force=True)
+
+    assert readiness["ready"] is False
+    assert readiness["checks"][capability] is False
+    with pytest.raises(BoxReadinessError, match=capability):
         await runtime.execute(BoxSpec(session_id="global", cmd="true"), context)
 
 

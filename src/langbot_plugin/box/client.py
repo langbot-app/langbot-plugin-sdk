@@ -89,6 +89,9 @@ class BoxRuntimeClient(abc.ABC):
     @abc.abstractmethod
     async def init(self, config: dict) -> None: ...
 
+    async def verify_shared_workspace(self, marker_name: str) -> dict:
+        raise NotImplementedError
+
     async def upsert_sandbox_admission_grant(
         self, grant: SandboxAdmissionGrant
     ) -> dict:
@@ -398,6 +401,12 @@ class ActionRPCBoxClient(BoxRuntimeClient):
 
     async def init(self, config: dict) -> None:
         await self._call(LangBotToBoxAction.INIT, config)
+
+    async def verify_shared_workspace(self, marker_name: str) -> dict:
+        return await self._call(
+            LangBotToBoxAction.VERIFY_SHARED_WORKSPACE,
+            {"marker_name": marker_name},
+        )
 
     async def upsert_sandbox_admission_grant(
         self, grant: SandboxAdmissionGrant

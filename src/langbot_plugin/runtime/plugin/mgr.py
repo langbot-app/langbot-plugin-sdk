@@ -57,6 +57,11 @@ from langbot_plugin.runtime.plugin.artifact import (
     PluginArtifactStore,
     PluginInstallationPaths,
 )
+from langbot_plugin.runtime.plugin.dependency_environment import (
+    DependencyEnvironmentPreparationError,
+    PluginDependencyEnvironment,
+    PluginDependencyEnvironmentStore,
+)
 from langbot_plugin.runtime.plugin.worker_launcher import (
     PluginWorkerLaunchSpec,
     PluginWorkerLauncher,
@@ -99,6 +104,10 @@ class PluginInstallationRuntime:
     artifact: PluginArtifact
     paths: PluginInstallationPaths
     enabled: bool
+    dependency_environment: PluginDependencyEnvironment | None = None
+    state: str = "disabled"
+    error_code: str | None = None
+    error_message: str | None = None
     plugin_container: runtime_plugin_container.PluginContainer | None = None
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
     launch_task: asyncio.Task | None = None
@@ -163,6 +172,9 @@ class PluginManager:
         self._active_binding_by_uuid: dict[str, InstallationBinding] = {}
         self._binding_by_container_id: dict[int, InstallationBinding] = {}
         self.artifact_store = PluginArtifactStore()
+        self.dependency_environment_store = PluginDependencyEnvironmentStore(
+            self.artifact_store.base_path
+        )
         self.worker_launcher = PluginWorkerLauncher()
 
     @property
@@ -676,14 +688,90 @@ class PluginManager:
             current.enabled = enabled
 
         if enabled:
+            current.error_code = None
+            current.error_message = None
+            if getattr(self.context, "runtime_profile", "oss_dev") == "shared":
+                current.dependency_environment = None
+                if (
+                    self.dependency_environment_store.base_path
+                    != self.artifact_store.base_path
+                ):
+                    # Tests and embedders may replace the artifact store after
+                    # construction; dependency state must follow that same
+                    # Runtime-owned volume.
+                    self.dependency_environment_store = (
+                        PluginDependencyEnvironmentStore(
+                            self.artifact_store.base_path
+                        )
+                    )
+                try:
+                    current.dependency_environment = (
+                        await self.worker_launcher.prepare_dependency_environment(
+                            self.dependency_environment_store,
+                            artifact,
+                        )
+                    )
+                except DependencyEnvironmentPreparationError as exc:
+                    await self._stop_installation_worker(current)
+                    current.state = "failed"
+                    current.error_code = "dependency_prepare_failed"
+                    current.error_message = str(exc)
+                    logger.error(
+                        "Plugin dependency preparation failed for installation %s: %s",
+                        binding.installation_uuid,
+                        exc,
+                    )
+                    return self._installation_state_result(current)
+                except Exception:
+                    await self._stop_installation_worker(current)
+                    current.state = "failed"
+                    current.error_code = "dependency_prepare_failed"
+                    current.error_message = (
+                        "Plugin dependency environment preparation failed"
+                    )
+                    logger.exception(
+                        "Unexpected plugin dependency preparation failure for %s",
+                        binding.installation_uuid,
+                    )
+                    return self._installation_state_result(current)
+
+                # A concurrent newer apply/remove can fence this binding while
+                # its shared environment is being prepared. Never launch it.
+                if (
+                    self._installations.get(binding) is not current
+                    or not self.context.is_current_installation_binding(binding)
+                ):
+                    return {
+                        "installation_uuid": binding.installation_uuid,
+                        "state": "superseded",
+                    }
+            current.state = "starting"
             self._schedule_installation_worker(current)
         else:
+            current.state = "disabled"
+            current.error_code = None
+            current.error_message = None
             await self._stop_installation_worker(current)
-        return {
-            "installation_uuid": binding.installation_uuid,
-            "state": "starting" if enabled else "disabled",
-            "artifact_path": str(artifact.code_path),
+        return self._installation_state_result(current)
+
+    @staticmethod
+    def _installation_state_result(
+        runtime: PluginInstallationRuntime,
+    ) -> dict[str, typing.Any]:
+        result: dict[str, typing.Any] = {
+            "installation_uuid": runtime.binding.installation_uuid,
+            "state": runtime.state,
+            "artifact_path": str(runtime.artifact.code_path),
         }
+        if runtime.dependency_environment is not None:
+            result["dependency_environment_digest"] = (
+                runtime.dependency_environment.digest
+            )
+        if runtime.error_code is not None:
+            result["error_code"] = runtime.error_code
+        if runtime.error_message is not None:
+            result["message"] = runtime.error_message
+        return result
 
     async def remove_plugin_installation(
         self,
@@ -725,6 +813,7 @@ class PluginManager:
 
         applied: list[str] = []
         missing_artifacts: list[str] = []
+        failed_installations: list[dict[str, str]] = []
         for desired in desired_states:
             result = await self.apply_plugin_installation(
                 desired.binding,
@@ -733,11 +822,20 @@ class PluginManager:
             applied.append(desired.binding.installation_uuid)
             if result["state"] == "artifact_missing":
                 missing_artifacts.append(desired.binding.installation_uuid)
+            elif result["state"] == "failed":
+                failed_installations.append(
+                    {
+                        "installation_uuid": desired.binding.installation_uuid,
+                        "error_code": str(result["error_code"]),
+                        "message": str(result["message"]),
+                    }
+                )
 
         return {
             "applied": applied,
             "removed": removed,
             "missing_artifacts": missing_artifacts,
+            "failed_installations": failed_installations,
         }
 
     def _schedule_installation_worker(
@@ -760,6 +858,13 @@ class PluginManager:
             return
         if not self.context.is_current_installation_binding(binding):
             raise ValueError("Plugin installation binding is no longer current")
+        if (
+            getattr(self.context, "runtime_profile", "oss_dev") == "shared"
+            and runtime.dependency_environment is None
+        ):
+            raise ValueError(
+                "Plugin installation dependency environment is unavailable"
+            )
 
         capability = self._issue_registration_capability(
             plugin_author=runtime.artifact.plugin_author,
@@ -773,6 +878,7 @@ class PluginManager:
                 artifact=runtime.artifact,
                 paths=runtime.paths,
                 registration_capability=capability,
+                dependency_environment=runtime.dependency_environment,
             )
         )
 
