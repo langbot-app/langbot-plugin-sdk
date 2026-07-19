@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 from .errors import BoxValidationError
 from .models import BoxSpec
+
+
+BOX_CONTROL_TOKEN_ENV = "LANGBOT_BOX_CONTROL_TOKEN"
+BOX_TRUSTED_INSTANCE_ENV = "LANGBOT_BOX_TRUSTED_INSTANCE_UUID"
+BOX_CONTROL_TOKEN_HEADER = "X-LangBot-Box-Control-Token"
+BOX_INSTANCE_HEADER = "X-LangBot-Instance-Id"
+BOX_WORKSPACE_HEADER = "X-LangBot-Workspace-Id"
+BOX_PLACEMENT_GENERATION_HEADER = "X-LangBot-Placement-Generation"
+CONTROL_TOKEN_MIN_LENGTH = 32
+
+_INSTANCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 _BLOCKED_HOST_PATHS_POSIX = frozenset(
     {
@@ -36,6 +48,25 @@ BLOCKED_HOST_PATHS = (
     if sys.platform == "win32"
     else _BLOCKED_HOST_PATHS_POSIX
 )
+
+
+def normalize_instance_uuid(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not _INSTANCE_ID_PATTERN.fullmatch(normalized):
+        raise ValueError("A valid trusted LangBot instance UUID is required")
+    return normalized
+
+
+def validate_control_token(value: str) -> str:
+    token = str(value or "").strip()
+    if len(token) < CONTROL_TOKEN_MIN_LENGTH or any(
+        character.isspace() for character in token
+    ):
+        raise ValueError(
+            f"{BOX_CONTROL_TOKEN_ENV} must be a non-whitespace secret of at least "
+            f"{CONTROL_TOKEN_MIN_LENGTH} characters"
+        )
+    return token
 
 
 def validate_sandbox_security(spec: BoxSpec) -> None:

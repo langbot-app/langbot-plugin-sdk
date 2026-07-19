@@ -17,12 +17,14 @@ import os
 import hashlib
 import base64
 import uuid
-import contextlib
+import contextvars
+import re
 import aiofiles
 import aiofiles.os
 import logging
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
+from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
 from langbot_plugin.entities.io.errors import (
     ConnectionClosedError,
@@ -35,8 +37,28 @@ logger = logging.getLogger(__name__)
 
 FILE_STORAGE_DIR = "data/temp/lbp"
 FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
-MAX_INFLIGHT_ACTIONS = 128
-MAX_STREAM_QUEUE_SIZE = 128
+_SAFE_FILE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+_SAFE_FILE_EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
+
+def _file_storage_path(file_key: str) -> str:
+    """Resolve one opaque transfer key without accepting path syntax."""
+
+    if not isinstance(file_key, str):
+        raise ValueError("Invalid file transfer key")
+    key = file_key.strip()
+    if (
+        not key
+        or key != file_key
+        or os.path.isabs(key)
+        or "/" in key
+        or "\\" in key
+        or ".." in key
+        or os.path.basename(key) != key
+        or _SAFE_FILE_KEY_PATTERN.fullmatch(key) is None
+    ):
+        raise ValueError("Invalid file transfer key")
+    return os.path.join(FILE_STORAGE_DIR, key)
 
 
 class Handler(abc.ABC):
@@ -55,6 +77,9 @@ class Handler(abc.ABC):
 
     _disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]] | None
 
+    _bound_action_context: ActionContext | None
+    _current_action_context: contextvars.ContextVar[ActionContext | None]
+
     def __init__(
         self,
         connection: connection.Connection,
@@ -66,9 +91,11 @@ class Handler(abc.ABC):
         self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
-        self._action_tasks: set[asyncio.Task[None]] = set()
-        self._closed = False
-        self._close_error: ConnectionClosedError | None = None
+        self._bound_action_context = None
+        self._current_action_context = contextvars.ContextVar(
+            f"{self.__class__.__name__}_{id(self)}_action_context",
+            default=None,
+        )
 
         self._disconnect_callback = disconnect_callback
 
@@ -76,19 +103,27 @@ class Handler(abc.ABC):
 
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
-            file_key = data["file_key"]
+            file_path = _file_storage_path(data["file_key"])
             chunk_base64 = data["chunk_base64"]
             chunk_index = data["chunk_index"]
             chunk_amount = data["chunk_amount"]
-            # append the chunk to the file
-            async with aiofiles.open(
-                os.path.join(FILE_STORAGE_DIR, file_key), "ab"
-            ) as f:
-                await f.write(base64.b64decode(chunk_base64))
-            if chunk_index == chunk_amount - 1:
-                return ActionResponse.success({})
-            else:
-                return ActionResponse.success({})
+            if (
+                isinstance(chunk_index, bool)
+                or not isinstance(chunk_index, int)
+                or isinstance(chunk_amount, bool)
+                or not isinstance(chunk_amount, int)
+                or chunk_amount <= 0
+                or chunk_index < 0
+                or chunk_index >= chunk_amount
+            ):
+                raise ValueError("Invalid file chunk position")
+            chunk_bytes = base64.b64decode(chunk_base64, validate=True)
+            # The first chunk replaces stale partial data for the same opaque
+            # transfer id; later chunks append in protocol order.
+            mode = "wb" if chunk_index == 0 else "ab"
+            async with aiofiles.open(file_path, mode) as f:
+                await f.write(chunk_bytes)
+            return ActionResponse.success({})
 
     def set_disconnect_callback(
         self,
@@ -195,63 +230,53 @@ class Handler(abc.ABC):
             if action_name not in self.actions:
                 raise ValueError(f"Action {action_name} not found")
 
-            response = self.actions[action_name](req_data["data"])
-            if not isinstance(response, AsyncGenerator):
-                if isinstance(response, Coroutine):
-                    response = await response
-                response.seq_id = seq_id
-                await self.conn.send(json.dumps(response.model_dump()))
-            else:
-                async for chunk in response:
-                    assert isinstance(chunk, ActionResponse)
-                    chunk.seq_id = seq_id
-                    chunk.chunk_status = ChunkStatus.CONTINUE
-                    await self.conn.send(json.dumps(chunk.model_dump()))
+                if "action" in req_data:  # action request from peer
+                    try:
+                        request = ActionRequest.model_validate(req_data)
+                        if request.action not in self.actions:
+                            raise ValueError(f"Action {request.action} not found")
 
-                end_response = ActionResponse.success({})
-                end_response.seq_id = seq_id
-                end_response.chunk_status = ChunkStatus.END
-                await self.conn.send(json.dumps(end_response.model_dump()))
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            traceback.print_exc()
-            error_response = ActionResponse.error(
-                f"{exc.__class__.__name__}: {str(exc)}"
-            )
-            error_response.seq_id = seq_id
-            with contextlib.suppress(ConnectionClosedError):
-                await self.conn.send(json.dumps(error_response.model_dump()))
-        finally:
-            if not action_name.startswith("__"):
-                logger.info("[Action] %s", action_name)
+                        action_context = self.validate_inbound_action_context(
+                            request.action,
+                            request.context,
+                        )
+                        context_token = self._current_action_context.set(action_context)
 
-    async def _send_overloaded_response(self, seq_id: int) -> None:
-        response = ActionResponse.error(
-            f"Runtime connection is busy (max {MAX_INFLIGHT_ACTIONS} concurrent actions)"
-        )
-        response.seq_id = seq_id
-        # The receive loop will observe a closed connection and run the normal
-        # disconnect/reconnect path; don't bypass it if this best-effort reply
-        # races with transport loss.
-        with contextlib.suppress(ConnectionClosedError):
-            await self.conn.send(json.dumps(response.model_dump()))
+                        try:
+                            response = self.actions[request.action](request.data)
 
-    def _action_task_done(self, task: asyncio.Task[None]) -> None:
-        self._action_tasks.discard(task)
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.error(
-                "Runtime action task failed",
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+                            if not isinstance(response, AsyncGenerator):
+                                if isinstance(response, Coroutine):
+                                    response = await response
 
-    def _fail_pending(self, error: ConnectionClosedError) -> None:
-        for waiter in list(self.resp_waiters.values()):
-            if not waiter.done():
-                waiter.set_exception(error)
+                                response.seq_id = seq_id
+                                await self.conn.send(json.dumps(response.model_dump()))
+                            elif isinstance(response, AsyncGenerator):
+                                response_generator = response
+                                async for chunk in response_generator:
+                                    assert isinstance(chunk, ActionResponse)
+                                    chunk.seq_id = seq_id
+                                    chunk.chunk_status = ChunkStatus.CONTINUE
+                                    await self.conn.send(json.dumps(chunk.model_dump()))
+
+                                end_response = ActionResponse.success({})
+                                end_response.seq_id = seq_id
+                                end_response.chunk_status = ChunkStatus.END
+                                await self.conn.send(
+                                    json.dumps(end_response.model_dump())
+                                )
+                        finally:
+                            self._current_action_context.reset(context_token)
+                    except Exception as e:
+                        traceback.print_exc()
+                        error_response = ActionResponse.error(
+                            f"{e.__class__.__name__}: {str(e)}"
+                        )
+                        error_response.seq_id = seq_id
+                        await self.conn.send(json.dumps(error_response.model_dump()))
+                    finally:
+                        if not req_data["action"].startswith("__"):
+                            logger.info(f"[Action] {req_data['action']}")
 
         for queue in list(self.resp_queues.values()):
             while queue.full():
@@ -268,12 +293,21 @@ class Handler(abc.ABC):
         self._action_tasks.clear()
 
     async def call_action(
-        self, action: ActionType, data: dict[str, Any], timeout: float = 15.0
+        self,
+        action: ActionType,
+        data: dict[str, Any],
+        timeout: float = 15.0,
+        action_context: ActionContext | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
-        request = ActionRequest.make_request(this_seq_id, action.value, data)
+        request = ActionRequest.make_request(
+            this_seq_id,
+            action.value,
+            data,
+            self.resolve_outbound_action_context(action_context),
+        )
         # wait for response
         if self._closed:
             raise self._close_error or ConnectionClosedError("Connection closed")
@@ -300,11 +334,20 @@ class Handler(abc.ABC):
                 del self.resp_queues[this_seq_id]
 
     async def call_action_generator(
-        self, action: ActionType, data: dict[str, Any], timeout: float = 15.0
+        self,
+        action: ActionType,
+        data: dict[str, Any],
+        timeout: float = 15.0,
+        action_context: ActionContext | dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
-        request = ActionRequest.make_request(this_seq_id, action.value, data)
+        request = ActionRequest.make_request(
+            this_seq_id,
+            action.value,
+            data,
+            self.resolve_outbound_action_context(action_context),
+        )
 
         # Create a queue for streaming responses
         if self._closed:
@@ -343,6 +386,112 @@ class Handler(abc.ABC):
         finally:
             if this_seq_id in self.resp_queues:
                 del self.resp_queues[this_seq_id]
+
+    @property
+    def bound_action_context(self) -> ActionContext | None:
+        """Trusted context permanently associated with this connection."""
+
+        return self._bound_action_context
+
+    @property
+    def current_action_context(self) -> ActionContext | None:
+        """Context of the request currently executing in this asyncio task."""
+
+        return self._current_action_context.get()
+
+    def bind_action_context(
+        self,
+        action_context: ActionContext | dict[str, Any],
+    ) -> ActionContext:
+        """Bind this connection once to a fenced Workspace.
+
+        The installation capability may be added once after LangBot resolves
+        the installation from its trusted settings store.  Changing the
+        Workspace, generation, or an existing installation is rejected.
+        """
+
+        context = ActionContext.model_validate(action_context)
+        current = self._bound_action_context
+        if current is not None:
+            if not current.same_workspace(context):
+                raise ValueError(
+                    "Action connection cannot be rebound to another Workspace"
+                )
+            if (
+                current.installation_uuid is not None
+                and context.installation_uuid is None
+            ):
+                raise ValueError("Plugin installation binding cannot be removed")
+            if (
+                current.installation_uuid is not None
+                and current.installation_uuid != context.installation_uuid
+            ):
+                raise ValueError(
+                    "Action connection cannot be rebound to another plugin installation"
+                )
+
+        self._bound_action_context = context
+        return context
+
+    def require_bound_action_context(self) -> ActionContext:
+        """Return the trusted binding or fail instead of choosing a default."""
+
+        if self._bound_action_context is None:
+            raise ValueError("Plugin Runtime is not bound to a Workspace")
+        return self._bound_action_context
+
+    def validate_inbound_action_context(
+        self,
+        action: str,
+        action_context: ActionContext | None,
+    ) -> ActionContext | None:
+        """Validate an inbound envelope against the connection binding.
+
+        A bound connection remains compatible with old peers that omit the
+        envelope: the connection binding supplies the context.  A peer cannot
+        switch Workspace or placement generation by sending a new envelope.
+        """
+
+        del action
+        bound = self._bound_action_context
+        if bound is None:
+            return action_context
+        if action_context is not None:
+            if not bound.same_workspace(action_context):
+                raise ValueError("Action context does not match connection Workspace")
+            if (
+                bound.installation_uuid is not None
+                and action_context.installation_uuid != bound.installation_uuid
+            ):
+                raise ValueError(
+                    "Action context does not match connection plugin installation"
+                )
+        return bound
+
+    def resolve_outbound_action_context(
+        self,
+        action_context: ActionContext | dict[str, Any] | None,
+    ) -> ActionContext | None:
+        """Resolve and validate the envelope for an outbound request."""
+
+        if action_context is None:
+            return self._bound_action_context
+
+        context = ActionContext.model_validate(action_context)
+        bound = self._bound_action_context
+        if bound is not None:
+            if not bound.same_workspace(context):
+                raise ValueError(
+                    "Outbound action context does not match connection Workspace"
+                )
+            if (
+                bound.installation_uuid is not None
+                and context.installation_uuid != bound.installation_uuid
+            ):
+                raise ValueError(
+                    "Outbound action context does not match plugin installation"
+                )
+        return context
 
     # decorator to register an action
     def action(
@@ -389,7 +538,11 @@ class Handler(abc.ABC):
     async def send_file(self, file_bytes: bytes, file_extension: str) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
         hash_value = hashlib.sha256(file_bytes).hexdigest()[:16]
+        if not isinstance(file_extension, str):
+            raise ValueError("Invalid file transfer extension")
         extension = file_extension.strip(".")
+        if extension and _SAFE_FILE_EXTENSION_PATTERN.fullmatch(extension) is None:
+            raise ValueError("Invalid file transfer extension")
         suffix = f".{extension}" if extension else ""
         file_key = f"{hash_value}-{uuid.uuid4().hex}{suffix}"
         file_length = len(file_bytes)
@@ -426,11 +579,11 @@ class Handler(abc.ABC):
         return file_key
 
     async def read_local_file(self, file_key: str) -> bytes:
-        async with aiofiles.open(os.path.join(FILE_STORAGE_DIR, file_key), "rb") as f:
+        async with aiofiles.open(_file_storage_path(file_key), "rb") as f:
             return await f.read()
 
     async def delete_local_file(self, file_key: str) -> None:
         try:
-            await aiofiles.os.remove(os.path.join(FILE_STORAGE_DIR, file_key))
+            await aiofiles.os.remove(_file_storage_path(file_key))
         except FileNotFoundError:
             return

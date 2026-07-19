@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.entities.io.context import ActionContext
 
 from .actions import LangBotToBoxAction
 from .errors import BoxError, BoxRuntimeUnavailableError
@@ -26,63 +27,97 @@ class BoxRuntimeClient(abc.ABC):
     async def initialize(self) -> None: ...
 
     @abc.abstractmethod
-    async def execute(self, spec: BoxSpec) -> BoxExecutionResult: ...
+    async def execute(
+        self, spec: BoxSpec, action_context: ActionContext | None = None
+    ) -> BoxExecutionResult: ...
 
     @abc.abstractmethod
     async def shutdown(self) -> None: ...
 
     @abc.abstractmethod
-    async def get_status(self) -> dict: ...
+    async def get_status(self, action_context: ActionContext | None = None) -> dict: ...
 
     @abc.abstractmethod
-    async def get_sessions(self) -> list[dict]: ...
+    async def get_sessions(
+        self, action_context: ActionContext | None = None
+    ) -> list[dict]: ...
 
     @abc.abstractmethod
     async def get_backend_info(self) -> dict: ...
 
     @abc.abstractmethod
-    async def delete_session(self, session_id: str) -> None: ...
+    async def delete_session(
+        self, session_id: str, action_context: ActionContext | None = None
+    ) -> None: ...
 
     @abc.abstractmethod
-    async def create_session(self, spec: BoxSpec) -> dict: ...
+    async def create_session(
+        self, spec: BoxSpec, action_context: ActionContext | None = None
+    ) -> dict: ...
 
     @abc.abstractmethod
     async def start_managed_process(
-        self, session_id: str, spec: BoxManagedProcessSpec
+        self,
+        session_id: str,
+        spec: BoxManagedProcessSpec,
+        action_context: ActionContext | None = None,
     ) -> BoxManagedProcessInfo: ...
 
     @abc.abstractmethod
     async def get_managed_process(
-        self, session_id: str, process_id: str = "default"
+        self,
+        session_id: str,
+        process_id: str = "default",
+        action_context: ActionContext | None = None,
     ) -> BoxManagedProcessInfo: ...
 
     @abc.abstractmethod
     async def stop_managed_process(
-        self, session_id: str, process_id: str = "default"
+        self,
+        session_id: str,
+        process_id: str = "default",
+        action_context: ActionContext | None = None,
     ) -> None: ...
 
     @abc.abstractmethod
-    async def get_session(self, session_id: str) -> dict: ...
+    async def get_session(
+        self, session_id: str, action_context: ActionContext | None = None
+    ) -> dict: ...
 
     @abc.abstractmethod
     async def init(self, config: dict) -> None: ...
 
-    async def list_skills(self) -> list[dict]:
+    async def list_skills(
+        self, action_context: ActionContext | None = None
+    ) -> list[dict]:
         raise NotImplementedError
 
-    async def get_skill(self, name: str) -> dict | None:
+    async def get_skill(
+        self, name: str, action_context: ActionContext | None = None
+    ) -> dict | None:
         raise NotImplementedError
 
-    async def create_skill(self, skill: dict) -> dict:
+    async def create_skill(
+        self, skill: dict, action_context: ActionContext | None = None
+    ) -> dict:
         raise NotImplementedError
 
-    async def update_skill(self, name: str, skill: dict) -> dict:
+    async def update_skill(
+        self,
+        name: str,
+        skill: dict,
+        action_context: ActionContext | None = None,
+    ) -> dict:
         raise NotImplementedError
 
-    async def delete_skill(self, name: str) -> None:
+    async def delete_skill(
+        self, name: str, action_context: ActionContext | None = None
+    ) -> None:
         raise NotImplementedError
 
-    async def scan_skill_directory(self, path: str) -> dict:
+    async def scan_skill_directory(
+        self, path: str, action_context: ActionContext | None = None
+    ) -> dict:
         raise NotImplementedError
 
     async def list_skill_files(
@@ -91,13 +126,22 @@ class BoxRuntimeClient(abc.ABC):
         path: str = ".",
         include_hidden: bool = False,
         max_entries: int = 200,
+        action_context: ActionContext | None = None,
     ) -> dict:
         raise NotImplementedError
 
-    async def read_skill_file(self, name: str, path: str) -> dict:
+    async def read_skill_file(
+        self, name: str, path: str, action_context: ActionContext | None = None
+    ) -> dict:
         raise NotImplementedError
 
-    async def write_skill_file(self, name: str, path: str, content: str) -> dict:
+    async def write_skill_file(
+        self,
+        name: str,
+        path: str,
+        content: str,
+        action_context: ActionContext | None = None,
+    ) -> dict:
         raise NotImplementedError
 
     async def preview_skill_zip(
@@ -106,6 +150,7 @@ class BoxRuntimeClient(abc.ABC):
         filename: str,
         source_subdir: str = "",
         target_suffix: str = "upload",
+        action_context: ActionContext | None = None,
     ) -> list[dict]:
         raise NotImplementedError
 
@@ -117,6 +162,7 @@ class BoxRuntimeClient(abc.ABC):
         source_path: str = "",
         source_subdir: str = "",
         target_suffix: str = "upload",
+        action_context: ActionContext | None = None,
     ) -> list[dict]:
         raise NotImplementedError
 
@@ -166,10 +212,16 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         self._handler = handler
 
     async def _call(
-        self, action: LangBotToBoxAction, data: dict[str, Any], timeout: float = 15.0
+        self,
+        action: LangBotToBoxAction,
+        data: dict[str, Any],
+        timeout: float = 15.0,
+        action_context: ActionContext | None = None,
     ) -> dict[str, Any]:
         try:
-            return await self.handler.call_action(action, data, timeout=timeout)
+            return await self.handler.call_action(
+                action, data, timeout=timeout, action_context=action_context
+            )
         except BoxRuntimeUnavailableError:
             raise
         except Exception as exc:
@@ -182,9 +234,14 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         except Exception as exc:
             raise BoxRuntimeUnavailableError(f"box runtime unavailable: {exc}") from exc
 
-    async def execute(self, spec: BoxSpec) -> BoxExecutionResult:
+    async def execute(
+        self, spec: BoxSpec, action_context: ActionContext | None = None
+    ) -> BoxExecutionResult:
         data = await self._call(
-            LangBotToBoxAction.EXEC, spec.model_dump(mode="json"), timeout=300.0
+            LangBotToBoxAction.EXEC,
+            spec.model_dump(mode="json"),
+            timeout=300.0,
+            action_context=action_context,
         )
         return BoxExecutionResult(
             session_id=data["session_id"],
@@ -204,33 +261,55 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 pass
             self._handler = None
 
-    async def get_status(self) -> dict:
-        return await self._call(LangBotToBoxAction.STATUS, {})
+    async def get_status(self, action_context: ActionContext | None = None) -> dict:
+        return await self._call(
+            LangBotToBoxAction.STATUS, {}, action_context=action_context
+        )
 
-    async def get_sessions(self) -> list[dict]:
-        data = await self._call(LangBotToBoxAction.GET_SESSIONS, {})
+    async def get_sessions(
+        self, action_context: ActionContext | None = None
+    ) -> list[dict]:
+        data = await self._call(
+            LangBotToBoxAction.GET_SESSIONS, {}, action_context=action_context
+        )
         return data["sessions"]
 
-    async def get_session(self, session_id: str) -> dict:
+    async def get_session(
+        self, session_id: str, action_context: ActionContext | None = None
+    ) -> dict:
         return await self._call(
-            LangBotToBoxAction.GET_SESSION, {"session_id": session_id}
+            LangBotToBoxAction.GET_SESSION,
+            {"session_id": session_id},
+            action_context=action_context,
         )
 
     async def get_backend_info(self) -> dict:
         return await self._call(LangBotToBoxAction.GET_BACKEND_INFO, {})
 
-    async def delete_session(self, session_id: str) -> None:
+    async def delete_session(
+        self, session_id: str, action_context: ActionContext | None = None
+    ) -> None:
         await self._call(
-            LangBotToBoxAction.DELETE_SESSION, {"session_id": session_id}, timeout=30.0
+            LangBotToBoxAction.DELETE_SESSION,
+            {"session_id": session_id},
+            timeout=30.0,
+            action_context=action_context,
         )
 
-    async def create_session(self, spec: BoxSpec) -> dict:
+    async def create_session(
+        self, spec: BoxSpec, action_context: ActionContext | None = None
+    ) -> dict:
         return await self._call(
-            LangBotToBoxAction.CREATE_SESSION, spec.model_dump(mode="json")
+            LangBotToBoxAction.CREATE_SESSION,
+            spec.model_dump(mode="json"),
+            action_context=action_context,
         )
 
     async def start_managed_process(
-        self, session_id: str, spec: BoxManagedProcessSpec
+        self,
+        session_id: str,
+        spec: BoxManagedProcessSpec,
+        action_context: ActionContext | None = None,
     ) -> BoxManagedProcessInfo:
         data = await self._call(
             LangBotToBoxAction.START_MANAGED_PROCESS,
@@ -241,11 +320,15 @@ class ActionRPCBoxClient(BoxRuntimeClient):
             # caused stdio MCP servers to be torn down mid-install. Give it
             # headroom so the first launch can complete.
             timeout=30.0,
+            action_context=action_context,
         )
         return BoxManagedProcessInfo.model_validate(data)
 
     async def get_managed_process(
-        self, session_id: str, process_id: str = "default"
+        self,
+        session_id: str,
+        process_id: str = "default",
+        action_context: ActionContext | None = None,
     ) -> BoxManagedProcessInfo:
         data = await self._call(
             LangBotToBoxAction.GET_MANAGED_PROCESS,
@@ -253,11 +336,15 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 "session_id": session_id,
                 "process_id": process_id,
             },
+            action_context=action_context,
         )
         return BoxManagedProcessInfo.model_validate(data)
 
     async def stop_managed_process(
-        self, session_id: str, process_id: str = "default"
+        self,
+        session_id: str,
+        process_id: str = "default",
+        action_context: ActionContext | None = None,
     ) -> None:
         await self._call(
             LangBotToBoxAction.STOP_MANAGED_PROCESS,
@@ -266,11 +353,20 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 "process_id": process_id,
             },
             timeout=30.0,
+            action_context=action_context,
         )
 
     def get_managed_process_websocket_url(
-        self, session_id: str, ws_relay_base_url: str, process_id: str = "default"
+        self,
+        session_id: str,
+        ws_relay_base_url: str,
+        process_id: str = "default",
+        action_context: ActionContext | None = None,
     ) -> str:
+        if action_context is not None:
+            from .tenancy import namespace_session_id
+
+            session_id = namespace_session_id(action_context, session_id)
         base = ws_relay_base_url
         if base.startswith("https://"):
             scheme = "wss://"
@@ -288,29 +384,64 @@ class ActionRPCBoxClient(BoxRuntimeClient):
     async def init(self, config: dict) -> None:
         await self._call(LangBotToBoxAction.INIT, config)
 
-    async def list_skills(self) -> list[dict]:
-        data = await self._call(LangBotToBoxAction.LIST_SKILLS, {})
+    async def list_skills(
+        self, action_context: ActionContext | None = None
+    ) -> list[dict]:
+        data = await self._call(
+            LangBotToBoxAction.LIST_SKILLS, {}, action_context=action_context
+        )
         return data["skills"]
 
-    async def get_skill(self, name: str) -> dict | None:
-        data = await self._call(LangBotToBoxAction.GET_SKILL, {"name": name})
+    async def get_skill(
+        self, name: str, action_context: ActionContext | None = None
+    ) -> dict | None:
+        data = await self._call(
+            LangBotToBoxAction.GET_SKILL,
+            {"name": name},
+            action_context=action_context,
+        )
         return data.get("skill")
 
-    async def create_skill(self, skill: dict) -> dict:
-        data = await self._call(LangBotToBoxAction.CREATE_SKILL, {"skill": skill})
-        return data["skill"]
-
-    async def update_skill(self, name: str, skill: dict) -> dict:
+    async def create_skill(
+        self, skill: dict, action_context: ActionContext | None = None
+    ) -> dict:
         data = await self._call(
-            LangBotToBoxAction.UPDATE_SKILL, {"name": name, "skill": skill}
+            LangBotToBoxAction.CREATE_SKILL,
+            {"skill": skill},
+            action_context=action_context,
         )
         return data["skill"]
 
-    async def delete_skill(self, name: str) -> None:
-        await self._call(LangBotToBoxAction.DELETE_SKILL, {"name": name})
+    async def update_skill(
+        self,
+        name: str,
+        skill: dict,
+        action_context: ActionContext | None = None,
+    ) -> dict:
+        data = await self._call(
+            LangBotToBoxAction.UPDATE_SKILL,
+            {"name": name, "skill": skill},
+            action_context=action_context,
+        )
+        return data["skill"]
 
-    async def scan_skill_directory(self, path: str) -> dict:
-        return await self._call(LangBotToBoxAction.SCAN_SKILL_DIRECTORY, {"path": path})
+    async def delete_skill(
+        self, name: str, action_context: ActionContext | None = None
+    ) -> None:
+        await self._call(
+            LangBotToBoxAction.DELETE_SKILL,
+            {"name": name},
+            action_context=action_context,
+        )
+
+    async def scan_skill_directory(
+        self, path: str, action_context: ActionContext | None = None
+    ) -> dict:
+        return await self._call(
+            LangBotToBoxAction.SCAN_SKILL_DIRECTORY,
+            {"path": path},
+            action_context=action_context,
+        )
 
     async def list_skill_files(
         self,
@@ -318,6 +449,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         path: str = ".",
         include_hidden: bool = False,
         max_entries: int = 200,
+        action_context: ActionContext | None = None,
     ) -> dict:
         return await self._call(
             LangBotToBoxAction.LIST_SKILL_FILES,
@@ -327,17 +459,29 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 "include_hidden": include_hidden,
                 "max_entries": max_entries,
             },
+            action_context=action_context,
         )
 
-    async def read_skill_file(self, name: str, path: str) -> dict:
+    async def read_skill_file(
+        self, name: str, path: str, action_context: ActionContext | None = None
+    ) -> dict:
         return await self._call(
-            LangBotToBoxAction.READ_SKILL_FILE, {"name": name, "path": path}
+            LangBotToBoxAction.READ_SKILL_FILE,
+            {"name": name, "path": path},
+            action_context=action_context,
         )
 
-    async def write_skill_file(self, name: str, path: str, content: str) -> dict:
+    async def write_skill_file(
+        self,
+        name: str,
+        path: str,
+        content: str,
+        action_context: ActionContext | None = None,
+    ) -> dict:
         return await self._call(
             LangBotToBoxAction.WRITE_SKILL_FILE,
             {"name": name, "path": path, "content": content},
+            action_context=action_context,
         )
 
     async def preview_skill_zip(
@@ -346,6 +490,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         filename: str,
         source_subdir: str = "",
         target_suffix: str = "upload",
+        action_context: ActionContext | None = None,
     ) -> list[dict]:
         file_key = await self.handler.send_file(file_bytes, "zip")
         data = await self._call(
@@ -357,6 +502,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 "target_suffix": target_suffix,
             },
             timeout=60.0,
+            action_context=action_context,
         )
         return data["skills"]
 
@@ -368,6 +514,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
         source_path: str = "",
         source_subdir: str = "",
         target_suffix: str = "upload",
+        action_context: ActionContext | None = None,
     ) -> list[dict]:
         file_key = await self.handler.send_file(file_bytes, "zip")
         data = await self._call(
@@ -381,5 +528,6 @@ class ActionRPCBoxClient(BoxRuntimeClient):
                 "target_suffix": target_suffix,
             },
             timeout=120.0,
+            action_context=action_context,
         )
         return data["skills"]

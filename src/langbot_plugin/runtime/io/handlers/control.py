@@ -28,6 +28,9 @@ class ControlConnectionHandler(handler.Handler):
         super().__init__(connection)
         self.name = "FromLangBot"
         self.context = context
+        workspace_binding = getattr(self.context, "workspace_binding", None)
+        if workspace_binding is not None:
+            self.bind_action_context(workspace_binding)
 
         @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
@@ -35,6 +38,14 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.SET_RUNTIME_CONFIG)
         async def set_runtime_config(data: dict[str, Any]) -> handler.ActionResponse:
+            # SET_RUNTIME_CONFIG is the trust-establishing handshake. An old or
+            # forged peer that omits its context must not start plugin work.
+            action_context = self.current_action_context
+            if action_context is None:
+                raise ValueError("SET_RUNTIME_CONFIG requires a Workspace context")
+            binding = self.context.bind_workspace(action_context)
+            self.bind_action_context(binding)
+
             # LangBot pushes its configured marketplace (Space) URL so the
             # runtime downloads plugins from the same place LangBot is bound to,
             # instead of relying on the runtime's own env/default.
@@ -46,6 +57,7 @@ class ControlConnectionHandler(handler.Handler):
                 logger.info(
                     f"Runtime cloud_service_url set by LangBot: {runtime_settings.cloud_service_url}"
                 )
+
             return handler.ActionResponse.success({})
 
         @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
@@ -172,7 +184,19 @@ class ControlConnectionHandler(handler.Handler):
             install_source = plugin_mgr_module.PluginInstallSource(
                 data["install_source"]
             )
-            install_info = data["install_info"]
+            install_info = {
+                key: value
+                for key, value in data["install_info"].items()
+                if key
+                not in {
+                    "context",
+                    "action_context",
+                    "instance_uuid",
+                    "workspace_uuid",
+                    "placement_generation",
+                    "installation_uuid",
+                }
+            }
 
             if (
                 install_source == plugin_mgr_module.PluginInstallSource.LOCAL
@@ -223,6 +247,10 @@ class ControlConnectionHandler(handler.Handler):
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
             event_context_data = data["event_context"]
             event_context = EventContext.model_validate(event_context_data)
+            action_context = self.current_action_context
+            if action_context is not None:
+                event_context.inherit_execution_scope(action_context)
+                event_context.event.inherit_execution_scope(action_context)
             include_plugins = data.get("include_plugins")
 
             (
@@ -262,11 +290,42 @@ class ControlConnectionHandler(handler.Handler):
             tool_parameters = data["tool_parameters"]
             session = data["session"]
             query_id = data["query_id"]
+            query_uuid = data.get("query_uuid")
             include_plugins = data.get("include_plugins")
 
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id, include_plugins
-            )
+            session_payload = dict(session)
+            action_context = self.current_action_context
+            if action_context is not None:
+                for field_name in (
+                    "instance_uuid",
+                    "workspace_uuid",
+                    "placement_generation",
+                ):
+                    trusted_value = getattr(action_context, field_name)
+                    supplied_value = session_payload.get(field_name)
+                    if supplied_value is not None and supplied_value != trusted_value:
+                        raise ValueError(
+                            f"Session {field_name} does not match action context"
+                        )
+                    session_payload[field_name] = trusted_value
+
+            if query_uuid is None:
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session_payload,
+                    query_id,
+                    include_plugins,
+                )
+            else:
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session_payload,
+                    query_id,
+                    include_plugins,
+                    query_uuid=query_uuid,
+                )
 
             return handler.ActionResponse.success(
                 {
@@ -287,6 +346,10 @@ class ControlConnectionHandler(handler.Handler):
             data: dict[str, Any],
         ) -> AsyncGenerator[handler.ActionResponse, None]:
             command_context = ExecuteContext.model_validate(data["command_context"])
+            action_context = self.current_action_context
+            if action_context is not None:
+                command_context.inherit_execution_scope(action_context)
+                command_context.session.inherit_execution_scope(action_context)
             include_plugins = data.get("include_plugins")
             async for resp in self.context.plugin_mgr.execute_command(
                 command_context, include_plugins

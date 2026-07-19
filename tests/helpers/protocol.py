@@ -7,6 +7,7 @@ from typing import Any
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.entities.io.context import ActionContext
 
 
 class ProtocolConnection(Connection):
@@ -34,10 +35,17 @@ class ProtocolConnection(Connection):
         action: str,
         data: dict[str, Any] | None = None,
         seq_id: int = 1,
+        action_context: ActionContext | dict[str, Any] | None = None,
     ) -> None:
-        await self.incoming.put(
-            json.dumps({"seq_id": seq_id, "action": action, "data": data or {}})
+        context = (
+            ActionContext.model_validate(action_context).model_dump()
+            if action_context is not None
+            else None
         )
+        request = {"seq_id": seq_id, "action": action, "data": data or {}}
+        if context is not None:
+            request["context"] = context
+        await self.incoming.put(json.dumps(request))
 
     async def send_peer_response(
         self,
@@ -92,9 +100,15 @@ class ProtocolSession:
         action: str,
         data: dict[str, Any] | None = None,
         seq_id: int = 1,
+        action_context: ActionContext | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         start = len(self.connection.sent)
-        await self.connection.send_peer_request(action, data, seq_id)
+        await self.connection.send_peer_request(
+            action,
+            data,
+            seq_id,
+            action_context,
+        )
         for _ in range(50):
             if len(self.connection.sent) > start:
                 return json.loads(self.connection.sent[-1])

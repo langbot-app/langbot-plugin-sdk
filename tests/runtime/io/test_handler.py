@@ -14,6 +14,7 @@ from langbot_plugin.entities.io.errors import (
     ConnectionClosedError,
 )
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
+from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
 
@@ -79,6 +80,88 @@ async def test_call_action_sends_request_and_returns_response_data():
 
     assert await task == {"ok": True}
     assert request["seq_id"] not in handler.resp_waiters
+
+
+def _action_context(workspace_uuid="workspace-a", installation_uuid=None):
+    return ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid=workspace_uuid,
+        placement_generation=5,
+        installation_uuid=installation_uuid,
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_action_carries_bound_context_outside_data_payload():
+    conn = QueueConnection()
+    handler = Handler(conn)
+    context = _action_context(installation_uuid="installation-1")
+    handler.bind_action_context(context)
+
+    task = asyncio.create_task(handler.call_action(SampleAction.ECHO, {}, timeout=1))
+    [request] = await _wait_for_sent(conn)
+
+    assert request["data"] == {}
+    assert request["context"] == context.model_dump()
+
+    handler.resp_waiters[request["seq_id"]].set_result(
+        ActionResponse(seq_id=request["seq_id"], code=0, message="ok", data={})
+    )
+    await task
+
+
+def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installation():
+    handler = Handler(QueueConnection())
+    workspace_binding = _action_context()
+
+    assert handler.bind_action_context(workspace_binding) == workspace_binding
+    assert handler.bind_action_context(workspace_binding) == workspace_binding
+
+    installation_binding = workspace_binding.for_installation("installation-1")
+    assert handler.bind_action_context(installation_binding) == installation_binding
+
+    with pytest.raises(ValueError, match="another Workspace"):
+        handler.bind_action_context(_action_context(workspace_uuid="workspace-b"))
+    with pytest.raises(ValueError, match="another plugin installation"):
+        handler.bind_action_context(
+            workspace_binding.for_installation("installation-2")
+        )
+    with pytest.raises(ValueError, match="cannot be removed"):
+        handler.bind_action_context(workspace_binding)
+
+
+@pytest.mark.asyncio
+async def test_run_exposes_validated_context_to_action_and_rejects_mismatch():
+    conn = ProtocolConnection()
+    handler = Handler(conn)
+    binding = _action_context()
+    handler.bind_action_context(binding)
+    seen = []
+
+    @handler.action(SampleAction.ECHO)
+    async def echo(_data):
+        seen.append(handler.current_action_context)
+        return ActionResponse.success({})
+
+    run_task = asyncio.create_task(handler.run())
+    await conn.send_peer_request("echo", {}, seq_id=1)
+    [success] = await conn.sent_messages(1)
+    assert success["code"] == 0
+    assert seen == [binding]
+
+    await conn.send_peer_request(
+        "echo",
+        {},
+        seq_id=2,
+        action_context=_action_context(workspace_uuid="workspace-b"),
+    )
+    responses = await conn.sent_messages(2)
+    assert responses[1]["code"] == 1
+    assert "does not match connection Workspace" in responses[1]["message"]
+    assert seen == [binding]
+
+    await conn.close_peer()
+    await run_task
 
 
 @pytest.mark.asyncio
@@ -236,6 +319,8 @@ async def test_call_action_error_response_should_preserve_peer_message():
 async def test_call_action_generator_yields_chunks_until_end():
     conn = QueueConnection()
     handler = Handler(conn)
+    context = _action_context(installation_uuid="installation-1")
+    handler.bind_action_context(context)
     chunks: list[dict] = []
 
     async def consume():
@@ -246,6 +331,7 @@ async def test_call_action_generator_yields_chunks_until_end():
 
     task = asyncio.create_task(consume())
     [request] = await _wait_for_sent(conn)
+    assert request["context"] == context.model_dump()
     queue = handler.resp_queues[request["seq_id"]]
     await queue.put(
         ActionResponse(
@@ -313,9 +399,13 @@ async def test_run_sends_error_response_for_unknown_action():
 async def test_run_handles_streaming_action_response():
     conn = QueueConnection()
     handler = Handler(conn)
+    context = _action_context()
+    handler.bind_action_context(context)
+    seen_contexts = []
 
     @handler.action(SampleAction.STREAM)
     async def stream(_data):
+        seen_contexts.append(handler.current_action_context)
         yield ActionResponse.success({"part": 1})
         yield ActionResponse.success({"part": 2})
 
@@ -335,6 +425,7 @@ async def test_run_handles_streaming_action_response():
         {"part": 2},
         {},
     ]
+    assert seen_contexts == [context]
 
 
 @pytest.mark.asyncio
@@ -624,6 +715,48 @@ async def test_file_chunk_action_reassembles_file_and_read_delete_roundtrip(
     # Delete once, then again: the second call must swallow FileNotFoundError.
     await handler.delete_local_file(file_key)
     await handler.delete_local_file(file_key)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_key",
+    [
+        "../secret.txt",
+        "/tmp/secret.txt",
+        "nested/secret.txt",
+        r"nested\secret.txt",
+        "opaque..txt",
+        r"C:\secret.txt",
+        " surrounded.txt ",
+        123,
+    ],
+)
+async def test_file_transfer_rejects_path_syntax(file_key, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    handler = Handler(ProtocolConnection())
+    chunk_handler = handler.actions[CommonAction.FILE_CHUNK.value]
+
+    with pytest.raises(ValueError, match="Invalid file transfer key"):
+        await chunk_handler(
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"secret").decode("utf-8"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="Invalid file transfer key"):
+        await handler.read_local_file(file_key)
+    with pytest.raises(ValueError, match="Invalid file transfer key"):
+        await handler.delete_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_send_file_rejects_extension_with_path_syntax(monkeypatch):
+    handler = Handler(ProtocolConnection())
+
+    with pytest.raises(ValueError, match="Invalid file transfer extension"):
+        await handler.send_file(b"payload", "../txt")
 
 
 @pytest.mark.asyncio

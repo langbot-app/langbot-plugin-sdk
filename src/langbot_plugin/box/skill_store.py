@@ -73,8 +73,22 @@ def build_skill_md(metadata: dict, instructions: str) -> str:
 class BoxSkillStore:
     """Skill package storage owned by the Box runtime process."""
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: dict | None = None, *, namespace: str | None = None):
         self._config = config or {}
+        self._namespace = namespace
+
+    def scoped(self, namespace: str) -> BoxSkillStore:
+        """Return an immutable Workspace view over the configured skill store."""
+
+        normalized = str(namespace or "").strip()
+        if (
+            not normalized
+            or "/" in normalized
+            or "\\" in normalized
+            or normalized in {".", ".."}
+        ):
+            raise ValueError("Invalid Box skill namespace")
+        return BoxSkillStore(self._config, namespace=normalized)
 
     def update_config(self, config: dict) -> None:
         self._config = config or {}
@@ -93,7 +107,10 @@ class BoxSkillStore:
         skills_root_path = Path(skills_root).expanduser()
         if not skills_root_path.is_absolute():
             skills_root_path = host_root_path / skills_root_path
-        return str(skills_root_path.resolve())
+        resolved_root = skills_root_path.resolve()
+        if self._namespace is not None:
+            resolved_root = resolved_root / "tenants" / self._namespace
+        return str(resolved_root)
 
     def list_skills(self) -> list[dict]:
         os.makedirs(self.root, exist_ok=True)

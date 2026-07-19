@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 from enum import Enum
+import hmac
 import logging
 import os
+import secrets
+from collections.abc import Mapping
 
 import asyncio
 import contextlib
@@ -18,6 +21,13 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
 from langbot_plugin.runtime.settings import settings
+from langbot_plugin.runtime.security import (
+    PLUGIN_DEBUG_KEY_HEADER,
+    PLUGIN_REGISTRATION_CAPABILITY_HEADER,
+    PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
+    PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER,
+    validate_runtime_secret,
+)
 from langbot_plugin.utils.log import configure_process_logging
 
 logger = logging.getLogger(__name__)
@@ -60,63 +70,66 @@ class RuntimeApplication:
         else:
             self._control_connection_mode = ControlConnectionMode.WS
 
+        configured_debug_key = str(settings.plugin_debug_key or "").strip()
+        if configured_debug_key:
+            settings.plugin_debug_key = validate_runtime_secret(
+                configured_debug_key,
+                name="PLUGIN_DEBUG_KEY",
+            )
+        else:
+            # Debug access is enabled by default for development, but never
+            # with the historical empty-key bypass. The authenticated control
+            # channel is the only place where this generated key is exposed.
+            settings.plugin_debug_key = secrets.token_urlsafe(48)
+
         # build controllers layer
         if self._control_connection_mode == ControlConnectionMode.STDIO:
             self.context.stdio_server = stdio_controller_server.StdioServerController()
 
         elif self._control_connection_mode == ControlConnectionMode.WS:
+            control_token = validate_runtime_secret(
+                os.environ.get(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV, ""),
+                name=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
+            )
             self.context.ws_control_server = (
                 ws_controller_server.WebSocketServerController(
-                    self.args.ws_control_port
+                    self.args.ws_control_port,
+                    expected_headers={
+                        PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER: control_token,
+                    },
                 )
             )
 
-        # enable debugging ws server
+        # The plugin WebSocket serves explicit debug clients and Windows
+        # Runtime-managed children, with separate authentication credentials.
         self.context.ws_debug_server = ws_controller_server.WebSocketServerController(
-            self.args.ws_debug_port
+            self.args.ws_debug_port,
+            request_authenticator=self._authenticate_plugin_request,
+        )
+
+    def _authenticate_plugin_request(self, headers: Mapping[str, str]) -> bool:
+        """Admit explicit debug clients or one pending installed plugin."""
+
+        supplied_debug_key = str(headers.get(PLUGIN_DEBUG_KEY_HEADER) or "")
+        if supplied_debug_key and hmac.compare_digest(
+            settings.plugin_debug_key,
+            supplied_debug_key,
+        ):
+            return True
+
+        registration_capability = str(
+            headers.get(PLUGIN_REGISTRATION_CAPABILITY_HEADER) or ""
+        )
+        return self.context.plugin_mgr.is_registration_capability_pending(
+            registration_capability
         )
 
     def set_control_handler(
         self, handler: control_handler_cls.ControlConnectionHandler
     ):
-        async def run_current_generation() -> None:
-            async with self._control_handler_lock:
-                previous = getattr(self.context, "control_handler", None)
-                if previous is not None and previous is not handler:
-                    close = getattr(previous, "close", None)
-                    if close is not None:
-                        await close()
-
-                if self._closing:
-                    close = getattr(handler, "close", None)
-                    if close is not None:
-                        await close()
-                    return
-
-                self.context.control_handler = handler
-                logger.info("Got control connection.")
-                mark_ready = getattr(
-                    self.context.plugin_mgr, "mark_control_connection_ready", None
-                )
-                if mark_ready is not None:
-                    mark_ready()
-                waiter = self.context.plugin_mgr.wait_for_control_connection
-                if waiter is not None:
-                    if not waiter.done():
-                        waiter.set_result(None)
-                    # Installed plugins are launched only once. Later control
-                    # generations reuse the existing supervised plugin processes.
-                    self.context.plugin_mgr.wait_for_control_connection = None
-            try:
-                await handler.run()
-            finally:
-                async with self._control_handler_lock:
-                    if getattr(self.context, "control_handler", None) is handler:
-                        del self.context.control_handler
-
-        task = asyncio.create_task(run_current_generation())
-        self._control_tasks.add(task)
-        task.add_done_callback(self._control_task_done)
+        self.context.control_handler = handler
+        task = asyncio.create_task(handler.run())
+        logger.info("Got control connection.")
         return task
 
     def _control_task_done(self, task: asyncio.Task) -> None:

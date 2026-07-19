@@ -26,12 +26,15 @@ from langbot_plugin.runtime.plugin.container import (
     PluginContainer,
     RuntimeContainerStatus,
 )
+from langbot_plugin.runtime.plugin import mgr as manager_module
 from langbot_plugin.runtime.plugin.mgr import PluginInstallSource, PluginManager
 from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
 from langbot_plugin.entities.io.errors import (
     DependencyInstallError,
     DependencyVerificationError,
 )
+from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.runtime.context import RuntimeContext
 
 
 def _manifest(
@@ -96,6 +99,56 @@ def _manager() -> PluginManager:
     return manager
 
 
+def _registration_capability(
+    manager: PluginManager,
+    plugin: PluginContainer,
+) -> str:
+    return manager._issue_registration_capability(
+        plugin_author=str(plugin.manifest.metadata.author),
+        plugin_name=plugin.manifest.metadata.name,
+        plugin_path=f"/tmp/{plugin.manifest.metadata.author}__{plugin.manifest.metadata.name}",
+    )
+
+
+def _write_installed_plugin(
+    root,
+    *,
+    author: str = "tester",
+    name: str = "demo",
+):
+    plugin_path = root / f"{author}__{name}"
+    plugin_path.mkdir()
+    (plugin_path / "manifest.yaml").write_text(
+        f"""
+apiVersion: v1
+kind: Plugin
+metadata:
+  author: {author}
+  name: {name}
+spec: {{}}
+""",
+        encoding="utf-8",
+    )
+    return plugin_path
+
+
+def _bound_runtime_context(
+    control_handler: FakeControlHandler | None = None,
+) -> RuntimeContext:
+    context = RuntimeContext()
+    context.ws_debug_port = 18080
+    if control_handler is not None:
+        context.control_handler = control_handler
+    context.bind_workspace(
+        ActionContext(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=9,
+        )
+    )
+    return context
+
+
 def _plugin_zip(author: str = "tester", name: str = "demo", version: str = "1.0.0"):
     manifest = f"""
 apiVersion: v1
@@ -127,6 +180,7 @@ class FakeControlHandler:
             "plugin_config": {"api_key": "secret"},
             "install_source": PluginInstallSource.MARKETPLACE.value,
             "install_info": {"plugin_version": "1.0.0"},
+            "installation_uuid": "installation-1",
         }
 
 
@@ -160,11 +214,16 @@ class FakeHandler:
         self.shutdown_calls = 0
         self.diagnostics = []
         self.log_buffer = FakeLogBuffer()
+        self.bound_action_context = None
         self.files = {
             "icon-key": b"<svg/>",
             "readme-key": b"# Demo",
             "asset-key": b"asset-bytes",
         }
+
+    def bind_action_context(self, action_context):
+        self.bound_action_context = action_context
+        return action_context
 
     async def initialize_plugin(self, plugin_settings):
         self.initialized_with = plugin_settings
@@ -184,12 +243,22 @@ class FakeHandler:
     async def emit_event(self, event_context):
         return {"emitted": True, "event_context": event_context}
 
-    async def call_tool(self, tool_name, tool_parameters, session, query_id):
+    async def call_tool(
+        self,
+        tool_name,
+        tool_parameters,
+        session,
+        query_id,
+        query_uuid=None,
+    ):
+        query_ref = {"query_id": query_id}
+        if query_uuid is not None:
+            query_ref["query_uuid"] = query_uuid
         return {
             "tool_response": {
                 "tool_name": tool_name,
                 "params": tool_parameters,
-                "query_id": query_id,
+                **query_ref,
             }
         }
 
@@ -257,6 +326,20 @@ class ReplyChangingFakeHandler(FakeHandler):
         return {"emitted": True, "event_context": event_context}
 
 
+class QueryUuidChangingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context["query_uuid"] = "query-forged"
+        event_context["event"]["query_uuid"] = "query-forged"
+        return {"emitted": True, "event_context": event_context}
+
+
+class QueryUuidDroppingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context.pop("query_uuid", None)
+        event_context["event"].pop("query_uuid", None)
+        return {"emitted": True, "event_context": event_context}
+
+
 def test_plugin_manager_instances_should_not_share_plugin_state():
     PluginManager.plugins = []
     first = PluginManager(SimpleNamespace())
@@ -265,6 +348,105 @@ def test_plugin_manager_instances_should_not_share_plugin_state():
     first.plugins.append(_plugin())
 
     assert second.plugins == []
+
+
+@pytest.mark.asyncio
+async def test_launch_plugin_passes_registration_capability_not_debug_key(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, Any] = {}
+
+    class FakeStdioController:
+        process = None
+
+        def __init__(self, command, args, env, working_dir):
+            captured.update(
+                command=command,
+                args=args,
+                env=env,
+                working_dir=working_dir,
+            )
+
+        async def run(self, _callback):
+            return None
+
+    monkeypatch.setattr(manager_module, "get_platform", lambda: "linux")
+    monkeypatch.setattr(
+        manager_module.stdio_client_controller,
+        "StdioClientController",
+        FakeStdioController,
+    )
+    plugin_path = _write_installed_plugin(tmp_path)
+    await _manager().launch_plugin(str(plugin_path))
+
+    assert "--plugin-debug-key" not in captured["args"]
+    assert "PLUGIN_DEBUG_KEY" not in captured["env"]
+    capability = captured["env"]["LANGBOT_PLUGIN_REGISTRATION_CAPABILITY"]
+    assert len(capability) >= 32
+
+
+@pytest.mark.asyncio
+async def test_windows_launch_uses_minimal_env_and_fences_runtime_url(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, Any] = {}
+
+    class FakeProcess:
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(manager_module, "get_platform", lambda: "win32")
+    monkeypatch.setattr(
+        manager_module.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setenv("RUNTIME_WS_URL", "ws://untrusted.example/plugin/ws")
+    monkeypatch.setenv("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN", "runtime-secret")
+    monkeypatch.setenv("LANGBOT_BOX_CONTROL_TOKEN", "box-secret")
+    monkeypatch.setenv("UNRELATED_SECRET", "also-secret")
+
+    plugin_path = _write_installed_plugin(tmp_path)
+    await _manager().launch_plugin(str(plugin_path))
+
+    assert "--plugin-debug-key" not in captured["args"]
+    child_env = captured["kwargs"]["env"]
+    assert "PLUGIN_DEBUG_KEY" not in child_env
+    assert "LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN" not in child_env
+    assert "LANGBOT_BOX_CONTROL_TOKEN" not in child_env
+    assert "UNRELATED_SECRET" not in child_env
+    assert len(child_env["LANGBOT_PLUGIN_REGISTRATION_CAPABILITY"]) >= 32
+    assert child_env["RUNTIME_WS_URL"] == "ws://localhost:18080/plugin/ws"
+
+
+@pytest.mark.asyncio
+async def test_launch_all_plugins_waits_for_trusted_workspace_binding(monkeypatch):
+    context = RuntimeContext()
+    context.ws_debug_port = 18080
+    manager = PluginManager(context)
+    context.plugin_mgr = manager
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.glob.glob",
+        lambda _pattern: [],
+    )
+
+    launch_task = asyncio.create_task(manager.launch_all_plugins())
+    await asyncio.sleep(0)
+
+    assert not launch_task.done()
+
+    context.bind_workspace(
+        ActionContext(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=9,
+        )
+    )
+    await launch_task
 
 
 def test_find_plugin_and_component_lists_respect_include_filters():
@@ -627,7 +809,7 @@ async def test_install_plugin_raises_verification_error_when_pip_lies(
 async def test_register_plugin_initializes_settings_and_refreshes_container():
     manager = _manager()
     control_handler = FakeControlHandler()
-    manager.context = SimpleNamespace(control_handler=control_handler)
+    manager.context = _bound_runtime_context(control_handler)
     plugin = _plugin(
         name="demo",
         components=[_component("Tool", "lookup")],
@@ -635,7 +817,12 @@ async def test_register_plugin_initializes_settings_and_refreshes_container():
     )
     handler = FakeHandler(plugin)
 
-    await manager.register_plugin(handler, plugin.model_dump())
+    capability = _registration_capability(manager, plugin)
+    await manager.register_plugin(
+        handler,
+        plugin.model_dump(),
+        registration_capability=capability,
+    )
 
     registered = manager.plugins[0]
     assert registered._runtime_plugin_handler is handler
@@ -649,10 +836,153 @@ async def test_register_plugin_initializes_settings_and_refreshes_container():
 
 
 @pytest.mark.asyncio
+async def test_register_plugin_binds_installation_from_trusted_host_settings():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    workspace_binding = manager.context.workspace_binding
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+
+    capability = _registration_capability(manager, plugin)
+    await manager.register_plugin(
+        handler,
+        plugin.model_dump(),
+        registration_capability=capability,
+    )
+
+    assert handler.bound_action_context == workspace_binding.for_installation(
+        "installation-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_registration_capability_is_one_use_and_manifest_bound():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    expected = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    forged = _plugin(
+        author="attacker",
+        name="forged",
+        status=RuntimeContainerStatus.MOUNTED,
+    )
+    capability = _registration_capability(manager, expected)
+
+    with pytest.raises(ValueError, match="manifest identity"):
+        await manager.register_plugin(
+            FakeHandler(forged),
+            forged.model_dump(),
+            registration_capability=capability,
+        )
+
+    assert control_handler.calls == []
+    assert not manager.is_registration_capability_pending(capability)
+    with pytest.raises(ValueError, match="invalid or already used"):
+        await manager.register_plugin(
+            FakeHandler(expected),
+            expected.model_dump(),
+            registration_capability=capability,
+        )
+
+
+@pytest.mark.asyncio
+async def test_registered_plugin_cannot_change_manifest_identity_on_refresh():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+    capability = _registration_capability(manager, plugin)
+
+    async def forged_container():
+        payload = plugin.model_dump()
+        payload["manifest"]["manifest"]["metadata"]["name"] = "forged"
+        return payload
+
+    handler.get_plugin_container = forged_container
+
+    with pytest.raises(ValueError, match="changed its manifest identity"):
+        await manager.register_plugin(
+            handler,
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
+
+    assert manager.plugins == []
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_waits_for_binding_before_host_settings_request():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    context = RuntimeContext()
+    context.control_handler = control_handler
+    context.ws_debug_port = 18080
+    manager.context = context
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+
+    capability = _registration_capability(manager, plugin)
+    register_task = asyncio.create_task(
+        manager.register_plugin(
+            handler,
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert not register_task.done()
+    assert control_handler.calls == []
+
+    context.bind_workspace(
+        ActionContext(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=9,
+        )
+    )
+    await register_task
+
+    assert [call[0] for call in control_handler.calls] == [
+        RuntimeToLangBotAction.GET_PLUGIN_SETTINGS
+    ]
+    assert handler.bound_action_context == context.workspace_binding.for_installation(
+        "installation-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_rejects_missing_installation_capability():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+
+    async def settings_without_installation(action, payload):
+        result = await FakeControlHandler.call_action(control_handler, action, payload)
+        result.pop("installation_uuid")
+        return result
+
+    control_handler.call_action = settings_without_installation
+    manager.context = _bound_runtime_context(control_handler)
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    capability = _registration_capability(manager, plugin)
+
+    with pytest.raises(ValueError, match="installation capability"):
+        await manager.register_plugin(
+            FakeHandler(plugin),
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
+
+    assert manager.plugins == []
+
+
+@pytest.mark.asyncio
 async def test_register_debug_plugin_initializes_settings_first():
     manager = _manager()
     control_handler = FakeControlHandler()
-    manager.context = SimpleNamespace(control_handler=control_handler)
+    manager.context = _bound_runtime_context(control_handler)
     plugin = _plugin(name="debug", status=RuntimeContainerStatus.MOUNTED)
     handler = FakeHandler(plugin)
     handler.debug_plugin = True
@@ -672,10 +1002,16 @@ async def test_register_debug_plugin_initializes_settings_first():
 @pytest.mark.asyncio
 async def test_register_plugin_requires_control_handler():
     manager = _manager()
+    manager.context = _bound_runtime_context()
     plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    capability = _registration_capability(manager, plugin)
 
     with pytest.raises(ValueError, match="Failed to get plugin settings"):
-        await manager.register_plugin(FakeHandler(plugin), plugin.model_dump())
+        await manager.register_plugin(
+            FakeHandler(plugin),
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
 
 
 @pytest.mark.asyncio
@@ -695,6 +1031,7 @@ async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
         {"city": "Paris"},
         {"launcher_type": "person"},
         query_id=99,
+        query_uuid="query-opaque-99",
     )
     command_responses = [
         response
@@ -710,6 +1047,7 @@ async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
         "tool_name": "lookup",
         "params": {"city": "Paris"},
         "query_id": 99,
+        "query_uuid": "query-opaque-99",
     }
     assert command_responses == [CommandReturn(text="admin")]
 
@@ -1137,6 +1475,60 @@ async def test_emit_event_should_report_each_emitting_plugin_once():
     emitted_plugins, _, _ = await manager.emit_event(event_context)
 
     assert emitted_plugins == [plugin]
+
+
+@pytest.mark.asyncio
+async def test_emit_event_rejects_plugin_query_uuid_forgery():
+    manager = _manager()
+    plugin = _plugin()
+    plugin._runtime_plugin_handler = QueryUuidChangingFakeHandler(plugin)
+    manager.plugins = [plugin]
+    event_context = EventContext(
+        query_id=1,
+        query_uuid="query-trusted",
+        event_name="PersonCommandSent",
+        event=PersonCommandSent(
+            query_uuid="query-trusted",
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            command="demo",
+            params=[],
+            text_message="/demo",
+            is_admin=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="changed EventContext query_uuid"):
+        await manager.emit_event(event_context)
+
+
+@pytest.mark.asyncio
+async def test_emit_event_restores_query_uuid_dropped_by_legacy_plugin():
+    manager = _manager()
+    plugin = _plugin()
+    plugin._runtime_plugin_handler = QueryUuidDroppingFakeHandler(plugin)
+    manager.plugins = [plugin]
+    event_context = EventContext(
+        query_id=1,
+        query_uuid="query-trusted",
+        event_name="PersonCommandSent",
+        event=PersonCommandSent(
+            query_uuid="query-trusted",
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            command="demo",
+            params=[],
+            text_message="/demo",
+            is_admin=False,
+        ),
+    )
+
+    _, returned_context, _ = await manager.emit_event(event_context)
+
+    assert returned_context.query_uuid == "query-trusted"
+    assert returned_context.event.query_uuid == "query-trusted"
 
 
 @pytest.mark.asyncio

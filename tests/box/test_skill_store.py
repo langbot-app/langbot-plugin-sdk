@@ -106,6 +106,28 @@ def test_skill_store_installs_zip_under_configured_relative_skills_root(tmp_path
     assert store.read_skill_file("demo", "notes.txt")["content"] == "updated"
 
 
+def test_scoped_skill_stores_isolate_same_named_skill_between_workspaces(tmp_path):
+    base_store = _make_store(tmp_path)
+    first_store = base_store.scoped("workspace-a")
+    second_store = base_store.scoped("workspace-b")
+
+    first_skill = first_store.install_zip_upload(
+        file_bytes=_skill_zip("demo"),
+        filename="demo.zip",
+    )[0]
+    second_skill = second_store.install_zip_upload(
+        file_bytes=_skill_zip("demo"),
+        filename="demo.zip",
+    )[0]
+
+    assert first_store.root != second_store.root
+    assert [skill["name"] for skill in first_store.list_skills()] == ["demo"]
+    assert [skill["name"] for skill in second_store.list_skills()] == ["demo"]
+    assert first_skill["package_root"].startswith(first_store.root + os.sep)
+    assert second_skill["package_root"].startswith(second_store.root + os.sep)
+    assert first_skill["package_root"] != second_skill["package_root"]
+
+
 def test_skill_store_supports_source_subdir_before_selecting_candidates(tmp_path):
     store = BoxSkillStore(
         {

@@ -23,6 +23,7 @@ from langbot_plugin.api.entities.builtin.rag.models import (
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 from langbot_plugin.cli.run.handler import PluginRuntimeHandler, _resolve_asset_path
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+from langbot_plugin.entities.io.context import ActionContext
 
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
 
@@ -94,9 +95,14 @@ class FakeTool(Tool):
     def __init__(self):
         self.calls = []
 
-    async def call(self, params, session, query_id):
-        self.calls.append((params, session, query_id))
-        return {"ok": True, "sender_id": session.sender_id, "query_id": query_id}
+    async def call(self, params, session, query_id, query_uuid=None):
+        self.calls.append((params, session, query_id, query_uuid))
+        return {
+            "ok": True,
+            "sender_id": session.sender_id,
+            "query_id": query_id,
+            "query_uuid": query_uuid,
+        }
 
 
 class SimpleTool(Tool):
@@ -205,6 +211,52 @@ async def test_plugin_runtime_handler_initializes_plugin_and_returns_container()
         "manifest": {"kind": "Plugin", "metadata": {"name": "demo"}},
         "components": [],
     }
+
+
+async def test_plugin_registration_separates_debug_key_and_prod_capability(
+    monkeypatch,
+):
+    handler, _initialized = _handler()
+    calls = []
+    monkeypatch.setenv("PLUGIN_DEBUG_KEY", "explicit-debug-key")
+
+    async def fake_call_action(action, data, **_kwargs):
+        calls.append((action, data))
+        return {"ok": True}
+
+    monkeypatch.setattr(handler, "call_action", fake_call_action)
+
+    await handler.register_plugin(prod_mode=False)
+    await handler.register_plugin(
+        prod_mode=True,
+        registration_capability="one-use-capability",
+    )
+
+    assert calls[0][1]["plugin_debug_key"] == "explicit-debug-key"
+    assert calls[0][1]["registration_capability"] == ""
+    assert calls[1][1]["plugin_debug_key"] == ""
+    assert calls[1][1]["registration_capability"] == "one-use-capability"
+
+
+async def test_plugin_runtime_handler_binds_context_from_initialize_envelope():
+    handler, initialized = _handler()
+    action_context = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=2,
+        installation_uuid="installation-1",
+    )
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            RuntimeToPluginAction.INITIALIZE_PLUGIN.value,
+            {"plugin_settings": {"enabled": True}},
+            action_context=action_context,
+        )
+
+    assert response["code"] == 0
+    assert initialized == [{"enabled": True}]
+    assert handler.bound_action_context == action_context
 
 
 async def test_plugin_runtime_handler_icon_without_icon_path_returns_empty_payload():
@@ -368,11 +420,17 @@ async def test_plugin_runtime_handler_call_tool_invokes_matching_tool_component(
                     "sender_id": "sender",
                 },
                 "query_id": 7,
+                "query_uuid": "query-opaque-7",
             },
         )
 
     assert response["data"] == {
-        "tool_response": {"ok": True, "sender_id": "sender", "query_id": 7}
+        "tool_response": {
+            "ok": True,
+            "sender_id": "sender",
+            "query_id": 7,
+            "query_uuid": "query-opaque-7",
+        }
     }
     assert tool.calls[0][0] == {"city": "Shanghai"}
 

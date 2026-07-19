@@ -37,6 +37,8 @@ from langbot_plugin.box.models import (
     BoxNetworkMode,
     BoxSpec,
 )
+from langbot_plugin.box.tenancy import namespace_session_id
+from langbot_plugin.entities.io.context import ActionContext
 
 
 @pytest.fixture
@@ -462,6 +464,25 @@ def test_ws_url_from_http(client):
 def test_ws_url_from_bare_host(client):
     url = client.get_managed_process_websocket_url("sess-1", "relay:8080")
     assert url == ("ws://relay:8080/v1/sessions/sess-1/managed-process/default/ws")
+
+
+def test_ws_url_uses_generation_scoped_physical_session(client):
+    context = ActionContext(
+        instance_uuid="instance-a",
+        workspace_uuid="workspace-a",
+        placement_generation=3,
+    )
+
+    url = client.get_managed_process_websocket_url(
+        "sess-1",
+        "https://relay.example.com",
+        process_id="worker",
+        action_context=context,
+    )
+
+    assert namespace_session_id(context, "sess-1") in url
+    assert "instance-a" not in url
+    assert "workspace-a" not in url
 
 
 # ── init ──────────────────────────────────────────────────────────────

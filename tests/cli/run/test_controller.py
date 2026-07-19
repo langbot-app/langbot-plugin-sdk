@@ -141,8 +141,12 @@ def _fake_handler_class(*, run_forever: bool = False):
             finally:
                 self.cancelled.set()
 
-        async def register_plugin(self, prod_mode: bool = False):
-            self.register_calls.append(prod_mode)
+        async def register_plugin(
+            self,
+            prod_mode: bool = False,
+            registration_capability: str = "",
+        ):
+            self.register_calls.append((prod_mode, registration_capability))
             self.registered.set()
             return {"ok": True}
 
@@ -188,9 +192,12 @@ def _install_ws_failure_controller(monkeypatch, failure: Exception):
     controllers = []
 
     class FakeWebSocketClientController:
-        def __init__(self, ws_url, make_connection_failed_callback):
+        def __init__(
+            self, ws_url, make_connection_failed_callback, additional_headers=None
+        ):
             self.ws_url = ws_url
             self.make_connection_failed_callback = make_connection_failed_callback
+            self.additional_headers = additional_headers or {}
             controllers.append(self)
 
         async def run(self, new_connection_callback):
@@ -312,6 +319,8 @@ async def test_cleanup_instances_resets_runtime_objects(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mount_stdio_prod_registers_plugin(monkeypatch):
+    capability = "registration-capability-that-is-long-enough-for-tests"
+    monkeypatch.setenv("LANGBOT_PLUGIN_REGISTRATION_CAPABILITY", capability)
     fake_handler_cls = _fake_handler_class()
     monkeypatch.setattr(controller_module, "PluginRuntimeHandler", fake_handler_cls)
     controllers = _install_stdio_controller(monkeypatch, "connect")
@@ -328,12 +337,15 @@ async def test_mount_stdio_prod_registers_plugin(monkeypatch):
     assert len(controllers) == 1
     handler = fake_handler_cls.instances[0]
     assert handler.plugin_container is controller.plugin_container
-    assert handler.register_calls == [True]
+    assert handler.register_calls == [(True, capability)]
+    assert controller._registration_capability == ""
     assert controller.plugin_container.status is RuntimeContainerStatus.MOUNTED
 
 
 @pytest.mark.asyncio
 async def test_mount_prod_connection_failure_sets_waiter_and_exits(monkeypatch):
+    capability = "registration-capability-that-is-long-enough-for-tests"
+    monkeypatch.setenv("LANGBOT_PLUGIN_REGISTRATION_CAPABILITY", capability)
     controller = PluginRuntimeController(
         plugin_manifest=_manifest("Plugin", "demo"),
         component_manifests=[],
@@ -353,6 +365,9 @@ async def test_mount_prod_connection_failure_sets_waiter_and_exits(monkeypatch):
         await controller.mount()
 
     assert controllers[0].ws_url == "ws://runtime/plugin/ws"
+    assert controllers[0].additional_headers == {
+        "X-LangBot-Plugin-Registration-Capability": capability
+    }
     assert exit_calls == [1]
     assert controller._connection_waiter.done()
 
@@ -361,6 +376,8 @@ async def test_mount_prod_connection_failure_sets_waiter_and_exits(monkeypatch):
 async def test_mount_debug_connection_failure_sets_waiter_exception_without_exit(
     monkeypatch,
 ):
+    monkeypatch.setenv("PLUGIN_DEBUG_KEY", "test-debug-key-which-is-at-least-32-chars")
+
     class StopMount(Exception):
         pass
 

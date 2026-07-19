@@ -9,6 +9,7 @@ import pydantic
 
 import langbot_plugin.api.entities.builtin.provider.prompt as provider_prompt
 import langbot_plugin.api.entities.builtin.provider.message as provider_message
+from langbot_plugin.api.entities.execution import WorkspaceExecutionScope
 
 
 class LauncherTypes(enum.Enum):
@@ -67,7 +68,7 @@ class Conversation(pydantic.BaseModel):
         return datetime.datetime.fromtimestamp(v)
 
 
-class Session(pydantic.BaseModel):
+class Session(WorkspaceExecutionScope):
     """Session, one Session corresponds to a {launcher_type.value}_{launcher_id}"""
 
     launcher_type: LauncherTypes
@@ -75,6 +76,9 @@ class Session(pydantic.BaseModel):
     launcher_id: typing.Union[int, str]
 
     sender_id: typing.Optional[typing.Union[int, str]] = 0
+
+    bot_uuid: str | None = None
+    """Bot UUID used as part of the Workspace-scoped session key."""
 
     use_prompt_name: typing.Optional[str] = "default"
 

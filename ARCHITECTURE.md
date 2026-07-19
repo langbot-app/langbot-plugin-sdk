@@ -95,6 +95,33 @@ Request shape:
 { "seq_id": 1, "action": "action_name", "data": {} }
 ```
 
+Workspace-bound peers may add a trusted context envelope without changing the
+action payload:
+
+```json
+{
+  "seq_id": 1,
+  "action": "action_name",
+  "data": {},
+  "context": {
+    "instance_uuid": "instance-id",
+    "workspace_uuid": "workspace-id",
+    "placement_generation": 1,
+    "installation_uuid": "installation-id"
+  }
+}
+```
+
+`context` is optional for wire compatibility. The LangBot control channel binds
+a Plugin Runtime to one `(instance_uuid, workspace_uuid,
+placement_generation)` tuple. A plugin connection may then add exactly one
+trusted `installation_uuid`; neither connection can be rebound. Plugin payload
+fields are never authoritative for this binding. Runtime-to-Host calls forward
+the connection binding in the envelope, and Workspace storage fails closed when
+the Runtime has no binding. Installed and debug plugins wait for the
+`SET_RUNTIME_CONFIG` handshake before launch or registration, so a control
+socket cannot race ahead of the trusted Workspace fence.
+
 Response shape:
 
 ```json
@@ -104,12 +131,16 @@ Response shape:
 Core mechanics:
 
 - `seq_id` correlates responses to requests.
+- `context` carries the trusted Workspace/installation binding independently of
+  plugin-controlled `data`.
 - Messages with `action` are requests; messages with `code` are responses.
 - Each peer may initiate requests on the same connection.
 - `Handler.call_action()` waits for one response.
 - `Handler.call_action_generator()` consumes streamed responses.
 - Streaming emits `chunk_status: "continue"` chunks and ends with `"end"`.
-- File transfer uses `CommonAction.FILE_CHUNK` with 16KB base64 chunks stored under `data/temp/lbp/`.
+- File transfer uses `CommonAction.FILE_CHUNK` with 16KB base64 chunks stored
+  under `data/temp/lbp/`. Transfer keys are high-entropy opaque basenames; the
+  receiver rejects absolute paths, separators, `..`, and unsafe extensions.
 
 Action enums are the protocol contract:
 
@@ -155,6 +186,26 @@ The Runtime has two external channels:
 - **control channel**: LangBot ↔ Runtime, stdio or `:5400/control/ws` by default.
 - **debug channel**: plugin dev process ↔ Runtime, WebSocket `:5401/plugin/debug/ws` by default.
 
+Installed plugin processes do not authenticate with the shared debug key. For
+each child launch, the Runtime reads the installed `manifest.yaml`, issues a
+short-lived one-use registration capability bound to that author/name, and
+passes only that capability to the child. The capability is consumed before
+Host settings are requested, cannot be replayed, and the plugin must preserve
+the same manifest identity after initialization. On Windows the child receives
+an explicit environment allowlist, so Runtime and Box control secrets are not
+inherited.
+
+WebSocket control requires the high-entropy
+`LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN` in the
+`X-LangBot-Plugin-Runtime-Token` handshake header. The debug server never
+accepts an empty key: it validates an explicitly configured `PLUGIN_DEBUG_KEY`
+or generates one at process start, and `lbp run` sends that value in the
+`X-LangBot-Plugin-Debug-Key` handshake header for explicit development
+sessions. Windows production children use their one-use registration
+capability in `X-LangBot-Plugin-Registration-Capability` instead. Workspace binding in
+`SET_RUNTIME_CONFIG` is an authorization fence after transport authentication;
+it is not a substitute for authenticating the peer.
+
 Installed plugins are stored under `data/plugins/{author}__{name}`. Runtime plugin processes normally run as separate Python processes and connect back via stdio or debug WebSocket.
 
 ## Box Runtime
@@ -191,6 +242,14 @@ Default Box WebSocket endpoints on port `5410`:
 - `/v1/sessions/{session_id}/managed-process/ws`: legacy default process stdio relay.
 - `/v1/sessions/{session_id}/managed-process/{process_id}/ws`: named process stdio relay.
 
+Box keeps durable skill/storage paths in an `(instance, workspace)` namespace,
+while sandbox sessions and managed processes use an
+`(instance, workspace, placement_generation)` namespace. Authenticated tenant
+RPCs advance a monotonic generation fence, cancel in-flight older RPCs, and
+retire older sessions. Managed-process relay handshakes carry Workspace and
+generation in authenticated headers; an attached relay closes as soon as that
+generation becomes stale.
+
 There is no supported `python -m langbot_plugin.box` entrypoint; use `lbp box`.
 
 ## Backend Selection
@@ -213,6 +272,12 @@ When changing shared contracts:
 2. Install the local SDK into LangBot's virtualenv: `uv pip install .` from this repo while LangBot's `.venv` is active.
 3. Run LangBot with `uv run --no-sync ...` so `uv` does not replace the local SDK with the pinned PyPI package.
 4. Exercise the exact path changed: plugin stdio, plugin WebSocket, `lbp run`, `lbp rt`, `lbp box`, Box WebSocket, or Box stdio.
+
+Workspace action-context support starts in SDK `0.4.15`. Until that version is
+published, a coordinated LangBot feature branch must pin the pushed SDK commit
+as a temporary Git source; the merge/release gate is to publish `0.4.15` and
+restore LangBot's normal exact PyPI pin. The already-published `0.4.14` artifact
+does not contain this protocol and must not be used as a compatibility alias.
 
 The SDK `AGENTS.md` keeps the short command checklist; this file keeps the structural map.
 

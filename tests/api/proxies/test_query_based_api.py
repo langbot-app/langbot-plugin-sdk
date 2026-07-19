@@ -68,6 +68,26 @@ async def test_query_based_proxy_query_var_helpers():
 
 
 @pytest.mark.asyncio
+async def test_query_based_proxy_prefers_opaque_query_uuid_without_breaking_legacy_id():
+    handler = FakeHandler({PluginToRuntimeAction.GET_QUERY_VARS: {"vars": {}}})
+    proxy = QueryBasedAPIProxy.model_construct(
+        query_id=7,
+        query_uuid="query-opaque-uuid",
+        plugin_runtime_handler=handler,
+    )
+
+    await proxy.get_query_vars()
+
+    assert handler.calls == [
+        (
+            PluginToRuntimeAction.GET_QUERY_VARS,
+            {"query_id": 7, "query_uuid": "query-opaque-uuid"},
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_query_based_proxy_pipeline_knowledge_helpers():
     handler = FakeHandler(
         {

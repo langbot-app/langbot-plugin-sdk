@@ -7,6 +7,7 @@ import pydantic
 import langbot_plugin.api.entities.builtin.provider.session as provider_session
 from langbot_plugin.api.entities.builtin.command import errors
 import langbot_plugin.api.entities.builtin.platform.message as platform_message
+from langbot_plugin.api.entities.execution import WorkspaceExecutionScope
 
 
 class CommandReturn(pydantic.BaseModel):
@@ -56,11 +57,14 @@ class CommandReturn(pydantic.BaseModel):
         arbitrary_types_allowed = True
 
 
-class ExecuteContext(pydantic.BaseModel):
+class ExecuteContext(WorkspaceExecutionScope):
     """单次命令执行上下文"""
 
     query_id: int
     """请求ID"""
+
+    query_uuid: str | None = None
+    """Opaque query identifier preferred by multi-tenant Hosts."""
 
     session: provider_session.Session
     """本次消息所属的会话对象"""
@@ -100,6 +104,12 @@ class ExecuteContext(pydantic.BaseModel):
 
     privilege: int
     """发起人权限"""
+
+    @pydantic.model_validator(mode="after")
+    def align_session_execution_scope(self) -> ExecuteContext:
+        self.inherit_execution_scope(self.session)
+        self.session.inherit_execution_scope(self)
+        return self
 
     def shift(self) -> ExecuteContext:
         """Shift the command context."""

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import glob
 import os
+import secrets
 import shutil
 import typing
 from typing import AsyncGenerator
 import asyncio
+from dataclasses import dataclass
 import io
 import enum
 import time
@@ -43,6 +45,7 @@ from langbot_plugin.entities.io.errors import (
     DependencyInstallError,
     DependencyVerificationError,
 )
+from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,54 @@ class PluginInstallSource(enum.Enum):
     DEBUG = "debug"
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingPluginRegistration:
+    """One launch-scoped capability bound to an installed plugin identity."""
+
+    plugin_author: str
+    plugin_name: str
+    plugin_path: str
+    expires_at: float
+
+
+_REGISTRATION_CAPABILITY_TTL_SECONDS = 300.0
+
+# A plugin process only needs a small subset of the parent environment on
+# Windows. In particular, Runtime and Box control-plane credentials must never
+# cross this boundary.
+_WINDOWS_PLUGIN_ENV_ALLOWLIST = frozenset(
+    {
+        "ALL_PROXY",
+        "APPDATA",
+        "COMSPEC",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "LANG",
+        "LC_ALL",
+        "LOCALAPPDATA",
+        "NO_PROXY",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PYTHONIOENCODING",
+        "PYTHONUTF8",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+        "USERPROFILE",
+        "WINDIR",
+    }
+)
+
+
 class PluginManager:
     """The manager for plugins."""
 
@@ -73,20 +124,122 @@ class PluginManager:
 
     plugin_run_tasks: list[asyncio.Task] = []
 
-    wait_for_control_connection: asyncio.Future[None] | None = None
-
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_handlers = []
         self.plugins = []
         self.plugin_run_tasks = []
-        self.wait_for_control_connection = None
-        self._control_connection_ready = asyncio.Event()
-        self._plugin_supervisors: dict[str, asyncio.Task[None]] = {}
-        self._desired_plugin_paths: set[str] = set()
-        self._shutting_down = False
-        self._dependency_errors: dict[str, str] = {}
-        self._plugin_operation_locks: dict[str, asyncio.Lock] = {}
+        self._pending_registrations: dict[str, _PendingPluginRegistration] = {}
+
+    @staticmethod
+    def _installed_plugin_identity(plugin_path: str) -> tuple[str, str]:
+        """Read and validate the identity the Runtime is about to launch."""
+
+        manifest_path = os.path.join(plugin_path, "manifest.yaml")
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+                manifest = yaml.safe_load(manifest_file)
+        except (OSError, yaml.YAMLError) as exc:
+            raise ValueError(
+                f"Installed plugin manifest is unavailable: {manifest_path}"
+            ) from exc
+
+        if not isinstance(manifest, dict) or manifest.get("kind") != "Plugin":
+            raise ValueError("Installed plugin manifest must have kind=Plugin")
+        metadata = manifest.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ValueError("Installed plugin manifest metadata is missing")
+        plugin_author = str(metadata.get("author") or "").strip()
+        plugin_name = str(metadata.get("name") or "").strip()
+        if not plugin_author or not plugin_name:
+            raise ValueError("Installed plugin manifest identity is incomplete")
+
+        expected_directory = f"{plugin_author}__{plugin_name}"
+        if os.path.basename(os.path.normpath(plugin_path)) != expected_directory:
+            raise ValueError(
+                "Installed plugin directory does not match its manifest identity"
+            )
+        return plugin_author, plugin_name
+
+    def _issue_registration_capability(
+        self,
+        *,
+        plugin_author: str,
+        plugin_name: str,
+        plugin_path: str,
+    ) -> str:
+        """Issue a short-lived, one-use capability for one expected plugin."""
+
+        author = str(plugin_author or "").strip()
+        name = str(plugin_name or "").strip()
+        if not author or not name:
+            raise ValueError("Plugin registration identity is incomplete")
+
+        capability = secrets.token_urlsafe(48)
+        self._pending_registrations[capability] = _PendingPluginRegistration(
+            plugin_author=author,
+            plugin_name=name,
+            plugin_path=os.path.abspath(plugin_path),
+            expires_at=time.monotonic() + _REGISTRATION_CAPABILITY_TTL_SECONDS,
+        )
+        return capability
+
+    def _find_pending_registration_key(self, capability: str) -> str | None:
+        supplied = str(capability or "").strip()
+        if not supplied:
+            return None
+        now = time.monotonic()
+        expired = [
+            key
+            for key, registration in self._pending_registrations.items()
+            if registration.expires_at <= now
+        ]
+        for key in expired:
+            self._pending_registrations.pop(key, None)
+        for key in self._pending_registrations:
+            if secrets.compare_digest(key, supplied):
+                return key
+        return None
+
+    def is_registration_capability_pending(self, capability: str) -> bool:
+        """Check transport admission without consuming the registration."""
+
+        return self._find_pending_registration_key(capability) is not None
+
+    def _consume_registration_capability(
+        self,
+        capability: str,
+        *,
+        plugin_author: str,
+        plugin_name: str,
+    ) -> _PendingPluginRegistration:
+        key = self._find_pending_registration_key(capability)
+        if key is None:
+            raise ValueError(
+                "Plugin registration capability is invalid or already used"
+            )
+        registration = self._pending_registrations.pop(key)
+        if (
+            registration.plugin_author != plugin_author
+            or registration.plugin_name != plugin_name
+        ):
+            raise ValueError(
+                "Plugin manifest identity does not match its registration capability"
+            )
+        return registration
+
+    def _revoke_registration_capability(self, capability: str) -> None:
+        key = self._find_pending_registration_key(capability)
+        if key is not None:
+            self._pending_registrations.pop(key, None)
+
+    @staticmethod
+    def _windows_plugin_environment() -> dict[str, str]:
+        return {
+            key: value
+            for key, value in os.environ.items()
+            if key.upper() in _WINDOWS_PLUGIN_ENV_ALLOWLIST
+        }
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
@@ -204,7 +357,9 @@ class PluginManager:
         await asyncio.gather(*(reconcile(path) for path in plugin_paths))
 
     async def launch_all_plugins(self):
-        await self._control_connection_ready.wait()
+        # A control socket alone is not enough: LangBot must first fence this
+        # Runtime to one Workspace/generation through SET_RUNTIME_CONFIG.
+        await self.context.wait_for_workspace_binding()
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
                 continue
@@ -291,75 +446,81 @@ class PluginManager:
         self._control_connection_ready.set()
 
     async def launch_plugin(self, plugin_path: str):
-        from langbot_plugin.runtime.settings import settings as runtime_settings
+        plugin_author, plugin_name = self._installed_plugin_identity(plugin_path)
+        registration_capability = self._issue_registration_capability(
+            plugin_author=plugin_author,
+            plugin_name=plugin_name,
+            plugin_path=plugin_path,
+        )
 
-        if get_platform() == "win32":
-            # Due to Windows's lack of supports for both stdio and subprocess:
-            # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
-            # We have to launch plugin via cmd but communicate via ws.
-            python_path = pkgmgr_helper.get_plugin_python(plugin_path)
+        try:
+            if get_platform() == "win32":
+                # Due to Windows's lack of supports for both stdio and subprocess:
+                # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
+                # We have to launch plugin via cmd but communicate via ws.
+                python_path = sys.executable
 
-            # Build command with debug key if set
-            cmd_args = [
-                python_path,
-                "-m",
-                "langbot_plugin.cli.__init__",
-                "run",
-                "--prod",
-            ]
-            if runtime_settings.plugin_debug_key:
-                cmd_args.extend(
-                    ["--plugin-debug-key", runtime_settings.plugin_debug_key]
+                cmd_args = [
+                    python_path,
+                    "-m",
+                    "langbot_plugin.cli.__init__",
+                    "run",
+                    "--prod",
+                ]
+
+                child_env = self._windows_plugin_environment()
+                child_env["RUNTIME_WS_URL"] = (
+                    f"ws://localhost:{self.context.ws_debug_port}/plugin/ws"
+                )
+                child_env[PLUGIN_REGISTRATION_CAPABILITY_ENV] = registration_capability
+
+                process: asyncio.subprocess.Process = (
+                    await asyncio.create_subprocess_exec(
+                        *cmd_args,
+                        env=child_env,
+                        cwd=plugin_path,
+                    )
                 )
 
-            process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
-                *cmd_args,
-                env={
-                    "RUNTIME_WS_URL": f"ws://localhost:{self.context.ws_debug_port}/plugin/ws",
-                    **os.environ.copy(),
-                },
-                cwd=plugin_path,
-            )
+                # hold the process
+                task = asyncio.create_task(process.wait())
 
-            try:
-                # The plugin connects to the runtime via websocket automatically.
-                await process.wait()
-            except asyncio.CancelledError:
-                if process.returncode is None:
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=2)
-                    except asyncio.TimeoutError:
-                        process.kill()
-                        await process.wait()
-                raise
-        else:
-            python_path = pkgmgr_helper.get_plugin_python(plugin_path)
+                # the plugin will connect to the runtime via ws automatically
 
-            # Build args with debug key if set
-            args = ["-m", "langbot_plugin.cli.__init__", "run", "-s", "--prod"]
-            if runtime_settings.plugin_debug_key:
-                args.extend(["--plugin-debug-key", runtime_settings.plugin_debug_key])
+                await task
+            else:
+                python_path = sys.executable
 
-            ctrl = stdio_client_controller.StdioClientController(
-                command=python_path,
-                args=args,
-                env={},
-                working_dir=plugin_path,
-                capture_stderr=True,
-            )
+                args = [
+                    "-m",
+                    "langbot_plugin.cli.__init__",
+                    "run",
+                    "-s",
+                    "--prod",
+                ]
 
-            async def new_plugin_connection_callback(connection: Connection):
-                handler = runtime_plugin_handler_cls.PluginConnectionHandler(
-                    connection, self.context, stdio_process=ctrl.process
+                ctrl = stdio_client_controller.StdioClientController(
+                    command=python_path,
+                    args=args,
+                    env={PLUGIN_REGISTRATION_CAPABILITY_ENV: registration_capability},
+                    working_dir=plugin_path,
                 )
-                await self.add_plugin_handler(handler)
 
-            try:
-                await ctrl.run(new_plugin_connection_callback)
-            except asyncio.CancelledError:
-                logger.info(f"plugin process cancelled: {plugin_path}")
-                raise
+                async def new_plugin_connection_callback(connection: Connection):
+                    handler = runtime_plugin_handler_cls.PluginConnectionHandler(
+                        connection, self.context, stdio_process=ctrl.process
+                    )
+                    await self.add_plugin_handler(handler)
+
+                try:
+                    await ctrl.run(new_plugin_connection_callback)
+                except asyncio.CancelledError:
+                    logger.info(f"plugin process cancelled: {plugin_path}")
+                    return
+        finally:
+            # A successfully registered capability has already been consumed;
+            # this only removes launch failures or processes that never register.
+            self._revoke_registration_capability(registration_capability)
 
     async def add_plugin_handler(
         self,
@@ -687,12 +848,39 @@ class PluginManager:
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
         container_data: dict[str, typing.Any],
         debug_plugin: bool = False,
+        registration_capability: str | None = None,
     ):
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
         )
+        plugin_author = str(plugin_container.manifest.metadata.author or "").strip()
+        plugin_name = str(plugin_container.manifest.metadata.name or "").strip()
+        if not plugin_author or not plugin_name:
+            raise ValueError("Plugin manifest identity is incomplete")
+
+        if debug_plugin:
+            if registration_capability:
+                raise ValueError(
+                    "Debug plugin registration cannot use an installed-plugin capability"
+                )
+        else:
+            registration = self._consume_registration_capability(
+                registration_capability or "",
+                plugin_author=plugin_author,
+                plugin_name=plugin_name,
+            )
+            # From this point forward, use only the identity captured before the
+            # child process was launched, never values supplied by plugin code.
+            plugin_author = registration.plugin_author
+            plugin_name = registration.plugin_name
+            if self.find_plugin(plugin_author, plugin_name) is not None:
+                raise ValueError("Installed plugin is already registered")
 
         try:
+            # Debug plugins may connect before SET_RUNTIME_CONFIG arrives.
+            # Wait for the trusted binding before making any Host request so
+            # GET/INIT settings can never escape without a Workspace envelope.
+            runtime_binding = await self.context.wait_for_workspace_binding()
             if not hasattr(self.context, "control_handler"):
                 raise ValueError("Control handler not found")
 
@@ -701,8 +889,8 @@ class PluginManager:
                 await self.context.control_handler.call_action(
                     RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
                     {
-                        "plugin_author": plugin_container.manifest.metadata.author,
-                        "plugin_name": plugin_container.manifest.metadata.name,
+                        "plugin_author": plugin_author,
+                        "plugin_name": plugin_name,
                         "install_source": PluginInstallSource.DEBUG.value,
                         "install_info": {},
                     },
@@ -712,14 +900,25 @@ class PluginManager:
             plugin_settings = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
                 {
-                    "plugin_author": plugin_container.manifest.metadata.author,
-                    "plugin_name": plugin_container.manifest.metadata.name,
+                    "plugin_author": plugin_author,
+                    "plugin_name": plugin_name,
                 },
             )
         except Exception as e:
             raise ValueError(
                 "Failed to get plugin settings, is LangBot connected?"
             ) from e
+
+        # The installation capability comes from the trusted LangBot settings
+        # response, never from REGISTER_PLUGIN data supplied by plugin code.
+        installation_uuid = plugin_settings.get("installation_uuid")
+        if not isinstance(installation_uuid, str) or not installation_uuid.strip():
+            raise ValueError(
+                "LangBot did not provide a trusted plugin installation capability"
+            )
+        handler.bind_action_context(
+            runtime_binding.for_installation(installation_uuid.strip())
+        )
 
         # Register the plugin container BEFORE calling initialize_plugin so
         # that storage API calls during initialize() can resolve the owner.
@@ -733,17 +932,19 @@ class PluginManager:
             # initialize plugin
             await handler.initialize_plugin(plugin_settings)
 
-            # refresh plugin container from plugin (components may have changed)
-            plugin_container_data = await handler.get_plugin_container()
-            refreshed = runtime_plugin_container.PluginContainer.from_dict(
-                plugin_container_data
-            )
-            plugin_container.components = refreshed.components
-            plugin_container.manifest = refreshed.manifest
-            plugin_container.status = refreshed.status
-        except Exception:
-            await self.remove_plugin_container(plugin_container)
-            raise
+        # refresh plugin container from plugin (components may have changed)
+        plugin_container_data = await handler.get_plugin_container()
+        refreshed = runtime_plugin_container.PluginContainer.from_dict(
+            plugin_container_data
+        )
+        refreshed_author = str(refreshed.manifest.metadata.author or "").strip()
+        refreshed_name = str(refreshed.manifest.metadata.name or "").strip()
+        if (refreshed_author, refreshed_name) != (plugin_author, plugin_name):
+            self.plugins.remove(plugin_container)
+            raise ValueError("Plugin changed its manifest identity after registration")
+        plugin_container.components = refreshed.components
+        plugin_container.manifest = refreshed.manifest
+        plugin_container.status = refreshed.status
 
     async def remove_plugin_container(
         self,
@@ -984,6 +1185,8 @@ class PluginManager:
                     continue
 
             reply_message_chain_before = _dump_reply_message_chain(event_context)
+            trusted_query_id = event_context.query_id
+            trusted_query_uuid = event_context.query_uuid
             resp = await plugin._runtime_plugin_handler.emit_event(
                 event_context.model_dump()
             )
@@ -992,6 +1195,17 @@ class PluginManager:
                 emitted_plugins.append(plugin)
 
             event_context = EventContext.model_validate(resp["event_context"])
+            if event_context.query_id != trusted_query_id:
+                raise ValueError("Plugin changed EventContext query_id")
+            if trusted_query_uuid is not None:
+                if event_context.query_uuid not in (None, trusted_query_uuid):
+                    raise ValueError("Plugin changed EventContext query_uuid")
+                event_context.query_uuid = trusted_query_uuid
+                event_context.event.query_uuid = trusted_query_uuid
+            binding = plugin._runtime_plugin_handler.bound_action_context
+            if binding is not None:
+                event_context.inherit_execution_scope(binding)
+                event_context.event.inherit_execution_scope(binding)
             reply_message_chain_after = _dump_reply_message_chain(event_context)
             if reply_message_chain_after != reply_message_chain_before:
                 response_sources.append(
@@ -1124,6 +1338,7 @@ class PluginManager:
         session: dict[str, typing.Any],
         query_id: int,
         include_plugins: list[str] | None = None,
+        query_uuid: str | None = None,
     ) -> dict[str, typing.Any]:
         for plugin in self.plugins:
             # Filter by include_plugins if specified
@@ -1142,9 +1357,21 @@ class PluginManager:
                     if plugin._runtime_plugin_handler is None:
                         continue
 
-                    resp = await plugin._runtime_plugin_handler.call_tool(
-                        tool_name, tool_parameters, session, query_id
-                    )
+                    if query_uuid is None:
+                        resp = await plugin._runtime_plugin_handler.call_tool(
+                            tool_name,
+                            tool_parameters,
+                            session,
+                            query_id,
+                        )
+                    else:
+                        resp = await plugin._runtime_plugin_handler.call_tool(
+                            tool_name,
+                            tool_parameters,
+                            session,
+                            query_id,
+                            query_uuid,
+                        )
 
                     return resp["tool_response"]
 

@@ -31,6 +31,7 @@ from langbot_plugin.box.models import (
 )
 from langbot_plugin.box.server import (
     AiohttpWSConnection,
+    BoxGenerationFence,
     BoxServerHandler,
     _error_response,
     _result_to_dict,
@@ -39,9 +40,49 @@ from langbot_plugin.box.server import (
     handle_managed_process_ws,
     handle_rpc_ws,
 )
+from langbot_plugin.box.security import (
+    BOX_CONTROL_TOKEN_HEADER,
+    BOX_INSTANCE_HEADER,
+    BOX_PLACEMENT_GENERATION_HEADER,
+    BOX_WORKSPACE_HEADER,
+)
+from langbot_plugin.box.tenancy import (
+    box_namespace,
+    namespace_session_id,
+    workspace_session_namespace_prefix,
+)
+from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.entities.io.actions.enums import CommonAction
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.entities.io.resp import ActionResponse
+
+
+_ACTION_CONTEXT = ActionContext(
+    instance_uuid="instance-a",
+    workspace_uuid="workspace-a",
+    placement_generation=1,
+)
+_CONTROL_TOKEN = "box-control-token-that-is-longer-than-32-bytes"
+
+
+def _new_handler(
+    connection,
+    runtime,
+    *,
+    authenticated: bool = True,
+    generation_fence: BoxGenerationFence | None = None,
+):
+    return BoxServerHandler(
+        connection,
+        runtime,
+        host_control_authenticated=authenticated,
+        trusted_instance_uuid=_ACTION_CONTEXT.instance_uuid,
+        generation_fence=generation_fence,
+    )
+
+
+def _physical_session_id(session_id: str) -> str:
+    return namespace_session_id(_ACTION_CONTEXT, session_id)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -106,13 +147,16 @@ def mock_runtime():
     skill_store.preview_zip_upload = mock.MagicMock(return_value=[{"name": "demo"}])
     skill_store.install_zip_upload = mock.MagicMock(return_value=[{"name": "demo"}])
     runtime.skill_store = skill_store
+    skill_store.scoped.return_value = skill_store
 
     return runtime
 
 
 @pytest.fixture
 def handler(mock_connection, mock_runtime):
-    return BoxServerHandler(mock_connection, mock_runtime)
+    handler = _new_handler(mock_connection, mock_runtime)
+    handler.bind_action_context(_ACTION_CONTEXT)
+    return handler
 
 
 def _spec_data(**overrides) -> dict:
@@ -233,10 +277,219 @@ def test_handler_registers_all_box_actions(handler):
 
 
 def test_handler_keeps_runtime_reference(mock_connection, mock_runtime):
-    h = BoxServerHandler(mock_connection, mock_runtime)
+    h = _new_handler(mock_connection, mock_runtime)
     assert h._runtime is mock_runtime
     assert h.conn is mock_connection
     assert h.name == "BoxServerHandler"
+
+
+async def test_tenant_action_fails_closed_without_workspace_context(
+    mock_connection, mock_runtime
+):
+    handler = _new_handler(mock_connection, mock_runtime)
+
+    with pytest.raises(ValueError, match="trusted Workspace context"):
+        await _invoke(handler, LangBotToBoxAction.CREATE_SESSION, _spec_data())
+
+    mock_runtime.create_session.assert_not_awaited()
+
+
+async def test_same_logical_session_id_is_namespaced_per_workspace(
+    mock_connection, mock_runtime
+):
+    second_context = ActionContext(
+        instance_uuid="instance-a",
+        workspace_uuid="workspace-b",
+        placement_generation=1,
+    )
+    first_handler = _new_handler(mock_connection, mock_runtime)
+    first_handler.bind_action_context(_ACTION_CONTEXT)
+    second_handler = _new_handler(mock_connection, mock_runtime)
+    second_handler.bind_action_context(second_context)
+
+    await _invoke(
+        first_handler,
+        LangBotToBoxAction.CREATE_SESSION,
+        _spec_data(session_id="shared"),
+    )
+    await _invoke(
+        second_handler,
+        LangBotToBoxAction.CREATE_SESSION,
+        _spec_data(session_id="shared"),
+    )
+
+    first_spec = mock_runtime.create_session.await_args_list[0].args[0]
+    second_spec = mock_runtime.create_session.await_args_list[1].args[0]
+    assert first_spec.session_id == namespace_session_id(_ACTION_CONTEXT, "shared")
+    assert second_spec.session_id == namespace_session_id(second_context, "shared")
+    assert first_spec.session_id != second_spec.session_id
+
+
+async def test_generation_advance_retires_old_sessions_and_rejects_rollback(
+    mock_connection, mock_runtime
+):
+    generation_fence = BoxGenerationFence()
+    second_context = _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+    first_handler = _new_handler(
+        mock_connection,
+        mock_runtime,
+        generation_fence=generation_fence,
+    )
+    first_handler.bind_action_context(_ACTION_CONTEXT)
+    second_handler = _new_handler(
+        mock_connection,
+        mock_runtime,
+        generation_fence=generation_fence,
+    )
+    second_handler.bind_action_context(second_context)
+
+    old_physical_id = namespace_session_id(_ACTION_CONTEXT, "shared")
+    sessions = [{"session_id": old_physical_id}]
+    mock_runtime.get_sessions.side_effect = lambda: list(sessions)
+
+    async def delete_session(session_id):
+        sessions[:] = [
+            session for session in sessions if session["session_id"] != session_id
+        ]
+
+    mock_runtime.delete_session.side_effect = delete_session
+
+    await _invoke(
+        first_handler,
+        LangBotToBoxAction.CREATE_SESSION,
+        _spec_data(session_id="shared"),
+    )
+    await _invoke(
+        second_handler,
+        LangBotToBoxAction.CREATE_SESSION,
+        _spec_data(session_id="shared"),
+    )
+
+    assert namespace_session_id(second_context, "shared") != old_physical_id
+    mock_runtime.delete_session.assert_awaited_once_with(old_physical_id)
+    with pytest.raises(PermissionError, match="Stale Box placement generation"):
+        await _invoke(
+            first_handler,
+            LangBotToBoxAction.GET_SESSIONS,
+            {},
+        )
+
+
+async def test_generation_advance_cancels_inflight_old_rpc_and_retires_late_session(
+    mock_connection, mock_runtime
+):
+    generation_fence = BoxGenerationFence()
+    second_context = _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+    first_handler = _new_handler(
+        mock_connection,
+        mock_runtime,
+        generation_fence=generation_fence,
+    )
+    first_handler.bind_action_context(_ACTION_CONTEXT)
+    second_handler = _new_handler(
+        mock_connection,
+        mock_runtime,
+        generation_fence=generation_fence,
+    )
+    second_handler.bind_action_context(second_context)
+    started = asyncio.Event()
+    sessions: list[dict[str, str]] = []
+    old_session_id = namespace_session_id(_ACTION_CONTEXT, "late")
+
+    async def execute_old(_spec):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            sessions.append({"session_id": old_session_id})
+            raise
+
+    async def delete_session(session_id):
+        for session in tuple(sessions):
+            if session["session_id"] == session_id:
+                sessions.remove(session)
+                return
+        raise BoxSessionNotFoundError(f"session {session_id} not found")
+
+    mock_runtime.execute.side_effect = execute_old
+    mock_runtime.get_sessions.side_effect = lambda: list(sessions)
+    mock_runtime.delete_session.side_effect = delete_session
+
+    old_task = asyncio.create_task(
+        _invoke(
+            first_handler,
+            LangBotToBoxAction.EXEC,
+            _spec_data(session_id="late"),
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    await _invoke(second_handler, LangBotToBoxAction.GET_SESSIONS, {})
+
+    with pytest.raises(asyncio.CancelledError):
+        await old_task
+    assert sessions == []
+    assert mock_runtime.delete_session.await_count >= 1
+
+
+def test_skill_namespace_persists_across_generation_change():
+    second_context = _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+
+    assert box_namespace(_ACTION_CONTEXT) == box_namespace(second_context)
+    assert namespace_session_id(_ACTION_CONTEXT, "shared") != namespace_session_id(
+        second_context, "shared"
+    )
+
+
+def test_authenticated_host_accepts_multiple_workspaces_on_one_instance(
+    mock_connection, mock_runtime
+):
+    handler = _new_handler(mock_connection, mock_runtime)
+    second_workspace = _ACTION_CONTEXT.model_copy(
+        update={"workspace_uuid": "workspace-b", "placement_generation": 2}
+    )
+
+    assert (
+        handler.validate_inbound_action_context(
+            LangBotToBoxAction.EXEC.value, _ACTION_CONTEXT
+        )
+        == _ACTION_CONTEXT
+    )
+    assert (
+        handler.validate_inbound_action_context(
+            LangBotToBoxAction.EXEC.value, second_workspace
+        )
+        == second_workspace
+    )
+
+
+def test_tenant_action_rejects_forged_instance(mock_connection, mock_runtime):
+    handler = _new_handler(mock_connection, mock_runtime)
+    forged = _ACTION_CONTEXT.model_copy(update={"instance_uuid": "instance-b"})
+
+    with pytest.raises(PermissionError, match="trusted instance"):
+        handler.validate_inbound_action_context(LangBotToBoxAction.EXEC.value, forged)
+
+
+def test_tenant_action_rejects_missing_inbound_context(mock_connection, mock_runtime):
+    handler = _new_handler(mock_connection, mock_runtime)
+
+    with pytest.raises(PermissionError, match="trusted Workspace context"):
+        handler.validate_inbound_action_context(LangBotToBoxAction.EXEC.value, None)
+
+
+async def test_unauthenticated_handler_rejects_init_and_exec(
+    mock_connection, mock_runtime
+):
+    handler = _new_handler(mock_connection, mock_runtime, authenticated=False)
+    handler.bind_action_context(_ACTION_CONTEXT)
+
+    with pytest.raises(PermissionError, match="host control authentication"):
+        await _invoke(handler, LangBotToBoxAction.INIT, {"backend": "local"})
+    with pytest.raises(PermissionError, match="host control authentication"):
+        await _invoke(handler, LangBotToBoxAction.EXEC, _spec_data())
+
+    mock_runtime.init.assert_not_called()
+    mock_runtime.execute.assert_not_awaited()
 
 
 # ── PING / HEALTH / STATUS / GET_BACKEND_INFO ────────────────────────
@@ -274,7 +527,7 @@ async def test_get_backend_info(handler, mock_runtime):
 
 async def test_exec_success(handler, mock_runtime):
     result = BoxExecutionResult(
-        session_id="s1",
+        session_id=_physical_session_id("s1"),
         backend_name="docker",
         status=BoxExecutionStatus.COMPLETED,
         exit_code=0,
@@ -292,7 +545,7 @@ async def test_exec_success(handler, mock_runtime):
     # runtime.execute was called with a validated BoxSpec.
     mock_runtime.execute.assert_awaited_once()
     (spec_arg,), _ = mock_runtime.execute.call_args
-    assert spec_arg.session_id == "s1"
+    assert spec_arg.session_id == _physical_session_id("s1")
     assert spec_arg.cmd == "echo hi"
 
 
@@ -308,7 +561,10 @@ async def test_exec_invalid_spec_returns_validation_error(handler, mock_runtime)
 
 
 async def test_create_session_success(handler, mock_runtime):
-    mock_runtime.create_session.return_value = {"session_id": "s1", "image": "img"}
+    mock_runtime.create_session.return_value = {
+        "session_id": _physical_session_id("s1"),
+        "image": "img",
+    }
     resp = await _invoke(handler, LangBotToBoxAction.CREATE_SESSION, _spec_data())
     assert resp.code == 0
     assert resp.data["session_id"] == "s1"
@@ -326,18 +582,33 @@ async def test_create_session_invalid_spec(handler, mock_runtime):
 
 
 async def test_get_session(handler, mock_runtime):
-    mock_runtime.get_session.return_value = {"session_id": "abc"}
+    mock_runtime.get_session.return_value = {
+        "session_id": _physical_session_id("abc"),
+        "managed_process": {"session_id": _physical_session_id("abc")},
+    }
     resp = await _invoke(handler, LangBotToBoxAction.GET_SESSION, {"session_id": "abc"})
     assert resp.code == 0
-    assert resp.data == {"session_id": "abc"}
-    mock_runtime.get_session.assert_called_once_with("abc")
+    assert resp.data == {
+        "session_id": "abc",
+        "managed_process": {"session_id": "abc"},
+    }
+    mock_runtime.get_session.assert_called_once_with(_physical_session_id("abc"))
 
 
 async def test_get_sessions_wraps_list(handler, mock_runtime):
-    mock_runtime.get_sessions.return_value = [{"session_id": "a"}, {"session_id": "b"}]
+    mock_runtime.get_sessions.return_value = [
+        {"session_id": _physical_session_id("a")},
+        {"session_id": _physical_session_id("b")},
+        {"session_id": "ws-other-foreign"},
+    ]
     resp = await _invoke(handler, LangBotToBoxAction.GET_SESSIONS, {})
     assert resp.code == 0
-    assert resp.data == {"sessions": [{"session_id": "a"}, {"session_id": "b"}]}
+    assert resp.data == {
+        "sessions": [
+            {"session_id": "a"},
+            {"session_id": "b"},
+        ]
+    }
 
 
 async def test_delete_session(handler, mock_runtime):
@@ -346,7 +617,7 @@ async def test_delete_session(handler, mock_runtime):
     )
     assert resp.code == 0
     assert resp.data == {"deleted": "gone"}
-    mock_runtime.delete_session.assert_awaited_once_with("gone")
+    mock_runtime.delete_session.assert_awaited_once_with(_physical_session_id("gone"))
 
 
 # ── MANAGED PROCESS ──────────────────────────────────────────────────
@@ -366,7 +637,7 @@ async def test_start_managed_process_success(handler, mock_runtime):
     assert resp.data["process_id"] == "p1"
     mock_runtime.start_managed_process.assert_awaited_once()
     (session_id, spec_arg), _ = mock_runtime.start_managed_process.call_args
-    assert session_id == "s1"
+    assert session_id == _physical_session_id("s1")
     assert spec_arg.command == "python"
     assert spec_arg.process_id == "p1"
 
@@ -385,7 +656,9 @@ async def test_get_managed_process_defaults_process_id(handler, mock_runtime):
         handler, LangBotToBoxAction.GET_MANAGED_PROCESS, {"session_id": "s1"}
     )
     assert resp.code == 0
-    mock_runtime.get_managed_process.assert_called_once_with("s1", "default")
+    mock_runtime.get_managed_process.assert_called_once_with(
+        _physical_session_id("s1"), "default"
+    )
 
 
 async def test_get_managed_process_explicit_process_id(handler, mock_runtime):
@@ -394,7 +667,9 @@ async def test_get_managed_process_explicit_process_id(handler, mock_runtime):
         LangBotToBoxAction.GET_MANAGED_PROCESS,
         {"session_id": "s1", "process_id": "p2"},
     )
-    mock_runtime.get_managed_process.assert_called_once_with("s1", "p2")
+    mock_runtime.get_managed_process.assert_called_once_with(
+        _physical_session_id("s1"), "p2"
+    )
 
 
 async def test_stop_managed_process_default(handler, mock_runtime):
@@ -403,7 +678,9 @@ async def test_stop_managed_process_default(handler, mock_runtime):
     )
     assert resp.code == 0
     assert resp.data == {"stopped": "default"}
-    mock_runtime.stop_managed_process.assert_awaited_once_with("s1", "default")
+    mock_runtime.stop_managed_process.assert_awaited_once_with(
+        _physical_session_id("s1"), "default"
+    )
 
 
 async def test_stop_managed_process_explicit(handler, mock_runtime):
@@ -413,7 +690,9 @@ async def test_stop_managed_process_explicit(handler, mock_runtime):
         {"session_id": "s1", "process_id": "p3"},
     )
     assert resp.data == {"stopped": "p3"}
-    mock_runtime.stop_managed_process.assert_awaited_once_with("s1", "p3")
+    mock_runtime.stop_managed_process.assert_awaited_once_with(
+        _physical_session_id("s1"), "p3"
+    )
 
 
 # ── SKILL store actions (sync skill_store) ───────────────────────────
@@ -714,7 +993,7 @@ async def test_shutdown(handler, mock_runtime):
 
 
 def test_create_app_registers_routes_and_runtime(mock_runtime):
-    app = create_app(mock_runtime)
+    app = create_app(mock_runtime, control_token=_CONTROL_TOKEN)
     assert isinstance(app, web.Application)
     assert app["runtime"] is mock_runtime
     assert app[server._ACTIVE_WEBSOCKETS_KEY] == set()
@@ -734,7 +1013,7 @@ def test_create_app_registers_routes_and_runtime(mock_runtime):
 
 
 def test_create_ws_relay_app_is_alias(mock_runtime):
-    app = create_ws_relay_app(mock_runtime)
+    app = create_ws_relay_app(mock_runtime, control_token=_CONTROL_TOKEN)
     assert isinstance(app, web.Application)
     assert app["runtime"] is mock_runtime
 
@@ -749,7 +1028,13 @@ async def test_handle_rpc_ws_prepares_ws_and_runs_handler(mock_runtime):
     request = mock.MagicMock()
     request.app = {
         "runtime": mock_runtime,
-        server._ACTIVE_WEBSOCKETS_KEY: set(),
+        "_box_control_token": _CONTROL_TOKEN,
+        "_box_trusted_instance_uuid": {"value": None},
+        "_box_generation_fence": BoxGenerationFence(),
+    }
+    request.headers = {
+        BOX_CONTROL_TOKEN_HEADER: _CONTROL_TOKEN,
+        BOX_INSTANCE_HEADER: _ACTION_CONTEXT.instance_uuid,
     }
 
     run_mock = mock.AsyncMock()
@@ -782,18 +1067,162 @@ async def test_close_active_websockets_closes_every_client(mock_runtime):
         )
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {
+            BOX_CONTROL_TOKEN_HEADER: "wrong-token-that-is-still-long-enough-123",
+            BOX_INSTANCE_HEADER: _ACTION_CONTEXT.instance_uuid,
+        },
+    ],
+)
+async def test_handle_rpc_ws_rejects_missing_or_wrong_token_before_upgrade(
+    mock_runtime, headers
+):
+    request = mock.MagicMock()
+    request.app = {
+        "runtime": mock_runtime,
+        "_box_control_token": _CONTROL_TOKEN,
+        "_box_trusted_instance_uuid": {"value": None},
+    }
+    request.headers = headers
+
+    with mock.patch.object(server.web, "WebSocketResponse") as websocket_response:
+        result = await handle_rpc_ws(request)
+
+    assert result.status == 401
+    assert result.text == "Unauthorized"
+    websocket_response.assert_not_called()
+
+
+async def test_handle_rpc_ws_pins_instance_and_rejects_rebind(mock_runtime):
+    app = {
+        "runtime": mock_runtime,
+        "_box_control_token": _CONTROL_TOKEN,
+        "_box_trusted_instance_uuid": {"value": None},
+        "_box_generation_fence": BoxGenerationFence(),
+    }
+
+    async def connect(instance_uuid: str):
+        fake_ws = mock.MagicMock()
+        fake_ws.prepare = mock.AsyncMock()
+        request = mock.MagicMock()
+        request.app = app
+        request.headers = {
+            BOX_CONTROL_TOKEN_HEADER: _CONTROL_TOKEN,
+            BOX_INSTANCE_HEADER: instance_uuid,
+        }
+        with (
+            mock.patch.object(server.web, "WebSocketResponse", return_value=fake_ws),
+            mock.patch.object(BoxServerHandler, "run", mock.AsyncMock()),
+        ):
+            return await handle_rpc_ws(request)
+
+    assert await connect(_ACTION_CONTEXT.instance_uuid)
+    rejected = await connect("instance-b")
+
+    assert app["_box_trusted_instance_uuid"]["value"] == _ACTION_CONTEXT.instance_uuid
+    assert rejected.status == 401
+
+
 # ── handle_managed_process_ws error/early-return paths ───────────────
 
 
-def _ws_request(runtime, session_id="s1", process_id=None):
+def _ws_request(
+    runtime,
+    session_id="s1",
+    process_id=None,
+    *,
+    token=_CONTROL_TOKEN,
+    instance_uuid=_ACTION_CONTEXT.instance_uuid,
+    bound_instance_uuid=_ACTION_CONTEXT.instance_uuid,
+    action_context=_ACTION_CONTEXT,
+    generation_fence=None,
+):
+    generation_fence = generation_fence or BoxGenerationFence()
+    generation_fence.observe(action_context)
+    if not str(session_id).startswith(
+        workspace_session_namespace_prefix(action_context)
+    ):
+        session_id = namespace_session_id(action_context, session_id)
     request = mock.MagicMock()
-    request.app = {"runtime": runtime}
+    request.app = {
+        "runtime": runtime,
+        "_box_control_token": _CONTROL_TOKEN,
+        "_box_trusted_instance_uuid": {"value": bound_instance_uuid},
+        "_box_generation_fence": generation_fence,
+    }
+    request.headers = {
+        BOX_CONTROL_TOKEN_HEADER: token,
+        BOX_INSTANCE_HEADER: instance_uuid,
+        BOX_WORKSPACE_HEADER: action_context.workspace_uuid,
+        BOX_PLACEMENT_GENERATION_HEADER: str(action_context.placement_generation),
+    }
     match_info = {"session_id": session_id}
     if process_id is not None:
         match_info["process_id"] = process_id
     # match_info.get used in source; emulate dict.get default behavior.
     request.match_info = match_info
     return request
+
+
+@pytest.mark.parametrize(
+    "request_kwargs",
+    [
+        {"token": "wrong-token-that-is-still-long-enough-123"},
+        {"bound_instance_uuid": None},
+        {"instance_uuid": "instance-b"},
+    ],
+)
+async def test_managed_process_ws_rejects_untrusted_attach_before_lookup(
+    mock_runtime, request_kwargs
+):
+    mock_runtime._sessions = {"secret-session": mock.MagicMock()}
+    request = _ws_request(
+        mock_runtime,
+        session_id="secret-session",
+        **request_kwargs,
+    )
+
+    resp = await handle_managed_process_ws(request)
+
+    assert resp.status == 401
+    assert resp.text == "Unauthorized"
+
+
+async def test_managed_process_ws_requires_workspace_generation_headers(
+    mock_runtime,
+):
+    mock_runtime._sessions = {"secret-session": mock.MagicMock()}
+    request = _ws_request(mock_runtime, session_id="secret-session")
+    request.headers.pop(BOX_WORKSPACE_HEADER)
+
+    resp = await handle_managed_process_ws(request)
+
+    assert resp.status == 401
+    assert resp.text == "Unauthorized"
+
+
+async def test_managed_process_ws_rejects_session_from_old_generation(
+    mock_runtime,
+):
+    generation_fence = BoxGenerationFence()
+    second_context = _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+    generation_fence.observe(second_context)
+    old_session_id = _physical_session_id("secret")
+    mock_runtime._sessions = {old_session_id: mock.MagicMock()}
+    request = _ws_request(
+        mock_runtime,
+        session_id=old_session_id,
+        action_context=second_context,
+        generation_fence=generation_fence,
+    )
+
+    resp = await handle_managed_process_ws(request)
+
+    assert resp.status == 401
+    assert resp.text == "Unauthorized"
 
 
 async def test_managed_process_ws_session_not_found(mock_runtime):
@@ -808,7 +1237,7 @@ async def test_managed_process_ws_session_not_found(mock_runtime):
 async def test_managed_process_ws_process_not_found(mock_runtime):
     runtime_session = mock.MagicMock()
     runtime_session.managed_processes = {}
-    mock_runtime._sessions = {"s1": runtime_session}
+    mock_runtime._sessions = {_physical_session_id("s1"): runtime_session}
     request = _ws_request(mock_runtime, session_id="s1", process_id="p1")
     resp = await handle_managed_process_ws(request)
     assert isinstance(resp, web.Response)
@@ -821,7 +1250,7 @@ async def test_managed_process_ws_process_not_running(mock_runtime):
     managed.is_running = False
     runtime_session = mock.MagicMock()
     runtime_session.managed_processes = {"default": managed}
-    mock_runtime._sessions = {"s1": runtime_session}
+    mock_runtime._sessions = {_physical_session_id("s1"): runtime_session}
     request = _ws_request(mock_runtime, session_id="s1", process_id="default")
     resp = await handle_managed_process_ws(request)
     assert isinstance(resp, web.Response)
@@ -840,7 +1269,7 @@ async def test_managed_process_ws_stdio_unavailable_closes_ws(mock_runtime):
 
     runtime_session = mock.MagicMock()
     runtime_session.managed_processes = {"default": managed}
-    mock_runtime._sessions = {"s1": runtime_session}
+    mock_runtime._sessions = {_physical_session_id("s1"): runtime_session}
 
     fake_ws = mock.MagicMock()
     fake_ws.prepare = mock.AsyncMock()
@@ -853,6 +1282,71 @@ async def test_managed_process_ws_stdio_unavailable_closes_ws(mock_runtime):
     assert result is fake_ws
     fake_ws.prepare.assert_awaited_once_with(request)
     fake_ws.close.assert_awaited_once()
+
+
+async def test_active_managed_process_relay_closes_when_generation_advances(
+    mock_runtime,
+):
+    class BlockingStdout:
+        async def readline(self):
+            await asyncio.Event().wait()
+
+    class FakeStdin:
+        def write(self, _value):
+            raise AssertionError("stale relay must not forward stdin")
+
+        async def drain(self):
+            return None
+
+    class BlockingWebSocket:
+        def __init__(self):
+            self.prepared = asyncio.Event()
+            self.closed = asyncio.Event()
+
+        async def prepare(self, _request):
+            self.prepared.set()
+
+        async def send_str(self, _value):
+            raise AssertionError("stale relay must not forward stdout")
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+
+        async def close(self, **_kwargs):
+            self.closed.set()
+
+    generation_fence = BoxGenerationFence()
+    managed = mock.MagicMock()
+    managed.is_running = True
+    managed.process = SimpleNamespace(
+        stdout=BlockingStdout(),
+        stdin=FakeStdin(),
+    )
+    managed.attach_lock = asyncio.Lock()
+    runtime_session = mock.MagicMock()
+    runtime_session.managed_processes = {"default": managed}
+    session_id = _physical_session_id("active")
+    mock_runtime._sessions = {session_id: runtime_session}
+    fake_ws = BlockingWebSocket()
+    request = _ws_request(
+        mock_runtime,
+        session_id=session_id,
+        generation_fence=generation_fence,
+    )
+
+    with mock.patch.object(server.web, "WebSocketResponse", return_value=fake_ws):
+        relay_task = asyncio.create_task(handle_managed_process_ws(request))
+        await asyncio.wait_for(fake_ws.prepared.wait(), timeout=1)
+        generation_fence.observe(
+            _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+        )
+        result = await asyncio.wait_for(relay_task, timeout=1)
+
+    assert result is fake_ws
+    assert fake_ws.closed.is_set()
 
 
 # ── Sanity: error classes used by the relay are importable/usable ────

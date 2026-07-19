@@ -92,6 +92,9 @@ class PluginRuntimeHandler(Handler):
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
         async def initialize_plugin(data: dict[str, typing.Any]) -> ActionResponse:
+            action_context = self.current_action_context
+            if action_context is not None:
+                self.bind_action_context(action_context)
             await plugin_initialize_callback(data["plugin_settings"])
             return ActionResponse.success({})
 
@@ -260,6 +263,7 @@ class PluginRuntimeHandler(Handler):
             tool_parameters = data["tool_parameters"]
             session = data["session"]
             query_id = data["query_id"]
+            query_uuid = data.get("query_uuid")
 
             for component in self.plugin_container.components:
                 if component.manifest.kind == Tool.__kind__:
@@ -273,7 +277,7 @@ class PluginRuntimeHandler(Handler):
 
                     tool_instance = component.component_instance
 
-                    # 检查 call 方法是否接受 session 和 query_id 参数，如果接受则传入，否则只传 tool_parameters
+                    # Pass only the context parameters supported by the plugin.
                     import inspect
 
                     call_sig = inspect.signature(tool_instance.call)
@@ -281,9 +285,10 @@ class PluginRuntimeHandler(Handler):
 
                     if "session" in params and "query_id" in params:
                         session = provider_session.Session.model_validate(session)
-                        resp = await tool_instance.call(
-                            tool_parameters, session=session, query_id=query_id
-                        )
+                        call_kwargs = {"session": session, "query_id": query_id}
+                        if "query_uuid" in params:
+                            call_kwargs["query_uuid"] = query_uuid
+                        resp = await tool_instance.call(tool_parameters, **call_kwargs)
                     else:
                         resp = await tool_instance.call(tool_parameters)
 
@@ -534,9 +539,14 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success(result.model_dump(mode="json"))
 
-    async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
-        # Read PLUGIN_DEBUG_KEY from environment variable
-        plugin_debug_key = os.environ.get("PLUGIN_DEBUG_KEY", "")
+    async def register_plugin(
+        self,
+        prod_mode: bool = False,
+        registration_capability: str = "",
+    ) -> dict[str, typing.Any]:
+        # The shared key is only a development credential. Installed plugin
+        # processes authenticate with a launch-scoped, one-use capability.
+        plugin_debug_key = "" if prod_mode else os.environ.get("PLUGIN_DEBUG_KEY", "")
 
         resp = await self.call_action(
             PluginToRuntimeAction.REGISTER_PLUGIN,
@@ -544,6 +554,9 @@ class PluginRuntimeHandler(Handler):
                 "plugin_container": self.plugin_container.model_dump(),
                 "prod_mode": prod_mode,
                 "plugin_debug_key": plugin_debug_key,
+                "registration_capability": (
+                    registration_capability if prod_mode else ""
+                ),
             },
         )
         return resp

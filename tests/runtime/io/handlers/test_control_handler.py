@@ -11,6 +11,8 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime.io.handlers.control import ControlConnectionHandler
 from langbot_plugin.runtime.settings import settings as runtime_settings
+from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.runtime.context import RuntimeContext
 
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
 
@@ -128,17 +130,22 @@ class FakePluginManager:
         session,
         query_id,
         include_plugins=None,
+        query_uuid=None,
     ):
-        self.calls.append(
-            (
-                "call_tool",
-                tool_name,
-                tool_parameters,
-                session,
-                query_id,
-                include_plugins,
-            )
+        call = (
+            "call_tool",
+            tool_name,
+            tool_parameters,
+            session,
+            query_id,
+            include_plugins,
         )
+        if query_uuid is not None:
+            call = (
+                *call,
+                query_uuid,
+            )
+        self.calls.append(call)
         return {"text": "sunny"}
 
     async def list_commands(self, include_plugins=None):
@@ -212,7 +219,9 @@ class FakePluginManager:
 
 def _handler():
     manager = FakePluginManager()
-    context = SimpleNamespace(plugin_mgr=manager, ws_debug_port=5401)
+    context = RuntimeContext()
+    context.plugin_mgr = manager
+    context.ws_debug_port = 5401
     handler = ControlConnectionHandler(ProtocolConnection(), context)
     return handler, manager
 
@@ -264,15 +273,71 @@ async def test_control_handler_set_runtime_config_updates_cloud_service_url(
 ):
     handler, _manager = _handler()
     monkeypatch.setattr(runtime_settings, "cloud_service_url", "https://old.example")
+    binding = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=4,
+    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
             LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
             {"cloud_service_url": "https://space.example/"},
+            action_context=binding,
         )
 
     assert response["data"] == {}
     assert runtime_settings.cloud_service_url == "https://space.example"
+
+
+async def test_control_handler_rejects_runtime_config_without_workspace_context():
+    handler, _manager = _handler()
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            {},
+        )
+
+    assert response["code"] == 1
+    assert "requires a Workspace context" in response["message"]
+    assert handler.context.workspace_binding is None
+
+
+async def test_control_handler_binds_runtime_once_from_trusted_action_context():
+    context = RuntimeContext()
+    context.plugin_mgr = FakePluginManager()
+    context.ws_debug_port = 5401
+    handler = ControlConnectionHandler(ProtocolConnection(), context)
+    binding = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=4,
+    )
+
+    async with ProtocolSession(handler) as session:
+        first = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            {},
+            action_context=binding,
+        )
+        repeated = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            {},
+            action_context=binding,
+        )
+        rebound = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            {},
+            action_context=binding.model_copy(update={"workspace_uuid": "workspace-b"}),
+        )
+
+    assert first["code"] == 0
+    assert repeated["code"] == 0
+    assert context.workspace_binding == binding
+    assert handler.bound_action_context == binding
+    assert rebound["code"] == 1
+    assert "does not match connection Workspace" in rebound["message"]
 
 
 async def test_control_handler_get_debug_info_returns_runtime_settings(monkeypatch):
@@ -520,7 +585,13 @@ async def test_control_handler_install_plugin_streams_progress_and_reads_local_p
             LangBotToRuntimeAction.INSTALL_PLUGIN.value,
             {
                 "install_source": "local",
-                "install_info": {"plugin_file_key": "pkg-key"},
+                "install_info": {
+                    "plugin_file_key": "pkg-key",
+                    "workspace_uuid": "workspace-forged",
+                    "instance_uuid": "instance-forged",
+                    "placement_generation": 999,
+                    "installation_uuid": "installation-forged",
+                },
             },
             count=4,
         )
@@ -794,6 +865,7 @@ async def test_control_handler_call_tool_delegates_session_and_query_context():
                 "tool_parameters": {"city": "Shanghai"},
                 "session": {"id": "s"},
                 "query_id": 7,
+                "query_uuid": "query-opaque-7",
                 "include_plugins": ["tester/demo"],
             },
         )
@@ -807,6 +879,7 @@ async def test_control_handler_call_tool_delegates_session_and_query_context():
             {"id": "s"},
             7,
             ["tester/demo"],
+            "query-opaque-7",
         )
     ]
 

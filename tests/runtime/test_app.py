@@ -6,6 +6,12 @@ import asyncio
 import pytest
 
 from langbot_plugin.runtime import app as runtime_app
+from langbot_plugin.runtime.security import (
+    PLUGIN_DEBUG_KEY_HEADER,
+    PLUGIN_REGISTRATION_CAPABILITY_HEADER,
+    PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
+    PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER,
+)
 
 
 class FakePluginManager:
@@ -13,7 +19,6 @@ class FakePluginManager:
 
     def __init__(self, context):
         self.context = context
-        self.wait_for_control_connection = None
         self.calls = []
         self.handlers = []
         self.instances.append(self)
@@ -31,15 +36,16 @@ class FakePluginManager:
     async def shutdown_all_plugins(self):
         self.calls.append("shutdown_all")
 
-    def mark_control_connection_ready(self):
-        self.calls.append("control_ready")
+    def is_registration_capability_pending(self, capability):
+        return capability == "pending-registration-capability"
 
 
 class FakeServerController:
     instances = []
 
-    def __init__(self, port=None):
+    def __init__(self, port=None, **kwargs):
         self.port = port
+        self.kwargs = kwargs
         self.callbacks = []
         self.instances.append(self)
 
@@ -90,6 +96,12 @@ def _args(**overrides):
     return argparse.Namespace(**defaults)
 
 
+@pytest.fixture(autouse=True)
+def _runtime_secrets(monkeypatch):
+    monkeypatch.setattr(runtime_app.settings, "plugin_debug_key", "")
+    monkeypatch.setenv(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV, "c" * 48)
+
+
 def test_runtime_application_initializes_stdio_control_mode(monkeypatch):
     monkeypatch.setattr(
         runtime_app.plugin_mgr_cls,
@@ -119,6 +131,15 @@ def test_runtime_application_initializes_stdio_control_mode(monkeypatch):
     assert isinstance(app.context.stdio_server, FakeServerController)
     assert app.context.ws_control_server is None
     assert app.context.ws_debug_server.port == 5401
+    assert len(runtime_app.settings.plugin_debug_key) >= 32
+    authenticator = app.context.ws_debug_server.kwargs["request_authenticator"]
+    assert authenticator(
+        {PLUGIN_DEBUG_KEY_HEADER: runtime_app.settings.plugin_debug_key}
+    )
+    assert authenticator(
+        {PLUGIN_REGISTRATION_CAPABILITY_HEADER: ("pending-registration-capability")}
+    )
+    assert not authenticator({PLUGIN_DEBUG_KEY_HEADER: "wrong"})
     assert app.context.ws_debug_port == 5401
     assert runtime_app.os.environ["LANGBOT_PLUGIN_PYPI_INDEX_URL"] == "https://mirror"
     assert runtime_app.os.environ["LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"] == "mirror"
@@ -148,10 +169,29 @@ def test_runtime_application_initializes_websocket_control_mode(monkeypatch):
     assert app._control_connection_mode is runtime_app.ControlConnectionMode.WS
     assert app.context.stdio_server is None
     assert app.context.ws_control_server.port == 5500
+    assert app.context.ws_control_server.kwargs["expected_headers"] == {
+        PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER: "c" * 48,
+    }
     assert app.context.ws_debug_server.port == 5501
 
 
-async def test_set_control_handler_runs_handler_and_resolves_waiter(monkeypatch):
+def test_runtime_application_rejects_websocket_control_without_secret(monkeypatch):
+    monkeypatch.setattr(runtime_app.plugin_mgr_cls, "PluginManager", FakePluginManager)
+    monkeypatch.delenv(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV)
+
+    with pytest.raises(ValueError, match=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV):
+        runtime_app.RuntimeApplication(_args(stdio_control=False))
+
+
+def test_runtime_application_rejects_weak_configured_debug_key(monkeypatch):
+    monkeypatch.setattr(runtime_app.plugin_mgr_cls, "PluginManager", FakePluginManager)
+    monkeypatch.setattr(runtime_app.settings, "plugin_debug_key", "short")
+
+    with pytest.raises(ValueError, match="PLUGIN_DEBUG_KEY"):
+        runtime_app.RuntimeApplication(_args(stdio_control=True))
+
+
+async def test_set_control_handler_runs_handler(monkeypatch):
     monkeypatch.setattr(
         runtime_app.plugin_mgr_cls,
         "PluginManager",
@@ -168,7 +208,6 @@ async def test_set_control_handler_runs_handler_and_resolves_waiter(monkeypatch)
         FakeServerController,
     )
     app = runtime_app.RuntimeApplication(_args())
-    app.context.plugin_mgr.wait_for_control_connection = asyncio.Future()
     handler = FakeControlHandler(object(), app.context)
 
     task = app.set_control_handler(handler)
@@ -176,7 +215,6 @@ async def test_set_control_handler_runs_handler_and_resolves_waiter(monkeypatch)
 
     assert not hasattr(app.context, "control_handler")
     assert handler.calls == ["run"]
-    assert app.context.plugin_mgr.wait_for_control_connection is None
 
 
 async def test_set_control_handler_serializes_replacements(monkeypatch):

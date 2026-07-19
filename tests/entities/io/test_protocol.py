@@ -17,6 +17,7 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.entities.io.req import ActionRequest
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
+from langbot_plugin.entities.io.context import ActionContext
 
 
 def test_action_request_factory_preserves_protocol_fields():
@@ -39,6 +40,50 @@ def test_action_request_factory_preserves_protocol_fields():
 def test_action_request_requires_mapping_data():
     with pytest.raises(ValidationError):
         ActionRequest(seq_id=1, action="ping", data=["not", "a", "dict"])
+
+
+def test_action_request_serializes_optional_workspace_context_envelope():
+    context = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=7,
+        installation_uuid="installation-1",
+    )
+
+    request = ActionRequest.make_request(7, "ping", {}, context)
+
+    assert request.model_dump() == {
+        "seq_id": 7,
+        "action": "ping",
+        "data": {},
+        "context": context.model_dump(),
+    }
+    assert ActionRequest.model_validate(request.model_dump()).context == context
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "instance_uuid": "",
+            "workspace_uuid": "workspace-a",
+            "placement_generation": 1,
+        },
+        {
+            "instance_uuid": "instance-1",
+            "workspace_uuid": "",
+            "placement_generation": 1,
+        },
+        {
+            "instance_uuid": "instance-1",
+            "workspace_uuid": "workspace-a",
+            "placement_generation": 0,
+        },
+    ],
+)
+def test_action_context_rejects_incomplete_or_unfenced_binding(payload):
+    with pytest.raises(ValidationError):
+        ActionContext.model_validate(payload)
 
 
 def test_action_response_success_error_and_chunk_serialization():

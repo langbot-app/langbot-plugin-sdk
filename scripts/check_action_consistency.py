@@ -47,7 +47,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src" / "langbot_plugin"
 ENUMS_FILE = SRC_ROOT / "entities" / "io" / "actions" / "enums.py"
 
-INVOKE_METHODS = {"call_action", "call_action_generator"}
+INVOKE_METHODS = {"call_action", "call_action_generator", "call_host_action"}
 REGISTER_METHODS = {"action"}
 
 # Receivers whose action handlers live in THIS repository. Actions whose receiver
@@ -154,11 +154,14 @@ def scan(enum_names: set[str]) -> tuple[list[Ref], list[Ref]]:
             continue
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(
-                node.func, ast.Attribute
-            ):
+            if not isinstance(node, ast.Call):
                 continue
-            method = node.func.attr
+            if isinstance(node.func, ast.Attribute):
+                method = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                method = node.func.id
+            else:
+                continue
             if not node.args:
                 continue
             ref = _enum_member_arg(node.args[0], enum_names)
