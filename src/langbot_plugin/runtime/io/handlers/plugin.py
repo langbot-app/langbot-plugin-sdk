@@ -7,6 +7,7 @@ import logging
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
+    CommonAction,
     PluginToRuntimeAction,
     RuntimeToPluginAction,
     RuntimeToLangBotAction,
@@ -15,7 +16,11 @@ from langbot_plugin.runtime import context as context_module
 import asyncio
 from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import (
+    ActionContext,
+    ActionEnvelopeContext,
+    InstallationBinding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +34,10 @@ _UNTRUSTED_SCOPE_FIELDS = frozenset(
         "instance_uuid",
         "workspace_uuid",
         "placement_generation",
+        "execution_generation",
         "installation_uuid",
+        "runtime_revision",
+        "artifact_digest",
     }
 )
 
@@ -60,15 +68,15 @@ class PluginConnectionHandler(handler.Handler):
     ):
         async def disconnect_callback(hdl: handler.Handler):
             logger.debug("disconnect_callback")
+            if hasattr(self.context.plugin_mgr, "remove_plugin_handler"):
+                await self.context.plugin_mgr.remove_plugin_handler(self)
+                return
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    logger.info(
-                        f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect"
-                    )
                     await self.context.plugin_mgr.remove_plugin_container(
                         plugin_container
                     )
-                    break
+                    return
 
         super().__init__(connection, disconnect_callback)
         self.context = context
@@ -76,7 +84,9 @@ class PluginConnectionHandler(handler.Handler):
         self.debug_plugin = debug_plugin
         self.stdio_process = stdio_process
         runtime_binding = getattr(self.context, "workspace_binding", None)
-        if runtime_binding is not None:
+        if runtime_binding is not None and (
+            debug_plugin or not hasattr(self.context, "runtime_profile")
+        ):
             self.bind_action_context(runtime_binding)
 
         # Capture the plugin subprocess's stderr (Python `logging` output) into
@@ -117,6 +127,15 @@ class PluginConnectionHandler(handler.Handler):
                 timeout=timeout,
                 action_context=binding,
             )
+
+        def scoped_plugins():
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding) and hasattr(
+                self.context.plugin_mgr,
+                "plugins_for_binding",
+            ):
+                return self.context.plugin_mgr.plugins_for_binding(binding)
+            return self.context.plugin_mgr.plugins
 
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
@@ -468,7 +487,7 @@ class PluginConnectionHandler(handler.Handler):
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
@@ -487,7 +506,7 @@ class PluginConnectionHandler(handler.Handler):
         async def get_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
@@ -508,7 +527,7 @@ class PluginConnectionHandler(handler.Handler):
         ) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
@@ -527,7 +546,7 @@ class PluginConnectionHandler(handler.Handler):
         async def delete_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
@@ -624,14 +643,22 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
-            commands = await self.context.plugin_mgr.list_commands()
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                commands = await self.context.plugin_mgr.list_commands(binding=binding)
+            else:
+                commands = await self.context.plugin_mgr.list_commands()
             return handler.ActionResponse.success(
                 {"commands": [command.model_dump() for command in commands]}
             )
 
         @self.action(PluginToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
-            tools = await self.context.plugin_mgr.list_tools()
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                tools = await self.context.plugin_mgr.list_tools(binding=binding)
+            else:
+                tools = await self.context.plugin_mgr.list_tools()
             return handler.ActionResponse.success(
                 {"tools": [tool.to_plain_dict() for tool in tools]}
             )
@@ -639,7 +666,11 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
         async def get_tool_detail(data: dict[str, Any]) -> handler.ActionResponse:
             tool_name = data["tool_name"]
-            tools = await self.context.plugin_mgr.list_tools()
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                tools = await self.context.plugin_mgr.list_tools(binding=binding)
+            else:
+                tools = await self.context.plugin_mgr.list_tools()
             for tool in tools:
                 if tool.metadata.name == tool_name:
                     return handler.ActionResponse.success(
@@ -653,9 +684,22 @@ class PluginConnectionHandler(handler.Handler):
             tool_parameters = data["tool_parameters"]
             session = data["session"]
             query_id = data["query_id"]
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id
-            )
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session,
+                    query_id,
+                    binding=binding,
+                )
+            else:
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session,
+                    query_id,
+                )
             return handler.ActionResponse.success({"tool_response": resp})
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
@@ -663,11 +707,50 @@ class PluginConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(
                 {
                     "plugins": [
-                        plugin.model_dump()["manifest"]
-                        for plugin in self.context.plugin_mgr.plugins
+                        plugin.model_dump()["manifest"] for plugin in scoped_plugins()
                     ]
                 }
             )
+
+    def validate_inbound_action_context(
+        self,
+        action: str,
+        action_context: ActionEnvelopeContext | None,
+    ) -> ActionEnvelopeContext | None:
+        """Fence production worker actions to the consumed launch capability."""
+
+        if self.debug_plugin:
+            return super().validate_inbound_action_context(action, action_context)
+
+        if action == PluginToRuntimeAction.REGISTER_PLUGIN.value:
+            if self.bound_action_context is not None:
+                raise ValueError("Plugin worker is already registered")
+            if action_context is not None:
+                raise ValueError("Plugin registration does not accept action context")
+            return None
+
+        if action == CommonAction.PING.value and self.bound_action_context is None:
+            if action_context is not None:
+                raise ValueError("PING does not accept action context")
+            return None
+
+        binding = self.bound_action_context
+        if binding is None:
+            if getattr(self.context, "runtime_profile", "oss_dev") != "shared":
+                return super().validate_inbound_action_context(
+                    action,
+                    action_context,
+                )
+            raise ValueError("Plugin worker must register before calling actions")
+        if isinstance(binding, InstallationBinding) and not (
+            self.context.is_current_installation_binding(binding)
+        ):
+            raise ValueError("Plugin worker installation binding has been revoked")
+        if getattr(
+            self.context, "runtime_profile", "oss_dev"
+        ) == "shared" and not isinstance(binding, InstallationBinding):
+            raise ValueError("Shared plugin worker requires InstallationBinding")
+        return super().validate_inbound_action_context(action, action_context)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]

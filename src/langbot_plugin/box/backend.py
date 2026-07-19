@@ -67,6 +67,27 @@ class BaseSandboxBackend(abc.ABC):
     async def is_session_alive(self, session: BoxSessionInfo) -> bool:
         return True
 
+    async def get_readiness(
+        self,
+        *,
+        workspace_path: str | None = None,
+        strict: bool = False,
+    ) -> dict:
+        """Return backend isolation readiness.
+
+        Generic backends can report availability, but cannot claim the
+        cgroup/namespace/mount guarantees required by the managed nsjail mode.
+        """
+
+        available = await self.is_available()
+        return {
+            "available": available,
+            "cgroup_v2": False if strict else None,
+            "namespace_isolation": False if strict else None,
+            "mount_isolation": False if strict else None,
+            "network_isolation": False if strict else None,
+        }
+
     async def start_managed_process(self, session: BoxSessionInfo, spec):
         raise BoxError(f"{self.name} backend does not support managed processes")
 

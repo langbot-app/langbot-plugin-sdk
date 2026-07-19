@@ -42,11 +42,19 @@ from langbot_plugin.utils.log import configure_process_logging
 
 from .actions import LangBotToBoxAction
 from .errors import (
+    BoxAdmissionError,
     BoxManagedProcessConflictError,
     BoxManagedProcessNotFoundError,
+    BoxReadinessError,
     BoxSessionNotFoundError,
 )
-from .models import BoxExecutionResult, BoxManagedProcessSpec, BoxSpec
+from .models import (
+    BoxExecutionResult,
+    BoxManagedProcessSpec,
+    BoxSpec,
+    SandboxAdmissionGrant,
+    SandboxAdmissionRevocation,
+)
 from .runtime import BoxRuntime
 from .security import (
     BOX_CONTROL_TOKEN_ENV,
@@ -343,7 +351,22 @@ class BoxServerHandler(Handler):
             LangBotToBoxAction.HEALTH.value,
             LangBotToBoxAction.GET_BACKEND_INFO.value,
             LangBotToBoxAction.INIT.value,
+            LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT.value,
+            LangBotToBoxAction.REVOKE_SANDBOX_ADMISSION_GRANT.value,
             LangBotToBoxAction.SHUTDOWN.value,
+        }
+    )
+
+    _SANDBOX_ACTIONS = frozenset(
+        {
+            LangBotToBoxAction.EXEC.value,
+            LangBotToBoxAction.CREATE_SESSION.value,
+            LangBotToBoxAction.GET_SESSION.value,
+            LangBotToBoxAction.GET_SESSIONS.value,
+            LangBotToBoxAction.DELETE_SESSION.value,
+            LangBotToBoxAction.START_MANAGED_PROCESS.value,
+            LangBotToBoxAction.GET_MANAGED_PROCESS.value,
+            LangBotToBoxAction.STOP_MANAGED_PROCESS.value,
         }
     )
 
@@ -380,9 +403,15 @@ class BoxServerHandler(Handler):
                 data: dict[str, Any],
                 *,
                 _handler=action_handler,
+                _action=action,
             ) -> ActionResponse:
                 context = self._action_context()
                 lease_task = asyncio.current_task()
+                if (
+                    _action in self._SANDBOX_ACTIONS
+                    and self._runtime.admission_required
+                ):
+                    await self._runtime.require_sandbox_admission(context)
                 await self._generation_fence.activate(self._runtime, context)
                 try:
                     response = await _handler(data)
@@ -450,7 +479,15 @@ class BoxServerHandler(Handler):
         return context.without_installation()
 
     def _session_id(self, logical_session_id: str) -> str:
-        return namespace_session_id(self._action_context(), logical_session_id)
+        context = self._action_context()
+        if self._runtime.admission_required:
+            canonical_id = self._runtime.admission_policy.logical_session_id
+            if str(logical_session_id or "").strip() != canonical_id:
+                raise BoxAdmissionError(
+                    "Managed sandbox session_id is runtime-owned"
+                )
+            logical_session_id = canonical_id
+        return namespace_session_id(context, logical_session_id)
 
     def _skill_store(self):
         return self._runtime.skill_store.scoped(box_namespace(self._action_context()))
@@ -487,6 +524,13 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.HEALTH)
         async def health(data: dict[str, Any]) -> ActionResponse:
             self._require_host_control()
+            if self._runtime.admission_required:
+                readiness = await self._runtime.get_readiness()
+                if not readiness.get("ready"):
+                    return ActionResponse.error(
+                        "BoxReadinessError: managed sandbox isolation is not ready"
+                    )
+                return ActionResponse.success(readiness)
             info = await self._runtime.get_backend_info()
             return ActionResponse.success(info)
 
@@ -505,12 +549,18 @@ class BoxServerHandler(Handler):
         async def exec_cmd(data: dict[str, Any]) -> ActionResponse:
             try:
                 spec = BoxSpec.model_validate(data)
-                spec = spec.model_copy(
-                    update={"session_id": self._session_id(spec.session_id)}
-                )
+                context = self._action_context()
+                if self._runtime.admission_required:
+                    result = await self._runtime.execute(
+                        spec, action_context=context
+                    )
+                else:
+                    spec = spec.model_copy(
+                        update={"session_id": self._session_id(spec.session_id)}
+                    )
+                    result = await self._runtime.execute(spec)
             except pydantic.ValidationError as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
-            result = await self._runtime.execute(spec)
             return ActionResponse.success(
                 self._logical_session_data(_result_to_dict(result))
             )
@@ -519,12 +569,18 @@ class BoxServerHandler(Handler):
         async def create_session(data: dict[str, Any]) -> ActionResponse:
             try:
                 spec = BoxSpec.model_validate(data)
-                spec = spec.model_copy(
-                    update={"session_id": self._session_id(spec.session_id)}
-                )
+                context = self._action_context()
+                if self._runtime.admission_required:
+                    info = await self._runtime.create_session(
+                        spec, action_context=context
+                    )
+                else:
+                    spec = spec.model_copy(
+                        update={"session_id": self._session_id(spec.session_id)}
+                    )
+                    info = await self._runtime.create_session(spec)
             except pydantic.ValidationError as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
-            info = await self._runtime.create_session(spec)
             return ActionResponse.success(self._logical_session_data(info))
 
         @self.action(LangBotToBoxAction.GET_SESSION)
@@ -552,7 +608,14 @@ class BoxServerHandler(Handler):
                 spec = BoxManagedProcessSpec.model_validate(data["spec"])
             except pydantic.ValidationError as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
-            info = await self._runtime.start_managed_process(session_id, spec)
+            if self._runtime.admission_required:
+                info = await self._runtime.start_managed_process(
+                    session_id,
+                    spec,
+                    action_context=self._action_context(),
+                )
+            else:
+                info = await self._runtime.start_managed_process(session_id, spec)
             return ActionResponse.success(self._logical_session_data(info))
 
         @self.action(LangBotToBoxAction.GET_MANAGED_PROCESS)
@@ -581,6 +644,47 @@ class BoxServerHandler(Handler):
             self._require_host_control()
             info = await self._runtime.get_backend_info()
             return ActionResponse.success(info)
+
+        @self.action(LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT)
+        async def upsert_sandbox_admission_grant(
+            data: dict[str, Any],
+        ) -> ActionResponse:
+            self._require_host_control()
+            try:
+                grant = SandboxAdmissionGrant.model_validate(data)
+            except pydantic.ValidationError as exc:
+                return ActionResponse.error(f"BoxValidationError: {exc}")
+            if grant.instance_uuid != self._trusted_instance_uuid:
+                raise PermissionError(
+                    "Sandbox admission grant does not match the trusted instance"
+                )
+            result = await self._runtime.upsert_sandbox_admission_grant(grant)
+            self._generation_fence.observe(
+                ActionContext(
+                    instance_uuid=grant.instance_uuid,
+                    workspace_uuid=grant.workspace_uuid,
+                    placement_generation=grant.execution_generation,
+                )
+            )
+            return ActionResponse.success(result)
+
+        @self.action(LangBotToBoxAction.REVOKE_SANDBOX_ADMISSION_GRANT)
+        async def revoke_sandbox_admission_grant(
+            data: dict[str, Any],
+        ) -> ActionResponse:
+            self._require_host_control()
+            try:
+                revocation = SandboxAdmissionRevocation.model_validate(data)
+            except pydantic.ValidationError as exc:
+                return ActionResponse.error(f"BoxValidationError: {exc}")
+            if revocation.instance_uuid != self._trusted_instance_uuid:
+                raise PermissionError(
+                    "Sandbox admission revocation does not match the trusted instance"
+                )
+            result = await self._runtime.revoke_sandbox_admission_grant(
+                revocation
+            )
+            return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.LIST_SKILLS)
         async def list_skills(data: dict[str, Any]) -> ActionResponse:
@@ -731,6 +835,15 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
         return _unauthorized_response()
 
     runtime: BoxRuntime = request.app[_APP_RUNTIME_KEY]
+    if runtime.admission_required:
+        try:
+            grant = await runtime.require_sandbox_admission(action_context)
+            if grant.max_managed_processes <= 0:
+                raise BoxAdmissionError(
+                    "Sandbox admission grant does not permit managed process relay"
+                )
+        except (BoxAdmissionError, BoxReadinessError) as exc:
+            return _error_response(exc)
     session_id = request.match_info["session_id"]
     process_id = request.match_info.get("process_id", "default")
     if not session_belongs_to_placement(action_context, session_id):
@@ -846,24 +959,20 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
 
 
 async def handle_healthz(request: web.Request) -> web.Response:
-    """Return a lightweight liveness response for container orchestrators."""
-    return web.Response(text="ok\n")
+    """Process liveness probe; it intentionally does not claim isolation readiness."""
+
+    return web.json_response({"live": True})
 
 
-async def _close_active_websockets(app: web.Application) -> None:
-    """Close live clients before aiohttp waits for request handlers to drain."""
-    active_websockets = list(app.get(_ACTIVE_WEBSOCKETS_KEY, ()))
-    if active_websockets:
-        await asyncio.gather(
-            *(
-                ws.close(
-                    code=WSCloseCode.GOING_AWAY,
-                    message=b"Box runtime shutting down",
-                )
-                for ws in active_websockets
-            ),
-            return_exceptions=True,
-        )
+async def handle_readyz(request: web.Request) -> web.Response:
+    """Strict readiness probe used by shared managed-sandbox deployments."""
+
+    runtime: BoxRuntime = request.app[_APP_RUNTIME_KEY]
+    readiness = await runtime.get_readiness()
+    return web.json_response(
+        readiness,
+        status=200 if readiness.get("ready") else 503,
+    )
 
 
 # ── App factory ──────────────────────────────────────────────────────
@@ -891,6 +1000,8 @@ def create_app(
         )
     }
     app[_APP_GENERATION_FENCE_KEY] = generation_fence or BoxGenerationFence()
+    app.router.add_get("/healthz", handle_healthz)
+    app.router.add_get("/readyz", handle_readyz)
     app.router.add_get("/rpc/ws", handle_rpc_ws)
     app.router.add_get(
         "/v1/sessions/{session_id}/managed-process/{process_id}/ws",

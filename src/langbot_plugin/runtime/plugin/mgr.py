@@ -7,6 +7,7 @@ import shutil
 import typing
 from typing import AsyncGenerator
 import asyncio
+import contextlib
 from dataclasses import dataclass
 import io
 import enum
@@ -46,6 +47,20 @@ from langbot_plugin.entities.io.errors import (
     DependencyVerificationError,
 )
 from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
+from langbot_plugin.entities.io.context import (
+    InstallationBinding,
+    PluginInstallationDesiredState,
+    PluginWorkerPolicy,
+)
+from langbot_plugin.runtime.plugin.artifact import (
+    PluginArtifact,
+    PluginArtifactStore,
+    PluginInstallationPaths,
+)
+from langbot_plugin.runtime.plugin.worker_launcher import (
+    PluginWorkerLaunchSpec,
+    PluginWorkerLauncher,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +87,21 @@ class _PendingPluginRegistration:
     plugin_author: str
     plugin_name: str
     plugin_path: str
+    binding: InstallationBinding | None
     expires_at: float
+
+
+@dataclass(slots=True)
+class PluginInstallationRuntime:
+    """Rebuildable runtime state keyed only by its complete binding."""
+
+    binding: InstallationBinding
+    artifact: PluginArtifact
+    paths: PluginInstallationPaths
+    enabled: bool
+    plugin_container: runtime_plugin_container.PluginContainer | None = None
+    plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
+    launch_task: asyncio.Task | None = None
 
 
 _REGISTRATION_CAPABILITY_TTL_SECONDS = 300.0
@@ -130,6 +159,24 @@ class PluginManager:
         self.plugins = []
         self.plugin_run_tasks = []
         self._pending_registrations: dict[str, _PendingPluginRegistration] = {}
+        self._installations: dict[InstallationBinding, PluginInstallationRuntime] = {}
+        self._active_binding_by_uuid: dict[str, InstallationBinding] = {}
+        self._binding_by_container_id: dict[int, InstallationBinding] = {}
+        self.artifact_store = PluginArtifactStore()
+        self.worker_launcher = PluginWorkerLauncher()
+
+    @property
+    def installation_runtimes(
+        self,
+    ) -> dict[InstallationBinding, PluginInstallationRuntime]:
+        return dict(self._installations)
+
+    def configure_worker_runtime(
+        self,
+        policy: PluginWorkerPolicy,
+        runtime_profile: typing.Literal["oss_dev", "shared"],
+    ) -> None:
+        self.worker_launcher.configure(policy, runtime_profile)
 
     @staticmethod
     def _installed_plugin_identity(plugin_path: str) -> tuple[str, str]:
@@ -167,6 +214,7 @@ class PluginManager:
         plugin_author: str,
         plugin_name: str,
         plugin_path: str,
+        binding: InstallationBinding | None = None,
     ) -> str:
         """Issue a short-lived, one-use capability for one expected plugin."""
 
@@ -174,12 +222,24 @@ class PluginManager:
         name = str(plugin_name or "").strip()
         if not author or not name:
             raise ValueError("Plugin registration identity is incomplete")
+        if (
+            getattr(self.context, "runtime_profile", "oss_dev") == "shared"
+            and binding is None
+        ):
+            raise ValueError(
+                "Shared plugin registration capability requires InstallationBinding"
+            )
+        if binding is not None and not self.context.is_current_installation_binding(
+            binding
+        ):
+            raise ValueError("Plugin registration binding is no longer current")
 
         capability = secrets.token_urlsafe(48)
         self._pending_registrations[capability] = _PendingPluginRegistration(
             plugin_author=author,
             plugin_name=name,
             plugin_path=os.path.abspath(plugin_path),
+            binding=binding,
             expires_at=time.monotonic() + _REGISTRATION_CAPABILITY_TTL_SECONDS,
         )
         return capability
@@ -233,6 +293,14 @@ class PluginManager:
         if key is not None:
             self._pending_registrations.pop(key, None)
 
+    def _revoke_registration_capabilities_for_binding(
+        self,
+        binding: InstallationBinding,
+    ) -> None:
+        for key, registration in list(self._pending_registrations.items()):
+            if registration.binding == binding:
+                self._pending_registrations.pop(key, None)
+
     @staticmethod
     def _windows_plugin_environment() -> dict[str, str]:
         return {
@@ -244,8 +312,45 @@ class PluginManager:
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
+    def _current_control_binding(self) -> InstallationBinding | None:
+        control_handler = getattr(self.context, "control_handler", None)
+        action_context = getattr(control_handler, "current_action_context", None)
+        return (
+            action_context if isinstance(action_context, InstallationBinding) else None
+        )
+
+    def plugins_for_binding(
+        self,
+        binding: InstallationBinding,
+    ) -> list[runtime_plugin_container.PluginContainer]:
+        runtime = self._installations.get(binding)
+        if runtime is None or runtime.plugin_container is None:
+            return []
+        return [runtime.plugin_container]
+
+    def _plugins_for_current_scope(
+        self,
+    ) -> list[runtime_plugin_container.PluginContainer]:
+        binding = self._current_control_binding()
+        if binding is not None:
+            if (
+                binding in self._installations
+                or getattr(self.context, "runtime_profile", "oss_dev") == "shared"
+            ):
+                return self.plugins_for_binding(binding)
+        return self.plugins
+
+    def plugins_for_current_scope(
+        self,
+    ) -> list[runtime_plugin_container.PluginContainer]:
+        return list(self._plugins_for_current_scope())
+
     def find_plugin(
-        self, plugin_author: str, plugin_name: str
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        *,
+        binding: InstallationBinding | None = None,
     ) -> runtime_plugin_container.PluginContainer | None:
         """Find a plugin by author and name.
 
@@ -256,7 +361,12 @@ class PluginManager:
         Returns:
             The plugin container if found, otherwise None.
         """
-        for plugin in self.plugins:
+        scoped_plugins = (
+            self.plugins_for_binding(binding)
+            if binding is not None
+            else self._plugins_for_current_scope()
+        )
+        for plugin in scoped_plugins:
             if (
                 plugin.manifest.metadata.author == plugin_author
                 and plugin.manifest.metadata.name == plugin_name
@@ -522,6 +632,214 @@ class PluginManager:
             # this only removes launch failures or processes that never register.
             self._revoke_registration_capability(registration_capability)
 
+    async def apply_plugin_installation(
+        self,
+        binding: InstallationBinding,
+        *,
+        artifact_package: bytes | None = None,
+        enabled: bool = True,
+    ) -> dict[str, typing.Any]:
+        """Apply one desired installation and fence an older worker first."""
+
+        binding = self.context.validate_installation_candidate(binding)
+        artifact = (
+            self.artifact_store.install_package(
+                artifact_package,
+                binding.artifact_digest,
+            )
+            if artifact_package is not None
+            else self.artifact_store.get_verified(binding.artifact_digest)
+        )
+
+        previous = self.context.activate_installation_binding(binding)
+        if previous is not None and previous != binding:
+            await self._revoke_installation_runtime(previous)
+        self._active_binding_by_uuid[binding.installation_uuid] = binding
+
+        if artifact is None:
+            self._installations.pop(binding, None)
+            return {
+                "installation_uuid": binding.installation_uuid,
+                "state": "artifact_missing",
+            }
+
+        current = self._installations.get(binding)
+        if current is None:
+            current = PluginInstallationRuntime(
+                binding=binding,
+                artifact=artifact,
+                paths=self.artifact_store.ensure_installation_paths(binding),
+                enabled=enabled,
+            )
+            self._installations[binding] = current
+        else:
+            current.enabled = enabled
+
+        if enabled:
+            self._schedule_installation_worker(current)
+        else:
+            await self._stop_installation_worker(current)
+        return {
+            "installation_uuid": binding.installation_uuid,
+            "state": "starting" if enabled else "disabled",
+            "artifact_path": str(artifact.code_path),
+        }
+
+    async def remove_plugin_installation(
+        self,
+        binding: InstallationBinding,
+    ) -> dict[str, typing.Any]:
+        """Remove exactly the active desired binding and revoke its worker."""
+
+        binding = self.context.deactivate_installation_binding(binding)
+        await self._revoke_installation_runtime(binding)
+        self._active_binding_by_uuid.pop(binding.installation_uuid, None)
+        return {
+            "installation_uuid": binding.installation_uuid,
+            "state": "removed",
+        }
+
+    async def reconcile_plugin_installations(
+        self,
+        desired_states: tuple[PluginInstallationDesiredState, ...],
+    ) -> dict[str, typing.Any]:
+        """Replay the authoritative instance desired state after reconnect."""
+
+        desired_by_uuid = {
+            desired.binding.installation_uuid: desired for desired in desired_states
+        }
+        for desired in desired_states:
+            self.context.validate_installation_candidate(desired.binding)
+
+        removed: list[str] = []
+        for installation_uuid, current_binding in list(
+            self._active_binding_by_uuid.items()
+        ):
+            desired = desired_by_uuid.get(installation_uuid)
+            if desired is None or desired.binding != current_binding:
+                if self.context.is_current_installation_binding(current_binding):
+                    self.context.deactivate_installation_binding(current_binding)
+                await self._revoke_installation_runtime(current_binding)
+                self._active_binding_by_uuid.pop(installation_uuid, None)
+                removed.append(installation_uuid)
+
+        applied: list[str] = []
+        missing_artifacts: list[str] = []
+        for desired in desired_states:
+            result = await self.apply_plugin_installation(
+                desired.binding,
+                enabled=desired.enabled,
+            )
+            applied.append(desired.binding.installation_uuid)
+            if result["state"] == "artifact_missing":
+                missing_artifacts.append(desired.binding.installation_uuid)
+
+        return {
+            "applied": applied,
+            "removed": removed,
+            "missing_artifacts": missing_artifacts,
+        }
+
+    def _schedule_installation_worker(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> None:
+        if runtime.launch_task is not None and not runtime.launch_task.done():
+            return
+        runtime.launch_task = asyncio.create_task(
+            self.launch_plugin_installation(runtime.binding)
+        )
+        self.plugin_run_tasks.append(runtime.launch_task)
+
+    async def launch_plugin_installation(
+        self,
+        binding: InstallationBinding,
+    ) -> None:
+        runtime = self._installations.get(binding)
+        if runtime is None or not runtime.enabled:
+            return
+        if not self.context.is_current_installation_binding(binding):
+            raise ValueError("Plugin installation binding is no longer current")
+
+        capability = self._issue_registration_capability(
+            plugin_author=runtime.artifact.plugin_author,
+            plugin_name=runtime.artifact.plugin_name,
+            plugin_path=str(runtime.artifact.code_path),
+            binding=binding,
+        )
+        controller = self.worker_launcher.create_controller(
+            PluginWorkerLaunchSpec(
+                binding=binding,
+                artifact=runtime.artifact,
+                paths=runtime.paths,
+                registration_capability=capability,
+            )
+        )
+
+        async def new_plugin_connection_callback(connection: Connection):
+            if not self.context.is_current_installation_binding(binding):
+                await connection.close()
+                return
+            plugin_handler = runtime_plugin_handler_cls.PluginConnectionHandler(
+                connection,
+                self.context,
+                stdio_process=controller.process,
+            )
+            runtime.plugin_handler = plugin_handler
+            await self.add_plugin_handler(plugin_handler)
+
+        try:
+            await controller.run(new_plugin_connection_callback)
+        except asyncio.CancelledError:
+            logger.info(
+                "plugin installation worker cancelled: %s",
+                binding.installation_uuid,
+            )
+            raise
+        finally:
+            self._revoke_registration_capability(capability)
+
+    async def _revoke_installation_runtime(
+        self,
+        binding: InstallationBinding,
+    ) -> None:
+        self._revoke_registration_capabilities_for_binding(binding)
+        runtime = self._installations.pop(binding, None)
+        if runtime is None:
+            return
+        await self._stop_installation_worker(runtime)
+
+    async def _stop_installation_worker(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> None:
+        handler = runtime.plugin_handler
+        if handler is not None:
+            handler.cancel_inflight_messages()
+            try:
+                await handler.shutdown_plugin()
+            except Exception as exc:
+                logger.warning("Failed to notify revoked plugin worker: %s", exc)
+            await handler.conn.close()
+            if handler in self.plugin_handlers:
+                self.plugin_handlers.remove(handler)
+            process = handler.stdio_process
+            if process is not None and process.returncode is None:
+                process.kill()
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=2)
+        runtime.plugin_handler = None
+        if runtime.plugin_container is not None:
+            self._binding_by_container_id.pop(id(runtime.plugin_container), None)
+            runtime.plugin_container = None
+
+        task = runtime.launch_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        runtime.launch_task = None
+
     async def add_plugin_handler(
         self,
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
@@ -534,10 +852,22 @@ class PluginManager:
         self,
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
     ):
-        if handler not in self.plugin_handlers:
-            return
-
-        self.plugin_handlers.remove(handler)
+        if handler in self.plugin_handlers:
+            self.plugin_handlers.remove(handler)
+        for runtime in self._installations.values():
+            if runtime.plugin_handler is handler:
+                if runtime.plugin_container is not None:
+                    self._binding_by_container_id.pop(
+                        id(runtime.plugin_container),
+                        None,
+                    )
+                runtime.plugin_handler = None
+                runtime.plugin_container = None
+                return
+        for plugin_container in list(self.plugins):
+            if plugin_container._runtime_plugin_handler is handler:
+                self.plugins.remove(plugin_container)
+                return
 
     async def install_plugin_from_file(
         self, plugin_file: bytes
@@ -858,6 +1188,8 @@ class PluginManager:
         if not plugin_author or not plugin_name:
             raise ValueError("Plugin manifest identity is incomplete")
 
+        installation_binding: InstallationBinding | None = None
+        installation_runtime: PluginInstallationRuntime | None = None
         if debug_plugin:
             if registration_capability:
                 raise ValueError(
@@ -873,19 +1205,36 @@ class PluginManager:
             # child process was launched, never values supplied by plugin code.
             plugin_author = registration.plugin_author
             plugin_name = registration.plugin_name
-            if self.find_plugin(plugin_author, plugin_name) is not None:
+            installation_binding = registration.binding
+            if installation_binding is not None:
+                if not self.context.is_current_installation_binding(
+                    installation_binding
+                ):
+                    raise ValueError(
+                        "Plugin registration capability binding is no longer current"
+                    )
+                installation_runtime = self._installations.get(installation_binding)
+                if installation_runtime is None:
+                    raise ValueError("Plugin installation desired state is unavailable")
+                handler.bind_action_context(installation_binding)
+            if (
+                self.find_plugin(
+                    plugin_author,
+                    plugin_name,
+                    binding=installation_binding,
+                )
+                is not None
+            ):
                 raise ValueError("Installed plugin is already registered")
 
         try:
-            # Debug plugins may connect before SET_RUNTIME_CONFIG arrives.
-            # Wait for the trusted binding before making any Host request so
-            # GET/INIT settings can never escape without a Workspace envelope.
-            runtime_binding = await self.context.wait_for_workspace_binding()
-            if not hasattr(self.context, "control_handler"):
+            if getattr(self.context, "control_handler", None) is None:
                 raise ValueError("Control handler not found")
 
             # if it's a debug plugin, we need to initialize the plugin settings first
             if debug_plugin:
+                # Debug plugins preserve the OSS single-Workspace flow.
+                runtime_binding = await self.context.wait_for_workspace_binding()
                 await self.context.control_handler.call_action(
                     RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
                     {
@@ -895,6 +1244,9 @@ class PluginManager:
                         "install_info": {},
                     },
                 )
+            elif installation_binding is None:
+                # Temporary OSS compatibility for legacy data/plugins launches.
+                runtime_binding = await self.context.wait_for_workspace_binding()
 
             # get plugin settings from LangBot
             plugin_settings = await self.context.control_handler.call_action(
@@ -903,6 +1255,11 @@ class PluginManager:
                     "plugin_author": plugin_author,
                     "plugin_name": plugin_name,
                 },
+                **(
+                    {"action_context": installation_binding}
+                    if installation_binding is not None
+                    else {}
+                ),
             )
         except Exception as e:
             raise ValueError(
@@ -912,21 +1269,36 @@ class PluginManager:
         # The installation capability comes from the trusted LangBot settings
         # response, never from REGISTER_PLUGIN data supplied by plugin code.
         installation_uuid = plugin_settings.get("installation_uuid")
-        if not isinstance(installation_uuid, str) or not installation_uuid.strip():
-            raise ValueError(
-                "LangBot did not provide a trusted plugin installation capability"
+        if installation_binding is not None:
+            if installation_uuid is not None and (
+                not isinstance(installation_uuid, str)
+                or installation_uuid.strip() != installation_binding.installation_uuid
+            ):
+                raise ValueError(
+                    "LangBot plugin settings do not match installation binding"
+                )
+        else:
+            if not isinstance(installation_uuid, str) or not installation_uuid.strip():
+                raise ValueError(
+                    "LangBot did not provide a trusted plugin installation capability"
+                )
+            handler.bind_action_context(
+                runtime_binding.for_installation(installation_uuid.strip())
             )
-        handler.bind_action_context(
-            runtime_binding.for_installation(installation_uuid.strip())
-        )
 
         # Register the plugin container BEFORE calling initialize_plugin so
         # that storage API calls during initialize() can resolve the owner.
         plugin_container._runtime_plugin_handler = handler
         plugin_container.debug = bool(handler.debug_plugin)
-        plugin_container.install_source = plugin_settings["install_source"]
-        plugin_container.install_info = plugin_settings["install_info"]
-        self.plugins.append(plugin_container)
+        plugin_container.install_source = plugin_settings.get("install_source", "")
+        plugin_container.install_info = plugin_settings.get("install_info", {})
+        if installation_binding is not None:
+            assert installation_runtime is not None
+            installation_runtime.plugin_container = plugin_container
+            installation_runtime.plugin_handler = handler
+            self._binding_by_container_id[id(plugin_container)] = installation_binding
+        else:
+            self.plugins.append(plugin_container)
 
         try:
             # initialize plugin
@@ -940,7 +1312,13 @@ class PluginManager:
         refreshed_author = str(refreshed.manifest.metadata.author or "").strip()
         refreshed_name = str(refreshed.manifest.metadata.name or "").strip()
         if (refreshed_author, refreshed_name) != (plugin_author, plugin_name):
-            self.plugins.remove(plugin_container)
+            if installation_binding is not None:
+                assert installation_runtime is not None
+                installation_runtime.plugin_container = None
+                installation_runtime.plugin_handler = None
+                self._binding_by_container_id.pop(id(plugin_container), None)
+            else:
+                self.plugins.remove(plugin_container)
             raise ValueError("Plugin changed its manifest identity after registration")
         plugin_container.components = refreshed.components
         plugin_container.manifest = refreshed.manifest
@@ -953,7 +1331,13 @@ class PluginManager:
         if plugin_container._runtime_plugin_handler is not None:
             await self.remove_plugin_handler(plugin_container._runtime_plugin_handler)
 
-        if plugin_container in self.plugins:
+        binding = self._binding_by_container_id.pop(id(plugin_container), None)
+        if binding is not None:
+            runtime = self._installations.get(binding)
+            if runtime is not None:
+                runtime.plugin_container = None
+                runtime.plugin_handler = None
+        elif plugin_container in self.plugins:
             self.plugins.remove(plugin_container)
 
     async def restart_plugin(
@@ -1095,11 +1479,9 @@ class PluginManager:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
 
     async def shutdown_all_plugins(self):
-        if self._shutting_down:
-            return
-        self._shutting_down = True
-        self._desired_plugin_paths.clear()
-        for plugin in list(self.plugins):
+        for runtime in list(self._installations.values()):
+            await self._stop_installation_worker(runtime)
+        for plugin in self.plugins:
             await self.shutdown_plugin(plugin)
 
         tasks = list(self._plugin_supervisors.values())
@@ -1163,7 +1545,7 @@ class PluginManager:
         emitted_plugins: list[runtime_plugin_container.PluginContainer] = []
         response_sources: list[dict[str, typing.Any]] = []
 
-        for plugin in self.plugins:
+        for plugin in self._plugins_for_current_scope():
             if (
                 plugin.status
                 != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
@@ -1312,11 +1694,19 @@ class PluginManager:
         )
 
     async def list_tools(
-        self, include_plugins: list[str] | None = None
+        self,
+        include_plugins: list[str] | None = None,
+        *,
+        binding: InstallationBinding | None = None,
     ) -> list[ComponentManifest]:
         tools: list[ComponentManifest] = []
 
-        for plugin in self.plugins:
+        plugins = (
+            self.plugins_for_binding(binding)
+            if binding is not None
+            else self._plugins_for_current_scope()
+        )
+        for plugin in plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
                 plugin_id = (
@@ -1339,8 +1729,14 @@ class PluginManager:
         query_id: int,
         include_plugins: list[str] | None = None,
         query_uuid: str | None = None,
+        binding: InstallationBinding | None = None,
     ) -> dict[str, typing.Any]:
-        for plugin in self.plugins:
+        plugins = (
+            self.plugins_for_binding(binding)
+            if binding is not None
+            else self._plugins_for_current_scope()
+        )
+        for plugin in plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
                 plugin_id = (
@@ -1378,11 +1774,19 @@ class PluginManager:
         return {}
 
     async def list_commands(
-        self, include_plugins: list[str] | None = None
+        self,
+        include_plugins: list[str] | None = None,
+        *,
+        binding: InstallationBinding | None = None,
     ) -> list[ComponentManifest]:
         commands: list[ComponentManifest] = []
 
-        for plugin in self.plugins:
+        plugins = (
+            self.plugins_for_binding(binding)
+            if binding is not None
+            else self._plugins_for_current_scope()
+        )
+        for plugin in plugins:
             # Filter by include_plugins if specified
             if include_plugins is not None:
                 plugin_id = (
@@ -1400,7 +1804,7 @@ class PluginManager:
     async def execute_command(
         self, command_context: ExecuteContext, include_plugins: list[str] | None = None
     ) -> typing.AsyncGenerator[CommandReturn, None]:
-        for plugin in self.plugins:
+        for plugin in self._plugins_for_current_scope():
             # Filter by include_plugins if specified
             if include_plugins is not None:
                 plugin_id = (
@@ -1499,7 +1903,7 @@ class PluginManager:
         """
         engines: list[dict[str, typing.Any]] = []
 
-        for plugin in self.plugins:
+        for plugin in self._plugins_for_current_scope():
             if (
                 plugin.status
                 != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
@@ -1654,7 +2058,7 @@ class PluginManager:
         """
         parsers: list[dict[str, typing.Any]] = []
 
-        for plugin in self.plugins:
+        for plugin in self._plugins_for_current_scope():
             if (
                 plugin.status
                 != runtime_plugin_container.RuntimeContainerStatus.INITIALIZED

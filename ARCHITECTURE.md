@@ -95,8 +95,8 @@ Request shape:
 { "seq_id": 1, "action": "action_name", "data": {} }
 ```
 
-Workspace-bound peers may add a trusted context envelope without changing the
-action payload:
+Tenant-scoped control actions must carry a complete, trusted installation
+binding without placing authority in the action payload:
 
 ```json
 {
@@ -107,20 +107,66 @@ action payload:
     "instance_uuid": "instance-id",
     "workspace_uuid": "workspace-id",
     "placement_generation": 1,
-    "installation_uuid": "installation-id"
+    "installation_uuid": "installation-id",
+    "runtime_revision": 1,
+    "artifact_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 }
 ```
 
-`context` is optional for wire compatibility. The LangBot control channel binds
-a Plugin Runtime to one `(instance_uuid, workspace_uuid,
-placement_generation)` tuple. A plugin connection may then add exactly one
-trusted `installation_uuid`; neither connection can be rebound. Plugin payload
-fields are never authoritative for this binding. Runtime-to-Host calls forward
-the connection binding in the envelope, and Workspace storage fails closed when
-the Runtime has no binding. Installed and debug plugins wait for the
-`SET_RUNTIME_CONFIG` handshake before launch or registration, so a control
-socket cannot race ahead of the trusted Workspace fence.
+`SET_RUNTIME_CONFIG` is the instance-scoped handshake. It carries no Workspace
+context and accepts this frozen payload:
+
+```json
+{
+  "runtime_identity": {
+    "instance_uuid": "instance-id",
+    "runtime_id": "short-lived-runtime-id"
+  },
+  "worker_policy": {
+    "max_cpus": 1.0,
+    "max_memory_mb": 512,
+    "max_pids": 128,
+    "max_open_files": 256,
+    "max_file_size_mb": 512,
+    "require_hard_limits": true
+  },
+  "runtime_profile": "shared",
+  "cloud_service_url": "https://space.langbot.app"
+}
+```
+
+The Runtime identity and worker policy can be repeated exactly after a control
+reconnect but cannot be changed for the life of the Runtime process. A new
+authenticated control handler atomically supersedes the old handler; old
+requests fail even if the old transport has not finished closing.
+
+After the handshake, every tenant-scoped LangBot-to-Runtime action (including
+file chunks) requires the complete immutable tuple
+`(instance_uuid, workspace_uuid, placement_generation, installation_uuid,
+runtime_revision, artifact_digest)`. Missing context, a different instance, or
+an attempted generation/revision/artifact rebind fails closed. Instance-scoped
+actions reject tenant context. Plugin payload fields are never authoritative
+for these bindings.
+
+In the `shared` profile, `PluginManager` indexes desired state by the complete
+installation binding. The instance-scoped `RECONCILE_PLUGIN_INSTALLATIONS`
+action replays the authoritative set, while tenant-scoped
+`APPLY_PLUGIN_INSTALLATION` and `REMOVE_PLUGIN_INSTALLATION` actions change one
+installation. Newer placement generations or Runtime revisions fence the old
+worker immediately; stale or cross-Workspace transitions fail closed.
+
+Plugin packages are verified against `artifact_digest` and extracted once into
+a read-only `artifacts/sha256/<digest>/code` tree. Installations may share that
+code tree, but each gets a separate process and private `home`, `tmp`, and `data`
+directories. A worker receives a short-lived, one-use registration capability
+bound to the complete installation tuple; it cannot select its own tenant scope.
+
+Shared workers launch through nsjail with policy-owned cgroup CPU, memory, and
+PID limits plus file/process rlimits. If `require_hard_limits` is true, missing
+nsjail or cgroup v2 delegation makes configuration fail closed. Artifact `.env`
+files are not loaded in the shared profile. The default `oss_dev` profile keeps
+the direct-process and `.env` behavior needed for local open-source development.
 
 Response shape:
 
@@ -131,8 +177,8 @@ Response shape:
 Core mechanics:
 
 - `seq_id` correlates responses to requests.
-- `context` carries the trusted Workspace/installation binding independently of
-  plugin-controlled `data`.
+- `context` carries trusted tenant/installation authority independently of
+  plugin-controlled `data`; it is mandatory on tenant control actions.
 - Messages with `action` are requests; messages with `code` are responses.
 - Each peer may initiate requests on the same connection.
 - `Handler.call_action()` waits for one response.
@@ -202,9 +248,10 @@ accepts an empty key: it validates an explicitly configured `PLUGIN_DEBUG_KEY`
 or generates one at process start, and `lbp run` sends that value in the
 `X-LangBot-Plugin-Debug-Key` handshake header for explicit development
 sessions. Windows production children use their one-use registration
-capability in `X-LangBot-Plugin-Registration-Capability` instead. Workspace binding in
-`SET_RUNTIME_CONFIG` is an authorization fence after transport authentication;
-it is not a substitute for authenticating the peer.
+capability in `X-LangBot-Plugin-Registration-Capability` instead. The
+instance-scoped `SET_RUNTIME_CONFIG` handshake and per-action installation
+bindings are authorization fences after transport authentication; neither is a
+substitute for authenticating the peer.
 
 Installed plugins are stored under `data/plugins/{author}__{name}`. Runtime plugin processes normally run as separate Python processes and connect back via stdio or debug WebSocket.
 
@@ -273,11 +320,12 @@ When changing shared contracts:
 3. Run LangBot with `uv run --no-sync ...` so `uv` does not replace the local SDK with the pinned PyPI package.
 4. Exercise the exact path changed: plugin stdio, plugin WebSocket, `lbp run`, `lbp rt`, `lbp box`, Box WebSocket, or Box stdio.
 
-Workspace action-context support starts in SDK `0.4.15`. Until that version is
-published, a coordinated LangBot feature branch must pin the pushed SDK commit
-as a temporary Git source; the merge/release gate is to publish `0.4.15` and
-restore LangBot's normal exact PyPI pin. The already-published `0.4.14` artifact
-does not contain this protocol and must not be used as a compatibility alias.
+Workspace action-context support starts in SDK `0.4.15`. The instance-scoped
+Runtime handshake and complete `InstallationBinding` extend that protocol on
+the multi-tenant branch and require a coordinated LangBot Core change before
+release. Until a matching SDK version is published, Core must pin the exact
+pushed SDK commit; the already-published `0.4.14` artifact does not contain any
+of these contracts and must not be used as a compatibility alias.
 
 The SDK `AGENTS.md` keeps the short command checklist; this file keeps the structural map.
 

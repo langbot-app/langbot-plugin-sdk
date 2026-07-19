@@ -14,7 +14,7 @@ from langbot_plugin.entities.io.errors import (
     ConnectionClosedError,
 )
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
 
@@ -128,6 +128,32 @@ def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installati
         )
     with pytest.raises(ValueError, match="cannot be removed"):
         handler.bind_action_context(workspace_binding)
+
+
+def test_handler_preserves_complete_installation_binding_and_rejects_downgrade():
+    handler = Handler(QueueConnection())
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=5,
+        installation_uuid="installation-1",
+        runtime_revision=2,
+        artifact_digest="a" * 64,
+    )
+
+    assert handler.bind_action_context(binding.model_dump()) == binding
+    assert isinstance(handler.bound_action_context, InstallationBinding)
+    with pytest.raises(ValueError, match="revision or artifact"):
+        handler.bind_action_context(
+            ActionContext(
+                instance_uuid=binding.instance_uuid,
+                workspace_uuid=binding.workspace_uuid,
+                placement_generation=binding.placement_generation,
+                installation_uuid=binding.installation_uuid,
+            )
+        )
+    with pytest.raises(ValueError, match="revision or artifact"):
+        handler.bind_action_context(binding.model_copy(update={"runtime_revision": 3}))
 
 
 @pytest.mark.asyncio

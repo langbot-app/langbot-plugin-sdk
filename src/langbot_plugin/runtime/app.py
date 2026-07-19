@@ -127,8 +127,27 @@ class RuntimeApplication:
     def set_control_handler(
         self, handler: control_handler_cls.ControlConnectionHandler
     ):
-        self.context.control_handler = handler
-        task = asyncio.create_task(handler.run())
+        previous = self.context.activate_control_handler(handler)
+        if previous is not None and previous is not handler:
+            previous.invalidate()
+
+        async def run_active_handler():
+            close_task = None
+            if previous is not None and previous is not handler:
+                close_task = asyncio.create_task(previous.conn.close())
+            try:
+                await handler.run()
+            finally:
+                if close_task is not None:
+                    try:
+                        await close_task
+                    except Exception:
+                        logger.warning(
+                            "Failed to close superseded control connection",
+                            exc_info=True,
+                        )
+
+        task = asyncio.create_task(run_active_handler())
         logger.info("Got control connection.")
         return task
 

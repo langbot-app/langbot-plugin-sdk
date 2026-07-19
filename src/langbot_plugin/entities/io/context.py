@@ -1,6 +1,89 @@
 from __future__ import annotations
 
+import math
+import re
+from typing import Literal
+
 import pydantic
+
+
+_SHA256_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+class RuntimeIdentity(pydantic.BaseModel):
+    """Stable instance scope plus this Runtime process' short-lived identity."""
+
+    instance_uuid: str
+    runtime_id: str
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("instance_uuid", "runtime_id")
+    @classmethod
+    def validate_required_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+
+class PluginWorkerPolicy(pydantic.BaseModel):
+    """Immutable instance policy applied to every isolated plugin worker."""
+
+    max_cpus: float
+    max_memory_mb: int
+    max_pids: int
+    max_open_files: int
+    max_file_size_mb: int
+    require_hard_limits: bool = False
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("max_cpus", mode="before")
+    @classmethod
+    def validate_numeric_cpu_limit(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("max_cpus must be a positive number")
+        return value
+
+    @pydantic.field_validator(
+        "max_memory_mb",
+        "max_pids",
+        "max_open_files",
+        "max_file_size_mb",
+        mode="before",
+    )
+    @classmethod
+    def validate_integer_limits(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("must be a positive integer")
+        return value
+
+    @pydantic.field_validator("require_hard_limits", mode="before")
+    @classmethod
+    def validate_require_hard_limits(cls, value):
+        if not isinstance(value, bool):
+            raise ValueError("require_hard_limits must be a boolean")
+        return value
+
+    @pydantic.field_validator("max_cpus")
+    @classmethod
+    def validate_max_cpus(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("max_cpus must be finite and greater than 0")
+        return value
+
+    @pydantic.field_validator(
+        "max_memory_mb",
+        "max_pids",
+        "max_open_files",
+        "max_file_size_mb",
+    )
+    @classmethod
+    def validate_positive_integer_limit(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("must be greater than 0")
+        return value
 
 
 class ActionContext(pydantic.BaseModel):
@@ -72,3 +155,149 @@ class ActionContext(pydantic.BaseModel):
             workspace_uuid=self.workspace_uuid,
             placement_generation=self.placement_generation,
         )
+
+
+class InstallationBinding(ActionContext):
+    """Complete, immutable authority for one plugin installation revision.
+
+    ``placement_generation`` is retained on the wire for compatibility. Its
+    target multi-tenant meaning is the Workspace execution generation.
+    """
+
+    installation_uuid: str
+    runtime_revision: int
+    artifact_digest: str
+
+    @pydantic.field_validator("placement_generation", mode="before")
+    @classmethod
+    def validate_integer_execution_generation(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("placement_generation must be an integer")
+        return value
+
+    @pydantic.field_validator("runtime_revision", mode="before")
+    @classmethod
+    def reject_boolean_revision(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("runtime_revision must be an integer")
+        return value
+
+    @pydantic.field_validator("runtime_revision")
+    @classmethod
+    def validate_runtime_revision(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("runtime_revision must be greater than or equal to 1")
+        return value
+
+    @pydantic.field_validator("artifact_digest")
+    @classmethod
+    def validate_artifact_digest(cls, value: str) -> str:
+        value = value.strip()
+        if _SHA256_DIGEST_PATTERN.fullmatch(value) is None:
+            raise ValueError("artifact_digest must be a lowercase SHA-256 hex digest")
+        return value
+
+    @property
+    def execution_generation(self) -> int:
+        """Target-semantic alias for the compatibility wire field."""
+
+        return self.placement_generation
+
+    def same_installation(self, other: InstallationBinding) -> bool:
+        """Return whether both bindings name the exact immutable worker tuple."""
+
+        return self == other
+
+
+class RuntimeConfig(pydantic.BaseModel):
+    """Instance-scoped payload accepted by ``SET_RUNTIME_CONFIG``."""
+
+    runtime_identity: RuntimeIdentity
+    worker_policy: PluginWorkerPolicy
+    runtime_profile: Literal["oss_dev", "shared"] = "oss_dev"
+    cloud_service_url: str | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("cloud_service_url")
+    @classmethod
+    def validate_cloud_service_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().rstrip("/")
+        if not value:
+            raise ValueError("cloud_service_url must not be empty")
+        return value
+
+
+class PluginInstallationDesiredState(pydantic.BaseModel):
+    """One installation entry replayed by the trusted control plane."""
+
+    binding: InstallationBinding
+    enabled: bool = True
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("enabled", mode="before")
+    @classmethod
+    def validate_enabled(cls, value):
+        if not isinstance(value, bool):
+            raise ValueError("enabled must be a boolean")
+        return value
+
+
+class ReconcilePluginInstallationsRequest(pydantic.BaseModel):
+    installations: tuple[PluginInstallationDesiredState, ...]
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.model_validator(mode="after")
+    def validate_unique_installations(self):
+        installation_ids = [
+            item.binding.installation_uuid for item in self.installations
+        ]
+        if len(installation_ids) != len(set(installation_ids)):
+            raise ValueError(
+                "installations must contain unique installation_uuid values"
+            )
+        return self
+
+
+class ApplyPluginInstallationRequest(pydantic.BaseModel):
+    artifact_file_key: str | None = None
+    enabled: bool = True
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("artifact_file_key")
+    @classmethod
+    def validate_artifact_file_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("artifact_file_key must not be empty")
+        return value
+
+    @pydantic.field_validator("enabled", mode="before")
+    @classmethod
+    def validate_enabled(cls, value):
+        if not isinstance(value, bool):
+            raise ValueError("enabled must be a boolean")
+        return value
+
+
+class RemovePluginInstallationRequest(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+
+ActionEnvelopeContext = InstallationBinding | ActionContext
+_ACTION_ENVELOPE_CONTEXT_ADAPTER = pydantic.TypeAdapter(ActionEnvelopeContext)
+
+
+def parse_action_envelope_context(
+    value: ActionEnvelopeContext | dict,
+) -> ActionEnvelopeContext:
+    """Parse a legacy Workspace context or complete installation binding."""
+
+    return _ACTION_ENVELOPE_CONTEXT_ADAPTER.validate_python(value)

@@ -11,7 +11,7 @@ from langbot_plugin.entities.io.actions.enums import (
 import langbot_plugin.runtime.plugin.container  # noqa: F401
 from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_module
 from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
 
@@ -119,6 +119,17 @@ def _action_context(workspace_uuid="workspace-a", installation_uuid=None):
     )
 
 
+def _installation_binding(runtime_revision=1):
+    return InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=3,
+        installation_uuid="installation-1",
+        runtime_revision=runtime_revision,
+        artifact_digest="a" * 64,
+    )
+
+
 def _handler(debug_plugin=False, action_context=None):
     control_handler = FakeControlHandler()
     manager = FakePluginManager()
@@ -149,6 +160,34 @@ async def test_plugin_handler_registers_plugin_when_debug_key_matches(monkeypatc
 
     assert response["code"] == 0
     assert manager.calls == [("register_plugin", handler, {"id": "plugin"}, True, None)]
+
+
+def test_shared_plugin_handler_rejects_unregistered_and_revoked_worker_actions():
+    manager = FakePluginManager()
+    binding = _installation_binding()
+    current_binding = binding
+    context = SimpleNamespace(
+        control_handler=FakeControlHandler(),
+        plugin_mgr=manager,
+        workspace_binding=None,
+        runtime_profile="shared",
+        is_current_installation_binding=lambda candidate: candidate == current_binding,
+    )
+    handler = PluginConnectionHandler(ProtocolConnection(), context)
+
+    with pytest.raises(ValueError, match="must register"):
+        handler.validate_inbound_action_context(
+            PluginToRuntimeAction.GET_BOTS.value,
+            None,
+        )
+
+    handler.bind_action_context(binding)
+    current_binding = binding.model_copy(update={"runtime_revision": 2})
+    with pytest.raises(ValueError, match="revoked"):
+        handler.validate_inbound_action_context(
+            PluginToRuntimeAction.GET_BOTS.value,
+            None,
+        )
 
 
 async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch):

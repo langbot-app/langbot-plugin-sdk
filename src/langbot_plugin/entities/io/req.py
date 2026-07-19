@@ -3,14 +3,20 @@ from __future__ import annotations
 import pydantic
 from typing import Any
 
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import (
+    ActionContext,
+    ActionEnvelopeContext,
+    InstallationBinding,
+)
 
 
 class ActionRequest(pydantic.BaseModel):
     seq_id: int = pydantic.Field(..., description="The sequence id of the request")
     action: str
     data: dict[str, Any]
-    context: ActionContext | None = None
+    # Keep InstallationBinding first: it must retain its revision/digest fields
+    # instead of being reduced to the legacy Workspace envelope.
+    context: InstallationBinding | ActionContext | None = None
 
     @classmethod
     def make_request(
@@ -18,7 +24,7 @@ class ActionRequest(pydantic.BaseModel):
         seq_id: int,
         action: str,
         data: dict[str, Any],
-        context: ActionContext | dict[str, Any] | None = None,
+        context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> ActionRequest:
         return cls(seq_id=seq_id, action=action, data=data, context=context)
 

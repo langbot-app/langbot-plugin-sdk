@@ -4,12 +4,14 @@ import datetime as dt
 import enum
 import ntpath
 import posixpath
+from typing import Literal
 
 import pydantic
 
 
 DEFAULT_BOX_IMAGE = "rockchin/langbot-sandbox:latest"
 DEFAULT_BOX_MOUNT_PATH = "/workspace"
+_UTC = dt.timezone.utc
 
 
 class BoxNetworkMode(str, enum.Enum):
@@ -31,6 +33,201 @@ class BoxHostMountMode(str, enum.Enum):
 class BoxManagedProcessStatus(str, enum.Enum):
     RUNNING = "running"
     EXITED = "exited"
+
+
+class SandboxAdmissionGrant(pydantic.BaseModel):
+    """Short-lived authority for one Workspace managed sandbox.
+
+    The authenticated LangBot host is the only party allowed to install this
+    grant.  The Box Runtime deliberately understands numeric capabilities,
+    not product plan names.
+    """
+
+    instance_uuid: str
+    workspace_uuid: str
+    execution_generation: int
+    entitlement_revision: int
+    expires_at: dt.datetime
+    max_sessions: int
+    max_managed_processes: int
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("instance_uuid", "workspace_uuid")
+    @classmethod
+    def validate_required_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @pydantic.field_validator(
+        "execution_generation",
+        "entitlement_revision",
+        "max_sessions",
+        "max_managed_processes",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_integer(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("must be an integer")
+        return value
+
+    @pydantic.field_validator("execution_generation", "entitlement_revision")
+    @classmethod
+    def validate_positive_revision(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("must be greater than or equal to 1")
+        return value
+
+    @pydantic.field_validator("max_sessions", "max_managed_processes")
+    @classmethod
+    def validate_non_negative_limit(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("must be greater than or equal to 0")
+        return value
+
+    @pydantic.field_validator("expires_at")
+    @classmethod
+    def validate_aware_expiry(cls, value: dt.datetime) -> dt.datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expires_at must include a timezone")
+        return value.astimezone(_UTC)
+
+    @property
+    def workspace_key(self) -> tuple[str, str]:
+        return self.instance_uuid, self.workspace_uuid
+
+    def is_expired(self, now: dt.datetime | None = None) -> bool:
+        current = now or dt.datetime.now(_UTC)
+        return self.expires_at <= current.astimezone(_UTC)
+
+
+class SandboxAdmissionRevocation(pydantic.BaseModel):
+    """Monotonic tombstone that invalidates a Workspace admission grant."""
+
+    instance_uuid: str
+    workspace_uuid: str
+    entitlement_revision: int
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("instance_uuid", "workspace_uuid")
+    @classmethod
+    def validate_required_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @pydantic.field_validator("entitlement_revision", mode="before")
+    @classmethod
+    def reject_boolean_revision(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("entitlement_revision must be an integer")
+        return value
+
+    @pydantic.field_validator("entitlement_revision")
+    @classmethod
+    def validate_positive_revision(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("entitlement_revision must be greater than or equal to 1")
+        return value
+
+    @property
+    def workspace_key(self) -> tuple[str, str]:
+        return self.instance_uuid, self.workspace_uuid
+
+
+class SandboxAdmissionPolicy(pydantic.BaseModel):
+    """Instance-owned hard policy for grant-enforced sandbox execution.
+
+    This policy is supplied by deployment configuration and caps every grant.
+    It contains no subscription or edition vocabulary.
+    """
+
+    required: bool = False
+    logical_session_id: Literal["global"] = "global"
+    required_backend: Literal["nsjail"] = "nsjail"
+    max_sessions: int = 1
+    max_managed_processes: int = 0
+    max_grant_ttl_sec: int = 300
+    max_timeout_sec: int = 120
+    cpus: float = 1.0
+    memory_mb: int = 512
+    pids_limit: int = 128
+    read_only_rootfs: bool = True
+    workspace_quota_mb: int = 0
+    readiness_cache_sec: int = 15
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator(
+        "max_sessions",
+        "max_managed_processes",
+        "max_grant_ttl_sec",
+        "max_timeout_sec",
+        "memory_mb",
+        "pids_limit",
+        "workspace_quota_mb",
+        "readiness_cache_sec",
+        mode="before",
+    )
+    @classmethod
+    def reject_boolean_integer(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("must be an integer")
+        return value
+
+    @pydantic.field_validator("cpus", mode="before")
+    @classmethod
+    def reject_boolean_cpu(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("cpus must be a number")
+        return value
+
+    @pydantic.field_validator("max_sessions")
+    @classmethod
+    def validate_session_cap(cls, value: int) -> int:
+        if value < 0 or value > 1:
+            raise ValueError("max_sessions must be between 0 and 1")
+        return value
+
+    @pydantic.field_validator("max_managed_processes")
+    @classmethod
+    def validate_managed_process_cap(cls, value: int) -> int:
+        if value != 0:
+            raise ValueError("max_managed_processes must be 0")
+        return value
+
+    @pydantic.field_validator("max_grant_ttl_sec", "max_timeout_sec", "pids_limit")
+    @classmethod
+    def validate_positive_integer(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("must be greater than 0")
+        return value
+
+    @pydantic.field_validator("memory_mb")
+    @classmethod
+    def validate_memory_limit(cls, value: int) -> int:
+        if value < 32:
+            raise ValueError("memory_mb must be at least 32")
+        return value
+
+    @pydantic.field_validator("workspace_quota_mb", "readiness_cache_sec")
+    @classmethod
+    def validate_non_negative_integer(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("must be greater than or equal to 0")
+        return value
+
+    @pydantic.field_validator("cpus")
+    @classmethod
+    def validate_positive_cpu(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("cpus must be greater than 0")
+        return value
 
 
 class BoxMountSpec(pydantic.BaseModel):

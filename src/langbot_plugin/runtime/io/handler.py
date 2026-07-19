@@ -24,7 +24,11 @@ import aiofiles.os
 import logging
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import (
+    ActionEnvelopeContext,
+    InstallationBinding,
+    parse_action_envelope_context,
+)
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
 from langbot_plugin.entities.io.errors import (
     ConnectionClosedError,
@@ -77,8 +81,8 @@ class Handler(abc.ABC):
 
     _disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]] | None
 
-    _bound_action_context: ActionContext | None
-    _current_action_context: contextvars.ContextVar[ActionContext | None]
+    _bound_action_context: ActionEnvelopeContext | None
+    _current_action_context: contextvars.ContextVar[ActionEnvelopeContext | None]
 
     def __init__(
         self,
@@ -91,6 +95,7 @@ class Handler(abc.ABC):
         self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
+        self._message_tasks: set[asyncio.Task] = set()
         self._bound_action_context = None
         self._current_action_context = contextvars.ContextVar(
             f"{self.__class__.__name__}_{id(self)}_action_context",
@@ -284,20 +289,30 @@ class Handler(abc.ABC):
                     queue.get_nowait()
             queue.put_nowait(error)
 
-    async def _cancel_action_tasks(self) -> None:
-        tasks = list(self._action_tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._action_tasks.clear()
+                    # Handle single response (for call_action)
+                    if seq_id in self.resp_waiters:
+                        self.resp_waiters[seq_id].set_result(response)
+
+                    # Handle streaming response (for call_action_generator)
+                    if seq_id in self.resp_queues:
+                        await self.resp_queues[seq_id].put(response)
+
+            message_task = asyncio.create_task(handle_message(message))
+            self._message_tasks.add(message_task)
+            message_task.add_done_callback(self._message_tasks.discard)
+
+    def cancel_inflight_messages(self) -> None:
+        """Cancel peer requests already accepted by this handler."""
+
+        for message_task in tuple(self._message_tasks):
+            message_task.cancel()
 
     async def call_action(
         self,
         action: ActionType,
         data: dict[str, Any],
         timeout: float = 15.0,
-        action_context: ActionContext | dict[str, Any] | None = None,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
         self.seq_id_index += 1
@@ -338,7 +353,7 @@ class Handler(abc.ABC):
         action: ActionType,
         data: dict[str, Any],
         timeout: float = 15.0,
-        action_context: ActionContext | dict[str, Any] | None = None,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
@@ -388,21 +403,21 @@ class Handler(abc.ABC):
                 del self.resp_queues[this_seq_id]
 
     @property
-    def bound_action_context(self) -> ActionContext | None:
+    def bound_action_context(self) -> ActionEnvelopeContext | None:
         """Trusted context permanently associated with this connection."""
 
         return self._bound_action_context
 
     @property
-    def current_action_context(self) -> ActionContext | None:
+    def current_action_context(self) -> ActionEnvelopeContext | None:
         """Context of the request currently executing in this asyncio task."""
 
         return self._current_action_context.get()
 
     def bind_action_context(
         self,
-        action_context: ActionContext | dict[str, Any],
-    ) -> ActionContext:
+        action_context: ActionEnvelopeContext | dict[str, Any],
+    ) -> ActionEnvelopeContext:
         """Bind this connection once to a fenced Workspace.
 
         The installation capability may be added once after LangBot resolves
@@ -410,7 +425,7 @@ class Handler(abc.ABC):
         Workspace, generation, or an existing installation is rejected.
         """
 
-        context = ActionContext.model_validate(action_context)
+        context = parse_action_envelope_context(action_context)
         current = self._bound_action_context
         if current is not None:
             if not current.same_workspace(context):
@@ -429,11 +444,17 @@ class Handler(abc.ABC):
                 raise ValueError(
                     "Action connection cannot be rebound to another plugin installation"
                 )
+            if isinstance(current, InstallationBinding) and (
+                not isinstance(context, InstallationBinding) or context != current
+            ):
+                raise ValueError(
+                    "Action connection cannot change installation revision or artifact"
+                )
 
         self._bound_action_context = context
         return context
 
-    def require_bound_action_context(self) -> ActionContext:
+    def require_bound_action_context(self) -> ActionEnvelopeContext:
         """Return the trusted binding or fail instead of choosing a default."""
 
         if self._bound_action_context is None:
@@ -443,8 +464,8 @@ class Handler(abc.ABC):
     def validate_inbound_action_context(
         self,
         action: str,
-        action_context: ActionContext | None,
-    ) -> ActionContext | None:
+        action_context: ActionEnvelopeContext | None,
+    ) -> ActionEnvelopeContext | None:
         """Validate an inbound envelope against the connection binding.
 
         A bound connection remains compatible with old peers that omit the
@@ -466,18 +487,22 @@ class Handler(abc.ABC):
                 raise ValueError(
                     "Action context does not match connection plugin installation"
                 )
+            if isinstance(bound, InstallationBinding) and action_context != bound:
+                raise ValueError(
+                    "Action context does not match installation revision or artifact"
+                )
         return bound
 
     def resolve_outbound_action_context(
         self,
-        action_context: ActionContext | dict[str, Any] | None,
-    ) -> ActionContext | None:
+        action_context: ActionEnvelopeContext | dict[str, Any] | None,
+    ) -> ActionEnvelopeContext | None:
         """Resolve and validate the envelope for an outbound request."""
 
         if action_context is None:
             return self._bound_action_context
 
-        context = ActionContext.model_validate(action_context)
+        context = parse_action_envelope_context(action_context)
         bound = self._bound_action_context
         if bound is not None:
             if not bound.same_workspace(context):
@@ -490,6 +515,10 @@ class Handler(abc.ABC):
             ):
                 raise ValueError(
                     "Outbound action context does not match plugin installation"
+                )
+            if isinstance(bound, InstallationBinding) and context != bound:
+                raise ValueError(
+                    "Outbound action context does not match installation revision or artifact"
                 )
         return context
 

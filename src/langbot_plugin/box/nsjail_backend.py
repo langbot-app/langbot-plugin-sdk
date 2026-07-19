@@ -9,7 +9,9 @@ import pathlib
 import shlex
 import shutil
 import signal
+import tempfile
 import uuid
+from typing import Any
 
 from .backend import BaseSandboxBackend, _CommandResult, _MAX_RAW_OUTPUT_BYTES
 from .models import (
@@ -121,6 +123,121 @@ class NsjailBackend(BaseSandboxBackend):
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
         return True
+
+    async def get_readiness(
+        self,
+        *,
+        workspace_path: str | None = None,
+        strict: bool = False,
+    ) -> dict:
+        """Probe the isolation guarantees required by managed nsjail mode."""
+
+        available = await self.is_available()
+        readiness: dict[str, Any] = {
+            "available": available,
+            "cgroup_v2": self._cgroup_v2_available if available else False,
+            "namespace_isolation": None,
+            "mount_isolation": None,
+            "network_isolation": None,
+        }
+        if not strict:
+            return readiness
+
+        if not available:
+            readiness.update(
+                {
+                    "namespace_isolation": False,
+                    "mount_isolation": False,
+                    "network_isolation": False,
+                }
+            )
+            return readiness
+
+        if not workspace_path:
+            readiness.update(
+                {
+                    "namespace_isolation": False,
+                    "mount_isolation": False,
+                    "network_isolation": False,
+                    "error": "managed nsjail readiness requires a durable workspace path",
+                }
+            )
+            return readiness
+
+        try:
+            probe = await self._probe_isolation_readiness(workspace_path)
+        except Exception as exc:
+            self.logger.warning(f"nsjail strict readiness probe failed: {exc}")
+            probe = {
+                "namespace_isolation": False,
+                "mount_isolation": False,
+                "network_isolation": False,
+                "error": str(exc),
+            }
+        readiness.update(probe)
+        return readiness
+
+    async def _probe_isolation_readiness(self, workspace_path: str) -> dict:
+        """Run a disposable offline jail and verify its namespace and bind mount."""
+
+        workspace_root = pathlib.Path(workspace_path).resolve()
+        if not workspace_root.is_dir():
+            raise RuntimeError("managed sandbox workspace path is not a directory")
+        if not os.access(workspace_root, os.R_OK | os.W_OK | os.X_OK):
+            raise RuntimeError("managed sandbox workspace path is not writable")
+
+        probe_path = pathlib.Path(
+            tempfile.mkdtemp(prefix=".box-readiness-", dir=str(workspace_root))
+        )
+        marker_name = ".mounted"
+        marker_path = probe_path / marker_name
+        session_info: BoxSessionInfo | None = None
+        try:
+            spec = BoxSpec(
+                session_id=f"readiness-{uuid.uuid4().hex}",
+                cmd=(
+                    f"printf readiness > /workspace/{marker_name} && "
+                    "readlink /proc/self/ns/net"
+                ),
+                network=BoxNetworkMode.OFF,
+                host_path=str(probe_path),
+                host_path_mode=BoxHostMountMode.READ_WRITE,
+                mount_path="/workspace",
+                workdir="/workspace",
+                persistent=False,
+                read_only_rootfs=True,
+            )
+            session_info = await self.start_session(spec)
+            result = await self.exec(session_info, spec)
+            sandbox_net_namespace_lines = (result.stdout or "").strip().splitlines()
+            sandbox_net_namespace = (
+                sandbox_net_namespace_lines[-1] if sandbox_net_namespace_lines else ""
+            )
+            try:
+                host_net_namespace = os.readlink("/proc/self/ns/net")
+            except OSError:
+                host_net_namespace = ""
+
+            mount_isolation = (
+                result.ok
+                and marker_path.is_file()
+                and marker_path.read_text() == "readiness"
+            )
+            network_isolation = bool(
+                result.ok
+                and host_net_namespace
+                and sandbox_net_namespace
+                and sandbox_net_namespace != host_net_namespace
+            )
+            return {
+                "namespace_isolation": result.ok,
+                "mount_isolation": mount_isolation,
+                "network_isolation": network_isolation,
+            }
+        finally:
+            if session_info is not None:
+                await self.stop_session(session_info)
+            shutil.rmtree(probe_path, ignore_errors=True)
 
     async def start_session(self, spec: BoxSpec) -> BoxSessionInfo:
         validate_sandbox_security(spec)
@@ -408,14 +525,14 @@ class NsjailBackend(BaseSandboxBackend):
         args: list[str] = []
 
         for path in _READONLY_SYSTEM_MOUNTS:
-            if os.path.exists(path):
+            if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
 
         for path in _READONLY_ETC_ENTRIES:
             # /etc/resolv.conf is only needed when network is ON.
             if path == "/etc/resolv.conf" and network == BoxNetworkMode.OFF:
                 continue
-            if os.path.exists(path):
+            if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
 
         return args
@@ -468,6 +585,8 @@ class NsjailBackend(BaseSandboxBackend):
         }
         mount_paths.update(_READONLY_SYSTEM_MOUNTS)
         mount_paths.update(_READONLY_ETC_ENTRIES)
+        readonly_host_entries = set(_READONLY_SYSTEM_MOUNTS)
+        readonly_host_entries.update(_READONLY_ETC_ENTRIES)
         for mount in spec.extra_mounts:
             mount_paths.add(mount.mount_path)
 
@@ -476,7 +595,18 @@ class NsjailBackend(BaseSandboxBackend):
                 continue
             target = root_dir / mount_path.lstrip("/")
             try:
-                if os.path.isfile(mount_path):
+                if mount_path in readonly_host_entries and os.path.islink(mount_path):
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    link_value = os.readlink(mount_path)
+                    if os.path.lexists(target):
+                        if target.is_symlink() and os.readlink(target) == link_value:
+                            continue
+                        if target.is_dir():
+                            target.rmdir()
+                        else:
+                            target.unlink()
+                    target.symlink_to(link_value)
+                elif os.path.isfile(mount_path):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.touch(exist_ok=True)
                 else:
@@ -616,15 +746,16 @@ class NsjailBackend(BaseSandboxBackend):
         subtree_control = cgroup_mount / "cgroup.subtree_control"
         if not controllers.exists() or not subtree_control.exists():
             return False
-        # nsjail enables the controllers it needs (memory, pids, cpu) on the
-        # child cgroup, which requires them to be delegated via the root's
-        # subtree_control. Only probe controllers actually present here.
+        # nsjail always requests memory, pids, and cpu limits. Readiness must
+        # therefore prove every controller is both available and writable;
+        # accepting a partial delegation would fail after admission or silently
+        # weaken the resource contract.
         try:
             available = set(controllers.read_text().split())
         except Exception:
             return False
-        wanted = [c for c in ("memory", "pids", "cpu") if c in available]
-        if not wanted:
+        wanted = ("memory", "pids", "cpu")
+        if not set(wanted).issubset(available):
             return False
         # Authoritative writability probe: re-arm a controller that is already
         # enabled (idempotent no-op), or briefly toggle one that is not. A
@@ -635,22 +766,20 @@ class NsjailBackend(BaseSandboxBackend):
             enabled = set(subtree_control.read_text().split())
         except Exception:
             return False
-        probe_controller = wanted[0]
-        try:
-            if probe_controller in enabled:
+        for controller in wanted:
+            try:
                 # Already delegated: re-writing the same enable is a harmless
                 # no-op that still exercises the write permission + EBUSY rule.
-                subtree_control.write_text(f"+{probe_controller}")
-            else:
-                # Not yet delegated: enable then immediately disable to leave
-                # the host configuration untouched.
-                subtree_control.write_text(f"+{probe_controller}")
+                subtree_control.write_text(f"+{controller}")
+            except Exception:
+                return False
+            if controller not in enabled:
+                # Not yet delegated: immediately disable it again so the probe
+                # leaves the host configuration unchanged.
                 try:
-                    subtree_control.write_text(f"-{probe_controller}")
+                    subtree_control.write_text(f"-{controller}")
                 except Exception:
-                    pass
-        except Exception:
-            return False
+                    return False
         return True
 
     async def _kill_session_processes(self, session_dir: pathlib.Path) -> None:

@@ -17,7 +17,19 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.entities.io.req import ActionRequest
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import (
+    ActionContext,
+    ApplyPluginInstallationRequest,
+    InstallationBinding,
+    PluginInstallationDesiredState,
+    PluginWorkerPolicy,
+    ReconcilePluginInstallationsRequest,
+    RuntimeConfig,
+    RuntimeIdentity,
+)
+
+
+ARTIFACT_DIGEST = "a" * 64
 
 
 def test_action_request_factory_preserves_protocol_fields():
@@ -59,6 +71,140 @@ def test_action_request_serializes_optional_workspace_context_envelope():
         "context": context.model_dump(),
     }
     assert ActionRequest.model_validate(request.model_dump()).context == context
+
+
+def test_action_request_preserves_complete_installation_binding():
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=7,
+        installation_uuid="installation-1",
+        runtime_revision=3,
+        artifact_digest=ARTIFACT_DIGEST,
+    )
+
+    request = ActionRequest.make_request(8, "list_plugins", {}, binding)
+    round_tripped = ActionRequest.model_validate(request.model_dump())
+
+    assert request.model_dump()["context"] == binding.model_dump()
+    assert isinstance(round_tripped.context, InstallationBinding)
+    assert round_tripped.context == binding
+    assert binding.execution_generation == 7
+
+
+def test_runtime_config_models_are_frozen_and_instance_scoped():
+    identity = RuntimeIdentity(instance_uuid="instance-1", runtime_id="runtime-boot-1")
+    policy = PluginWorkerPolicy(
+        max_cpus=1.0,
+        max_memory_mb=512,
+        max_pids=128,
+        max_open_files=256,
+        max_file_size_mb=512,
+    )
+    config = RuntimeConfig(
+        runtime_identity=identity,
+        worker_policy=policy,
+        cloud_service_url="https://space.example/",
+    )
+
+    assert config.cloud_service_url == "https://space.example"
+    assert config.runtime_profile == "oss_dev"
+    assert policy.require_hard_limits is False
+    with pytest.raises(ValidationError):
+        identity.runtime_id = "runtime-boot-2"
+    with pytest.raises(ValidationError):
+        policy.max_pids = 256
+    with pytest.raises(ValidationError):
+        RuntimeConfig.model_validate(
+            {
+                **config.model_dump(),
+                "workspace_uuid": "workspace-a",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "installation_uuid": "",
+            "runtime_revision": 1,
+            "artifact_digest": ARTIFACT_DIGEST,
+        },
+        {
+            "installation_uuid": "installation-1",
+            "runtime_revision": "1",
+            "artifact_digest": ARTIFACT_DIGEST,
+        },
+        {
+            "installation_uuid": "installation-1",
+            "runtime_revision": 0,
+            "artifact_digest": ARTIFACT_DIGEST,
+        },
+        {
+            "installation_uuid": "installation-1",
+            "runtime_revision": 1,
+            "artifact_digest": "not-a-sha256",
+        },
+    ],
+)
+def test_installation_binding_rejects_incomplete_worker_tuple(payload):
+    with pytest.raises(ValidationError):
+        InstallationBinding.model_validate(
+            {
+                "instance_uuid": "instance-1",
+                "workspace_uuid": "workspace-a",
+                "placement_generation": 1,
+                **payload,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_cpus", 0),
+        ("max_cpus", "1.0"),
+        ("max_cpus", float("nan")),
+        ("max_cpus", float("inf")),
+        ("max_memory_mb", 0),
+        ("max_memory_mb", "512"),
+        ("max_pids", -1),
+        ("max_open_files", False),
+        ("max_file_size_mb", 0),
+    ],
+)
+def test_plugin_worker_policy_rejects_non_positive_limits(field, value):
+    payload = {
+        "max_cpus": 1.0,
+        "max_memory_mb": 512,
+        "max_pids": 128,
+        "max_open_files": 256,
+        "max_file_size_mb": 512,
+    }
+    payload[field] = value
+
+    with pytest.raises(ValidationError):
+        PluginWorkerPolicy.model_validate(payload)
+
+
+def test_desired_state_protocol_requires_unique_complete_bindings():
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-1",
+        runtime_revision=1,
+        artifact_digest=ARTIFACT_DIGEST,
+    )
+    desired = PluginInstallationDesiredState(binding=binding, enabled=True)
+
+    request = ReconcilePluginInstallationsRequest(installations=(desired,))
+
+    assert request.installations == (desired,)
+    assert ApplyPluginInstallationRequest(artifact_file_key=None).enabled is True
+    with pytest.raises(ValidationError, match="unique installation_uuid"):
+        ReconcilePluginInstallationsRequest(installations=(desired, desired))
 
 
 @pytest.mark.parametrize(

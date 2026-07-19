@@ -17,6 +17,8 @@ from .models import (
     BoxManagedProcessInfo,
     BoxManagedProcessSpec,
     BoxSpec,
+    SandboxAdmissionGrant,
+    SandboxAdmissionRevocation,
 )
 
 
@@ -86,6 +88,16 @@ class BoxRuntimeClient(abc.ABC):
 
     @abc.abstractmethod
     async def init(self, config: dict) -> None: ...
+
+    async def upsert_sandbox_admission_grant(
+        self, grant: SandboxAdmissionGrant
+    ) -> dict:
+        raise NotImplementedError
+
+    async def revoke_sandbox_admission_grant(
+        self, revocation: SandboxAdmissionRevocation
+    ) -> dict:
+        raise NotImplementedError
 
     async def list_skills(
         self, action_context: ActionContext | None = None
@@ -171,9 +183,10 @@ def _translate_action_error(exc: Exception) -> BoxError:
     """Convert an ActionCallError message back into the appropriate BoxError subclass."""
     from .errors import (
         BoxBackendUnavailableError,
-        BoxCapacityExceededError,
+        BoxAdmissionError,
         BoxManagedProcessConflictError,
         BoxManagedProcessNotFoundError,
+        BoxReadinessError,
         BoxSessionConflictError,
         BoxSessionNotFoundError,
         BoxValidationError,
@@ -181,6 +194,8 @@ def _translate_action_error(exc: Exception) -> BoxError:
 
     msg = str(exc)
     _ERROR_PREFIX_MAP: list[tuple[str, type[BoxError]]] = [
+        ("BoxAdmissionError:", BoxAdmissionError),
+        ("BoxReadinessError:", BoxReadinessError),
         ("BoxValidationError:", BoxValidationError),
         ("BoxSessionNotFoundError:", BoxSessionNotFoundError),
         ("BoxSessionConflictError:", BoxSessionConflictError),
@@ -383,6 +398,23 @@ class ActionRPCBoxClient(BoxRuntimeClient):
 
     async def init(self, config: dict) -> None:
         await self._call(LangBotToBoxAction.INIT, config)
+
+    async def upsert_sandbox_admission_grant(
+        self, grant: SandboxAdmissionGrant
+    ) -> dict:
+        return await self._call(
+            LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT,
+            grant.model_dump(mode="json"),
+        )
+
+    async def revoke_sandbox_admission_grant(
+        self, revocation: SandboxAdmissionRevocation
+    ) -> dict:
+        return await self._call(
+            LangBotToBoxAction.REVOKE_SANDBOX_ADMISSION_GRANT,
+            revocation.model_dump(mode="json"),
+            timeout=30.0,
+        )
 
     async def list_skills(
         self, action_context: ActionContext | None = None

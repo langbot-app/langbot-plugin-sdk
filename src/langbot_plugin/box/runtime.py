@@ -9,22 +9,31 @@ import json
 import logging
 import os
 from pathlib import Path
+import time
 import uuid
 import weakref
 from typing import TYPE_CHECKING
 
+import pydantic
+
+from langbot_plugin.entities.io.context import ActionContext
+
 from .backend import BaseSandboxBackend, DockerBackend
 from .nsjail_backend import NsjailBackend
 from .errors import (
+    BoxAdmissionError,
     BoxBackendUnavailableError,
     BoxCapacityExceededError,
     BoxManagedProcessNotFoundError,
+    BoxReadinessError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
     BoxRuntimeUnavailableError,
     BoxValidationError,
 )
 from .models import (
+    DEFAULT_BOX_IMAGE,
+    DEFAULT_BOX_MOUNT_PATH,
     BoxExecutionResult,
     BoxExecutionStatus,
     BoxManagedProcessInfo,
@@ -32,8 +41,18 @@ from .models import (
     BoxManagedProcessStatus,
     BoxSessionInfo,
     BoxSpec,
+    BoxHostMountMode,
+    BoxNetworkMode,
+    SandboxAdmissionGrant,
+    SandboxAdmissionPolicy,
+    SandboxAdmissionRevocation,
 )
 from .skill_store import BoxSkillStore
+from .tenancy import (
+    box_namespace,
+    namespace_session_id,
+    workspace_session_namespace_prefix,
+)
 
 if TYPE_CHECKING:
     from .e2b_backend import E2BSandboxBackend
@@ -162,6 +181,19 @@ class BoxRuntime:
         self._background_tasks: set[asyncio.Task] = set()
         self.instance_id = uuid.uuid4().hex[:12]
         self.skill_store = BoxSkillStore(self._box_config)
+        self._admission_policy = SandboxAdmissionPolicy()
+        self._admission_config_error: str | None = None
+        self._admission_grants: dict[
+            tuple[str, str], SandboxAdmissionGrant
+        ] = {}
+        self._admission_revisions: dict[tuple[str, str], int] = {}
+        self._admission_generations: dict[tuple[str, str], int] = {}
+        self._admission_limit_fingerprints: dict[
+            tuple[str, str], tuple[int, int]
+        ] = {}
+        self._revoked_admission_revisions: dict[tuple[str, str], int] = {}
+        self._readiness_cache: tuple[float, dict] | None = None
+        self._refresh_admission_policy()
 
     def _create_e2b_backend(self, logger: logging.Logger) -> "E2BSandboxBackend | None":
         """Create E2B backend if package is installed."""
@@ -196,6 +228,7 @@ class BoxRuntime:
 
         Called via RPC (INIT action) when connecting over WebSocket.
         """
+        previous_admission_policy = self._admission_policy
         self._box_config.update(config)
         limits = self._box_config.get("limits") or {}
         self.max_sessions = int(limits.get("max_sessions", self.max_sessions))
@@ -213,9 +246,40 @@ class BoxRuntime:
         )
         self._apply_config_to_backends(config)
         self.skill_store.update_config(self._box_config)
+        self._refresh_admission_policy()
+        if previous_admission_policy.required and not self._admission_policy.required:
+            self._admission_policy = previous_admission_policy
+            self._admission_config_error = (
+                "Sandbox admission enforcement cannot be disabled without "
+                "restarting the Box Runtime"
+            )
+        self._readiness_cache = None
         self._ensure_default_workspace()
         if not self._sessions:
             self._backend = None
+
+    @property
+    def admission_required(self) -> bool:
+        return bool(self._admission_policy.required)
+
+    @property
+    def admission_policy(self) -> SandboxAdmissionPolicy:
+        return self._admission_policy
+
+    def _refresh_admission_policy(self) -> None:
+        raw_policy = self._box_config.get("admission")
+        if raw_policy is None:
+            self._admission_policy = SandboxAdmissionPolicy()
+            self._admission_config_error = None
+            return
+        try:
+            self._admission_policy = SandboxAdmissionPolicy.model_validate(raw_policy)
+            self._admission_config_error = None
+        except (pydantic.ValidationError, TypeError, ValueError) as exc:
+            # Merely having a malformed admission section must never downgrade
+            # the runtime to unrestricted OSS behavior.
+            self._admission_policy = SandboxAdmissionPolicy(required=True)
+            self._admission_config_error = str(exc)
 
     def _local_config(self) -> dict:
         return self._box_config.get("local") or {}
@@ -289,6 +353,312 @@ class BoxRuntime:
             + ", ".join(allowed_roots)
         )
 
+    @staticmethod
+    def _grant_context(grant: SandboxAdmissionGrant) -> ActionContext:
+        return ActionContext(
+            instance_uuid=grant.instance_uuid,
+            workspace_uuid=grant.workspace_uuid,
+            placement_generation=grant.execution_generation,
+        )
+
+    @staticmethod
+    def _path_is_under(path: str, root: str) -> bool:
+        try:
+            return os.path.commonpath((path, root)) == root
+        except ValueError:
+            return False
+
+    def _managed_workspace_root(self) -> str:
+        default_workspace = self._default_workspace()
+        if default_workspace is None:
+            raise BoxReadinessError(
+                "Managed sandbox admission requires box.local.default_workspace"
+            )
+        resolved_default = _resolve_local_path(default_workspace)
+        allowed_roots = self._allowed_mount_roots()
+        if not allowed_roots or not any(
+            self._path_is_under(resolved_default, allowed_root)
+            for allowed_root in allowed_roots
+        ):
+            raise BoxReadinessError(
+                "Managed sandbox workspace is outside box.local.allowed_mount_roots"
+            )
+        if not os.path.isdir(resolved_default):
+            raise BoxReadinessError("Managed sandbox workspace path is not a directory")
+        if not os.access(resolved_default, os.R_OK | os.W_OK | os.X_OK):
+            raise BoxReadinessError("Managed sandbox workspace path is not writable")
+        return resolved_default
+
+    def _canonical_workspace_path(self, context: ActionContext) -> str:
+        context = ActionContext.model_validate(context).without_installation()
+        default_workspace = self._managed_workspace_root()
+        raw_tenants_root = os.path.join(default_workspace, "tenants")
+        os.makedirs(raw_tenants_root, exist_ok=True)
+        tenants_root = _resolve_local_path(raw_tenants_root)
+        if not self._path_is_under(tenants_root, default_workspace):
+            raise BoxAdmissionError(
+                "Managed sandbox tenant directory escapes the configured workspace"
+            )
+
+        raw_workspace_path = os.path.join(tenants_root, box_namespace(context))
+        workspace_path = _resolve_local_path(raw_workspace_path)
+        if not self._path_is_under(workspace_path, tenants_root):
+            raise BoxAdmissionError(
+                "Managed sandbox Workspace path escapes its tenant directory"
+            )
+        os.makedirs(workspace_path, exist_ok=True)
+        return workspace_path
+
+    def _normalize_admitted_spec(
+        self,
+        spec: BoxSpec,
+        action_context: ActionContext,
+    ) -> BoxSpec:
+        context = ActionContext.model_validate(action_context).without_installation()
+        policy = self._admission_policy
+        if spec.network != BoxNetworkMode.OFF:
+            raise BoxAdmissionError("Managed sandbox network access is disabled")
+        if spec.extra_mounts:
+            raise BoxAdmissionError("Managed sandbox additional host mounts are disabled")
+        if spec.mount_path != DEFAULT_BOX_MOUNT_PATH:
+            raise BoxAdmissionError("Managed sandbox mount_path is runtime-owned")
+        if spec.workdir != DEFAULT_BOX_MOUNT_PATH and not spec.workdir.startswith(
+            f"{DEFAULT_BOX_MOUNT_PATH}/"
+        ):
+            raise BoxAdmissionError("Managed sandbox workdir must stay under /workspace")
+
+        workspace_path = self._canonical_workspace_path(context)
+        if spec.host_path is not None:
+            submitted_host_path = _resolve_local_path(spec.host_path)
+            if submitted_host_path != workspace_path:
+                raise BoxAdmissionError("Managed sandbox host_path is runtime-owned")
+
+        return spec.model_copy(
+            update={
+                "session_id": namespace_session_id(
+                    context, policy.logical_session_id
+                ),
+                "network": BoxNetworkMode.OFF,
+                "image": DEFAULT_BOX_IMAGE,
+                "host_path": workspace_path,
+                "host_path_mode": BoxHostMountMode.READ_WRITE,
+                "mount_path": DEFAULT_BOX_MOUNT_PATH,
+                "extra_mounts": [],
+                "persistent": True,
+                "timeout_sec": min(spec.timeout_sec, policy.max_timeout_sec),
+                "cpus": policy.cpus,
+                "memory_mb": policy.memory_mb,
+                "pids_limit": policy.pids_limit,
+                "read_only_rootfs": policy.read_only_rootfs,
+                "workspace_quota_mb": policy.workspace_quota_mb,
+            }
+        )
+
+    def _workspace_session_ids_locked(self, context: ActionContext) -> list[str]:
+        prefix = workspace_session_namespace_prefix(context)
+        return [session_id for session_id in self._sessions if session_id.startswith(prefix)]
+
+    def _drop_workspace_sessions_locked(
+        self, context: ActionContext
+    ) -> list[asyncio.Task[None]]:
+        cleanup_tasks: list[asyncio.Task[None]] = []
+        for session_id in self._workspace_session_ids_locked(context):
+            cleanup_task = self._drop_session_locked(session_id)
+            if cleanup_task is not None:
+                cleanup_tasks.append(cleanup_task)
+        return cleanup_tasks
+
+    def _reap_expired_admissions_locked(
+        self, now: dt.datetime | None = None
+    ) -> list[asyncio.Task[None]]:
+        current_time = now or dt.datetime.now(_UTC)
+        cleanup_tasks: list[asyncio.Task[None]] = []
+        for key, grant in tuple(self._admission_grants.items()):
+            if not grant.is_expired(current_time):
+                continue
+            self._admission_grants.pop(key, None)
+            cleanup_tasks.extend(
+                self._drop_workspace_sessions_locked(self._grant_context(grant))
+            )
+        return cleanup_tasks
+
+    def _require_admission_locked(
+        self, action_context: ActionContext
+    ) -> SandboxAdmissionGrant:
+        if not self.admission_required:
+            raise BoxAdmissionError("Sandbox admission enforcement is not enabled")
+        if self._admission_config_error:
+            raise BoxReadinessError(
+                f"Invalid sandbox admission configuration: {self._admission_config_error}"
+            )
+        context = ActionContext.model_validate(action_context).without_installation()
+        grant = self._admission_grants.get(
+            (context.instance_uuid, context.workspace_uuid)
+        )
+        if grant is None:
+            raise BoxAdmissionError("Sandbox admission grant is missing")
+        if grant.is_expired():
+            raise BoxAdmissionError("Sandbox admission grant has expired")
+        if grant.execution_generation != context.placement_generation:
+            raise BoxAdmissionError(
+                "Sandbox admission grant belongs to another execution generation"
+            )
+        if grant.max_sessions <= 0:
+            raise BoxAdmissionError("Sandbox admission grant does not permit sessions")
+        if (
+            grant.max_sessions > self._admission_policy.max_sessions
+            or grant.max_managed_processes
+            > self._admission_policy.max_managed_processes
+        ):
+            raise BoxAdmissionError(
+                "Sandbox admission grant exceeds the active runtime policy"
+            )
+        return grant
+
+    async def require_sandbox_admission(
+        self, action_context: ActionContext
+    ) -> SandboxAdmissionGrant:
+        await self._ensure_managed_readiness()
+        async with self._lock:
+            self._reap_expired_admissions_locked()
+            return self._require_admission_locked(action_context)
+
+    async def upsert_sandbox_admission_grant(
+        self, grant: SandboxAdmissionGrant
+    ) -> dict:
+        grant = SandboxAdmissionGrant.model_validate(grant)
+        if not self.admission_required:
+            raise BoxAdmissionError("Sandbox admission enforcement is not enabled")
+        if self._admission_config_error:
+            raise BoxReadinessError(
+                f"Invalid sandbox admission configuration: {self._admission_config_error}"
+            )
+
+        policy = self._admission_policy
+        now = dt.datetime.now(_UTC)
+        if grant.is_expired(now):
+            raise BoxAdmissionError("Cannot install an expired sandbox admission grant")
+        if grant.expires_at > now + dt.timedelta(seconds=policy.max_grant_ttl_sec):
+            raise BoxAdmissionError("Sandbox admission grant lifetime exceeds the configured maximum")
+        if grant.max_sessions > policy.max_sessions:
+            raise BoxAdmissionError("Sandbox admission grant exceeds the session cap")
+        if grant.max_managed_processes > policy.max_managed_processes:
+            raise BoxAdmissionError(
+                "Sandbox admission grant exceeds the managed-process cap"
+            )
+
+        key = grant.workspace_key
+        context = self._grant_context(grant)
+        cleanup_tasks: list[asyncio.Task[None]] = []
+        async with self._lock:
+            cleanup_tasks.extend(self._reap_expired_admissions_locked(now))
+            revoked_revision = self._revoked_admission_revisions.get(key, 0)
+            if grant.entitlement_revision <= revoked_revision:
+                raise BoxAdmissionError("Sandbox admission grant revision was revoked")
+
+            highest_revision = self._admission_revisions.get(key, 0)
+            if grant.entitlement_revision < highest_revision:
+                raise BoxAdmissionError("Sandbox admission grant revision is stale")
+            highest_generation = self._admission_generations.get(key, 0)
+            if grant.execution_generation < highest_generation:
+                raise BoxAdmissionError("Sandbox admission execution generation is stale")
+
+            limit_fingerprint = (grant.max_sessions, grant.max_managed_processes)
+            previous_fingerprint = self._admission_limit_fingerprints.get(key)
+            if (
+                grant.entitlement_revision == highest_revision
+                and previous_fingerprint is not None
+                and previous_fingerprint != limit_fingerprint
+            ):
+                raise BoxAdmissionError(
+                    "Sandbox admission limits changed without a new entitlement revision"
+                )
+
+            current = self._admission_grants.get(key)
+            if (
+                current is not None
+                and grant.entitlement_revision == current.entitlement_revision
+                and grant.execution_generation == current.execution_generation
+                and grant.expires_at < current.expires_at
+            ):
+                raise BoxAdmissionError("Sandbox admission grant renewal shortens its lifetime")
+
+            self._admission_grants[key] = grant
+            self._admission_revisions[key] = grant.entitlement_revision
+            self._admission_generations[key] = grant.execution_generation
+            self._admission_limit_fingerprints[key] = limit_fingerprint
+
+            if (
+                current is None
+                or current.execution_generation != grant.execution_generation
+                or grant.max_sessions == 0
+            ):
+                cleanup_tasks.extend(self._drop_workspace_sessions_locked(context))
+            else:
+                canonical_session_id = namespace_session_id(
+                    context, policy.logical_session_id
+                )
+                for session_id in self._workspace_session_ids_locked(context):
+                    if session_id == canonical_session_id:
+                        continue
+                    cleanup_task = self._drop_session_locked(session_id)
+                    if cleanup_task is not None:
+                        cleanup_tasks.append(cleanup_task)
+
+        await self._wait_for_session_cleanups(cleanup_tasks)
+        return {
+            "installed": True,
+            "workspace_uuid": grant.workspace_uuid,
+            "execution_generation": grant.execution_generation,
+            "entitlement_revision": grant.entitlement_revision,
+            "max_sessions": grant.max_sessions,
+            "max_managed_processes": grant.max_managed_processes,
+            "expires_at": grant.expires_at.isoformat(),
+        }
+
+    async def revoke_sandbox_admission_grant(
+        self, revocation: SandboxAdmissionRevocation
+    ) -> dict:
+        revocation = SandboxAdmissionRevocation.model_validate(revocation)
+        if not self.admission_required:
+            raise BoxAdmissionError("Sandbox admission enforcement is not enabled")
+        key = revocation.workspace_key
+        cleanup_tasks: list[asyncio.Task[None]] = []
+        async with self._lock:
+            highest_revision = self._admission_revisions.get(key, 0)
+            revoked_revision = self._revoked_admission_revisions.get(key, 0)
+            if revocation.entitlement_revision < max(
+                highest_revision, revoked_revision
+            ):
+                raise BoxAdmissionError("Sandbox admission revocation is stale")
+
+            active = self._admission_grants.pop(key, None)
+            self._admission_revisions[key] = max(
+                highest_revision, revocation.entitlement_revision
+            )
+            self._revoked_admission_revisions[key] = max(
+                revoked_revision, revocation.entitlement_revision
+            )
+            context = (
+                self._grant_context(active)
+                if active is not None
+                else ActionContext(
+                    instance_uuid=revocation.instance_uuid,
+                    workspace_uuid=revocation.workspace_uuid,
+                    placement_generation=max(
+                        self._admission_generations.get(key, 1), 1
+                    ),
+                )
+            )
+            cleanup_tasks.extend(self._drop_workspace_sessions_locked(context))
+
+        await self._wait_for_session_cleanups(cleanup_tasks)
+        return {
+            "revoked": True,
+            "workspace_uuid": revocation.workspace_uuid,
+            "entitlement_revision": revocation.entitlement_revision,
+        }
+
     def _apply_config_to_backends(self, config: dict) -> None:
         """Apply configuration sections to corresponding backends."""
         for backend in self.backends:
@@ -298,10 +668,25 @@ class BoxRuntime:
             if backend_config and hasattr(backend, "configure"):
                 backend.configure(backend_config)
 
-    async def execute(self, spec: BoxSpec) -> BoxExecutionResult:
+    async def execute(
+        self,
+        spec: BoxSpec,
+        action_context: ActionContext | None = None,
+    ) -> BoxExecutionResult:
         if not spec.cmd:
             raise BoxValidationError("cmd must not be empty")
-        session = await self._get_or_create_session(spec, track_active_exec=True)
+        if self.admission_required:
+            if action_context is None:
+                raise BoxAdmissionError(
+                    "Managed sandbox execution requires a trusted Workspace context"
+                )
+            await self.require_sandbox_admission(action_context)
+            spec = self._normalize_admitted_spec(spec, action_context)
+        session = await self._get_or_create_session(
+            spec,
+            track_active_exec=True,
+            action_context=action_context,
+        )
 
         result: BoxExecutionResult | None = None
         cleanup_task: asyncio.Task[None] | None = None
@@ -339,7 +724,7 @@ class BoxRuntime:
                 await self._wait_for_session_cleanup(spec.session_id, cleanup_task)
 
     def start_background_reaper(self) -> None:
-        if self.session_ttl_sec <= 0:
+        if self.session_ttl_sec <= 0 and not self.admission_required:
             return
         if self._reaper_task is not None and not self._reaper_task.done():
             return
@@ -355,12 +740,20 @@ class BoxRuntime:
             await task
 
     async def _reaper_loop(self) -> None:
-        while self.session_ttl_sec > 0:
-            await asyncio.sleep(min(_REAPER_INTERVAL_SEC, self.session_ttl_sec))
+        while self.session_ttl_sec > 0 or self.admission_required:
+            interval = (
+                min(_REAPER_INTERVAL_SEC, self.session_ttl_sec)
+                if self.session_ttl_sec > 0
+                else _REAPER_INTERVAL_SEC
+            )
+            await asyncio.sleep(interval)
             try:
                 cleanup_tasks: list[asyncio.Task[None]]
                 async with self._lock:
-                    cleanup_tasks = await self._reap_expired_sessions_locked()
+                    cleanup_tasks = self._reap_expired_admissions_locked()
+                    cleanup_tasks.extend(
+                        await self._reap_expired_sessions_locked()
+                    )
                 await self._wait_for_session_cleanups(cleanup_tasks)
             except asyncio.CancelledError:
                 raise
@@ -400,8 +793,21 @@ class BoxRuntime:
         finally:
             self._shutdown_in_progress = False
 
-    async def create_session(self, spec: BoxSpec) -> dict:
-        session = await self._get_or_create_session(spec)
+    async def create_session(
+        self,
+        spec: BoxSpec,
+        action_context: ActionContext | None = None,
+    ) -> dict:
+        if self.admission_required:
+            if action_context is None:
+                raise BoxAdmissionError(
+                    "Managed sandbox session creation requires a trusted Workspace context"
+                )
+            await self.require_sandbox_admission(action_context)
+            spec = self._normalize_admitted_spec(spec, action_context)
+        session = await self._get_or_create_session(
+            spec, action_context=action_context
+        )
         return self._session_to_dict(session.info)
 
     async def delete_session(self, session_id: str) -> None:
@@ -421,14 +827,45 @@ class BoxRuntime:
                 await self._wait_for_session_cleanup(session_id, cleanup_task)
 
     async def start_managed_process(
-        self, session_id: str, spec: BoxManagedProcessSpec
+        self,
+        session_id: str,
+        spec: BoxManagedProcessSpec,
+        action_context: ActionContext | None = None,
     ) -> dict:
+        if self.admission_required:
+            if action_context is None:
+                raise BoxAdmissionError(
+                    "Managed process creation requires a trusted Workspace context"
+                )
+            grant = await self.require_sandbox_admission(action_context)
+            if grant.max_managed_processes <= 0:
+                raise BoxAdmissionError(
+                    "Sandbox admission grant does not permit managed processes"
+                )
+            expected_session_id = namespace_session_id(
+                action_context, self._admission_policy.logical_session_id
+            )
+            if session_id != expected_session_id:
+                raise BoxAdmissionError("Managed sandbox session_id is runtime-owned")
         async with self._lock:
+            if self.admission_required:
+                assert action_context is not None
+                grant = self._require_admission_locked(action_context)
             runtime_session = self._sessions.get(session_id)
             if runtime_session is None:
                 raise BoxSessionNotFoundError(f"session {session_id} not found")
 
         async with runtime_session.lock:
+            if self.admission_required:
+                active_processes = sum(
+                    1
+                    for managed_process in runtime_session.managed_processes.values()
+                    if managed_process.is_running
+                )
+                if active_processes >= grant.max_managed_processes:
+                    raise BoxAdmissionError(
+                        "Sandbox admission managed-process limit reached"
+                    )
             process_id = spec.process_id
             async with self._lock:
                 self._reap_completed_processes()
@@ -529,7 +966,125 @@ class BoxRuntime:
 
     # ── Observability ─────────────────────────────────────────────────
 
+    async def get_readiness(self, *, force: bool = False) -> dict:
+        """Return process readiness, including strict managed-mode guarantees."""
+
+        cache_ttl = self._admission_policy.readiness_cache_sec
+        now_monotonic = time.monotonic()
+        if (
+            not force
+            and self._readiness_cache is not None
+            and now_monotonic - self._readiness_cache[0] <= cache_ttl
+        ):
+            return dict(self._readiness_cache[1])
+
+        if self._backend is None:
+            self._backend = await self._select_backend()
+        backend = self._backend
+
+        if not self.admission_required:
+            available = False
+            if backend is not None:
+                try:
+                    available = await backend.is_available()
+                except Exception:
+                    available = False
+            result = {
+                "ready": available,
+                "mode": "standard",
+                "backend": {
+                    "name": backend.name if backend is not None else None,
+                    "available": available,
+                },
+                "checks": {"backend_available": available},
+            }
+            self._readiness_cache = (now_monotonic, result)
+            return dict(result)
+
+        checks: dict[str, bool] = {
+            "configuration": self._admission_config_error is None,
+            "required_backend": bool(
+                backend is not None
+                and backend.name == self._admission_policy.required_backend
+            ),
+            "workspace_mount": False,
+            "backend_available": False,
+            "cgroup_v2": False,
+            "namespace_isolation": False,
+            "mount_isolation": False,
+            "network_isolation": False,
+            "session_cap": self._admission_policy.max_sessions <= 1,
+            "managed_process_cap": self._admission_policy.max_managed_processes
+            == 0,
+        }
+        workspace_path: str | None = None
+        readiness_error = self._admission_config_error
+        try:
+            workspace_path = self._managed_workspace_root()
+            checks["workspace_mount"] = True
+        except BoxReadinessError as exc:
+            readiness_error = str(exc)
+
+        backend_readiness: dict = {}
+        if backend is not None and checks["required_backend"]:
+            try:
+                backend_readiness = await backend.get_readiness(
+                    workspace_path=workspace_path,
+                    strict=True,
+                )
+            except Exception as exc:
+                readiness_error = str(exc)
+            checks["backend_available"] = bool(
+                backend_readiness.get("available", False)
+            )
+            for name in (
+                "cgroup_v2",
+                "namespace_isolation",
+                "mount_isolation",
+                "network_isolation",
+            ):
+                checks[name] = backend_readiness.get(name) is True
+            readiness_error = backend_readiness.get("error") or readiness_error
+
+        result = {
+            "ready": all(checks.values()),
+            "mode": "grant_enforced",
+            "backend": {
+                "name": backend.name if backend is not None else None,
+                "available": checks["backend_available"],
+                "details": backend_readiness,
+            },
+            "checks": checks,
+        }
+        if readiness_error:
+            result["error"] = readiness_error
+        self._readiness_cache = (now_monotonic, result)
+        return dict(result)
+
+    async def _ensure_managed_readiness(self) -> None:
+        if not self.admission_required:
+            return
+        readiness = await self.get_readiness()
+        if readiness.get("ready"):
+            return
+        failed_checks = [
+            name
+            for name, passed in (readiness.get("checks") or {}).items()
+            if not passed
+        ]
+        detail = ", ".join(failed_checks) or "unknown"
+        raise BoxReadinessError(
+            f"Managed sandbox isolation is not ready (failed checks: {detail})"
+        )
+
     async def get_backend_info(self) -> dict:
+        if self.admission_required:
+            readiness = await self.get_readiness()
+            return {
+                "name": readiness.get("backend", {}).get("name"),
+                "available": bool(readiness.get("ready", False)),
+                "readiness": readiness,
+            }
         if self._backend is None:
             async with self._backend_lock:
                 if self._backend is None:
@@ -581,35 +1136,41 @@ class BoxRuntime:
         }
 
     async def _get_or_create_session(
-        self, spec: BoxSpec, *, track_active_exec: bool = False
+        self,
+        spec: BoxSpec,
+        *,
+        track_active_exec: bool = False,
+        action_context: ActionContext | None = None,
     ) -> _RuntimeSession:
         new_extra_mounts_key = _compute_extra_mounts_key(spec)
         operation_lock = await self._get_session_operation_lock(spec.session_id)
 
-        async with operation_lock:
-            while True:
-                cleanup_task: asyncio.Task[None] | None = None
-                existing: _RuntimeSession | None = None
-                async with self._lock:
-                    if self._shutdown_in_progress:
-                        raise BoxRuntimeUnavailableError("Box runtime is shutting down")
-                    await self._reap_expired_sessions_locked()
-                    cleanup_task = self._closing_session_tasks.get(spec.session_id)
-                    if cleanup_task is None:
-                        existing = self._sessions.get(spec.session_id)
-                        if existing is not None:
-                            self._assert_session_compatible(existing.info, spec)
-                            if existing.extra_mounts_key != new_extra_mounts_key:
-                                self.logger.info(
-                                    "LangBot Box session extra_mounts changed, "
-                                    f"recreating: session_id={spec.session_id}"
-                                )
-                                cleanup_task = self._drop_session_locked(
-                                    spec.session_id
-                                )
-                                existing = None
-                            else:
-                                self._session_leases[spec.session_id] += 1
+        while True:
+            cleanup_task: asyncio.Task[None] | None = None
+            async with self._lock:
+                self._reap_expired_admissions_locked()
+                await self._reap_expired_sessions_locked()
+                if self.admission_required:
+                    if action_context is None:
+                        raise BoxAdmissionError(
+                            "Managed sandbox session requires a trusted Workspace context"
+                        )
+                    grant = self._require_admission_locked(action_context)
+                    workspace_session_ids = self._workspace_session_ids_locked(
+                        action_context
+                    )
+                    if len(workspace_session_ids) > grant.max_sessions:
+                        raise BoxAdmissionError(
+                            "Sandbox admission session limit exceeded"
+                        )
+                    if (
+                        spec.session_id not in self._sessions
+                        and len(workspace_session_ids) >= grant.max_sessions
+                    ):
+                        raise BoxAdmissionError(
+                            "Sandbox admission session limit reached"
+                        )
+                cleanup_task = self._closing_session_tasks.get(spec.session_id)
 
                 if cleanup_task is not None:
                     await self._wait_for_session_cleanup(spec.session_id, cleanup_task)

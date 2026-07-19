@@ -12,6 +12,7 @@ error/early-return paths of the aiohttp request handlers are also covered with
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 from types import SimpleNamespace
 from unittest import mock
 
@@ -21,6 +22,7 @@ from aiohttp import WSCloseCode, web
 from langbot_plugin.box import server
 from langbot_plugin.box.actions import LangBotToBoxAction
 from langbot_plugin.box.errors import (
+    BoxAdmissionError,
     BoxManagedProcessConflictError,
     BoxManagedProcessNotFoundError,
     BoxSessionNotFoundError,
@@ -28,6 +30,8 @@ from langbot_plugin.box.errors import (
 from langbot_plugin.box.models import (
     BoxExecutionResult,
     BoxExecutionStatus,
+    SandboxAdmissionGrant,
+    SandboxAdmissionRevocation,
 )
 from langbot_plugin.box.server import (
     AiohttpWSConnection,
@@ -37,7 +41,9 @@ from langbot_plugin.box.server import (
     _result_to_dict,
     create_app,
     create_ws_relay_app,
+    handle_healthz,
     handle_managed_process_ws,
+    handle_readyz,
     handle_rpc_ws,
 )
 from langbot_plugin.box.security import (
@@ -107,6 +113,7 @@ def mock_runtime():
     override return values / side effects as needed.
     """
     runtime = mock.MagicMock()
+    runtime.admission_required = False
 
     runtime.get_backend_info = mock.AsyncMock(
         return_value={"name": "docker", "available": True}
@@ -522,6 +529,21 @@ async def test_get_backend_info(handler, mock_runtime):
     mock_runtime.get_backend_info.assert_awaited_once()
 
 
+async def test_grant_enforced_health_fails_closed_when_isolation_not_ready(
+    handler, mock_runtime
+):
+    mock_runtime.admission_required = True
+    mock_runtime.get_readiness = mock.AsyncMock(
+        return_value={"ready": False, "checks": {"cgroup_v2": False}}
+    )
+
+    resp = await _invoke(handler, LangBotToBoxAction.HEALTH, {})
+
+    assert resp.code == 1
+    assert "BoxReadinessError" in resp.message
+    mock_runtime.get_backend_info.assert_not_awaited()
+
+
 # ── EXEC ─────────────────────────────────────────────────────────────
 
 
@@ -555,6 +577,38 @@ async def test_exec_invalid_spec_returns_validation_error(handler, mock_runtime)
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
     mock_runtime.execute.assert_not_awaited()
+
+
+async def test_grant_enforced_exec_passes_trusted_context_to_runtime(
+    handler, mock_runtime
+):
+    mock_runtime.admission_required = True
+    mock_runtime.admission_policy = SimpleNamespace(logical_session_id="global")
+    mock_runtime.require_sandbox_admission = mock.AsyncMock()
+    mock_runtime.execute.return_value = BoxExecutionResult(
+        session_id=_physical_session_id("global"),
+        backend_name="nsjail",
+        status=BoxExecutionStatus.COMPLETED,
+        exit_code=0,
+        stdout="ok",
+        stderr="",
+        duration_ms=1,
+    )
+
+    resp = await _invoke(
+        handler,
+        LangBotToBoxAction.EXEC,
+        _spec_data(session_id="caller-controlled"),
+    )
+
+    assert resp.code == 0
+    assert resp.data["session_id"] == "global"
+    spec, = mock_runtime.execute.await_args.args
+    assert spec.session_id == "caller-controlled"
+    assert mock_runtime.execute.await_args.kwargs["action_context"] == _ACTION_CONTEXT
+    mock_runtime.require_sandbox_admission.assert_awaited_once_with(
+        _ACTION_CONTEXT
+    )
 
 
 # ── CREATE_SESSION ───────────────────────────────────────────────────
@@ -593,6 +647,22 @@ async def test_get_session(handler, mock_runtime):
         "managed_process": {"session_id": "abc"},
     }
     mock_runtime.get_session.assert_called_once_with(_physical_session_id("abc"))
+
+
+async def test_grant_enforced_session_lookup_rejects_non_global_id(
+    handler, mock_runtime
+):
+    mock_runtime.admission_required = True
+    mock_runtime.admission_policy = SimpleNamespace(logical_session_id="global")
+    mock_runtime.require_sandbox_admission = mock.AsyncMock()
+
+    with pytest.raises(BoxAdmissionError, match="session_id is runtime-owned"):
+        await _invoke(
+            handler,
+            LangBotToBoxAction.GET_SESSION,
+            {"session_id": "caller-controlled"},
+        )
+    mock_runtime.get_session.assert_not_called()
 
 
 async def test_get_sessions_wraps_list(handler, mock_runtime):
@@ -974,6 +1044,82 @@ async def test_install_skill_zip_error(handler, mock_runtime):
 # ── INIT / SHUTDOWN ──────────────────────────────────────────────────
 
 
+async def test_host_control_installs_grant_and_advances_generation_fence(
+    handler, mock_runtime
+):
+    mock_runtime.upsert_sandbox_admission_grant = mock.AsyncMock(
+        return_value={"installed": True}
+    )
+    grant = SandboxAdmissionGrant(
+        instance_uuid=_ACTION_CONTEXT.instance_uuid,
+        workspace_uuid=_ACTION_CONTEXT.workspace_uuid,
+        execution_generation=2,
+        entitlement_revision=4,
+        expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60),
+        max_sessions=1,
+        max_managed_processes=0,
+    )
+
+    resp = await _invoke(
+        handler,
+        LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT,
+        grant.model_dump(mode="json"),
+    )
+
+    assert resp.code == 0
+    assert resp.data == {"installed": True}
+    mock_runtime.upsert_sandbox_admission_grant.assert_awaited_once_with(grant)
+    handler._generation_fence.require_current(
+        _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+    )
+
+
+async def test_host_control_rejects_grant_for_another_instance(
+    handler, mock_runtime
+):
+    mock_runtime.upsert_sandbox_admission_grant = mock.AsyncMock()
+    grant = SandboxAdmissionGrant(
+        instance_uuid="instance-b",
+        workspace_uuid=_ACTION_CONTEXT.workspace_uuid,
+        execution_generation=1,
+        entitlement_revision=1,
+        expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60),
+        max_sessions=1,
+        max_managed_processes=0,
+    )
+
+    with pytest.raises(PermissionError, match="trusted instance"):
+        await _invoke(
+            handler,
+            LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT,
+            grant.model_dump(mode="json"),
+        )
+    mock_runtime.upsert_sandbox_admission_grant.assert_not_awaited()
+
+
+async def test_host_control_revokes_grant(handler, mock_runtime):
+    mock_runtime.revoke_sandbox_admission_grant = mock.AsyncMock(
+        return_value={"revoked": True}
+    )
+    revocation = SandboxAdmissionRevocation(
+        instance_uuid=_ACTION_CONTEXT.instance_uuid,
+        workspace_uuid=_ACTION_CONTEXT.workspace_uuid,
+        entitlement_revision=5,
+    )
+
+    resp = await _invoke(
+        handler,
+        LangBotToBoxAction.REVOKE_SANDBOX_ADMISSION_GRANT,
+        revocation.model_dump(mode="json"),
+    )
+
+    assert resp.code == 0
+    assert resp.data == {"revoked": True}
+    mock_runtime.revoke_sandbox_admission_grant.assert_awaited_once_with(
+        revocation
+    )
+
+
 async def test_init(handler, mock_runtime):
     config = {"backend": "docker"}
     resp = await _invoke(handler, LangBotToBoxAction.INIT, config)
@@ -1001,6 +1147,7 @@ def test_create_app_registers_routes_and_runtime(mock_runtime):
 
     routes = {(route.method, route.resource.canonical) for route in app.router.routes()}
     assert ("GET", "/healthz") in routes
+    assert ("GET", "/readyz") in routes
     assert ("GET", "/rpc/ws") in routes
     assert (
         "GET",
@@ -1016,6 +1163,25 @@ def test_create_ws_relay_app_is_alias(mock_runtime):
     app = create_ws_relay_app(mock_runtime, control_token=_CONTROL_TOKEN)
     assert isinstance(app, web.Application)
     assert app["runtime"] is mock_runtime
+
+
+async def test_healthz_is_liveness_only():
+    response = await handle_healthz(mock.MagicMock())
+    assert response.status == 200
+    assert '"live": true' in response.text
+
+
+async def test_readyz_returns_503_when_strict_checks_fail(mock_runtime):
+    mock_runtime.get_readiness = mock.AsyncMock(
+        return_value={"ready": False, "checks": {"cgroup_v2": False}}
+    )
+    request = mock.MagicMock()
+    request.app = {"runtime": mock_runtime}
+
+    response = await handle_readyz(request)
+
+    assert response.status == 503
+    assert '"ready": false' in response.text
 
 
 # ── handle_rpc_ws ────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import pytest
 from langbot_plugin.box.nsjail_backend import (
     NsjailBackend,
 )
+from langbot_plugin.box import nsjail_backend as nsjail_backend_module
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -66,6 +67,77 @@ async def test_is_available_binary_exists(backend, tmp_base):
         result = await backend.is_available()
         assert result is True
         assert tmp_base.exists()
+
+
+@pytest.mark.anyio
+async def test_strict_readiness_reports_cgroup_namespace_mount_and_network(
+    backend, tmp_path
+):
+    backend._cgroup_v2_available = True
+    expected_probe = {
+        "namespace_isolation": True,
+        "mount_isolation": True,
+        "network_isolation": True,
+    }
+    with (
+        mock.patch.object(
+            backend, "is_available", new_callable=mock.AsyncMock, return_value=True
+        ),
+        mock.patch.object(
+            backend,
+            "_probe_isolation_readiness",
+            new_callable=mock.AsyncMock,
+            return_value=expected_probe,
+        ) as probe,
+    ):
+        readiness = await backend.get_readiness(
+            workspace_path=str(tmp_path), strict=True
+        )
+
+    assert readiness == {
+        "available": True,
+        "cgroup_v2": True,
+        **expected_probe,
+    }
+    probe.assert_awaited_once_with(str(tmp_path))
+
+
+@pytest.mark.anyio
+async def test_isolation_probe_proves_bind_mount_and_distinct_network_namespace(
+    backend, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    now = "2024-01-01T00:00:00+00:00"
+
+    async def start_session(spec):
+        pathlib.Path(spec.host_path, ".mounted").write_text("readiness")
+        return BoxSessionInfo(
+            session_id=spec.session_id,
+            backend_name="nsjail",
+            backend_session_id=str(tmp_path / "session"),
+            image=spec.image,
+            network=spec.network,
+            host_path=spec.host_path,
+            created_at=now,
+            last_used_at=now,
+        )
+
+    backend.start_session = mock.AsyncMock(side_effect=start_session)
+    backend.exec = mock.AsyncMock(return_value=mock.Mock(ok=True, stdout="net:[222]\n"))
+    backend.stop_session = mock.AsyncMock()
+    with mock.patch("os.readlink", return_value="net:[111]"):
+        readiness = await backend._probe_isolation_readiness(str(workspace))
+
+    assert readiness == {
+        "namespace_isolation": True,
+        "mount_isolation": True,
+        "network_isolation": True,
+    }
+    submitted_spec = backend.start_session.await_args.args[0]
+    assert submitted_spec.network is BoxNetworkMode.OFF
+    assert submitted_spec.host_path.startswith(str(workspace))
+    backend.stop_session.assert_awaited_once()
 
 
 # ── start_session ─────────────────────────────────────────────────────
@@ -538,8 +610,66 @@ def test_detect_cgroup_v2_subtree_writable():
         mock.patch.object(pathlib.Path, "write_text", fake_write_text),
     ):
         assert NsjailBackend._detect_cgroup_v2() is True
-    # Probe must enable then disable to leave host config untouched.
-    assert writes == ["+memory", "-memory"]
+    # Probe must validate every limit controller and leave host config untouched.
+    assert writes == [
+        "+memory",
+        "-memory",
+        "+pids",
+        "-pids",
+        "+cpu",
+        "-cpu",
+    ]
+
+
+def test_detect_cgroup_v2_rejects_partial_controller_delegation():
+    def fake_exists(self):
+        return str(self) in (
+            "/sys/fs/cgroup",
+            "/sys/fs/cgroup/cgroup.controllers",
+            "/sys/fs/cgroup/cgroup.subtree_control",
+        )
+
+    def fake_read_text(self, *a, **k):
+        if str(self).endswith("cgroup.controllers"):
+            return "cpu memory"
+        return ""
+
+    with (
+        mock.patch.object(pathlib.Path, "exists", fake_exists),
+        mock.patch.object(pathlib.Path, "read_text", fake_read_text),
+    ):
+        assert NsjailBackend._detect_cgroup_v2() is False
+
+
+def test_readonly_system_symlink_is_recreated_without_bind_mount(
+    backend, tmp_path, monkeypatch
+):
+    host_root = tmp_path / "host"
+    (host_root / "usr" / "bin").mkdir(parents=True)
+    host_link = host_root / "bin"
+    host_link.symlink_to("usr/bin")
+    monkeypatch.setattr(
+        nsjail_backend_module, "_READONLY_SYSTEM_MOUNTS", [str(host_link)]
+    )
+    monkeypatch.setattr(nsjail_backend_module, "_READONLY_ETC_ENTRIES", [])
+
+    session = BoxSessionInfo(
+        session_id="symlink",
+        backend_name="nsjail",
+        backend_session_id=str(tmp_path / "session"),
+        image="python:3.12",
+        network=BoxNetworkMode.OFF,
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
+    )
+    spec = BoxSpec(session_id="symlink", cmd="true")
+    jail_root = tmp_path / "jail"
+    backend._ensure_chroot_mount_targets(jail_root, session, spec)
+
+    jail_link = jail_root / str(host_link).lstrip("/")
+    assert jail_link.is_symlink()
+    assert jail_link.readlink() == host_link.readlink()
+    assert backend._build_readonly_mounts(BoxNetworkMode.OFF) == []
 
 
 def test_detect_cgroup_v2_private_cgroupns_ebusy_returns_false():

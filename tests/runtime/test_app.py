@@ -64,12 +64,25 @@ class FakeControlHandler:
 
     def __init__(self, connection, context):
         self.connection = connection
+        self.conn = connection
         self.context = context
         self.calls = []
+        self.invalidated = False
         self.instances.append(self)
 
     async def run(self):
         self.calls.append("run")
+
+    def invalidate(self):
+        self.invalidated = True
+
+
+class FakeConnection:
+    def __init__(self):
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
 
 
 class FakePluginHandler:
@@ -217,7 +230,7 @@ async def test_set_control_handler_runs_handler(monkeypatch):
     assert handler.calls == ["run"]
 
 
-async def test_set_control_handler_serializes_replacements(monkeypatch):
+async def test_new_control_handler_fences_and_closes_previous_handler(monkeypatch):
     monkeypatch.setattr(
         runtime_app.plugin_mgr_cls,
         "PluginManager",
@@ -234,35 +247,19 @@ async def test_set_control_handler_serializes_replacements(monkeypatch):
         FakeServerController,
     )
     app = runtime_app.RuntimeApplication(_args())
+    old_connection = FakeConnection()
+    new_connection = FakeConnection()
+    old_handler = FakeControlHandler(old_connection, app.context)
+    new_handler = FakeControlHandler(new_connection, app.context)
 
-    class BlockingHandler:
-        def __init__(self):
-            self.started = asyncio.Event()
-            self.release = asyncio.Event()
-            self.close_calls = 0
+    await app.set_control_handler(old_handler)
+    await app.set_control_handler(new_handler)
 
-        async def run(self):
-            self.started.set()
-            await self.release.wait()
-
-        async def close(self):
-            self.close_calls += 1
-            self.release.set()
-
-    first = BlockingHandler()
-    second = BlockingHandler()
-    first_task = app.set_control_handler(first)
-    await first.started.wait()
-    second_task = app.set_control_handler(second)
-    await second.started.wait()
-
-    assert first_task.done()
-    assert first.close_calls == 1
-    assert app.context.control_handler is second
-
-    second.release.set()
-    await second_task
-    assert not hasattr(app.context, "control_handler")
+    assert app.context.control_handler is new_handler
+    assert old_handler.invalidated is True
+    assert old_connection.closed is True
+    assert new_handler.invalidated is False
+    assert new_connection.closed is False
 
 
 async def test_runtime_application_run_coordinates_servers_and_plugin_manager(

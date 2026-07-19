@@ -5,9 +5,13 @@ import json
 from typing import Any
 
 from langbot_plugin.entities.io.errors import ConnectionClosedError
+from langbot_plugin.entities.io.req import ActionRequest
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import ActionEnvelopeContext
+
+
+_USE_DEFAULT_CONTEXT = object()
 
 
 class ProtocolConnection(Connection):
@@ -35,17 +39,15 @@ class ProtocolConnection(Connection):
         action: str,
         data: dict[str, Any] | None = None,
         seq_id: int = 1,
-        action_context: ActionContext | dict[str, Any] | None = None,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> None:
-        context = (
-            ActionContext.model_validate(action_context).model_dump()
-            if action_context is not None
-            else None
+        request = ActionRequest.make_request(
+            seq_id,
+            action,
+            data or {},
+            action_context,
         )
-        request = {"seq_id": seq_id, "action": action, "data": data or {}}
-        if context is not None:
-            request["context"] = context
-        await self.incoming.put(json.dumps(request))
+        await self.incoming.put(json.dumps(request.model_dump()))
 
     async def send_peer_response(
         self,
@@ -79,10 +81,15 @@ class ProtocolConnection(Connection):
 
 
 class ProtocolSession:
-    def __init__(self, handler: Handler):
+    def __init__(
+        self,
+        handler: Handler,
+        default_action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+    ):
         self.handler = handler
         self.connection = handler.conn
         assert isinstance(self.connection, ProtocolConnection)
+        self.default_action_context = default_action_context
         self._task: asyncio.Task | None = None
 
     async def __aenter__(self):
@@ -100,8 +107,12 @@ class ProtocolSession:
         action: str,
         data: dict[str, Any] | None = None,
         seq_id: int = 1,
-        action_context: ActionContext | dict[str, Any] | None = None,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None | object = (
+            _USE_DEFAULT_CONTEXT
+        ),
     ) -> dict[str, Any]:
+        if action_context is _USE_DEFAULT_CONTEXT:
+            action_context = self.default_action_context
         start = len(self.connection.sent)
         await self.connection.send_peer_request(
             action,
@@ -121,9 +132,14 @@ class ProtocolSession:
         data: dict[str, Any] | None = None,
         seq_id: int = 1,
         count: int = 1,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None | object = (
+            _USE_DEFAULT_CONTEXT
+        ),
     ) -> list[dict[str, Any]]:
+        if action_context is _USE_DEFAULT_CONTEXT:
+            action_context = self.default_action_context
         start = len(self.connection.sent)
-        await self.connection.send_peer_request(action, data, seq_id)
+        await self.connection.send_peer_request(action, data, seq_id, action_context)
         for _ in range(50):
             if len(self.connection.sent) >= start + count:
                 return [

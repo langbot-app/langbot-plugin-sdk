@@ -13,6 +13,12 @@ from pathlib import Path
 
 import pytest  # type: ignore
 
+from langbot_plugin.entities.io.actions.enums import LangBotToRuntimeAction
+from langbot_plugin.runtime.io.handlers.control import (
+    INSTANCE_SCOPED_CONTROL_ACTIONS,
+    TENANT_SCOPED_CONTROL_ACTIONS,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_action_consistency.py"
 
@@ -76,4 +82,15 @@ def test_repo_action_protocol_is_consistent(capsys):
     captured = capsys.readouterr()
     assert exit_code == 0, (
         f"Action protocol consistency check failed:\n{captured.out}\n{captured.err}"
+    )
+
+
+def test_every_langbot_control_action_has_exactly_one_security_scope():
+    """A newly added control action cannot silently bypass tenant validation."""
+
+    declared_actions = {action.value for action in LangBotToRuntimeAction}
+
+    assert INSTANCE_SCOPED_CONTROL_ACTIONS.isdisjoint(TENANT_SCOPED_CONTROL_ACTIONS)
+    assert INSTANCE_SCOPED_CONTROL_ACTIONS | TENANT_SCOPED_CONTROL_ACTIONS == (
+        declared_actions
     )
