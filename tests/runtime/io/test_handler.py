@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import stat
 
 import pytest
 
@@ -17,6 +18,7 @@ from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
 from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
 
 from tests.helpers.protocol import ProtocolConnection
 
@@ -481,6 +483,39 @@ def test_handler_file_storage_dir_is_created_for_instances(tmp_path, monkeypatch
     assert (tmp_path / "data" / "temp" / "lbp").is_dir()
 
 
+def test_shared_worker_file_storage_uses_private_writable_tmp(tmp_path, monkeypatch):
+    worker_tmp = tmp_path / "lbp-rpc"
+    monkeypatch.setenv(PLUGIN_RUNTIME_PROFILE_ENV, "shared")
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.io.handler.SHARED_WORKER_FILE_STORAGE_DIR",
+        str(worker_tmp),
+    )
+
+    handler = Handler(QueueConnection())
+
+    assert handler.file_storage_dir == str(worker_tmp)
+    assert worker_tmp.is_dir()
+
+
+def test_handler_file_storage_can_be_isolated_per_installation(tmp_path):
+    first = Handler(
+        QueueConnection(),
+        file_storage_dir=tmp_path / "installation-a" / "rpc-transfer",
+    )
+    second = Handler(
+        QueueConnection(),
+        file_storage_dir=tmp_path / "installation-b" / "rpc-transfer",
+    )
+
+    assert first.file_storage_dir != second.file_storage_dir
+    assert (tmp_path / "installation-a" / "rpc-transfer").is_dir()
+    assert (tmp_path / "installation-b" / "rpc-transfer").is_dir()
+    assert (
+        stat.S_IMODE((tmp_path / "installation-a" / "rpc-transfer").stat().st_mode)
+        == 0o700
+    )
+
+
 # ---------------------------------------------------------------------------
 # Response routing through the receive loop (run()).
 #
@@ -741,6 +776,38 @@ async def test_file_chunk_action_reassembles_file_and_read_delete_roundtrip(
     # Delete once, then again: the second call must swallow FileNotFoundError.
     await handler.delete_local_file(file_key)
     await handler.delete_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_file_chunk_action_enforces_aggregate_handler_limit(tmp_path):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path / "rpc-transfer",
+        max_file_bytes=5,
+    )
+    chunk_handler = handler.actions[CommonAction.FILE_CHUNK.value]
+    base = {
+        "file_key": "limited.bin",
+        "chunk_amount": 2,
+    }
+
+    await chunk_handler(
+        {
+            **base,
+            "chunk_base64": base64.b64encode(b"1234").decode("ascii"),
+            "chunk_index": 0,
+        }
+    )
+    with pytest.raises(ValueError, match="configured size limit"):
+        await chunk_handler(
+            {
+                **base,
+                "chunk_base64": base64.b64encode(b"56").decode("ascii"),
+                "chunk_index": 1,
+            }
+        )
+
+    assert await handler.read_local_file("limited.bin") == b"1234"
 
 
 @pytest.mark.asyncio

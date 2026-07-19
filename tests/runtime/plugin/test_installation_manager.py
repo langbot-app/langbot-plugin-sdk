@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import stat
 import zipfile
 
 import pytest
@@ -119,6 +120,8 @@ async def test_manager_indexes_same_artifact_installations_by_complete_binding(
     assert runtimes[binding_a].paths.home_path != runtimes[binding_b].paths.home_path
     assert runtimes[binding_a].paths.tmp_path != runtimes[binding_b].paths.tmp_path
     assert runtimes[binding_a].paths.data_path != runtimes[binding_b].paths.data_path
+    assert stat.S_IMODE(runtimes[binding_a].paths.root_path.stat().st_mode) == 0o700
+    assert stat.S_IMODE(runtimes[binding_b].paths.root_path.stat().st_mode) == 0o700
     assert context.is_current_installation_binding(binding_a)
     assert context.is_current_installation_binding(binding_b)
 

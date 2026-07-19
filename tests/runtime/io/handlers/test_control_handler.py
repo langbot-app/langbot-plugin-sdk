@@ -41,6 +41,9 @@ TEST_RUNTIME_CONFIG = RuntimeConfig(
     runtime_identity=TEST_RUNTIME_IDENTITY,
     worker_policy=TEST_WORKER_POLICY,
 )
+TEST_SHARED_RUNTIME_CONFIG = TEST_RUNTIME_CONFIG.model_copy(
+    update={"runtime_profile": "shared"}
+)
 TEST_INSTALLATION_BINDING = InstallationBinding(
     instance_uuid="instance-1",
     workspace_uuid="workspace-a",
@@ -291,7 +294,7 @@ class FakePluginManager:
         return {"text": "parsed"}
 
 
-def _handler(*, configured=True):
+def _handler(*, configured=True, runtime_config=TEST_RUNTIME_CONFIG):
     manager = FakePluginManager()
     context = RuntimeContext()
     context.plugin_mgr = manager
@@ -299,7 +302,7 @@ def _handler(*, configured=True):
     handler = ControlConnectionHandler(ProtocolConnection(), context)
     context.activate_control_handler(handler)
     if configured:
-        handler.configure_runtime(TEST_RUNTIME_CONFIG)
+        handler.configure_runtime(runtime_config)
     return handler, manager
 
 
@@ -936,6 +939,54 @@ async def test_control_handler_install_plugin_marketplace_does_not_read_local_fi
         {"current_action": "plugin installed"},
         {},
     ]
+
+
+async def test_shared_control_handler_rejects_legacy_plugin_lifecycle_before_io(
+    monkeypatch,
+):
+    handler, manager = _handler(runtime_config=TEST_SHARED_RUNTIME_CONFIG)
+    file_ops = []
+
+    async def fake_read_local_file(file_key):
+        file_ops.append(("read", file_key))
+        return b"package"
+
+    monkeypatch.setattr(handler, "read_local_file", fake_read_local_file)
+
+    requests = [
+        (
+            LangBotToRuntimeAction.INSTALL_PLUGIN,
+            {
+                "install_source": "local",
+                "install_info": {"plugin_file_key": "pkg-key"},
+            },
+        ),
+        *(
+            (
+                action,
+                {"plugin_author": "tester", "plugin_name": "demo"},
+            )
+            for action in (
+                LangBotToRuntimeAction.RESTART_PLUGIN,
+                LangBotToRuntimeAction.DELETE_PLUGIN,
+                LangBotToRuntimeAction.UPGRADE_PLUGIN,
+            )
+        ),
+    ]
+
+    async with ProtocolSession(handler) as session:
+        responses = [
+            await session.request(action.value, data, seq_id=index)
+            for index, (action, data) in enumerate(requests, start=1)
+        ]
+
+    assert all(response["code"] == 1 for response in responses)
+    assert all(
+        "unavailable in the shared Runtime profile" in response["message"]
+        for response in responses
+    )
+    assert file_ops == []
+    assert manager.calls == []
 
 
 @pytest.mark.parametrize(

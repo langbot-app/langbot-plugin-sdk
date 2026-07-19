@@ -12,6 +12,10 @@ from langbot_plugin.runtime.security import (
     PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
     PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER,
 )
+from langbot_plugin.entities.io.context import (
+    PluginWorkerPolicy,
+    RuntimeIdentity,
+)
 
 
 class FakePluginManager:
@@ -107,6 +111,20 @@ def _args(**overrides):
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
+
+
+def _configure_runtime(app, profile="oss_dev"):
+    app.context.bind_runtime(
+        RuntimeIdentity(instance_uuid="instance-a", runtime_id="runtime-a"),
+        PluginWorkerPolicy(
+            max_cpus=1.0,
+            max_memory_mb=512,
+            max_pids=128,
+            max_open_files=256,
+            max_file_size_mb=512,
+        ),
+        profile,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -294,17 +312,16 @@ async def test_runtime_application_run_coordinates_servers_and_plugin_manager(
         FakePluginHandler,
     )
     app = runtime_app.RuntimeApplication(_args(stdio_control=True))
+    _configure_runtime(app)
 
     await app.run()
 
     manager = FakePluginManager.instances[-1]
-    assert manager.calls[0] == "add_plugin_handler"
-    assert set(manager.calls) == {
+    assert sorted(manager.calls) == [
         "add_plugin_handler",
-        "control_ready",
         "ensure_deps",
         "launch_all",
-    }
+    ]
     assert manager.calls.index("ensure_deps") < manager.calls.index("launch_all")
     assert FakeControlHandler.instances[-1].calls == ["run"]
     assert FakePluginHandler.instances[-1].debug_plugin is True
@@ -338,6 +355,7 @@ async def test_runtime_application_run_can_skip_deps_and_plugin_launch(monkeypat
         FakePluginHandler,
     )
     app = runtime_app.RuntimeApplication(_args(skip_deps_check=True, debug_only=True))
+    _configure_runtime(app)
 
     await app.run()
 
@@ -400,6 +418,7 @@ async def test_runtime_application_run_uses_websocket_control_server(monkeypatch
     app = runtime_app.RuntimeApplication(
         _args(stdio_control=False, skip_deps_check=True, debug_only=True)
     )
+    _configure_runtime(app)
 
     await app.run()
 
@@ -409,6 +428,40 @@ async def test_runtime_application_run_uses_websocket_control_server(monkeypatch
         "add_plugin_handler",
         "control_ready",
     ]
+
+
+async def test_legacy_workloads_wait_for_runtime_configuration(monkeypatch):
+    FakePluginManager.instances = []
+    monkeypatch.setattr(
+        runtime_app.plugin_mgr_cls,
+        "PluginManager",
+        FakePluginManager,
+    )
+    app = runtime_app.RuntimeApplication(_args())
+
+    workload = asyncio.create_task(app._start_legacy_plugin_workloads())
+    await asyncio.sleep(0)
+    assert FakePluginManager.instances[-1].calls == []
+
+    _configure_runtime(app)
+    await workload
+
+    assert FakePluginManager.instances[-1].calls == ["ensure_deps", "launch_all"]
+
+
+async def test_shared_runtime_never_runs_legacy_plugin_workloads(monkeypatch):
+    FakePluginManager.instances = []
+    monkeypatch.setattr(
+        runtime_app.plugin_mgr_cls,
+        "PluginManager",
+        FakePluginManager,
+    )
+    app = runtime_app.RuntimeApplication(_args())
+    _configure_runtime(app, "shared")
+
+    await app._start_legacy_plugin_workloads()
+
+    assert FakePluginManager.instances[-1].calls == []
 
 
 async def test_runtime_application_shutdown_delegates_to_plugin_manager(monkeypatch):

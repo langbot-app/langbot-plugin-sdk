@@ -65,6 +65,9 @@ class PluginConnectionHandler(handler.Handler):
         context: context_module.RuntimeContext,
         stdio_process: asyncio.subprocess.Process | None = None,
         debug_plugin: bool = False,
+        *,
+        file_storage_dir: str | None = None,
+        max_file_bytes: int | None = None,
     ):
         async def disconnect_callback(hdl: handler.Handler):
             logger.debug("disconnect_callback")
@@ -78,7 +81,12 @@ class PluginConnectionHandler(handler.Handler):
                     )
                     return
 
-        super().__init__(connection, disconnect_callback)
+        super().__init__(
+            connection,
+            disconnect_callback,
+            file_storage_dir=file_storage_dir,
+            max_file_bytes=max_file_bytes,
+        )
         self.context = context
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin

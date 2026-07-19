@@ -151,16 +151,29 @@ class RuntimeApplication:
         logger.info("Got control connection.")
         return task
 
-    def _control_task_done(self, task: asyncio.Task) -> None:
-        self._control_tasks.discard(task)
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.error(
-                "Control connection task failed",
-                exc_info=(type(exc), exc, exc.__traceback__),
+    async def _start_legacy_plugin_workloads(self) -> None:
+        """Start the OSS ``data/plugins`` bridge only after the handshake.
+
+        The Runtime does not know its immutable deployment profile until
+        ``SET_RUNTIME_CONFIG`` arrives.  In particular, inspecting legacy
+        artifacts or installing their dependencies before that handshake
+        would let a shared Runtime bypass its verified artifact, nsjail, and
+        immutable dependency-environment boundaries.
+        """
+
+        await self.context.wait_for_runtime_configuration()
+        if self.context.runtime_profile == "shared":
+            logger.info(
+                "Shared Runtime skips legacy data/plugins dependency and launch paths"
             )
+            return
+
+        if not self.args.skip_deps_check:
+            logger.info("Ensuring all installed plugins dependencies are installed...")
+            await self.context.plugin_mgr.ensure_all_plugins_dependencies_installed()
+
+        if not self.args.debug_only:
+            await self.context.plugin_mgr.launch_all_plugins()
 
     async def run(self):
         server_coroutines = []
@@ -195,27 +208,10 @@ class RuntimeApplication:
                 self.context.ws_debug_server.run(new_plugin_debug_connection_callback)
             )
 
-        # Schedule listeners before dependency reconciliation. A slow package
-        # index must not make the control ports look dead.
-        for coroutine in server_coroutines:
-            task = asyncio.create_task(coroutine)
-            self._server_tasks.add(task)
-        await asyncio.sleep(0)
-        for task in list(self._server_tasks):
-            if task.done() and not task.cancelled():
-                exc = task.exception()
-                if exc is not None:
-                    raise exc
-
-        # ==== check and install dependencies for all plugins ====
-        if not self.args.skip_deps_check:
-            logger.info("Ensuring all installed plugins dependencies are installed...")
-            await self.context.plugin_mgr.ensure_all_plugins_dependencies_installed()
-
-        # ==== launch plugin processes ====
-        if not self.args.debug_only:
-            task = asyncio.create_task(self.context.plugin_mgr.launch_all_plugins())
-            self._server_tasks.add(task)
+        # The transport tasks must start first so LangBot can deliver the
+        # immutable Runtime handshake. Legacy plugin inspection and launch are
+        # gated by the resulting profile inside this concurrent workload.
+        tasks.append(self._start_legacy_plugin_workloads())
 
         if self._server_tasks:
             await asyncio.gather(*list(self._server_tasks))

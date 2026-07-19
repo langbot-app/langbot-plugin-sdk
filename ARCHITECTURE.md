@@ -156,6 +156,12 @@ action replays the authoritative set, while tenant-scoped
 installation. Newer placement generations or Runtime revisions fence the old
 worker immediately; stale or cross-Workspace transitions fail closed.
 
+Reconcile and control reconnect restore desired installations, but the current
+Supervisor does not yet attach a crash-completion callback with bounded
+backoff. An unexpectedly exited enabled worker is therefore restored by the
+next apply/reconcile cycle, not immediately. Production shared deployment must
+close and verify that reliability gap before activation.
+
 Plugin packages are verified against `artifact_digest` and extracted once into
 a read-only `artifacts/sha256/<digest>/code` tree. Installations may share that
 code tree, but each gets a separate process and private `home`, `tmp`, and `data`
@@ -177,6 +183,10 @@ PID limits plus file/process rlimits. If `require_hard_limits` is true, missing
 nsjail or cgroup v2 delegation makes configuration fail closed. Artifact `.env`
 files are not loaded in the shared profile. The default `oss_dev` profile keeps
 the direct-process and `.env` behavior needed for local open-source development.
+The Runtime waits for this immutable profile handshake before inspecting legacy
+plugin state. A shared Runtime never scans, installs dependencies for, or
+launches the global `data/plugins` tree; only apply/reconcile desired state may
+start an installation worker.
 
 Response shape:
 
@@ -263,7 +273,13 @@ instance-scoped `SET_RUNTIME_CONFIG` handshake and per-action installation
 bindings are authorization fences after transport authentication; neither is a
 substitute for authenticating the peer.
 
-Installed plugins are stored under `data/plugins/{author}__{name}`. Runtime plugin processes normally run as separate Python processes and connect back via stdio or debug WebSocket.
+Legacy OSS plugins are stored under `data/plugins/{author}__{name}`. Runtime
+plugin processes normally run as separate Python processes and connect back via
+stdio or debug WebSocket. Shared workers instead use the digest-addressed
+artifact tree and installation-private paths described above. RPC transfer files
+created inside a shared worker use its private writable tmp mount; files accepted
+by the Supervisor are stored in an installation-private Runtime directory and
+enforce the instance file-size policy.
 
 ## Box Runtime
 

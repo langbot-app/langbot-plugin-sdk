@@ -102,6 +102,7 @@ def test_shared_launcher_maps_only_trusted_policy_to_nsjail(tmp_path):
     assert args[args.index("--cgroup_mem_max") + 1] == str(384 * 1024 * 1024)
     assert args[args.index("--cgroup_pids_max") + 1] == "73"
     assert args[args.index("--cgroup_cpu_ms_per_sec") + 1] == "1500"
+    assert args[args.index("--time_limit") + 1] == "0"
     assert args[args.index("--rlimit_nofile") + 1] == "211"
     assert args[args.index("--rlimit_fsize") + 1] == "97"
     assert "999" not in args

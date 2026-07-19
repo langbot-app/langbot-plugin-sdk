@@ -69,6 +69,18 @@ TENANT_SCOPED_CONTROL_ACTIONS = frozenset(
     }
 )
 
+# These actions operate on the historical global ``data/plugins`` tree and
+# may install dependencies into the Runtime interpreter. They remain an OSS
+# compatibility surface only; shared installations must use desired state.
+LEGACY_OSS_PLUGIN_LIFECYCLE_ACTIONS = frozenset(
+    {
+        LangBotToRuntimeAction.INSTALL_PLUGIN.value,
+        LangBotToRuntimeAction.RESTART_PLUGIN.value,
+        LangBotToRuntimeAction.DELETE_PLUGIN.value,
+        LangBotToRuntimeAction.UPGRADE_PLUGIN.value,
+    }
+)
+
 
 class ControlConnectionHandler(handler.Handler):
     """The handler for control connection."""
@@ -641,6 +653,15 @@ class ControlConnectionHandler(handler.Handler):
             if action_context is not None:
                 raise ValueError(f"{action} does not accept tenant context")
             return None
+
+        if (
+            self.context.runtime_profile == "shared"
+            and action in LEGACY_OSS_PLUGIN_LIFECYCLE_ACTIONS
+        ):
+            raise ValueError(
+                f"{action} is unavailable in the shared Runtime profile; "
+                "use installation desired state"
+            )
 
         if action in {
             LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,

@@ -36,16 +36,21 @@ from langbot_plugin.entities.io.errors import (
     ActionCallError,
 )
 from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
+from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
 
 logger = logging.getLogger(__name__)
 
 FILE_STORAGE_DIR = "data/temp/lbp"
+SHARED_WORKER_FILE_STORAGE_DIR = "/tmp/lbp-rpc"
 FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
 _SAFE_FILE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 _SAFE_FILE_EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 
 
-def _file_storage_path(file_key: str) -> str:
+def _file_storage_path(
+    file_key: str,
+    file_storage_dir: str | os.PathLike[str] = FILE_STORAGE_DIR,
+) -> str:
     """Resolve one opaque transfer key without accepting path syntax."""
 
     if not isinstance(file_key, str):
@@ -62,7 +67,7 @@ def _file_storage_path(file_key: str) -> str:
         or _SAFE_FILE_KEY_PATTERN.fullmatch(key) is None
     ):
         raise ValueError("Invalid file transfer key")
-    return os.path.join(FILE_STORAGE_DIR, key)
+    return os.path.join(os.fspath(file_storage_dir), key)
 
 
 class Handler(abc.ABC):
@@ -89,6 +94,9 @@ class Handler(abc.ABC):
         connection: connection.Connection,
         disconnect_callback: Callable[[Handler], Coroutine[Any, Any, bool]]
         | None = None,
+        *,
+        file_storage_dir: str | os.PathLike[str] | None = None,
+        max_file_bytes: int | None = None,
     ):
         self.conn = connection
         self.actions = {}
@@ -102,13 +110,34 @@ class Handler(abc.ABC):
             default=None,
         )
 
+        if file_storage_dir is None:
+            runtime_profile = os.environ.get(PLUGIN_RUNTIME_PROFILE_ENV, "oss_dev")
+            file_storage_dir = (
+                SHARED_WORKER_FILE_STORAGE_DIR
+                if runtime_profile == "shared"
+                else FILE_STORAGE_DIR
+            )
+        self.file_storage_dir = os.fspath(file_storage_dir)
+        if max_file_bytes is not None and (
+            isinstance(max_file_bytes, bool)
+            or not isinstance(max_file_bytes, int)
+            or max_file_bytes <= 0
+        ):
+            raise ValueError("max_file_bytes must be a positive integer")
+        self.max_file_bytes = max_file_bytes
+        self._file_transfer_lock = asyncio.Lock()
+
         self._disconnect_callback = disconnect_callback
 
-        os.makedirs(FILE_STORAGE_DIR, exist_ok=True)
+        os.makedirs(self.file_storage_dir, mode=0o700, exist_ok=True)
+        os.chmod(self.file_storage_dir, 0o700)
 
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
-            file_path = _file_storage_path(data["file_key"])
+            file_path = _file_storage_path(
+                data["file_key"],
+                self.file_storage_dir,
+            )
             chunk_base64 = data["chunk_base64"]
             chunk_index = data["chunk_index"]
             chunk_amount = data["chunk_amount"]
@@ -123,11 +152,31 @@ class Handler(abc.ABC):
             ):
                 raise ValueError("Invalid file chunk position")
             chunk_bytes = base64.b64decode(chunk_base64, validate=True)
-            # The first chunk replaces stale partial data for the same opaque
-            # transfer id; later chunks append in protocol order.
-            mode = "wb" if chunk_index == 0 else "ab"
-            async with aiofiles.open(file_path, mode) as f:
-                await f.write(chunk_bytes)
+            async with self._file_transfer_lock:
+                # The first chunk replaces stale partial data for the same
+                # opaque transfer id; later chunks append. Runtime-side
+                # installation handlers cap the aggregate bytes written on
+                # behalf of an untrusted worker so protocol transfer cannot
+                # bypass the worker's per-file policy.
+                mode = "wb" if chunk_index == 0 else "ab"
+                existing_size = 0
+                if mode == "ab":
+                    try:
+                        existing_size = os.path.getsize(file_path)
+                    except FileNotFoundError:
+                        pass
+                resulting_size = (
+                    len(chunk_bytes)
+                    if mode == "wb"
+                    else existing_size + len(chunk_bytes)
+                )
+                if (
+                    self.max_file_bytes is not None
+                    and resulting_size > self.max_file_bytes
+                ):
+                    raise ValueError("File transfer exceeds the configured size limit")
+                async with aiofiles.open(file_path, mode) as f:
+                    await f.write(chunk_bytes)
             return ActionResponse.success({})
 
     def set_disconnect_callback(
@@ -608,11 +657,16 @@ class Handler(abc.ABC):
         return file_key
 
     async def read_local_file(self, file_key: str) -> bytes:
-        async with aiofiles.open(_file_storage_path(file_key), "rb") as f:
+        async with aiofiles.open(
+            _file_storage_path(file_key, self.file_storage_dir),
+            "rb",
+        ) as f:
             return await f.read()
 
     async def delete_local_file(self, file_key: str) -> None:
         try:
-            await aiofiles.os.remove(_file_storage_path(file_key))
+            await aiofiles.os.remove(
+                _file_storage_path(file_key, self.file_storage_dir)
+            )
         except FileNotFoundError:
             return

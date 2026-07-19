@@ -61,6 +61,9 @@ registration uses a short-lived, one-use capability bound to that same tuple.
 When `worker_policy.require_hard_limits` is true, configuration fails if nsjail
 or delegated cgroup v2 controllers are unavailable. The `oss_dev` profile is the
 default and retains direct local processes and artifact `.env` loading.
+The legacy `install_plugin`, `restart_plugin`, `delete_plugin`, and
+`upgrade_plugin` actions are rejected in `shared`; shared lifecycle changes use
+only `apply_plugin_installation`, `remove_plugin_installation`, and reconcile.
 
 ## `reconcile_plugin_installations`
 

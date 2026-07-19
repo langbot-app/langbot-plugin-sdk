@@ -700,9 +700,7 @@ class PluginManager:
                     # construction; dependency state must follow that same
                     # Runtime-owned volume.
                     self.dependency_environment_store = (
-                        PluginDependencyEnvironmentStore(
-                            self.artifact_store.base_path
-                        )
+                        PluginDependencyEnvironmentStore(self.artifact_store.base_path)
                     )
                 try:
                     current.dependency_environment = (
@@ -737,9 +735,10 @@ class PluginManager:
 
                 # A concurrent newer apply/remove can fence this binding while
                 # its shared environment is being prepared. Never launch it.
-                if (
-                    self._installations.get(binding) is not current
-                    or not self.context.is_current_installation_binding(binding)
+                if self._installations.get(
+                    binding
+                ) is not current or not self.context.is_current_installation_binding(
+                    binding
                 ):
                     return {
                         "installation_uuid": binding.installation_uuid,
@@ -890,6 +889,10 @@ class PluginManager:
                 connection,
                 self.context,
                 stdio_process=controller.process,
+                file_storage_dir=str(runtime.paths.root_path / "rpc-transfer"),
+                max_file_bytes=(
+                    self.context.worker_policy.max_file_size_mb * 1024 * 1024
+                ),
             )
             runtime.plugin_handler = plugin_handler
             await self.add_plugin_handler(plugin_handler)

@@ -180,9 +180,7 @@ class PluginWorkerLauncher:
             "sdk_version": sdk_version,
         }
         return hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
 
     async def _install_dependency_environment(
@@ -323,7 +321,17 @@ class PluginWorkerLauncher:
             launch_spec.paths.jail_root_path,
             extra_targets=(runtime_prefix_mount,) if runtime_prefix_mount else (),
         )
-        args = ["--mode", "o", "--chroot", str(launch_spec.paths.jail_root_path)]
+        # Plugin installations are resident workers. NsJail defaults to a
+        # 600-second jail lifetime, so explicitly disable the wall-time limit;
+        # lifecycle revocation is owned by desired state and generation fences.
+        args = [
+            "--mode",
+            "o",
+            "--time_limit",
+            "0",
+            "--chroot",
+            str(launch_spec.paths.jail_root_path),
+        ]
         args.append("--disable_clone_newnet")
         self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
 

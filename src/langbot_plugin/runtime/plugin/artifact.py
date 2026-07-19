@@ -137,6 +137,8 @@ class PluginArtifactStore:
             "installation_uuid",
         )
         root_path = self.installations_path / installation_uuid
+        root_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root_path.chmod(0o700)
         home_path = root_path / "home"
         tmp_path = root_path / "tmp"
         data_path = root_path / "data"
@@ -188,7 +190,9 @@ class PluginArtifactStore:
             for info in members:
                 member_name = str(info.filename or "")
                 if not member_name or "\x00" in member_name:
-                    raise ValueError("Plugin artifact contains an unsafe empty or NUL path")
+                    raise ValueError(
+                        "Plugin artifact contains an unsafe empty or NUL path"
+                    )
 
                 portable_name = member_name.replace("\\", "/")
                 normalized = posixpath.normpath(portable_name)
@@ -201,7 +205,9 @@ class PluginArtifactStore:
                     or ".." in raw_parts
                     or (len(first_component) >= 2 and first_component[1] == ":")
                 ):
-                    raise ValueError(f"Plugin artifact contains an unsafe path: {member_name}")
+                    raise ValueError(
+                        f"Plugin artifact contains an unsafe path: {member_name}"
+                    )
 
                 target = destination_root.joinpath(*normalized.split("/"))
                 try:
@@ -213,7 +219,9 @@ class PluginArtifactStore:
 
                 target_key = os.path.normcase(str(target))
                 if target_key in seen_paths:
-                    raise ValueError(f"Plugin artifact contains a duplicate path: {member_name}")
+                    raise ValueError(
+                        f"Plugin artifact contains a duplicate path: {member_name}"
+                    )
                 seen_paths.add(target_key)
 
                 unix_mode = (info.external_attr >> 16) & 0xFFFF
@@ -306,18 +314,12 @@ class PluginArtifactStore:
                                 break
                             extracted_entry += len(chunk)
                             extracted_total += len(chunk)
-                            if (
-                                extracted_entry
-                                > _MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES
-                            ):
+                            if extracted_entry > _MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES:
                                 raise ValueError(
                                     "Plugin artifact entry exceeds the uncompressed size "
                                     f"limit: {info.filename}"
                                 )
-                            if (
-                                extracted_total
-                                > _MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES
-                            ):
+                            if extracted_total > _MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES:
                                 raise ValueError(
                                     "Plugin artifact exceeds the total uncompressed size limit"
                                 )
