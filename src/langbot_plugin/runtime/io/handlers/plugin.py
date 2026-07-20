@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # Timeout for long-running operations like command execution and tool calls (3 minutes)
 LONG_RUNNING_OPERATION_TIMEOUT = 180.0
 
+# Knowledge retrieval may need to cold-load an embedding model before searching.
+KNOWLEDGE_RETRIEVAL_TIMEOUT = 120.0
+
 
 def _get_caller_plugin_identity(
     handler_instance: "PluginConnectionHandler",
@@ -1009,6 +1012,7 @@ class PluginConnectionHandler(handler.Handler):
         resp = await self.call_action(
             RuntimeToPluginAction.RETRIEVE_KNOWLEDGE,
             {"retriever_name": retriever_name, "retrieval_context": retrieval_context},
+            timeout=KNOWLEDGE_RETRIEVAL_TIMEOUT,
         )
         return resp
 

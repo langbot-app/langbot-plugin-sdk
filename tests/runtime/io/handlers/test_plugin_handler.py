@@ -787,6 +787,11 @@ async def test_plugin_connection_handler_peer_call_helpers(monkeypatch):
         "action": RuntimeToPluginAction.RETRIEVE_KNOWLEDGE.value,
         "data": {"retriever_name": "kb", "retrieval_context": {"query": "hi"}},
     }
+    assert (
+        RuntimeToPluginAction.RETRIEVE_KNOWLEDGE,
+        {"retriever_name": "kb", "retrieval_context": {"query": "hi"}},
+        plugin_handler_module.KNOWLEDGE_RETRIEVAL_TIMEOUT,
+    ) in calls
     assert await handler.shutdown_plugin() == {
         "action": RuntimeToPluginAction.SHUTDOWN.value,
         "data": {},
