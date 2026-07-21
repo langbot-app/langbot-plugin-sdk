@@ -1,10 +1,13 @@
 import asyncio
 import importlib.metadata
 import importlib.util
+import json
 import os
 import re
 import subprocess
 import sys
+import pathlib
+import venv
 
 from packaging.requirements import Requirement
 from pip._internal import main as pipmain
@@ -13,6 +16,8 @@ from pip._internal import main as pipmain
 PYPI_INDEX_URL_ENV = "LANGBOT_PLUGIN_PYPI_INDEX_URL"
 PYPI_TRUSTED_HOST_ENV = "LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"
 DEFAULT_PYPI_INDEX_URL = "https://pypi.org/simple"
+PLUGIN_VENV_DIR = ".venv"
+DEFAULT_INSTALL_TIMEOUT_SEC = 300.0
 
 
 def get_pip_index_args() -> list[str]:
@@ -95,14 +100,18 @@ def install_single(
 
 
 async def install_single_async(
-    package: str, extra_params: list | None = None
+    package: str,
+    extra_params: list | None = None,
+    *,
+    python_executable: str | None = None,
+    timeout_sec: float = DEFAULT_INSTALL_TIMEOUT_SEC,
 ) -> tuple[int, int, str]:
     """Install a package via async subprocess without blocking the event loop."""
     if extra_params is None:
         extra_params = []
 
     cmd = [
-        sys.executable,
+        python_executable or sys.executable,
         "-m",
         "pip",
         "install",
@@ -115,7 +124,21 @@ async def install_single_async(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, stderr_bytes = await proc.communicate()
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout_sec
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        stdout_bytes, stderr_bytes = await proc.communicate()
+        stderr_bytes += (
+            f"\nDependency installation timed out after {timeout_sec:.0f}s".encode()
+        )
+        return 124, 0, (
+            stdout_bytes.decode("utf-8", errors="ignore")
+            + "\n"
+            + stderr_bytes.decode("utf-8", errors="ignore")
+        )
     output = (
         stdout_bytes.decode("utf-8", errors="ignore")
         + "\n"
@@ -311,6 +334,8 @@ async def install_with_retry(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     extra_params: list | None = None,
+    python_executable: str | None = None,
+    timeout_sec: float = DEFAULT_INSTALL_TIMEOUT_SEC,
 ) -> tuple[int, int, str]:
     """Install a package with retry on failure.
 
@@ -326,7 +351,10 @@ async def install_with_retry(
     last_error = ""
     for attempt in range(max_retries):
         returncode, downloaded_bytes, output = await install_single_async(
-            package, extra_params
+            package,
+            extra_params,
+            python_executable=python_executable,
+            timeout_sec=timeout_sec,
         )
         if returncode == 0:
             return returncode, downloaded_bytes, ""
@@ -341,6 +369,119 @@ async def install_with_retry(
             await asyncio.sleep(retry_delay)
 
     return returncode, 0, last_error
+
+
+def get_plugin_python(plugin_path: str) -> str:
+    """Return the isolated interpreter for a plugin when it exists."""
+    root = pathlib.Path(plugin_path) / PLUGIN_VENV_DIR
+    candidate = root / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    return str(candidate) if candidate.is_file() else sys.executable
+
+
+async def ensure_plugin_environment(plugin_path: str) -> str:
+    """Create a plugin-local environment that can still import the SDK.
+
+    System site packages expose the runtime's SDK without reinstalling it, while
+    dependencies installed into the venv shadow only this plugin's imports.
+    """
+    root = pathlib.Path(plugin_path) / PLUGIN_VENV_DIR
+    python_path = get_plugin_python(plugin_path)
+    if python_path != sys.executable:
+        return python_path
+
+    await asyncio.to_thread(
+        venv.EnvBuilder(with_pip=True, system_site_packages=True).create,
+        root,
+    )
+    return get_plugin_python(plugin_path)
+
+
+async def install_requirements_isolated(
+    plugin_path: str,
+    *,
+    timeout_sec: float = DEFAULT_INSTALL_TIMEOUT_SEC,
+) -> tuple[int, str]:
+    """Install a plugin's requirements without blocking the runtime loop."""
+    requirements_file = pathlib.Path(plugin_path) / "requirements.txt"
+    if not requirements_file.is_file():
+        return 0, ""
+
+    python_path = await ensure_plugin_environment(plugin_path)
+    proc = await asyncio.create_subprocess_exec(
+        python_path,
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        str(requirements_file),
+        *get_pip_index_args(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout_sec)
+    except asyncio.TimeoutError:
+        proc.kill()
+        stdout, stderr = await proc.communicate()
+        return 124, (
+            stdout + stderr + f"\nTimed out after {timeout_sec:.0f}s".encode()
+        ).decode("utf-8", errors="replace")
+    return proc.returncode or 0, (stdout + stderr).decode("utf-8", errors="replace")
+
+
+async def classify_requirements_in_environment(
+    python_executable: str,
+    deps: list[str],
+    *,
+    timeout_sec: float = 30.0,
+) -> tuple[list[str], list[str]]:
+    """Verify requirements against the interpreter that will run the plugin."""
+    verifier = r"""
+import importlib.metadata
+import json
+import sys
+from packaging.requirements import Requirement
+
+missing = []
+version_mismatch = []
+for spec in json.loads(sys.argv[1]):
+    try:
+        req = Requirement(spec)
+    except Exception:
+        missing.append(spec)
+        continue
+    if req.marker and not req.marker.evaluate():
+        continue
+    try:
+        version = importlib.metadata.version(req.name)
+    except importlib.metadata.PackageNotFoundError:
+        missing.append(spec)
+        continue
+    if req.specifier and version not in req.specifier:
+        version_mismatch.append(spec)
+print(json.dumps([missing, version_mismatch]))
+"""
+    proc = await asyncio.create_subprocess_exec(
+        python_executable,
+        "-c",
+        verifier,
+        json.dumps(deps),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout_sec)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return list(deps), []
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Dependency verification subprocess failed: "
+            + stderr.decode("utf-8", errors="replace").strip()
+        )
+    result = json.loads(stdout.decode("utf-8"))
+    return list(result[0]), list(result[1])
 
 
 async def precheck_dependencies(requirements_file: str) -> dict:

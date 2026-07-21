@@ -309,7 +309,13 @@ def _patch_install_sequence(monkeypatch, results):
     seq = list(results)
     calls = {"n": 0}
 
-    async def fake_install(package, extra_params=None):
+    async def fake_install(
+        package,
+        extra_params=None,
+        *,
+        python_executable=None,
+        timeout_sec=pkgmgr.DEFAULT_INSTALL_TIMEOUT_SEC,
+    ):
         calls["n"] += 1
         return seq.pop(0)
 

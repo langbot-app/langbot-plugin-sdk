@@ -8,11 +8,12 @@ from typing import AsyncGenerator
 import asyncio
 import io
 import enum
-import sys
 import time
 import zipfile
 import yaml
 import logging
+import contextlib
+import uuid
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -45,6 +46,11 @@ from langbot_plugin.entities.io.errors import (
 
 logger = logging.getLogger(__name__)
 
+_PLUGIN_RESTART_INITIAL_DELAY_SEC = 1.0
+_PLUGIN_RESTART_MAX_DELAY_SEC = 60.0
+_PLUGIN_STABLE_WINDOW_SEC = 60.0
+_PLUGIN_READY_TIMEOUT_SEC = 30.0
+
 
 class PluginInstallSource(enum.Enum):
     """The source of plugin installation."""
@@ -75,6 +81,11 @@ class PluginManager:
         self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
+        self._control_connection_ready = asyncio.Event()
+        self._plugin_supervisors: dict[str, asyncio.Task[None]] = {}
+        self._desired_plugin_paths: set[str] = set()
+        self._shutting_down = False
+        self._dependency_errors: dict[str, str] = {}
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
@@ -157,29 +168,119 @@ class PluginManager:
             logger.warning(f"Failed to notify plugin diagnostic for {plugin_id}: {e}")
 
     async def ensure_all_plugins_dependencies_installed(self):
-        for plugin_path in glob.glob("data/plugins/*"):
-            if not os.path.isdir(plugin_path):
-                continue
+        semaphore = asyncio.Semaphore(2)
 
-            # install dependencies
-            requirements_file = os.path.join(plugin_path, "requirements.txt")
-            if os.path.exists(requirements_file):
-                pkgmgr_helper.install_requirements(requirements_file)
-                logger.info(f"Installed dependencies for plugin at {plugin_path}")
+        async def reconcile(plugin_path: str) -> None:
+            async with semaphore:
+                returncode, output = await pkgmgr_helper.install_requirements_isolated(
+                    plugin_path
+                )
+                if returncode == 0:
+                    self._dependency_errors.pop(plugin_path, None)
+                    logger.info(
+                        "Installed isolated dependencies for plugin at %s",
+                        plugin_path,
+                    )
+                    return
+                tail = output.strip()[-2000:]
+                self._dependency_errors[plugin_path] = tail
+                logger.error(
+                    "Failed to install dependencies for plugin at %s: %s",
+                    plugin_path,
+                    tail,
+                )
+
+        plugin_paths = [
+            path for path in glob.glob("data/plugins/*") if os.path.isdir(path)
+        ]
+        await asyncio.gather(*(reconcile(path) for path in plugin_paths))
 
     async def launch_all_plugins(self):
-        self.wait_for_control_connection = asyncio.Future()
-        await self.wait_for_control_connection
+        await self._control_connection_ready.wait()
         for plugin_path in glob.glob("data/plugins/*"):
             if not os.path.isdir(plugin_path):
                 continue
 
-            # launch plugin process
-            task = self.launch_plugin(plugin_path)
-            self.plugin_run_tasks.append(task)
+            self.start_plugin_supervisor(plugin_path)
 
         logger.info(f"launch all plugins: {len(self.plugin_run_tasks)}")
-        await asyncio.gather(*self.plugin_run_tasks)
+        if self.plugin_run_tasks:
+            await asyncio.gather(*list(self.plugin_run_tasks))
+
+    def start_plugin_supervisor(self, plugin_path: str) -> asyncio.Task[None]:
+        """Ensure one crash-restarting supervisor owns a production plugin."""
+        existing = self._plugin_supervisors.get(plugin_path)
+        if existing is not None and not existing.done():
+            return existing
+
+        self._desired_plugin_paths.add(plugin_path)
+        task = asyncio.create_task(self._supervise_plugin(plugin_path))
+        self._plugin_supervisors[plugin_path] = task
+        self.plugin_run_tasks.append(task)
+        task.add_done_callback(
+            lambda completed, path=plugin_path: self._supervisor_done(path, completed)
+        )
+        return task
+
+    def _supervisor_done(self, plugin_path: str, task: asyncio.Task[None]) -> None:
+        if self._plugin_supervisors.get(plugin_path) is task:
+            self._plugin_supervisors.pop(plugin_path, None)
+        with contextlib.suppress(ValueError):
+            self.plugin_run_tasks.remove(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Plugin supervisor failed for %s",
+                plugin_path,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    async def _supervise_plugin(self, plugin_path: str) -> None:
+        delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+        while (
+            not self._shutting_down
+            and plugin_path in self._desired_plugin_paths
+            and os.path.isdir(plugin_path)
+        ):
+            started_at = asyncio.get_running_loop().time()
+            try:
+                await self.launch_plugin(plugin_path)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Plugin process failed: %s", plugin_path)
+
+            if (
+                self._shutting_down
+                or plugin_path not in self._desired_plugin_paths
+                or not os.path.isdir(plugin_path)
+            ):
+                return
+
+            uptime = asyncio.get_running_loop().time() - started_at
+            if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
+                delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+            logger.warning(
+                "Plugin process exited unexpectedly; restarting %s in %.1fs",
+                plugin_path,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
+
+    async def stop_plugin_supervisor(self, plugin_path: str) -> None:
+        self._desired_plugin_paths.discard(plugin_path)
+        task = self._plugin_supervisors.get(plugin_path)
+        if task is None or task is asyncio.current_task():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    def mark_control_connection_ready(self) -> None:
+        self._control_connection_ready.set()
 
     async def launch_plugin(self, plugin_path: str):
         from langbot_plugin.runtime.settings import settings as runtime_settings
@@ -188,7 +289,7 @@ class PluginManager:
             # Due to Windows's lack of supports for both stdio and subprocess:
             # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
             # We have to launch plugin via cmd but communicate via ws.
-            python_path = sys.executable
+            python_path = pkgmgr_helper.get_plugin_python(plugin_path)
 
             # Build command with debug key if set
             cmd_args = [
@@ -212,14 +313,20 @@ class PluginManager:
                 cwd=plugin_path,
             )
 
-            # hold the process
-            task = asyncio.create_task(process.wait())
-
-            # the plugin will connect to the runtime via ws automatically
-
-            await task
+            try:
+                # The plugin connects to the runtime via websocket automatically.
+                await process.wait()
+            except asyncio.CancelledError:
+                if process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=2)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+                raise
         else:
-            python_path = sys.executable
+            python_path = pkgmgr_helper.get_plugin_python(plugin_path)
 
             # Build args with debug key if set
             args = ["-m", "langbot_plugin.cli.__init__", "run", "-s", "--prod"]
@@ -243,7 +350,7 @@ class PluginManager:
                 await ctrl.run(new_plugin_connection_callback)
             except asyncio.CancelledError:
                 logger.info(f"plugin process cancelled: {plugin_path}")
-                return
+                raise
 
     async def add_plugin_handler(
         self,
@@ -265,21 +372,14 @@ class PluginManager:
     async def install_plugin_from_file(
         self, plugin_file: bytes
     ) -> tuple[str, str, str, str]:
-        # read manifest.yaml file
-        file_reader = io.BytesIO(plugin_file)
-        manifest_file = zipfile.ZipFile(file_reader, "r")
-        manifest_file_content = manifest_file.read("manifest.yaml")
-        manifest = yaml.safe_load(manifest_file_content)
+        """Validate and extract a package into an isolated staging directory."""
+        with zipfile.ZipFile(io.BytesIO(plugin_file), "r") as manifest_file:
+            manifest = yaml.safe_load(manifest_file.read("manifest.yaml"))
 
-        # extract plugin name and author from manifest
         plugin_name = manifest["metadata"]["name"]
         plugin_author = manifest["metadata"]["author"]
         plugin_version = manifest["metadata"]["version"]
 
-        # unzip to data/plugins/{plugin_author}__{plugin_name}
-        plugin_path = self.get_plugin_path(plugin_author, plugin_name)
-
-        # check if plugin already exists
         for plugin in self.plugins:
             if (
                 plugin.manifest.metadata.author == plugin_author
@@ -293,27 +393,97 @@ class PluginManager:
                     raise ValueError(
                         f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists, and it is a debugging plugin"
                     )
-                else:
-                    # shutdown old version
-                    await self.shutdown_plugin(plugin)
-                    # await self.remove_plugin_container(plugin)
-                    # delete old version
-                    shutil.rmtree(plugin_path)
-                    break
 
-        os.makedirs(plugin_path, exist_ok=True)
-        manifest_file.extractall(plugin_path)
+        staging_path = os.path.join(
+            "data",
+            ".plugin-staging",
+            f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
+        )
 
-        return plugin_path, plugin_author, plugin_name, plugin_version
+        def extract() -> None:
+            os.makedirs(staging_path, exist_ok=False)
+            try:
+                with zipfile.ZipFile(io.BytesIO(plugin_file), "r") as archive:
+                    archive.extractall(staging_path)
+            except Exception:
+                shutil.rmtree(staging_path, ignore_errors=True)
+                raise
+
+        await asyncio.to_thread(extract)
+        return staging_path, plugin_author, plugin_name, plugin_version
 
     async def install_plugin_from_marketplace(
         self, plugin_author: str, plugin_name: str, plugin_version: str
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, str, str]:
         # download plugin zip file from marketplace
         plugin_zip_file = await marketplace_helper.download_plugin(
             plugin_author, plugin_name, plugin_version
         )
         return await self.install_plugin_from_file(plugin_zip_file)
+
+    async def _activate_staged_plugin(
+        self, staging_path: str, plugin_author: str, plugin_name: str
+    ) -> str | None:
+        """Atomically replace plugin files after stopping the old generation."""
+        target_path = self.get_plugin_path(plugin_author, plugin_name)
+        old_plugin = self.find_plugin(plugin_author, plugin_name)
+        if old_plugin is not None:
+            self._desired_plugin_paths.discard(target_path)
+            await self.shutdown_plugin(old_plugin)
+            await self.stop_plugin_supervisor(target_path)
+
+        backup_path: str | None = None
+        if os.path.isdir(target_path):
+            backup_path = os.path.join(
+                "data",
+                ".plugin-backups",
+                f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
+            )
+            os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+            os.replace(target_path, backup_path)
+
+        try:
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            os.replace(staging_path, target_path)
+        except Exception:
+            if backup_path is not None and os.path.isdir(backup_path):
+                os.replace(backup_path, target_path)
+            raise
+        return backup_path
+
+    async def _wait_for_plugin_ready(
+        self, plugin_author: str, plugin_name: str, timeout: float
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            plugin = self.find_plugin(plugin_author, plugin_name)
+            if (
+                plugin is not None
+                and plugin.status
+                == runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+            ):
+                return
+            await asyncio.sleep(0.1)
+        raise RuntimeError(
+            f"Plugin {plugin_author}/{plugin_name} did not become ready within {timeout:.0f}s"
+        )
+
+    async def _rollback_plugin_activation(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        backup_path: str | None,
+    ) -> None:
+        target_path = self.get_plugin_path(plugin_author, plugin_name)
+        self._desired_plugin_paths.discard(target_path)
+        current = self.find_plugin(plugin_author, plugin_name)
+        if current is not None:
+            await self.shutdown_plugin(current)
+        await self.stop_plugin_supervisor(target_path)
+        shutil.rmtree(target_path, ignore_errors=True)
+        if backup_path is not None and os.path.isdir(backup_path):
+            os.replace(backup_path, target_path)
+            self.start_plugin_supervisor(target_path)
 
     async def install_plugin(
         self, source: PluginInstallSource, install_info: dict[str, typing.Any]
@@ -368,139 +538,116 @@ class PluginManager:
         else:
             raise ValueError(f"Invalid source: {source}")
 
-        # install deps
-        logger.info("installing dependencies")
-        yield {"current_action": "installing dependencies"}
-        requirements_file = os.path.join(plugin_path, "requirements.txt")
-        if os.path.exists(requirements_file):
-            precheck_result = await pkgmgr_helper.precheck_dependencies(
-                requirements_file
-            )
-            deps = precheck_result["deps"]
-            to_install = precheck_result["to_install"]
-            already_installed = precheck_result["already_installed"]
+        backup_path: str | None = None
+        activated = False
+        try:
+            logger.info("installing isolated plugin dependencies")
+            yield {"current_action": "installing dependencies"}
+            requirements_file = os.path.join(plugin_path, "requirements.txt")
+            if os.path.exists(requirements_file):
+                deps = pkgmgr_helper.parse_requirements(requirements_file)
+                python_path = await pkgmgr_helper.ensure_plugin_environment(
+                    plugin_path
+                )
+                total_downloaded = 0
+                started_at = time.time()
+                failures: dict[str, str] = {}
+                for index, dep in enumerate(deps):
+                    elapsed = time.time() - started_at
+                    yield {
+                        "current_action": "installing dependencies",
+                        "metadata": {
+                            "deps_total": len(deps),
+                            "deps_installed": index,
+                            "deps_remaining": len(deps) - index,
+                            "current_dep": dep,
+                            "deps_downloaded_size": total_downloaded,
+                            "deps_speed": total_downloaded / elapsed
+                            if elapsed > 0
+                            else 0,
+                            "already_installed": 0,
+                            "to_install": len(deps),
+                        },
+                    }
+                    returncode, downloaded, error = (
+                        await pkgmgr_helper.install_with_retry(
+                            dep,
+                            max_retries=3,
+                            python_executable=python_path,
+                        )
+                    )
+                    total_downloaded += downloaded
+                    if returncode != 0:
+                        failures[dep] = error
 
-            logger.info(
-                f"Dependency precheck: {len(already_installed)} already installed, "
-                f"{len(to_install)} to install"
-            )
-
-            total_deps = len(deps)
-            total_downloaded = 0
-            start_time = time.time()
-            # Requirement specs pip could not install even after retries,
-            # mapped to the tail of pip's stderr for diagnostics.
-            install_failures: dict[str, str] = {}
-            already_installed_count = len(already_installed)
-            to_install_count = len(to_install)
-
-            for i, dep in enumerate(to_install):
-                elapsed = time.time() - start_time
+                elapsed = time.time() - started_at
                 yield {
                     "current_action": "installing dependencies",
                     "metadata": {
-                        "deps_total": total_deps,
-                        "deps_installed": already_installed_count + i,
-                        "deps_remaining": to_install_count - i,
-                        "current_dep": dep,
+                        "deps_total": len(deps),
+                        "deps_installed": len(deps) - len(failures),
+                        "deps_remaining": 0,
+                        "deps_failed": len(failures),
+                        "failed_deps": list(failures),
+                        "current_dep": "",
                         "deps_downloaded_size": total_downloaded,
-                        "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
-                        "already_installed": already_installed_count,
-                        "to_install": to_install_count,
+                        "deps_speed": total_downloaded / elapsed
+                        if elapsed > 0
+                        else 0,
                     },
                 }
-
-                (
-                    returncode,
-                    downloaded_bytes,
-                    error_msg,
-                ) = await pkgmgr_helper.install_with_retry(dep, max_retries=3)
-                total_downloaded += downloaded_bytes
-
-                if returncode != 0:
-                    logger.error(
-                        f"Failed to install dependency after retries: {dep}, "
-                        f"error: {error_msg}"
+                if failures:
+                    raise DependencyInstallError(
+                        failed=list(failures),
+                        plugin=f"{plugin_author}/{plugin_name}",
+                        details=failures,
                     )
-                    install_failures[dep] = error_msg
 
-            # Verification: pip may report success while the distribution is
-            # still unimportable or the installed version violates the
-            # specifier. Only verify deps that pip did not already flag as a
-            # hard install failure, so the two error classes stay distinct.
-            verified_targets = [d for d in deps if d not in install_failures]
-            missing_deps, version_mismatch = (
-                pkgmgr_helper.classify_unsatisfied_dependencies(verified_targets)
-            )
+                missing, version_mismatch = (
+                    await pkgmgr_helper.classify_requirements_in_environment(
+                        python_path, deps
+                    )
+                )
+                if missing or version_mismatch:
+                    raise DependencyVerificationError(
+                        missing=missing,
+                        version_mismatch=version_mismatch,
+                        plugin=f"{plugin_author}/{plugin_name}",
+                    )
 
-            failed_deps = (
-                list(install_failures.keys()) + missing_deps + version_mismatch
-            )
-
-            elapsed = time.time() - start_time
-            yield {
-                "current_action": "installing dependencies",
-                "metadata": {
-                    "deps_total": total_deps,
-                    "deps_installed": total_deps - len(failed_deps),
-                    "deps_remaining": 0,
-                    "deps_failed": len(failed_deps),
-                    "failed_deps": failed_deps,
-                    "current_dep": "",
-                    "deps_downloaded_size": total_downloaded,
-                    "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
+            yield {"current_action": "initializing plugin settings"}
+            await self.context.control_handler.call_action(
+                RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
+                {
+                    "plugin_author": plugin_author,
+                    "plugin_name": plugin_name,
+                    "install_source": source.value,
+                    "install_info": install_info
+                    if source != PluginInstallSource.LOCAL
+                    else {},
                 },
-            }
+            )
 
-            plugin_ref = f"{plugin_author}/{plugin_name}"
-
-            # pip-level install failures take priority — they are the root
-            # cause and carry the actual pip stderr for debugging.
-            if install_failures:
-                logger.error(
-                    f"Plugin {plugin_ref} failed to install "
-                    f"{len(install_failures)} dependencies: "
-                    f"{list(install_failures.keys())}"
+            yield {"current_action": "launching plugin"}
+            backup_path = await self._activate_staged_plugin(
+                plugin_path, plugin_author, plugin_name
+            )
+            activated = True
+            target_path = self.get_plugin_path(plugin_author, plugin_name)
+            self.start_plugin_supervisor(target_path)
+            await self._wait_for_plugin_ready(
+                plugin_author, plugin_name, _PLUGIN_READY_TIMEOUT_SEC
+            )
+            if backup_path is not None:
+                shutil.rmtree(backup_path, ignore_errors=True)
+        except Exception:
+            if activated:
+                await self._rollback_plugin_activation(
+                    plugin_author, plugin_name, backup_path
                 )
-                raise DependencyInstallError(
-                    failed=list(install_failures.keys()),
-                    plugin=plugin_ref,
-                    details=install_failures,
-                )
-
-            # pip succeeded but the result cannot be verified — surface which
-            # deps are missing vs. version-mismatched so callers can react.
-            if missing_deps or version_mismatch:
-                logger.error(
-                    f"Plugin {plugin_ref} dependency verification failed — "
-                    f"missing: {missing_deps}, version mismatch: {version_mismatch}"
-                )
-                raise DependencyVerificationError(
-                    missing=missing_deps,
-                    version_mismatch=version_mismatch,
-                    plugin=plugin_ref,
-                )
-
-        # initialize plugin settings
-        yield {"current_action": "initializing plugin settings"}
-        await self.context.control_handler.call_action(
-            RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
-            {
-                "plugin_author": plugin_author,
-                "plugin_name": plugin_name,
-                "install_source": source.value,
-                "install_info": install_info
-                if source != PluginInstallSource.LOCAL
-                else {},
-            },
-        )
-
-        # launch plugin
-        yield {"current_action": "launching plugin"}
-        task = self.launch_plugin(plugin_path)
-
-        asyncio_task = asyncio.create_task(task)
-        self.plugin_run_tasks.append(asyncio_task)
+            else:
+                shutil.rmtree(plugin_path, ignore_errors=True)
+            raise
 
     async def register_plugin(
         self,
@@ -549,17 +696,21 @@ class PluginManager:
         plugin_container.install_info = plugin_settings["install_info"]
         self.plugins.append(plugin_container)
 
-        # initialize plugin
-        await handler.initialize_plugin(plugin_settings)
+        try:
+            # initialize plugin
+            await handler.initialize_plugin(plugin_settings)
 
-        # refresh plugin container from plugin (components may have changed)
-        plugin_container_data = await handler.get_plugin_container()
-        refreshed = runtime_plugin_container.PluginContainer.from_dict(
-            plugin_container_data
-        )
-        plugin_container.components = refreshed.components
-        plugin_container.manifest = refreshed.manifest
-        plugin_container.status = refreshed.status
+            # refresh plugin container from plugin (components may have changed)
+            plugin_container_data = await handler.get_plugin_container()
+            refreshed = runtime_plugin_container.PluginContainer.from_dict(
+                plugin_container_data
+            )
+            plugin_container.components = refreshed.components
+            plugin_container.manifest = refreshed.manifest
+            plugin_container.status = refreshed.status
+        except Exception:
+            await self.remove_plugin_container(plugin_container)
+            raise
 
     async def remove_plugin_container(
         self,
@@ -582,18 +733,19 @@ class PluginManager:
                 and plugin.manifest.metadata.name == plugin_name
             ):
                 is_debugging = plugin.debug
+                plugin_path = self.get_plugin_path(plugin_author, plugin_name)
 
                 yield {"current_action": "shutting down plugin"}
+                if not is_debugging:
+                    self._desired_plugin_paths.discard(plugin_path)
                 await self.shutdown_plugin(plugin)
+                if not is_debugging:
+                    await self.stop_plugin_supervisor(plugin_path)
                 yield {"current_action": "removing plugin container"}
                 await self.remove_plugin_container(plugin)
                 if not is_debugging:
                     yield {"current_action": "launching plugin"}
-                    task = self.launch_plugin(
-                        self.get_plugin_path(plugin_author, plugin_name)
-                    )
-                    asyncio_task = asyncio.create_task(task)
-                    self.plugin_run_tasks.append(asyncio_task)
+                    self.start_plugin_supervisor(plugin_path)
 
                     # Poll until the plugin appears in self.plugins (with timeout)
                     plugin_key = f"{plugin_author}/{plugin_name}"
@@ -603,7 +755,7 @@ class PluginManager:
                             break
                         await asyncio.sleep(1)
                     else:
-                        logger.warning(
+                        raise RuntimeError(
                             f"Plugin {plugin_key} restart timed out waiting for registration"
                         )
 
@@ -627,8 +779,11 @@ class PluginManager:
                         f"Plugin {plugin_author}/{plugin_name} is a debugging plugin"
                     )
                 else:
+                    plugin_path = self.get_plugin_path(plugin_author, plugin_name)
+                    self._desired_plugin_paths.discard(plugin_path)
                     yield {"current_action": "shutting down plugin"}
                     await self.shutdown_plugin(plugin)
+                    await self.stop_plugin_supervisor(plugin_path)
                     yield {"current_action": "removing plugin container"}
                     await self.remove_plugin_container(plugin)
                     yield {"current_action": "deleting plugin files"}
@@ -682,8 +837,20 @@ class PluginManager:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
 
     async def shutdown_all_plugins(self):
-        for plugin in self.plugins:
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._desired_plugin_paths.clear()
+        for plugin in list(self.plugins):
             await self.shutdown_plugin(plugin)
+
+        tasks = list(self._plugin_supervisors.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._plugin_supervisors.clear()
+        self.plugin_run_tasks.clear()
 
     async def shutdown_plugin(
         self,
@@ -691,24 +858,35 @@ class PluginManager:
     ):
         # Send shutdown notification to plugin before closing connection
         # For debug plugins, this will trigger reconnection; for production plugins, it's just a notification
+        handler = plugin_container._runtime_plugin_handler
+        if handler is None:
+            await self.remove_plugin_container(plugin_container)
+            return
         try:
-            await plugin_container._runtime_plugin_handler.shutdown_plugin()
+            await handler.shutdown_plugin()
         except Exception as e:
             logger.warning(f"Failed to send shutdown notification: {e}")
 
-        await plugin_container._runtime_plugin_handler.conn.close()
+        close = getattr(handler, "close", None)
+        if close is not None:
+            await close()
+        else:
+            await handler.conn.close()
         await self.remove_plugin_container(plugin_container)
-        if plugin_container._runtime_plugin_handler.stdio_process is not None:
-            plugin_container._runtime_plugin_handler.stdio_process.kill()
-
-            if (
-                plugin_container._runtime_plugin_handler.stdio_process.returncode
-                is None
-            ):
-                await asyncio.wait_for(
-                    plugin_container._runtime_plugin_handler.stdio_process.wait(),
-                    timeout=2,
-                )
+        if handler.stdio_process is not None:
+            process = handler.stdio_process
+            if process.returncode is None:
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=2)
+                    except asyncio.TimeoutError:
+                        with contextlib.suppress(ProcessLookupError):
+                            process.kill()
+                        await process.wait()
             logger.info(
                 f"plugin process terminated: {plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}:{plugin_container.manifest.metadata.version}"
             )

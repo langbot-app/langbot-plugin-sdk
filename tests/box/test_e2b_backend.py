@@ -187,6 +187,20 @@ async def test_start_session_basic(backend, mock_e2b_module):
 
 
 @pytest.mark.anyio
+async def test_is_session_alive_probes_remote_sandbox(backend, mock_e2b_module):
+    backend._api_key = "test-api-key"
+    info = await backend.start_session(BoxSpec(session_id="alive", cmd="true"))
+
+    assert await backend.is_session_alive(info) is True
+    mock_e2b_module.connect.assert_awaited_once_with(
+        sandbox_id="sandbox-test-123", api_key="test-api-key"
+    )
+
+    mock_e2b_module.connect.side_effect = RuntimeError("sandbox gone")
+    assert await backend.is_session_alive(info) is False
+
+
+@pytest.mark.anyio
 async def test_start_session_with_template(backend, mock_e2b_module):
     """start_session passes template parameter when image is specified."""
     backend._api_key = "test-api-key"

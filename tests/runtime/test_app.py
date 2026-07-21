@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import pytest
+
 from langbot_plugin.runtime import app as runtime_app
 
 
@@ -29,6 +31,9 @@ class FakePluginManager:
     async def shutdown_all_plugins(self):
         self.calls.append("shutdown_all")
 
+    def mark_control_connection_ready(self):
+        self.calls.append("control_ready")
+
 
 class FakeServerController:
     instances = []
@@ -41,6 +46,11 @@ class FakeServerController:
     async def run(self, callback):
         self.callbacks.append(callback)
         await callback(object())
+
+
+class FailingServerController(FakeServerController):
+    async def run(self, callback):
+        raise RuntimeError("listener bind failed")
 
 
 class FakeControlHandler:
@@ -205,11 +215,14 @@ async def test_runtime_application_run_coordinates_servers_and_plugin_manager(
     await app.run()
 
     manager = FakePluginManager.instances[-1]
-    assert manager.calls == [
-        "ensure_deps",
+    assert manager.calls[0] == "add_plugin_handler"
+    assert set(manager.calls) == {
         "add_plugin_handler",
+        "control_ready",
+        "ensure_deps",
         "launch_all",
-    ]
+    }
+    assert manager.calls.index("ensure_deps") < manager.calls.index("launch_all")
     assert FakeControlHandler.instances[-1].calls == ["run"]
     assert FakePluginHandler.instances[-1].debug_plugin is True
 
@@ -245,7 +258,34 @@ async def test_runtime_application_run_can_skip_deps_and_plugin_launch(monkeypat
 
     await app.run()
 
-    assert FakePluginManager.instances[-1].calls == ["add_plugin_handler"]
+    assert FakePluginManager.instances[-1].calls == [
+        "add_plugin_handler",
+        "control_ready",
+    ]
+
+
+async def test_runtime_application_surfaces_listener_failure(monkeypatch):
+    monkeypatch.setattr(
+        runtime_app.plugin_mgr_cls,
+        "PluginManager",
+        FakePluginManager,
+    )
+    monkeypatch.setattr(
+        runtime_app.stdio_controller_server,
+        "StdioServerController",
+        FailingServerController,
+    )
+    monkeypatch.setattr(
+        runtime_app.ws_controller_server,
+        "WebSocketServerController",
+        FakeServerController,
+    )
+    app = runtime_app.RuntimeApplication(
+        _args(skip_deps_check=True, debug_only=True)
+    )
+
+    with pytest.raises(RuntimeError, match="listener bind failed"):
+        await app.run()
 
 
 async def test_runtime_application_run_uses_websocket_control_server(monkeypatch):
@@ -284,7 +324,10 @@ async def test_runtime_application_run_uses_websocket_control_server(monkeypatch
 
     assert app.context.ws_control_server.callbacks
     assert FakeControlHandler.instances[-1].calls == ["run"]
-    assert FakePluginManager.instances[-1].calls == ["add_plugin_handler"]
+    assert FakePluginManager.instances[-1].calls == [
+        "add_plugin_handler",
+        "control_ready",
+    ]
 
 
 async def test_runtime_application_shutdown_delegates_to_plugin_manager(monkeypatch):
@@ -321,6 +364,9 @@ def test_runtime_main_configures_logging_and_runs_application(monkeypatch):
         async def run(self):
             calls.append(("run",))
 
+        async def shutdown(self):
+            calls.append(("shutdown",))
+
     monkeypatch.setattr(
         runtime_app,
         "configure_process_logging",
@@ -330,7 +376,12 @@ def test_runtime_main_configures_logging_and_runs_application(monkeypatch):
 
     runtime_app.main(_args())
 
-    assert calls == [("configure_logging",), ("init", _args()), ("run",)]
+    assert calls == [
+        ("configure_logging",),
+        ("init", _args()),
+        ("run",),
+        ("shutdown",),
+    ]
 
 
 def test_runtime_main_handles_cancelled_error(monkeypatch):
@@ -349,11 +400,11 @@ def test_runtime_main_handles_cancelled_error(monkeypatch):
         lambda: calls.append(("configure_logging",)),
     )
     monkeypatch.setattr(runtime_app, "RuntimeApplication", FakeApplication)
-    monkeypatch.setattr(
-        runtime_app.asyncio,
-        "run",
-        lambda coroutine: (_ for _ in ()).throw(asyncio.CancelledError()),
-    )
+    def cancel_run(coroutine):
+        coroutine.close()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(runtime_app.asyncio, "run", cancel_run)
 
     runtime_app.main(_args())
 
@@ -376,11 +427,11 @@ def test_runtime_main_handles_keyboard_interrupt(monkeypatch):
         lambda: calls.append(("configure_logging",)),
     )
     monkeypatch.setattr(runtime_app, "RuntimeApplication", FakeApplication)
-    monkeypatch.setattr(
-        runtime_app.asyncio,
-        "run",
-        lambda coroutine: (_ for _ in ()).throw(KeyboardInterrupt()),
-    )
+    def interrupt_run(coroutine):
+        coroutine.close()
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runtime_app.asyncio, "run", interrupt_run)
 
     runtime_app.main(_args())
 

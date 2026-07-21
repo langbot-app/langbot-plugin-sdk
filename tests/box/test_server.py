@@ -719,6 +719,7 @@ def test_create_app_registers_routes_and_runtime(mock_runtime):
     assert app["runtime"] is mock_runtime
 
     routes = {(route.method, route.resource.canonical) for route in app.router.routes()}
+    assert ("GET", "/healthz") in routes
     assert ("GET", "/rpc/ws") in routes
     assert (
         "GET",

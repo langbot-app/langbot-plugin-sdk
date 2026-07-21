@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import websockets
 import asyncio
-import json
 
 from langbot_plugin.runtime.io import connection as io_connection
+from langbot_plugin.runtime.io.connection import MAX_MESSAGE_BYTES, split_utf8_chunks
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 
 
@@ -25,6 +25,10 @@ class WebSocketConnection(io_connection.Connection):
         async with self._send_lock:  # 确保同一时间只有一个send操作
             message_bytes = message.encode("utf-8")
             message_size = len(message_bytes)
+            if message_size > MAX_MESSAGE_BYTES:
+                raise ValueError(
+                    f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
+                )
 
             # For small messages, send directly
             if message_size <= self.chunk_size:
@@ -36,43 +40,35 @@ class WebSocketConnection(io_connection.Connection):
 
             # For large messages, use chunking with streaming
             try:
-                # Send message in chunks to avoid timeout
-                for i in range(0, message_size, self.chunk_size):
-                    chunk = message_bytes[i : i + self.chunk_size].decode("utf-8")
-                    await self.websocket.send(chunk, text=True)
-                    # Small delay to prevent overwhelming the connection
-                    await asyncio.sleep(0.001)
+                # Send one fragmented WebSocket message. Sending each chunk as
+                # an independent message forces the receiver to guess message
+                # boundaries and permits unbounded cross-message accumulation.
+                chunks = split_utf8_chunks(message, self.chunk_size)
+                await self.websocket.send(chunks)
             except websockets.exceptions.ConnectionClosed:
                 raise ConnectionClosedError("Connection closed during send")
-
-    def _is_valid_json(self, message: str) -> bool:
-        try:
-            json.loads(message)
-            return True
-        except json.JSONDecodeError:
-            return False
 
     async def receive(self) -> str:
         """Receive message with streaming support and timeout protection."""
         try:
-            # Use recv_streaming for better handling of large messages
-            whole_message = ""
             message_chunks = []
+            received_bytes = 0
 
-            while True:
-                async for data in self.websocket.recv_streaming(decode=True):
-                    message_chunks.append(data)
-                    # Yield control periodically to prevent blocking
-                    if len(message_chunks) % 100 == 0:
-                        await asyncio.sleep(0)
+            async for data in self.websocket.recv_streaming(decode=True):
+                message_chunks.append(data)
+                received_bytes += len(data.encode("utf-8"))
+                if received_bytes > MAX_MESSAGE_BYTES:
+                    await self.close()
+                    raise ConnectionClosedError(
+                        f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
+                    )
+                if len(message_chunks) % 100 == 0:
+                    await asyncio.sleep(0)
 
-                # Join all chunks efficiently
-                whole_message = "".join(message_chunks)
-
-                if self._is_valid_json(whole_message):
-                    return whole_message
-                else:
-                    await asyncio.sleep(0.001)
+            # recv_streaming yields exactly one WebSocket message. JSON
+            # validation belongs to Handler; never concatenate separate peer
+            # messages while waiting for one that happens to parse.
+            return "".join(message_chunks)
 
         except websockets.exceptions.ConnectionClosed:
             raise ConnectionClosedError("Connection closed")

@@ -46,6 +46,11 @@ class QueueConnection(Connection):
         self.closed = True
 
 
+class FailingSendConnection(QueueConnection):
+    async def send(self, message: str) -> None:
+        raise ConnectionClosedError("send failed")
+
+
 async def _wait_for_sent(conn: QueueConnection, count: int = 1) -> list[dict]:
     for _ in range(50):
         if len(conn.sent) >= count:
@@ -85,6 +90,133 @@ async def test_call_action_timeout_cleans_waiter():
         await handler.call_action(SampleAction.ECHO, {}, timeout=0.01)
 
     assert handler.resp_waiters == {}
+
+
+@pytest.mark.asyncio
+async def test_call_action_send_failure_cleans_waiter_immediately():
+    handler = Handler(FailingSendConnection())
+
+    with pytest.raises(ConnectionClosedError, match="send failed"):
+        await handler.call_action(SampleAction.ECHO, {}, timeout=10)
+
+    assert handler.resp_waiters == {}
+
+
+@pytest.mark.asyncio
+async def test_disconnect_fails_pending_unary_and_stream_calls():
+    conn = ProtocolConnection()
+    handler = Handler(conn)
+    run_task = asyncio.create_task(handler.run())
+    unary = asyncio.create_task(
+        handler.call_action(SampleAction.ECHO, {}, timeout=10)
+    )
+
+    async def consume_stream():
+        async for _ in handler.call_action_generator(
+            SampleAction.STREAM, {}, timeout=10
+        ):
+            pass
+
+    stream = asyncio.create_task(consume_stream())
+    await conn.sent_messages(2)
+    await conn.close_peer()
+
+    with pytest.raises(ConnectionClosedError):
+        await asyncio.wait_for(unary, timeout=0.5)
+    with pytest.raises(ConnectionClosedError):
+        await asyncio.wait_for(stream, timeout=0.5)
+    await run_task
+    assert handler.resp_waiters == {}
+    assert handler.resp_queues == {}
+
+
+@pytest.mark.asyncio
+async def test_reconnect_still_fails_requests_from_old_transport():
+    first = QueueConnection()
+    second = QueueConnection()
+    reconnects = 0
+
+    async def reconnect(current_handler):
+        nonlocal reconnects
+        reconnects += 1
+        if reconnects == 1:
+            current_handler.conn = second
+            return True
+        return False
+
+    handler = Handler(first, reconnect)
+    run_task = asyncio.create_task(handler.run())
+    old_call = asyncio.create_task(
+        handler.call_action(SampleAction.ECHO, {}, timeout=10)
+    )
+    await _wait_for_sent(first)
+    await first.incoming.put(ConnectionClosedError("old transport closed"))
+
+    with pytest.raises(ConnectionClosedError, match="old transport closed"):
+        await asyncio.wait_for(old_call, timeout=0.5)
+
+    new_call = asyncio.create_task(
+        handler.call_action(SampleAction.ECHO, {}, timeout=1)
+    )
+    [request] = await _wait_for_sent(second)
+    await second.incoming.put(
+        json.dumps(
+            ActionResponse.success({"generation": 2})
+            .model_copy(update={"seq_id": request["seq_id"]})
+            .model_dump()
+        )
+    )
+    assert await new_call == {"generation": 2}
+
+    await second.incoming.put(ConnectionClosedError("done"))
+    await run_task
+
+
+@pytest.mark.asyncio
+async def test_run_ignores_non_object_json_message():
+    conn = QueueConnection()
+    handler = Handler(conn)
+
+    @handler.action(SampleAction.ECHO)
+    async def echo(data):
+        return ActionResponse.success(data)
+
+    run_task = asyncio.create_task(handler.run())
+    await conn.incoming.put("[]")
+    await conn.incoming.put(
+        json.dumps({"seq_id": 4, "action": "echo", "data": {"ok": True}})
+    )
+    [response] = await _wait_for_sent(conn)
+    await conn.incoming.put(ConnectionClosedError("done"))
+    await run_task
+
+    assert response["data"] == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_slow_inbound_action_does_not_block_outbound_response_routing():
+    conn = ProtocolConnection()
+    handler = Handler(conn)
+    release = asyncio.Event()
+
+    @handler.action(SampleAction.STREAM)
+    async def slow_action(_data):
+        await release.wait()
+        return ActionResponse.success({})
+
+    run_task = asyncio.create_task(handler.run())
+    await conn.send_peer_request("stream", {}, seq_id=77)
+    call_task = asyncio.create_task(
+        handler.call_action(SampleAction.ECHO, {}, timeout=1)
+    )
+    [request] = await conn.sent_messages(1)
+    await conn.send_peer_response(request["seq_id"], data={"ok": True})
+
+    assert await asyncio.wait_for(call_task, timeout=0.5) == {"ok": True}
+    release.set()
+    await conn.sent_messages(2)
+    await conn.close_peer()
+    await run_task
 
 
 @pytest.mark.asyncio

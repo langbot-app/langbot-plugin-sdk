@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from http import HTTPStatus
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
 from langbot_plugin.runtime.io.connections.stdio import StdioConnection
@@ -14,6 +18,7 @@ class FakeProcess:
     def __init__(self, stdin=object(), stdout=object()):
         self.stdin = stdin
         self.stdout = stdout
+        self.returncode = 0
 
 
 class FakeWebSocket:
@@ -34,9 +39,13 @@ class FakeWebSocketConnectContext:
 class FakeServer:
     def __init__(self):
         self.waited = False
+        self.closed = False
 
     async def wait_closed(self):
         self.waited = True
+
+    def close(self):
+        self.closed = True
 
 
 async def test_stdio_client_controller_creates_process_connection(monkeypatch):
@@ -111,10 +120,11 @@ async def test_websocket_client_controller_invokes_connection_callback(monkeypat
     captured = {}
     websocket = FakeWebSocket()
 
-    def fake_connect(url, open_timeout, proxy="__unset__"):
+    def fake_connect(url, open_timeout, proxy="__unset__", **kwargs):
         captured["url"] = url
         captured["open_timeout"] = open_timeout
         captured["proxy"] = proxy
+        captured.update(kwargs)
         return FakeWebSocketConnectContext(websocket)
 
     async def callback(connection):
@@ -140,7 +150,7 @@ async def test_websocket_client_controller_reports_connection_failure(monkeypatc
     captured = {}
     error = OSError("network down")
 
-    def fake_connect(url, open_timeout, proxy=None):
+    def fake_connect(url, open_timeout, proxy=None, **kwargs):
         raise error
 
     async def callback(connection):
@@ -162,10 +172,11 @@ async def test_websocket_server_controller_run_waits_for_server(monkeypatch):
     fake_server = FakeServer()
     captured = {}
 
-    async def fake_serve(handler, host, port):
+    async def fake_serve(handler, host, port, **kwargs):
         captured["handler"] = handler
         captured["host"] = host
         captured["port"] = port
+        captured.update(kwargs)
         return fake_server
 
     async def callback(connection):
@@ -179,7 +190,34 @@ async def test_websocket_server_controller_run_waits_for_server(monkeypatch):
     assert captured["handler"] == controller.handle_connection
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 9000
+    assert captured["process_request"] is ws_server.process_http_request
+    assert captured["logger"] is ws_server.protocol_logger
     assert fake_server.waited is True
+    assert fake_server.closed is True
+
+
+def test_websocket_server_health_endpoint():
+    connection = MagicMock()
+    response = object()
+    connection.respond.return_value = response
+
+    result = ws_server.process_http_request(
+        connection, SimpleNamespace(path="/healthz")
+    )
+
+    assert result is response
+    connection.respond.assert_called_once_with(HTTPStatus.OK, "ok\n")
+
+
+def test_websocket_server_non_health_request_continues_handshake():
+    connection = MagicMock()
+
+    result = ws_server.process_http_request(
+        connection, SimpleNamespace(path="/control/ws")
+    )
+
+    assert result is None
+    connection.respond.assert_not_called()
 
 
 async def test_websocket_server_controller_wraps_new_connections():

@@ -17,6 +17,7 @@ import os
 import hashlib
 import base64
 import uuid
+import contextlib
 import aiofiles
 import aiofiles.os
 import logging
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 FILE_STORAGE_DIR = "data/temp/lbp"
 FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
+MAX_INFLIGHT_ACTIONS = 128
+MAX_STREAM_QUEUE_SIZE = 128
 
 
 class Handler(abc.ABC):
@@ -46,7 +49,9 @@ class Handler(abc.ABC):
     actions: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]]]
 
     resp_waiters: dict[int, asyncio.Future[ActionResponse]] = {}
-    resp_queues: dict[int, asyncio.Queue[ActionResponse]] = {}
+    resp_queues: dict[
+        int, asyncio.Queue[ActionResponse | BaseException]
+    ] = {}
 
     seq_id_index: int = 0
 
@@ -63,6 +68,9 @@ class Handler(abc.ABC):
         self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
+        self._action_tasks: set[asyncio.Task[None]] = set()
+        self._closed = False
+        self._close_error: ConnectionClosedError | None = None
 
         self._disconnect_callback = disconnect_callback
 
@@ -92,74 +100,174 @@ class Handler(abc.ABC):
         self._disconnect_callback = disconnect_callback
 
     async def run(self) -> None:
-        while True:
-            message = None
+        disconnect_error = ConnectionClosedError("Connection closed")
+        try:
+            while True:
+                try:
+                    message = await self.conn.receive()
+                except ConnectionClosedError as exc:
+                    disconnect_error = exc
+                    # Requests sent on the old transport cannot be completed by
+                    # a replacement connection, even when the handler itself is
+                    # reused by a reconnect callback.
+                    self._fail_pending(exc)
+                    if self._disconnect_callback is not None:
+                        reconnected = await self._disconnect_callback(self)
+                        if reconnected:
+                            continue
+                    break
+                if message is None:
+                    continue
+
+                try:
+                    req_data = json.loads(message)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    logger.warning("Ignored malformed runtime message: %s", exc)
+                    continue
+                if not isinstance(req_data, dict):
+                    logger.warning("Ignored non-object runtime message")
+                    continue
+
+                seq_id = req_data.get("seq_id", -1)
+                if "code" in req_data:
+                    await self._route_response(seq_id, req_data)
+                    continue
+
+                if "action" not in req_data:
+                    logger.warning("Ignored runtime message without action or code")
+                    continue
+
+                if len(self._action_tasks) >= MAX_INFLIGHT_ACTIONS:
+                    await self._send_overloaded_response(seq_id)
+                    continue
+
+                task = asyncio.create_task(self._handle_action(req_data))
+                self._action_tasks.add(task)
+                task.add_done_callback(self._action_task_done)
+        finally:
+            self._closed = True
+            self._close_error = disconnect_error
+            self._fail_pending(disconnect_error)
+            await self._cancel_action_tasks()
+
+    async def close(self) -> None:
+        """Close the transport and deterministically release connection-owned work."""
+        if self._closed:
+            return
+        self._closed = True
+        error = ConnectionClosedError("Connection closed by local runtime")
+        self._close_error = error
+        self._fail_pending(error)
+        try:
+            await self.conn.close()
+        finally:
+            await self._cancel_action_tasks()
+
+    async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
+        try:
+            response = ActionResponse.model_validate(req_data)
+        except Exception as exc:
+            logger.warning("Ignored malformed runtime response: %s", exc)
+            return
+        waiter = self.resp_waiters.get(seq_id)
+        if waiter is not None and not waiter.done():
+            waiter.set_result(response)
+
+        queue = self.resp_queues.get(seq_id)
+        if queue is not None:
             try:
-                message = await self.conn.receive()
-            except ConnectionClosedError:
-                if self._disconnect_callback is not None:
-                    reconnected = await self._disconnect_callback(self)
-                    if reconnected:
-                        continue
-                break
-            if message is None:
-                continue
+                queue.put_nowait(response)
+            except asyncio.QueueFull:
+                # A stalled stream consumer must not block response routing for
+                # every other action sharing this connection.
+                self.resp_queues.pop(seq_id, None)
+                while not queue.empty():
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        queue.get_nowait()
+                queue.put_nowait(
+                    ActionCallError(
+                        "Streaming action consumer is too slow; response buffer full"
+                    )
+                )
 
-            async def handle_message(message: str):
-                # sh*t, i dont really know how to use generic type here
-                # so just use dict[str, Any] for now
-                # 2025/07/02: i know now, learned from dify-plugin-sdk, but maybe i will implement it later
-                req_data = json.loads(message)
-                seq_id = req_data["seq_id"] if "seq_id" in req_data else -1
+    async def _handle_action(self, req_data: dict[str, Any]) -> None:
+        seq_id = req_data.get("seq_id", -1)
+        action_name = str(req_data["action"])
+        try:
+            if action_name not in self.actions:
+                raise ValueError(f"Action {action_name} not found")
 
-                if "action" in req_data:  # action request from peer
-                    try:
-                        if req_data["action"] not in self.actions:
-                            raise ValueError(f"Action {req_data['action']} not found")
+            response = self.actions[action_name](req_data["data"])
+            if not isinstance(response, AsyncGenerator):
+                if isinstance(response, Coroutine):
+                    response = await response
+                response.seq_id = seq_id
+                await self.conn.send(json.dumps(response.model_dump()))
+            else:
+                async for chunk in response:
+                    assert isinstance(chunk, ActionResponse)
+                    chunk.seq_id = seq_id
+                    chunk.chunk_status = ChunkStatus.CONTINUE
+                    await self.conn.send(json.dumps(chunk.model_dump()))
 
-                        response = self.actions[req_data["action"]](req_data["data"])
+                end_response = ActionResponse.success({})
+                end_response.seq_id = seq_id
+                end_response.chunk_status = ChunkStatus.END
+                await self.conn.send(json.dumps(end_response.model_dump()))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            traceback.print_exc()
+            error_response = ActionResponse.error(
+                f"{exc.__class__.__name__}: {str(exc)}"
+            )
+            error_response.seq_id = seq_id
+            with contextlib.suppress(ConnectionClosedError):
+                await self.conn.send(json.dumps(error_response.model_dump()))
+        finally:
+            if not action_name.startswith("__"):
+                logger.info("[Action] %s", action_name)
 
-                        if not isinstance(response, AsyncGenerator):
-                            if isinstance(response, Coroutine):
-                                response = await response
+    async def _send_overloaded_response(self, seq_id: int) -> None:
+        response = ActionResponse.error(
+            f"Runtime connection is busy (max {MAX_INFLIGHT_ACTIONS} concurrent actions)"
+        )
+        response.seq_id = seq_id
+        # The receive loop will observe a closed connection and run the normal
+        # disconnect/reconnect path; don't bypass it if this best-effort reply
+        # races with transport loss.
+        with contextlib.suppress(ConnectionClosedError):
+            await self.conn.send(json.dumps(response.model_dump()))
 
-                            response.seq_id = seq_id
-                            await self.conn.send(json.dumps(response.model_dump()))
-                        elif isinstance(response, AsyncGenerator):
-                            response_generator = response
-                            async for chunk in response_generator:
-                                assert isinstance(chunk, ActionResponse)
-                                chunk.seq_id = seq_id
-                                chunk.chunk_status = ChunkStatus.CONTINUE
-                                await self.conn.send(json.dumps(chunk.model_dump()))
+    def _action_task_done(self, task: asyncio.Task[None]) -> None:
+        self._action_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Runtime action task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
-                            end_response = ActionResponse.success({})
-                            end_response.seq_id = seq_id
-                            end_response.chunk_status = ChunkStatus.END
-                            await self.conn.send(json.dumps(end_response.model_dump()))
-                    except Exception as e:
-                        traceback.print_exc()
-                        error_response = ActionResponse.error(
-                            f"{e.__class__.__name__}: {str(e)}"
-                        )
-                        error_response.seq_id = seq_id
-                        await self.conn.send(json.dumps(error_response.model_dump()))
-                    finally:
-                        if not req_data["action"].startswith("__"):
-                            logger.info(f"[Action] {req_data['action']}")
+    def _fail_pending(self, error: ConnectionClosedError) -> None:
+        for waiter in list(self.resp_waiters.values()):
+            if not waiter.done():
+                waiter.set_exception(error)
 
-                elif "code" in req_data:  # action response from peer
-                    response = ActionResponse.model_validate(req_data)
+        for queue in list(self.resp_queues.values()):
+            while queue.full():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(error)
 
-                    # Handle single response (for call_action)
-                    if seq_id in self.resp_waiters:
-                        self.resp_waiters[seq_id].set_result(response)
-
-                    # Handle streaming response (for call_action_generator)
-                    if seq_id in self.resp_queues:
-                        await self.resp_queues[seq_id].put(response)
-
-            asyncio.create_task(handle_message(message))
+    async def _cancel_action_tasks(self) -> None:
+        tasks = list(self._action_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._action_tasks.clear()
 
     async def call_action(
         self, action: ActionType, data: dict[str, Any], timeout: float = 15.0
@@ -169,10 +277,12 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(this_seq_id, action.value, data)
         # wait for response
-        future = asyncio.Future[ActionResponse]()
+        if self._closed:
+            raise self._close_error or ConnectionClosedError("Connection closed")
+        future = asyncio.get_running_loop().create_future()
         self.resp_waiters[this_seq_id] = future
-        await self.conn.send(json.dumps(request.model_dump()))
         try:
+            await self.conn.send(json.dumps(request.model_dump()))
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
                 raise ActionCallError(f"{response.message}")
@@ -180,6 +290,8 @@ class Handler(abc.ABC):
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
         except ActionCallError:
+            raise
+        except ConnectionClosedError:
             raise
         except Exception as e:
             raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
@@ -197,15 +309,20 @@ class Handler(abc.ABC):
         request = ActionRequest.make_request(this_seq_id, action.value, data)
 
         # Create a queue for streaming responses
-        queue = asyncio.Queue[ActionResponse]()
+        if self._closed:
+            raise self._close_error or ConnectionClosedError("Connection closed")
+        queue = asyncio.Queue[ActionResponse | BaseException](
+            maxsize=MAX_STREAM_QUEUE_SIZE
+        )
         self.resp_queues[this_seq_id] = queue
 
-        await self.conn.send(json.dumps(request.model_dump()))
-
         try:
+            await self.conn.send(json.dumps(request.model_dump()))
             while True:
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
+                    if isinstance(response, BaseException):
+                        raise response
                     if response.code != 0:
                         raise ActionCallError(f"{response.message}")
 
@@ -214,12 +331,14 @@ class Handler(abc.ABC):
                     elif response.chunk_status == ChunkStatus.END:
                         break
                 except asyncio.CancelledError:
-                    break
+                    raise
                 except asyncio.TimeoutError:
                     raise ActionCallTimeoutError(
                         f"Action {action.value} call timed out"
                     )
                 except ActionCallError:
+                    raise
+                except ConnectionClosedError:
                     raise
                 except Exception as e:
                     raise ActionCallError(f"{e.__class__.__name__}: {str(e)}")
