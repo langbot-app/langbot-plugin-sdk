@@ -107,9 +107,7 @@ async def test_disconnect_fails_pending_unary_and_stream_calls():
     conn = ProtocolConnection()
     handler = Handler(conn)
     run_task = asyncio.create_task(handler.run())
-    unary = asyncio.create_task(
-        handler.call_action(SampleAction.ECHO, {}, timeout=10)
-    )
+    unary = asyncio.create_task(handler.call_action(SampleAction.ECHO, {}, timeout=10))
 
     async def consume_stream():
         async for _ in handler.call_action_generator(

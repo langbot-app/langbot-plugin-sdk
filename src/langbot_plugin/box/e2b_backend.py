@@ -468,9 +468,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
         if self._api_url:
             kwargs["domain"] = self._api_url
         try:
-            await _AsyncSandbox.connect(
-                sandbox_id=session.backend_session_id, **kwargs
-            )
+            await _AsyncSandbox.connect(sandbox_id=session.backend_session_id, **kwargs)
             return True
         except Exception as exc:
             self.logger.info(

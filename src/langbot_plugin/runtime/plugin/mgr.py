@@ -546,9 +546,7 @@ class PluginManager:
             requirements_file = os.path.join(plugin_path, "requirements.txt")
             if os.path.exists(requirements_file):
                 deps = pkgmgr_helper.parse_requirements(requirements_file)
-                python_path = await pkgmgr_helper.ensure_plugin_environment(
-                    plugin_path
-                )
+                python_path = await pkgmgr_helper.ensure_plugin_environment(plugin_path)
                 total_downloaded = 0
                 started_at = time.time()
                 failures: dict[str, str] = {}
@@ -569,12 +567,14 @@ class PluginManager:
                             "to_install": len(deps),
                         },
                     }
-                    returncode, downloaded, error = (
-                        await pkgmgr_helper.install_with_retry(
-                            dep,
-                            max_retries=3,
-                            python_executable=python_path,
-                        )
+                    (
+                        returncode,
+                        downloaded,
+                        error,
+                    ) = await pkgmgr_helper.install_with_retry(
+                        dep,
+                        max_retries=3,
+                        python_executable=python_path,
                     )
                     total_downloaded += downloaded
                     if returncode != 0:
@@ -591,9 +591,7 @@ class PluginManager:
                         "failed_deps": list(failures),
                         "current_dep": "",
                         "deps_downloaded_size": total_downloaded,
-                        "deps_speed": total_downloaded / elapsed
-                        if elapsed > 0
-                        else 0,
+                        "deps_speed": total_downloaded / elapsed if elapsed > 0 else 0,
                     },
                 }
                 if failures:
@@ -603,10 +601,11 @@ class PluginManager:
                         details=failures,
                     )
 
-                missing, version_mismatch = (
-                    await pkgmgr_helper.classify_requirements_in_environment(
-                        python_path, deps
-                    )
+                (
+                    missing,
+                    version_mismatch,
+                ) = await pkgmgr_helper.classify_requirements_in_environment(
+                    python_path, deps
                 )
                 if missing or version_mismatch:
                     raise DependencyVerificationError(

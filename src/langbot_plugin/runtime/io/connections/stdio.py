@@ -161,7 +161,10 @@ class StdioConnection(connection.Connection):
                                         chunk_data = json.loads(chunk_line)
                                         if chunk_data.get("type") == "chunk_data":
                                             chunk_text = chunk_data.get("data", "")
-                                            if chunk_data.get("offset") != received_size:
+                                            if (
+                                                chunk_data.get("offset")
+                                                != received_size
+                                            ):
                                                 raise ConnectionClosedError(
                                                     "Invalid runtime chunk offset"
                                                 )

@@ -280,9 +280,7 @@ async def test_runtime_application_surfaces_listener_failure(monkeypatch):
         "WebSocketServerController",
         FakeServerController,
     )
-    app = runtime_app.RuntimeApplication(
-        _args(skip_deps_check=True, debug_only=True)
-    )
+    app = runtime_app.RuntimeApplication(_args(skip_deps_check=True, debug_only=True))
 
     with pytest.raises(RuntimeError, match="listener bind failed"):
         await app.run()
@@ -400,6 +398,7 @@ def test_runtime_main_handles_cancelled_error(monkeypatch):
         lambda: calls.append(("configure_logging",)),
     )
     monkeypatch.setattr(runtime_app, "RuntimeApplication", FakeApplication)
+
     def cancel_run(coroutine):
         coroutine.close()
         raise asyncio.CancelledError
@@ -427,6 +426,7 @@ def test_runtime_main_handles_keyboard_interrupt(monkeypatch):
         lambda: calls.append(("configure_logging",)),
     )
     monkeypatch.setattr(runtime_app, "RuntimeApplication", FakeApplication)
+
     def interrupt_run(coroutine):
         coroutine.close()
         raise KeyboardInterrupt

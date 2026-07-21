@@ -444,14 +444,9 @@ class BoxRuntime:
                     for session in self._sessions.values()
                     for managed_id, managed in session.managed_processes.items()
                     if managed.is_running
-                    and not (
-                        session is runtime_session and managed_id == process_id
-                    )
+                    and not (session is runtime_session and managed_id == process_id)
                 )
-                if (
-                    running + self._managed_starting_count
-                    >= self.max_managed_processes
-                ):
+                if running + self._managed_starting_count >= self.max_managed_processes:
                     raise BoxCapacityExceededError(
                         "Box managed process capacity reached "
                         f"({self.max_managed_processes})"
@@ -484,16 +479,20 @@ class BoxRuntime:
             )
             runtime_session.managed_processes[process_id] = managed_process
             runtime_session.info.last_used_at = dt.datetime.now(_UTC)
-            self._track_background_task(asyncio.create_task(
-                self._drain_managed_process_stderr(
-                    runtime_session.info.session_id, process_id, managed_process
+            self._track_background_task(
+                asyncio.create_task(
+                    self._drain_managed_process_stderr(
+                        runtime_session.info.session_id, process_id, managed_process
+                    )
                 )
-            ))
-            self._track_background_task(asyncio.create_task(
-                self._watch_managed_process(
-                    runtime_session.info.session_id, process_id, managed_process
+            )
+            self._track_background_task(
+                asyncio.create_task(
+                    self._watch_managed_process(
+                        runtime_session.info.session_id, process_id, managed_process
+                    )
                 )
-            ))
+            )
             return self._managed_process_to_dict(
                 runtime_session.info.session_id, process_id, managed_process
             )
@@ -593,9 +592,7 @@ class BoxRuntime:
                 existing: _RuntimeSession | None = None
                 async with self._lock:
                     if self._shutdown_in_progress:
-                        raise BoxRuntimeUnavailableError(
-                            "Box runtime is shutting down"
-                        )
+                        raise BoxRuntimeUnavailableError("Box runtime is shutting down")
                     await self._reap_expired_sessions_locked()
                     cleanup_task = self._closing_session_tasks.get(spec.session_id)
                     if cleanup_task is None:
@@ -615,9 +612,7 @@ class BoxRuntime:
                                 self._session_leases[spec.session_id] += 1
 
                 if cleanup_task is not None:
-                    await self._wait_for_session_cleanup(
-                        spec.session_id, cleanup_task
-                    )
+                    await self._wait_for_session_cleanup(spec.session_id, cleanup_task)
                     continue
 
                 backend = await self._get_backend()
@@ -667,7 +662,10 @@ class BoxRuntime:
                     continue
 
                 async with self._lock:
-                    if len(self._sessions) + len(self._creating_session_tasks) >= self.max_sessions:
+                    if (
+                        len(self._sessions) + len(self._creating_session_tasks)
+                        >= self.max_sessions
+                    ):
                         raise BoxCapacityExceededError(
                             f"Box session capacity reached ({self.max_sessions})"
                         )
@@ -692,14 +690,13 @@ class BoxRuntime:
                                 self._active_exec_counts[spec.session_id] += 1
                     if runtime_session.closing:
                         await backend.stop_session(info)
-                        raise BoxRuntimeUnavailableError(
-                            "Box runtime is shutting down"
-                        )
+                        raise BoxRuntimeUnavailableError("Box runtime is shutting down")
                 finally:
                     async with self._lock:
-                        if self._creating_session_tasks.get(
-                            spec.session_id
-                        ) is asyncio.current_task():
+                        if (
+                            self._creating_session_tasks.get(spec.session_id)
+                            is asyncio.current_task()
+                        ):
                             self._creating_session_tasks.pop(spec.session_id, None)
 
                 self.logger.info(
@@ -827,9 +824,7 @@ class BoxRuntime:
         deadline = now - dt.timedelta(seconds=self.completed_process_retention_sec)
         completed: list[tuple[dt.datetime, _RuntimeSession, str, _ManagedProcess]] = []
         for session in self._sessions.values():
-            for process_id, managed_process in list(
-                session.managed_processes.items()
-            ):
+            for process_id, managed_process in list(session.managed_processes.items()):
                 if managed_process.is_running or managed_process.exited_at is None:
                     continue
                 if (

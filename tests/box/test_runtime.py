@@ -1157,9 +1157,7 @@ def test_relative_allowed_mount_root_is_resolved_from_working_directory(
         runtime._ensure_default_workspace()
 
     assert (tmp_path / "data/box/default").is_dir()
-    assert runtime._allowed_mount_roots()[0] == str(
-        (tmp_path / "data/box").resolve()
-    )
+    assert runtime._allowed_mount_roots()[0] == str((tmp_path / "data/box").resolve())
 
 
 @pytest.mark.anyio
@@ -1248,7 +1246,9 @@ async def test_delete_waits_for_inflight_session_creation(logger):
     backend.start_session = mock.AsyncMock(side_effect=blocked_start)
     with mock.patch("os.getenv", return_value=""):
         runtime = BoxRuntime(logger, backends=[backend])
-        creating = asyncio.create_task(runtime.create_session(_make_spec("create-race")))
+        creating = asyncio.create_task(
+            runtime.create_session(_make_spec("create-race"))
+        )
         await entered.wait()
         deleting = asyncio.create_task(runtime.delete_session("create-race"))
         await asyncio.sleep(0)
@@ -1281,9 +1281,7 @@ async def test_managed_process_capacity_and_completed_retention(logger):
             )
 
         backend.last_process.finish(0)
-        await _wait_until(
-            lambda: not runtime._sessions["p1"].managed_processes
-        )
+        await _wait_until(lambda: not runtime._sessions["p1"].managed_processes)
         await runtime.start_managed_process(
             "p2", BoxManagedProcessSpec(command="daemon")
         )
@@ -1307,10 +1305,7 @@ async def test_completed_process_diagnostics_are_globally_bounded(logger):
         first = backend.last_process
         first.finish(0)
         await _wait_until(
-            lambda: runtime._sessions["bounded"]
-            .managed_processes["one"]
-            .exit_code
-            == 0
+            lambda: runtime._sessions["bounded"].managed_processes["one"].exit_code == 0
         )
 
         await runtime.start_managed_process(

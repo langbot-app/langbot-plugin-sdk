@@ -1132,7 +1132,9 @@ async def test_install_plugin_marketplace_streams_progress_and_launches(monkeypa
     monkeypatch.setattr(
         manager, "install_plugin_from_file", fake_install_plugin_from_file
     )
-    monkeypatch.setattr(manager, "start_plugin_supervisor", fake_start_plugin_supervisor)
+    monkeypatch.setattr(
+        manager, "start_plugin_supervisor", fake_start_plugin_supervisor
+    )
     monkeypatch.setattr(manager, "_wait_for_plugin_ready", fake_wait_for_plugin_ready)
     monkeypatch.setattr(
         manager,

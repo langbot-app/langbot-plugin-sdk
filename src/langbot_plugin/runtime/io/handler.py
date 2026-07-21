@@ -49,9 +49,7 @@ class Handler(abc.ABC):
     actions: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, ActionResponse]]]
 
     resp_waiters: dict[int, asyncio.Future[ActionResponse]] = {}
-    resp_queues: dict[
-        int, asyncio.Queue[ActionResponse | BaseException]
-    ] = {}
+    resp_queues: dict[int, asyncio.Queue[ActionResponse | BaseException]] = {}
 
     seq_id_index: int = 0
 

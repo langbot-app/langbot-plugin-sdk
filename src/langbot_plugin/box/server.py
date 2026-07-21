@@ -69,9 +69,7 @@ class AiohttpWSConnection(Connection):
 
     async def send(self, message: str) -> None:
         if len(message.encode("utf-8")) > MAX_MESSAGE_BYTES:
-            raise ValueError(
-                f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
-            )
+            raise ValueError(f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit")
         async with self._send_lock:
             try:
                 await self._ws.send_str(message)

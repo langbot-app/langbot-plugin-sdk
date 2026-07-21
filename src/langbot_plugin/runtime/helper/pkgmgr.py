@@ -134,10 +134,14 @@ async def install_single_async(
         stderr_bytes += (
             f"\nDependency installation timed out after {timeout_sec:.0f}s".encode()
         )
-        return 124, 0, (
-            stdout_bytes.decode("utf-8", errors="ignore")
-            + "\n"
-            + stderr_bytes.decode("utf-8", errors="ignore")
+        return (
+            124,
+            0,
+            (
+                stdout_bytes.decode("utf-8", errors="ignore")
+                + "\n"
+                + stderr_bytes.decode("utf-8", errors="ignore")
+            ),
         )
     output = (
         stdout_bytes.decode("utf-8", errors="ignore")
@@ -374,7 +378,9 @@ async def install_with_retry(
 def get_plugin_python(plugin_path: str) -> str:
     """Return the isolated interpreter for a plugin when it exists."""
     root = pathlib.Path(plugin_path) / PLUGIN_VENV_DIR
-    candidate = root / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    candidate = root / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
     return str(candidate) if candidate.is_file() else sys.executable
 
 
