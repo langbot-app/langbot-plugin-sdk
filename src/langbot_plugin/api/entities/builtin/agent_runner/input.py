@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pydantic
 
+from langbot_plugin.api.entities.builtin.agent_runner.interaction import InteractionSubmission
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 
 
@@ -59,6 +60,9 @@ class AgentInput(pydantic.BaseModel):
 
     attachments: list[InputAttachment] = pydantic.Field(default_factory=list)
     """Current-event attachment metadata."""
+
+    interaction: InteractionSubmission | None = None
+    """Host-validated submission when the current event is interaction.submitted."""
 
     def to_text(self) -> str:
         """Extract plain text from input.

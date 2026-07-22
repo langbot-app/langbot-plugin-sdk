@@ -8,6 +8,10 @@ from __future__ import annotations
 import typing
 import pydantic
 
+from langbot_plugin.api.entities.builtin.agent_runner.interaction import (
+    InteractionDeliveryCapabilities,
+)
+
 
 class DeliveryContext(pydantic.BaseModel):
     """Delivery context for the agent run.
@@ -33,6 +37,9 @@ class DeliveryContext(pydantic.BaseModel):
 
     max_message_size: int | None = None
     """Maximum message size in characters/bytes."""
+
+    interactions: InteractionDeliveryCapabilities | None = None
+    """Structured interaction features supported by this delivery surface."""
 
     platform_capabilities: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Platform-specific capabilities."""

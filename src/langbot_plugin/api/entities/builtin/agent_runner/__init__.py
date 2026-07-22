@@ -38,6 +38,19 @@ from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
     ContextAPICapabilities,
 )
 from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.agent_runner.interaction import (
+    INTERACTION_REQUESTED_ACTION,
+    INTERACTION_SUBMITTED_EVENT,
+    InteractionAction,
+    InteractionActionStyle,
+    InteractionDeliveryCapabilities,
+    InteractionField,
+    InteractionFieldType,
+    InteractionOption,
+    InteractionRequest,
+    InteractionSubmission,
+    JSONValue,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.context import (
     AgentRunContext,
     AdapterContext,
@@ -122,6 +135,17 @@ __all__ = [
     "InlineContextPolicy",
     "ContextAPICapabilities",
     "DeliveryContext",
+    "INTERACTION_REQUESTED_ACTION",
+    "INTERACTION_SUBMITTED_EVENT",
+    "InteractionAction",
+    "InteractionActionStyle",
+    "InteractionDeliveryCapabilities",
+    "InteractionField",
+    "InteractionFieldType",
+    "InteractionOption",
+    "InteractionRequest",
+    "InteractionSubmission",
+    "JSONValue",
     "AdapterContext",
     # Main context and result
     "AgentRunContext",

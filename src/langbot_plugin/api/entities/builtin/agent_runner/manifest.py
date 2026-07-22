@@ -65,6 +65,9 @@ class AgentRunnerCapabilities(pydantic.BaseModel):
     steering: bool = False
     """Runner can pull run-scoped steering/follow-up input at turn boundaries."""
 
+    interactions: bool = False
+    """Runner can request Host-owned structured interactions and consume submissions."""
+
     model_config = pydantic.ConfigDict(extra="forbid")
 
 
@@ -101,6 +104,9 @@ class AgentRunnerPermissions(pydantic.BaseModel):
         default_factory=list
     )
     """Storage scopes allowed."""
+
+    interactions: list[typing.Literal["request"]] = pydantic.Field(default_factory=list)
+    """Structured interaction operations allowed."""
 
     model_config = pydantic.ConfigDict(extra="forbid")
 

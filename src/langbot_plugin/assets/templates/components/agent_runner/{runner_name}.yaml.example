@@ -16,6 +16,8 @@ spec:
     multimodal_input: false
     skill_authoring: false
     interrupt: false
+    steering: false
+    interactions: false
   permissions:
     models: ["invoke", "stream"]
     tools: []
@@ -23,6 +25,7 @@ spec:
     history: []
     events: []
     storage: []
+    interactions: []
   config: []
 execution:
   python:

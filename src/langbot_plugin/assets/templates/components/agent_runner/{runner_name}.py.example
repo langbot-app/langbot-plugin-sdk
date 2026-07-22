@@ -5,8 +5,11 @@ from typing import AsyncGenerator
 
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
 from langbot_plugin.api.entities.builtin.agent_runner import (
+    INTERACTION_SUBMITTED_EVENT,
     AgentRunContext,
     AgentRunResult,
+    InteractionAction,
+    InteractionRequest,
 )
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 
@@ -41,6 +44,23 @@ class {{ runner_attr }}(AgentRunner):
         # Example: return a simple response
         # For streaming, use AgentRunResult.message_delta(ctx.run_id, chunk)
         # For final response, use AgentRunResult.run_completed(ctx.run_id, message)
+        # For human input, declare interactions in the component manifest and use:
+        # if ctx.event.event_type == INTERACTION_SUBMITTED_EVENT and ctx.input.interaction:
+        #     submission = ctx.input.interaction
+        #     # Load provider-private continuation data from authorized state/storage
+        #     # by submission.interaction_id, then resume the provider with
+        #     # submission.action_id and submission.values.
+        #
+        # yield AgentRunResult.interaction_requested(
+        #     ctx.run_id,
+        #     InteractionRequest(
+        #         interaction_id="confirm-1",
+        #         kind="confirmation",
+        #         title="Continue?",
+        #         actions=[InteractionAction(id="continue", label="Continue", style="primary")],
+        #         fallback_text="Reply continue to proceed.",
+        #     ),
+        # )
 
         final_message = Message(
             role="assistant",
