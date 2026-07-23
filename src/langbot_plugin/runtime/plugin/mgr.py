@@ -86,6 +86,7 @@ class PluginManager:
         self._desired_plugin_paths: set[str] = set()
         self._shutting_down = False
         self._dependency_errors: dict[str, str] = {}
+        self._plugin_operation_locks: dict[str, asyncio.Lock] = {}
 
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
@@ -172,9 +173,16 @@ class PluginManager:
 
         async def reconcile(plugin_path: str) -> None:
             async with semaphore:
-                returncode, output = await pkgmgr_helper.install_requirements_isolated(
-                    plugin_path
-                )
+                try:
+                    (
+                        returncode,
+                        output,
+                    ) = await pkgmgr_helper.install_requirements_isolated(plugin_path)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    output = f"{type(exc).__name__}: {exc}"
+                    returncode = 1
                 if returncode == 0:
                     self._dependency_errors.pop(plugin_path, None)
                     logger.info(
@@ -338,6 +346,7 @@ class PluginManager:
                 args=args,
                 env={},
                 working_dir=plugin_path,
+                capture_stderr=True,
             )
 
             async def new_plugin_connection_callback(connection: Connection):
@@ -380,19 +389,7 @@ class PluginManager:
         plugin_author = manifest["metadata"]["author"]
         plugin_version = manifest["metadata"]["version"]
 
-        for plugin in self.plugins:
-            if (
-                plugin.manifest.metadata.author == plugin_author
-                and plugin.manifest.metadata.name == plugin_name
-            ):
-                if plugin.manifest.metadata.version == plugin_version:
-                    raise ValueError(
-                        f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists"
-                    )
-                elif plugin.debug:
-                    raise ValueError(
-                        f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists, and it is a debugging plugin"
-                    )
+        self._validate_install_target(plugin_author, plugin_name, plugin_version)
 
         staging_path = os.path.join(
             "data",
@@ -412,6 +409,34 @@ class PluginManager:
         await asyncio.to_thread(extract)
         return staging_path, plugin_author, plugin_name, plugin_version
 
+    def _validate_install_target(
+        self, plugin_author: str, plugin_name: str, plugin_version: str
+    ) -> None:
+        """Reject a conflicting installed generation for the same plugin."""
+        for plugin in self.plugins:
+            if (
+                plugin.manifest.metadata.author == plugin_author
+                and plugin.manifest.metadata.name == plugin_name
+            ):
+                if plugin.manifest.metadata.version == plugin_version:
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists"
+                    )
+                elif plugin.debug:
+                    raise ValueError(
+                        f"Plugin {plugin_author}/{plugin_name}:{plugin_version} already exists, and it is a debugging plugin"
+                    )
+
+    def _get_plugin_operation_lock(
+        self, plugin_author: str, plugin_name: str
+    ) -> asyncio.Lock:
+        key = f"{plugin_author}/{plugin_name}"
+        lock = self._plugin_operation_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._plugin_operation_locks[key] = lock
+        return lock
+
     async def install_plugin_from_marketplace(
         self, plugin_author: str, plugin_name: str, plugin_version: str
     ) -> tuple[str, str, str, str]:
@@ -426,28 +451,29 @@ class PluginManager:
     ) -> str | None:
         """Atomically replace plugin files after stopping the old generation."""
         target_path = self.get_plugin_path(plugin_author, plugin_name)
+        self._desired_plugin_paths.discard(target_path)
+        await self.stop_plugin_supervisor(target_path)
         old_plugin = self.find_plugin(plugin_author, plugin_name)
         if old_plugin is not None:
-            self._desired_plugin_paths.discard(target_path)
             await self.shutdown_plugin(old_plugin)
-            await self.stop_plugin_supervisor(target_path)
 
         backup_path: str | None = None
-        if os.path.isdir(target_path):
-            backup_path = os.path.join(
-                "data",
-                ".plugin-backups",
-                f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
-            )
-            os.makedirs(os.path.dirname(backup_path), exist_ok=True)
-            os.replace(target_path, backup_path)
-
         try:
+            if os.path.isdir(target_path):
+                backup_path = os.path.join(
+                    "data",
+                    ".plugin-backups",
+                    f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
+                )
+                os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+                os.replace(target_path, backup_path)
             os.makedirs(os.path.dirname(target_path), exist_ok=True)
             os.replace(staging_path, target_path)
         except Exception:
             if backup_path is not None and os.path.isdir(backup_path):
                 os.replace(backup_path, target_path)
+            if os.path.isdir(target_path) and not self._shutting_down:
+                self.start_plugin_supervisor(target_path)
             raise
         return backup_path
 
@@ -538,9 +564,14 @@ class PluginManager:
         else:
             raise ValueError(f"Invalid source: {source}")
 
+        operation_lock = self._get_plugin_operation_lock(plugin_author, plugin_name)
+        lock_acquired = False
         backup_path: str | None = None
         activated = False
         try:
+            await operation_lock.acquire()
+            lock_acquired = True
+            self._validate_install_target(plugin_author, plugin_name, plugin_version)
             logger.info("installing isolated plugin dependencies")
             yield {"current_action": "installing dependencies"}
             requirements_file = os.path.join(plugin_path, "requirements.txt")
@@ -639,7 +670,7 @@ class PluginManager:
             )
             if backup_path is not None:
                 shutil.rmtree(backup_path, ignore_errors=True)
-        except Exception:
+        except BaseException:
             if activated:
                 await self._rollback_plugin_activation(
                     plugin_author, plugin_name, backup_path
@@ -647,6 +678,9 @@ class PluginManager:
             else:
                 shutil.rmtree(plugin_path, ignore_errors=True)
             raise
+        finally:
+            if lock_acquired:
+                operation_lock.release()
 
     async def register_plugin(
         self,
@@ -726,6 +760,18 @@ class PluginManager:
         plugin_author: str,
         plugin_name: str,
     ):
+        operation_lock = self._get_plugin_operation_lock(plugin_author, plugin_name)
+        async with operation_lock:
+            async for progress in self._restart_plugin_unlocked(
+                plugin_author, plugin_name
+            ):
+                yield progress
+
+    async def _restart_plugin_unlocked(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+    ):
         for plugin in self.plugins:
             if (
                 plugin.manifest.metadata.author == plugin_author
@@ -764,6 +810,18 @@ class PluginManager:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
 
     async def delete_plugin(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+    ):
+        operation_lock = self._get_plugin_operation_lock(plugin_author, plugin_name)
+        async with operation_lock:
+            async for progress in self._delete_plugin_unlocked(
+                plugin_author, plugin_name
+            ):
+                yield progress
+
+    async def _delete_plugin_unlocked(
         self,
         plugin_author: str,
         plugin_name: str,

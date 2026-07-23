@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import zipfile
 from types import SimpleNamespace
 from typing import Any
@@ -422,6 +423,89 @@ async def test_install_plugin_from_file_rejects_same_version_duplicate(
 
     with pytest.raises(ValueError, match="already exists"):
         await manager.install_plugin_from_file(_plugin_zip(version="1.0.0"))
+
+
+@pytest.mark.asyncio
+async def test_dependency_reconciliation_isolates_plugin_failures(monkeypatch):
+    manager = _manager()
+
+    async def fake_install(plugin_path):
+        if plugin_path.endswith("bad"):
+            raise OSError("venv unavailable")
+        return 0, ""
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.glob.glob",
+        lambda pattern: ["data/plugins/bad", "data/plugins/good"],
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.os.path.isdir",
+        lambda path: True,
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.install_requirements_isolated",
+        fake_install,
+    )
+
+    await manager.ensure_all_plugins_dependencies_installed()
+
+    assert manager._dependency_errors == {
+        "data/plugins/bad": "OSError: venv unavailable"
+    }
+
+
+@pytest.mark.asyncio
+async def test_activation_stops_supervisor_without_registered_container(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    target_path = tmp_path / "data/plugins/tester__demo"
+    target_path.mkdir(parents=True)
+    (target_path / "old.py").write_text("old", encoding="utf-8")
+    staging_path = tmp_path / "data/.plugin-staging/tester__demo-new"
+    staging_path.mkdir(parents=True)
+    (staging_path / "new.py").write_text("new", encoding="utf-8")
+    manager.stop_plugin_supervisor = AsyncMock()
+
+    await manager._activate_staged_plugin(str(staging_path), "tester", "demo")
+
+    manager.stop_plugin_supervisor.assert_awaited_once_with("data/plugins/tester__demo")
+    assert (target_path / "new.py").is_file()
+
+
+@pytest.mark.asyncio
+async def test_activation_failure_restores_and_restarts_previous_generation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    target_path = tmp_path / "data/plugins/tester__demo"
+    target_path.mkdir(parents=True)
+    (target_path / "old.py").write_text("old", encoding="utf-8")
+    staging_path = tmp_path / "data/.plugin-staging/tester__demo-new"
+    staging_path.mkdir(parents=True)
+    (staging_path / "new.py").write_text("new", encoding="utf-8")
+    manager.stop_plugin_supervisor = AsyncMock()
+    restarted = []
+    manager.start_plugin_supervisor = lambda path: restarted.append(path)
+    real_replace = os.replace
+
+    def fail_new_generation(source, destination):
+        if str(source) == str(staging_path):
+            raise OSError("swap failed")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.os.replace",
+        fail_new_generation,
+    )
+
+    with pytest.raises(OSError, match="swap failed"):
+        await manager._activate_staged_plugin(str(staging_path), "tester", "demo")
+
+    assert (target_path / "old.py").read_text(encoding="utf-8") == "old"
+    assert restarted == ["data/plugins/tester__demo"]
 
 
 @pytest.mark.asyncio

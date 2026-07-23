@@ -663,7 +663,9 @@ class BoxRuntime:
 
                 async with self._lock:
                     if (
-                        len(self._sessions) + len(self._creating_session_tasks)
+                        len(self._sessions)
+                        + len(self._creating_session_tasks)
+                        + len(self._closing_session_tasks)
                         >= self.max_sessions
                     ):
                         raise BoxCapacityExceededError(

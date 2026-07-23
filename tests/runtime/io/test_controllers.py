@@ -77,8 +77,39 @@ async def test_stdio_client_controller_creates_process_connection(monkeypatch):
     assert captured["args"][:2] == ("python", "plugin.py")
     assert captured["kwargs"]["env"] == {"TOKEN": "secret"}
     assert captured["kwargs"]["cwd"] == "/tmp/plugin"
+    assert captured["kwargs"]["stderr"] is None
     assert isinstance(captured["connection"], StdioConnection)
     assert captured["connection"].process is process
+
+
+async def test_stdio_client_controller_captures_stderr_only_when_requested(
+    monkeypatch,
+):
+    process = FakeProcess()
+    captured = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(kwargs)
+        return process
+
+    async def callback(connection):
+        return None
+
+    monkeypatch.setattr(
+        stdio_client.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    controller = stdio_client.StdioClientController(
+        "python",
+        [],
+        {},
+        capture_stderr=True,
+    )
+
+    await controller.run(callback)
+
+    assert captured["stderr"] is stdio_client.asyncio.subprocess.PIPE
 
 
 async def test_stdio_client_controller_rejects_missing_pipes(monkeypatch):

@@ -44,6 +44,7 @@ class RuntimeApplication:
         self.context = context.RuntimeContext()
         self._server_tasks: set[asyncio.Task] = set()
         self._control_tasks: set[asyncio.Task] = set()
+        self._control_handler_lock = asyncio.Lock()
         self._closing = False
         self._shutdown_complete = False
 
@@ -79,33 +80,39 @@ class RuntimeApplication:
         self, handler: control_handler_cls.ControlConnectionHandler
     ):
         async def run_current_generation() -> None:
-            previous = getattr(self.context, "control_handler", None)
-            if previous is not None and previous is not handler:
-                close = getattr(previous, "close", None)
-                if close is not None:
-                    await close()
+            async with self._control_handler_lock:
+                previous = getattr(self.context, "control_handler", None)
+                if previous is not None and previous is not handler:
+                    close = getattr(previous, "close", None)
+                    if close is not None:
+                        await close()
 
-            if self._closing:
-                close = getattr(handler, "close", None)
-                if close is not None:
-                    await close()
-                return
+                if self._closing:
+                    close = getattr(handler, "close", None)
+                    if close is not None:
+                        await close()
+                    return
 
-            self.context.control_handler = handler
-            logger.info("Got control connection.")
-            mark_ready = getattr(
-                self.context.plugin_mgr, "mark_control_connection_ready", None
-            )
-            if mark_ready is not None:
-                mark_ready()
-            waiter = self.context.plugin_mgr.wait_for_control_connection
-            if waiter is not None:
-                if not waiter.done():
-                    waiter.set_result(None)
-                # Installed plugins are launched only once. Later control
-                # generations reuse the existing supervised plugin processes.
-                self.context.plugin_mgr.wait_for_control_connection = None
-            await handler.run()
+                self.context.control_handler = handler
+                logger.info("Got control connection.")
+                mark_ready = getattr(
+                    self.context.plugin_mgr, "mark_control_connection_ready", None
+                )
+                if mark_ready is not None:
+                    mark_ready()
+                waiter = self.context.plugin_mgr.wait_for_control_connection
+                if waiter is not None:
+                    if not waiter.done():
+                        waiter.set_result(None)
+                    # Installed plugins are launched only once. Later control
+                    # generations reuse the existing supervised plugin processes.
+                    self.context.plugin_mgr.wait_for_control_connection = None
+            try:
+                await handler.run()
+            finally:
+                async with self._control_handler_lock:
+                    if getattr(self.context, "control_handler", None) is handler:
+                        del self.context.control_handler
 
         task = asyncio.create_task(run_current_generation())
         self._control_tasks.add(task)
@@ -162,6 +169,11 @@ class RuntimeApplication:
             task = asyncio.create_task(coroutine)
             self._server_tasks.add(task)
         await asyncio.sleep(0)
+        for task in list(self._server_tasks):
+            if task.done() and not task.cancelled():
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
 
         # ==== check and install dependencies for all plugins ====
         if not self.args.skip_deps_check:
@@ -181,12 +193,13 @@ class RuntimeApplication:
             return
         self._closing = True
 
-        control_handler = getattr(self.context, "control_handler", None)
-        if control_handler is not None:
-            close = getattr(control_handler, "close", None)
-            if close is not None:
-                with contextlib.suppress(Exception):
-                    await close()
+        async with self._control_handler_lock:
+            control_handler = getattr(self.context, "control_handler", None)
+            if control_handler is not None:
+                close = getattr(control_handler, "close", None)
+                if close is not None:
+                    with contextlib.suppress(Exception):
+                        await close()
 
         await self.context.plugin_mgr.shutdown_all_plugins()
 

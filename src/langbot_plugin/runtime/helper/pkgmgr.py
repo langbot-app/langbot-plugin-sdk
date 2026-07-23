@@ -20,6 +20,24 @@ PLUGIN_VENV_DIR = ".venv"
 DEFAULT_INSTALL_TIMEOUT_SEC = 300.0
 
 
+async def _terminate_subprocess(proc: asyncio.subprocess.Process) -> None:
+    """Terminate and reap a subprocess without leaving cancellation orphans."""
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=2)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.communicate()
+
+
 def get_pip_index_args() -> list[str]:
     """Build pip index args from environment. Defaults to official PyPI."""
     index_url = os.getenv(PYPI_INDEX_URL_ENV, DEFAULT_PYPI_INDEX_URL).strip()
@@ -143,6 +161,9 @@ async def install_single_async(
                 + stderr_bytes.decode("utf-8", errors="ignore")
             ),
         )
+    except asyncio.CancelledError:
+        await _terminate_subprocess(proc)
+        raise
     output = (
         stdout_bytes.decode("utf-8", errors="ignore")
         + "\n"
@@ -381,7 +402,9 @@ def get_plugin_python(plugin_path: str) -> str:
     candidate = root / (
         "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
     )
-    return str(candidate) if candidate.is_file() else sys.executable
+    if candidate.is_file():
+        return str(candidate.resolve())
+    return str(pathlib.Path(sys.executable).resolve())
 
 
 async def ensure_plugin_environment(plugin_path: str) -> str:
@@ -432,6 +455,9 @@ async def install_requirements_isolated(
         return 124, (
             stdout + stderr + f"\nTimed out after {timeout_sec:.0f}s".encode()
         ).decode("utf-8", errors="replace")
+    except asyncio.CancelledError:
+        await _terminate_subprocess(proc)
+        raise
     return proc.returncode or 0, (stdout + stderr).decode("utf-8", errors="replace")
 
 
@@ -481,6 +507,9 @@ print(json.dumps([missing, version_mismatch]))
         proc.kill()
         await proc.communicate()
         return list(deps), []
+    except asyncio.CancelledError:
+        await _terminate_subprocess(proc)
+        raise
     if proc.returncode != 0:
         raise RuntimeError(
             "Dependency verification subprocess failed: "

@@ -174,9 +174,57 @@ async def test_set_control_handler_runs_handler_and_resolves_waiter(monkeypatch)
     task = app.set_control_handler(handler)
     await task
 
-    assert app.context.control_handler is handler
+    assert not hasattr(app.context, "control_handler")
     assert handler.calls == ["run"]
     assert app.context.plugin_mgr.wait_for_control_connection is None
+
+
+async def test_set_control_handler_serializes_replacements(monkeypatch):
+    monkeypatch.setattr(
+        runtime_app.plugin_mgr_cls,
+        "PluginManager",
+        FakePluginManager,
+    )
+    monkeypatch.setattr(
+        runtime_app.stdio_controller_server,
+        "StdioServerController",
+        FakeServerController,
+    )
+    monkeypatch.setattr(
+        runtime_app.ws_controller_server,
+        "WebSocketServerController",
+        FakeServerController,
+    )
+    app = runtime_app.RuntimeApplication(_args())
+
+    class BlockingHandler:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.close_calls = 0
+
+        async def run(self):
+            self.started.set()
+            await self.release.wait()
+
+        async def close(self):
+            self.close_calls += 1
+            self.release.set()
+
+    first = BlockingHandler()
+    second = BlockingHandler()
+    first_task = app.set_control_handler(first)
+    await first.started.wait()
+    second_task = app.set_control_handler(second)
+    await second.started.wait()
+
+    assert first_task.done()
+    assert first.close_calls == 1
+    assert app.context.control_handler is second
+
+    second.release.set()
+    await second_task
+    assert not hasattr(app.context, "control_handler")
 
 
 async def test_runtime_application_run_coordinates_servers_and_plugin_manager(

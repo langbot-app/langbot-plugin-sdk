@@ -1172,6 +1172,33 @@ async def test_session_capacity_is_enforced(logger):
 
 
 @pytest.mark.anyio
+async def test_closing_session_still_counts_toward_capacity(logger):
+    backend = FakeBackend(logger)
+    stop_started = asyncio.Event()
+    release_stop = asyncio.Event()
+
+    async def slow_stop_session(session: BoxSessionInfo):
+        stop_started.set()
+        await release_stop.wait()
+
+    backend.stop_session = mock.AsyncMock(side_effect=slow_stop_session)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], max_sessions=1)
+        await runtime.create_session(_make_spec("one"))
+        delete_task = asyncio.create_task(runtime.delete_session("one"))
+        await stop_started.wait()
+
+        with pytest.raises(BoxCapacityExceededError, match="capacity"):
+            await runtime.create_session(_make_spec("two"))
+
+        release_stop.set()
+        await delete_task
+        created = await runtime.create_session(_make_spec("two"))
+        assert created["session_id"] == "two"
+        await runtime.shutdown()
+
+
+@pytest.mark.anyio
 async def test_different_sessions_start_without_global_io_lock(logger):
     backend = FakeBackend(logger)
     original_start = backend.start_session
