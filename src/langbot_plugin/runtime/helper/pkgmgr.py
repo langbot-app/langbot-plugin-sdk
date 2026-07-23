@@ -398,9 +398,10 @@ async def install_with_retry(
 
 def get_plugin_python(plugin_path: str) -> str:
     """Return the isolated interpreter for a plugin when it exists."""
-    root = pathlib.Path(plugin_path) / PLUGIN_VENV_DIR
-    candidate = root / (
-        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    candidate = (
+        pathlib.Path(plugin_path)
+        / PLUGIN_VENV_DIR
+        / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     )
     if candidate.is_file():
         return str(candidate.resolve())
@@ -414,15 +415,19 @@ async def ensure_plugin_environment(plugin_path: str) -> str:
     dependencies installed into the venv shadow only this plugin's imports.
     """
     root = pathlib.Path(plugin_path) / PLUGIN_VENV_DIR
-    python_path = get_plugin_python(plugin_path)
-    if python_path != sys.executable:
-        return python_path
+    candidate = root / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
+    if candidate.is_file():
+        return str(candidate.resolve())
 
     await asyncio.to_thread(
         venv.EnvBuilder(with_pip=True, system_site_packages=True).create,
         root,
     )
-    return get_plugin_python(plugin_path)
+    if not candidate.is_file():
+        raise RuntimeError(f"Plugin virtual environment was not created at {root}")
+    return str(candidate.resolve())
 
 
 async def install_requirements_isolated(

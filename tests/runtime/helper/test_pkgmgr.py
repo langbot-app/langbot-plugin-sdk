@@ -180,6 +180,36 @@ def test_get_plugin_python_returns_absolute_venv_interpreter(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ensure_plugin_environment_creates_missing_venv_for_symlinked_host_python(
+    monkeypatch, tmp_path
+):
+    executable = (
+        tmp_path
+        / ".venv"
+        / ("Scripts/python.exe" if pkgmgr.sys.platform == "win32" else "bin/python")
+    )
+    created_roots = []
+
+    class FakeEnvBuilder:
+        def __init__(self, *, with_pip, system_site_packages):
+            assert with_pip is True
+            assert system_site_packages is True
+
+        def create(self, root):
+            created_roots.append(pathlib.Path(root))
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+
+    monkeypatch.setattr(pkgmgr.venv, "EnvBuilder", FakeEnvBuilder)
+    monkeypatch.setattr(pkgmgr.sys, "executable", "/host/.venv/bin/python")
+
+    result = await pkgmgr.ensure_plugin_environment(str(tmp_path))
+
+    assert created_roots == [tmp_path / ".venv"]
+    assert pathlib.Path(result) == executable.resolve()
+
+
+@pytest.mark.asyncio
 async def test_install_requirements_reaps_subprocess_when_cancelled(
     monkeypatch, tmp_path
 ):
