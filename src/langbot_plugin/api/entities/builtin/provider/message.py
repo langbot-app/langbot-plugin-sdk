@@ -112,6 +112,9 @@ class Message(pydantic.BaseModel):
 
     tool_call_id: typing.Optional[str] = None
 
+    usage: typing.Optional[dict[str, typing.Any]] = None
+    """Token usage info from LLM call (input_tokens, output_tokens, total_tokens)"""
+
     resp_message_id: typing.Optional[str] = None
     """Response message ID for tracking"""
 
