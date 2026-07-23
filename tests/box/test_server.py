@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-from aiohttp import web
+from aiohttp import WSCloseCode, web
 
 from langbot_plugin.box import server
 from langbot_plugin.box.actions import LangBotToBoxAction
@@ -717,6 +717,8 @@ def test_create_app_registers_routes_and_runtime(mock_runtime):
     app = create_app(mock_runtime)
     assert isinstance(app, web.Application)
     assert app["runtime"] is mock_runtime
+    assert app[server._ACTIVE_WEBSOCKETS_KEY] == set()
+    assert server._close_active_websockets in app.on_shutdown
 
     routes = {(route.method, route.resource.canonical) for route in app.router.routes()}
     assert ("GET", "/healthz") in routes
@@ -745,7 +747,10 @@ async def test_handle_rpc_ws_prepares_ws_and_runs_handler(mock_runtime):
     fake_ws.prepare = mock.AsyncMock()
 
     request = mock.MagicMock()
-    request.app = {"runtime": mock_runtime}
+    request.app = {
+        "runtime": mock_runtime,
+        server._ACTIVE_WEBSOCKETS_KEY: set(),
+    }
 
     run_mock = mock.AsyncMock()
     with (
@@ -757,6 +762,24 @@ async def test_handle_rpc_ws_prepares_ws_and_runs_handler(mock_runtime):
     assert result is fake_ws
     fake_ws.prepare.assert_awaited_once_with(request)
     run_mock.assert_awaited_once()
+    assert request.app[server._ACTIVE_WEBSOCKETS_KEY] == set()
+
+
+async def test_close_active_websockets_closes_every_client(mock_runtime):
+    app = create_app(mock_runtime)
+    first_ws = mock.MagicMock()
+    first_ws.close = mock.AsyncMock()
+    second_ws = mock.MagicMock()
+    second_ws.close = mock.AsyncMock(side_effect=ConnectionResetError)
+    app[server._ACTIVE_WEBSOCKETS_KEY].update((first_ws, second_ws))
+
+    await server._close_active_websockets(app)
+
+    for ws in (first_ws, second_ws):
+        ws.close.assert_awaited_once_with(
+            code=WSCloseCode.GOING_AWAY,
+            message=b"Box runtime shutting down",
+        )
 
 
 # ── handle_managed_process_ws error/early-return paths ───────────────
