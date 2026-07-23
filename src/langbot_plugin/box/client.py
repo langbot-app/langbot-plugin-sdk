@@ -125,6 +125,7 @@ def _translate_action_error(exc: Exception) -> BoxError:
     """Convert an ActionCallError message back into the appropriate BoxError subclass."""
     from .errors import (
         BoxBackendUnavailableError,
+        BoxCapacityExceededError,
         BoxManagedProcessConflictError,
         BoxManagedProcessNotFoundError,
         BoxSessionConflictError,
@@ -140,6 +141,7 @@ def _translate_action_error(exc: Exception) -> BoxError:
         ("BoxManagedProcessNotFoundError:", BoxManagedProcessNotFoundError),
         ("BoxManagedProcessConflictError:", BoxManagedProcessConflictError),
         ("BoxBackendUnavailableError:", BoxBackendUnavailableError),
+        ("BoxCapacityExceededError:", BoxCapacityExceededError),
     ]
     for prefix, cls in _ERROR_PREFIX_MAP:
         if prefix in msg:
@@ -160,7 +162,7 @@ class ActionRPCBoxClient(BoxRuntimeClient):
             raise BoxRuntimeUnavailableError("box runtime not connected")
         return self._handler
 
-    def set_handler(self, handler: Handler) -> None:
+    def set_handler(self, handler: Handler | None) -> None:
         self._handler = handler
 
     async def _call(

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from langbot_plugin.runtime.io.connection import split_utf8_chunks
 from langbot_plugin.runtime.io.connections.stdio import StdioConnection
 from langbot_plugin.runtime.io.connections.ws import WebSocketConnection
 
@@ -48,7 +51,7 @@ class FakeWebSocket:
         self.receive_batches = receive_batches or []
         self.closed = False
 
-    async def send(self, data: str, text: bool = False):
+    async def send(self, data, text: bool = False):
         self.sent.append((data, text))
 
     def recv_streaming(self, decode: bool = False):
@@ -129,13 +132,21 @@ async def test_websocket_connection_sends_large_message_in_chunks():
 
     await connection.send("abcdefghi")
 
-    assert websocket.sent == [("abcd", True), ("efgh", True), ("i", True)]
+    assert websocket.sent == [(["abcd", "efgh", "i"], False)]
 
 
 async def test_websocket_connection_receives_streamed_json_message():
     websocket = FakeWebSocket(receive_batches=[['{"ok": ', "true}"]])
     connection = WebSocketConnection(websocket)
 
+    assert await connection.receive() == '{"ok": true}'
+
+
+async def test_websocket_connection_returns_one_malformed_message_at_a_time():
+    websocket = FakeWebSocket(receive_batches=[["not-json"], ['{"ok": true}']])
+    connection = WebSocketConnection(websocket)
+
+    assert await connection.receive() == "not-json"
     assert await connection.receive() == '{"ok": true}'
 
 
@@ -146,3 +157,15 @@ async def test_websocket_connection_close_closes_socket():
     await connection.close()
 
     assert websocket.closed is True
+
+
+def test_split_utf8_chunks_respects_byte_limit():
+    chunks = split_utf8_chunks("a你b好", 4)
+
+    assert "".join(chunks) == "a你b好"
+    assert all(len(chunk.encode("utf-8")) <= 4 for chunk in chunks)
+
+
+def test_split_utf8_chunks_rejects_impossible_limit():
+    with pytest.raises(ValueError, match="UTF-8 code point"):
+        split_utf8_chunks("你", 2)

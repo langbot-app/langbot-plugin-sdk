@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
+
+import pytest
 
 from langbot_plugin.runtime.helper import pkgmgr
 
@@ -115,6 +118,93 @@ def test_install_single_async_builds_pip_command_and_parses_output(monkeypatch):
     assert downloaded == 2048
     assert "Downloading async.whl" in output
     assert calls[0][0][-2:] == ("install", "demo")
+
+
+class _BlockingProcess:
+    def __init__(self):
+        self.returncode = None
+        self.communicate_started = asyncio.Event()
+        self.terminated = False
+        self.killed = False
+
+    async def communicate(self):
+        self.communicate_started.set()
+        if self.returncode is not None:
+            return b"", b""
+        await asyncio.Future()
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self):
+        return self.returncode
+
+
+@pytest.mark.asyncio
+async def test_install_single_async_reaps_subprocess_when_cancelled(monkeypatch):
+    process = _BlockingProcess()
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    task = asyncio.create_task(pkgmgr.install_single_async("demo"))
+    await process.communicate_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.terminated
+    assert not process.killed
+
+
+def test_get_plugin_python_returns_absolute_venv_interpreter(tmp_path):
+    executable = (
+        tmp_path
+        / ".venv"
+        / ("Scripts/python.exe" if pkgmgr.sys.platform == "win32" else "bin/python")
+    )
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+
+    result = pkgmgr.get_plugin_python(str(tmp_path))
+
+    assert pathlib.Path(result).is_absolute()
+    assert pathlib.Path(result) == executable.resolve()
+
+
+@pytest.mark.asyncio
+async def test_install_requirements_reaps_subprocess_when_cancelled(
+    monkeypatch, tmp_path
+):
+    (tmp_path / "requirements.txt").write_text("demo\n", encoding="utf-8")
+    process = _BlockingProcess()
+
+    async def fake_ensure_plugin_environment(plugin_path):
+        return pkgmgr.sys.executable
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(
+        pkgmgr, "ensure_plugin_environment", fake_ensure_plugin_environment
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    task = asyncio.create_task(pkgmgr.install_requirements_isolated(str(tmp_path)))
+    await process.communicate_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert process.terminated
+    assert not process.killed
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +399,13 @@ def _patch_install_sequence(monkeypatch, results):
     seq = list(results)
     calls = {"n": 0}
 
-    async def fake_install(package, extra_params=None):
+    async def fake_install(
+        package,
+        extra_params=None,
+        *,
+        python_executable=None,
+        timeout_sec=pkgmgr.DEFAULT_INSTALL_TIMEOUT_SEC,
+    ):
         calls["n"] += 1
         return seq.pop(0)
 

@@ -10,15 +10,18 @@ import logging
 import os
 from pathlib import Path
 import uuid
+import weakref
 from typing import TYPE_CHECKING
 
 from .backend import BaseSandboxBackend, DockerBackend
 from .nsjail_backend import NsjailBackend
 from .errors import (
     BoxBackendUnavailableError,
+    BoxCapacityExceededError,
     BoxManagedProcessNotFoundError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
+    BoxRuntimeUnavailableError,
     BoxValidationError,
 )
 from .models import (
@@ -73,6 +76,7 @@ class _RuntimeSession:
     # Signature of the extra bind mounts the container was created with. Used
     # to detect when a reused session would be missing newly-requested mounts.
     extra_mounts_key: frozenset[tuple[str, str, str]] = frozenset()
+    closing: bool = False
 
 
 def _compute_extra_mounts_key(spec: BoxSpec) -> frozenset[tuple[str, str, str]]:
@@ -100,6 +104,10 @@ class BoxRuntime:
         logger: logging.Logger,
         backends: list[BaseSandboxBackend] | None = None,
         session_ttl_sec: int = 300,
+        max_sessions: int = 64,
+        max_managed_processes: int = 64,
+        max_completed_processes: int = 256,
+        completed_process_retention_sec: int = 300,
     ):
         self.logger = logger
 
@@ -124,12 +132,34 @@ class BoxRuntime:
 
         self.backends = backends
         self.session_ttl_sec = session_ttl_sec
+        limits = self._box_config.get("limits") or {}
+        self.max_sessions = int(limits.get("max_sessions", max_sessions))
+        self.max_managed_processes = int(
+            limits.get("max_managed_processes", max_managed_processes)
+        )
+        self.max_completed_processes = int(
+            limits.get("max_completed_processes", max_completed_processes)
+        )
+        self.completed_process_retention_sec = int(
+            limits.get(
+                "completed_process_retention_sec", completed_process_retention_sec
+            )
+        )
         self._backend: BaseSandboxBackend | None = None
+        self._backend_lock = asyncio.Lock()
         self._sessions: dict[str, _RuntimeSession] = {}
         self._lock = asyncio.Lock()
+        self._session_operation_locks: weakref.WeakValueDictionary[
+            str, asyncio.Lock
+        ] = weakref.WeakValueDictionary()
+        self._session_leases: collections.Counter[str] = collections.Counter()
+        self._creating_session_tasks: dict[str, asyncio.Task] = {}
+        self._managed_starting_count = 0
+        self._shutdown_in_progress = False
         self._reaper_task: asyncio.Task | None = None
         self._active_exec_counts: collections.Counter[str] = collections.Counter()
         self._closing_session_tasks: dict[str, asyncio.Task[None]] = {}
+        self._background_tasks: set[asyncio.Task] = set()
         self.instance_id = uuid.uuid4().hex[:12]
         self.skill_store = BoxSkillStore(self._box_config)
 
@@ -167,6 +197,20 @@ class BoxRuntime:
         Called via RPC (INIT action) when connecting over WebSocket.
         """
         self._box_config.update(config)
+        limits = self._box_config.get("limits") or {}
+        self.max_sessions = int(limits.get("max_sessions", self.max_sessions))
+        self.max_managed_processes = int(
+            limits.get("max_managed_processes", self.max_managed_processes)
+        )
+        self.max_completed_processes = int(
+            limits.get("max_completed_processes", self.max_completed_processes)
+        )
+        self.completed_process_retention_sec = int(
+            limits.get(
+                "completed_process_retention_sec",
+                self.completed_process_retention_sec,
+            )
+        )
         self._apply_config_to_backends(config)
         self.skill_store.update_config(self._box_config)
         self._ensure_default_workspace()
@@ -205,7 +249,10 @@ class BoxRuntime:
         for root in configured_roots or []:
             root_value = str(root or "").strip()
             if root_value:
-                roots.append(_resolve_local_path(root_value, base=host_root))
+                # Mount allow-list entries are host paths. Relative values in
+                # the shipped config (for example ``./data/box``) are relative
+                # to the runtime working directory, not nested under host_root.
+                roots.append(_resolve_local_path(root_value))
 
         if not roots and host_root is not None:
             roots.append(host_root)
@@ -260,6 +307,10 @@ class BoxRuntime:
         cleanup_task: asyncio.Task[None] | None = None
         try:
             async with session.lock:
+                if session.closing:
+                    raise BoxSessionNotFoundError(
+                        f"session {spec.session_id} is being deleted"
+                    )
                 self.logger.info(
                     "LangBot Box execute: "
                     f"session_id={spec.session_id} "
@@ -319,33 +370,55 @@ class BoxRuntime:
                 )
 
     async def shutdown(self):
-        cleanup_tasks: list[asyncio.Task[None]]
-        async with self._lock:
-            cleanup_tasks = list(self._closing_session_tasks.values())
-            session_ids = list(self._sessions.keys())
-            for session_id in session_ids:
-                session = self._sessions.get(session_id)
-                if session is not None and session.info.persistent:
-                    continue
-                cleanup_task = self._drop_session_locked(session_id)
-                if cleanup_task is not None:
-                    cleanup_tasks.append(cleanup_task)
-        await self._wait_for_session_cleanups(cleanup_tasks)
+        self._shutdown_in_progress = True
+        try:
+            while True:
+                async with self._lock:
+                    creating = [
+                        task
+                        for task in self._creating_session_tasks.values()
+                        if task is not asyncio.current_task()
+                    ]
+                if not creating:
+                    break
+                await asyncio.gather(*creating, return_exceptions=True)
+
+            async with self._lock:
+                cleanup_tasks = list(self._closing_session_tasks.values())
+                for session_id in list(self._sessions):
+                    cleanup_task = self._drop_session_locked(session_id)
+                    if cleanup_task is not None:
+                        cleanup_tasks.append(cleanup_task)
+            await self._wait_for_session_cleanups(cleanup_tasks)
+
+            tasks = list(self._background_tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            self._background_tasks.clear()
+        finally:
+            self._shutdown_in_progress = False
 
     async def create_session(self, spec: BoxSpec) -> dict:
         session = await self._get_or_create_session(spec)
         return self._session_to_dict(session.info)
 
     async def delete_session(self, session_id: str) -> None:
-        cleanup_task: asyncio.Task[None] | None
-        async with self._lock:
-            cleanup_task = self._closing_session_tasks.get(session_id)
-            if cleanup_task is None and session_id not in self._sessions:
-                raise BoxSessionNotFoundError(f"session {session_id} not found")
-            if cleanup_task is None:
-                cleanup_task = self._drop_session_locked(session_id)
-        if cleanup_task is not None:
-            await self._wait_for_session_cleanup(session_id, cleanup_task)
+        # Serialize against a session that is still being created. Otherwise a
+        # delete can return "not found" while start_session is in flight and
+        # leave the just-created backend resource alive.
+        operation_lock = await self._get_session_operation_lock(session_id)
+        async with operation_lock:
+            cleanup_task: asyncio.Task[None] | None
+            async with self._lock:
+                cleanup_task = self._closing_session_tasks.get(session_id)
+                if cleanup_task is None and session_id not in self._sessions:
+                    raise BoxSessionNotFoundError(f"session {session_id} not found")
+                if cleanup_task is None:
+                    cleanup_task = self._drop_session_locked(session_id)
+            if cleanup_task is not None:
+                await self._wait_for_session_cleanup(session_id, cleanup_task)
 
     async def start_managed_process(
         self, session_id: str, spec: BoxManagedProcessSpec
@@ -357,20 +430,46 @@ class BoxRuntime:
 
         async with runtime_session.lock:
             process_id = spec.process_id
-            existing = runtime_session.managed_processes.get(process_id)
-            if existing is not None and existing.is_running:
-                # Terminate the stale process before starting a new one.
-                # This happens when LangBot restarts while the Box runtime
-                # keeps the persistent session alive.
-                self.logger.info(
-                    f"LangBot Box terminating stale managed process before restart: "
-                    f"session_id={session_id} process_id={process_id}"
+            async with self._lock:
+                self._reap_completed_processes()
+                if (
+                    runtime_session.closing
+                    or self._sessions.get(session_id) is not runtime_session
+                ):
+                    raise BoxSessionNotFoundError(
+                        f"session {session_id} is being deleted"
+                    )
+                running = sum(
+                    1
+                    for session in self._sessions.values()
+                    for managed_id, managed in session.managed_processes.items()
+                    if managed.is_running
+                    and not (session is runtime_session and managed_id == process_id)
                 )
-                await self._terminate_managed_process(existing)
-                del runtime_session.managed_processes[process_id]
+                if running + self._managed_starting_count >= self.max_managed_processes:
+                    raise BoxCapacityExceededError(
+                        "Box managed process capacity reached "
+                        f"({self.max_managed_processes})"
+                    )
+                self._managed_starting_count += 1
+            try:
+                existing = runtime_session.managed_processes.get(process_id)
+                if existing is not None and existing.is_running:
+                    # A reconnect may legitimately replace the old generation.
+                    self.logger.info(
+                        "LangBot Box terminating stale managed process before restart: "
+                        f"session_id={session_id} process_id={process_id}"
+                    )
+                    await self._terminate_managed_process(existing)
+                    del runtime_session.managed_processes[process_id]
 
-            backend = await self._get_backend()
-            process = await backend.start_managed_process(runtime_session.info, spec)
+                backend = await self._get_backend()
+                process = await backend.start_managed_process(
+                    runtime_session.info, spec
+                )
+            finally:
+                async with self._lock:
+                    self._managed_starting_count -= 1
             managed_process = _ManagedProcess(
                 spec=spec,
                 process=process,
@@ -380,14 +479,18 @@ class BoxRuntime:
             )
             runtime_session.managed_processes[process_id] = managed_process
             runtime_session.info.last_used_at = dt.datetime.now(_UTC)
-            asyncio.create_task(
-                self._drain_managed_process_stderr(
-                    runtime_session.info.session_id, process_id, managed_process
+            self._track_background_task(
+                asyncio.create_task(
+                    self._drain_managed_process_stderr(
+                        runtime_session.info.session_id, process_id, managed_process
+                    )
                 )
             )
-            asyncio.create_task(
-                self._watch_managed_process(
-                    runtime_session.info.session_id, process_id, managed_process
+            self._track_background_task(
+                asyncio.create_task(
+                    self._watch_managed_process(
+                        runtime_session.info.session_id, process_id, managed_process
+                    )
                 )
             )
             return self._managed_process_to_dict(
@@ -428,7 +531,9 @@ class BoxRuntime:
 
     async def get_backend_info(self) -> dict:
         if self._backend is None:
-            self._backend = await self._select_backend()
+            async with self._backend_lock:
+                if self._backend is None:
+                    self._backend = await self._select_backend()
         backend = self._backend
         if backend is None:
             return {"name": None, "available": False}
@@ -468,96 +573,159 @@ class BoxRuntime:
                 if mp.is_running
             ),
             "session_ttl_sec": self.session_ttl_sec,
+            "limits": {
+                "max_sessions": self.max_sessions,
+                "max_managed_processes": self.max_managed_processes,
+                "max_completed_processes": self.max_completed_processes,
+            },
         }
 
     async def _get_or_create_session(
         self, spec: BoxSpec, *, track_active_exec: bool = False
     ) -> _RuntimeSession:
         new_extra_mounts_key = _compute_extra_mounts_key(spec)
+        operation_lock = await self._get_session_operation_lock(spec.session_id)
 
-        while True:
-            cleanup_task: asyncio.Task[None] | None = None
-            async with self._lock:
-                await self._reap_expired_sessions_locked()
-                cleanup_task = self._closing_session_tasks.get(spec.session_id)
+        async with operation_lock:
+            while True:
+                cleanup_task: asyncio.Task[None] | None = None
+                existing: _RuntimeSession | None = None
+                async with self._lock:
+                    if self._shutdown_in_progress:
+                        raise BoxRuntimeUnavailableError("Box runtime is shutting down")
+                    await self._reap_expired_sessions_locked()
+                    cleanup_task = self._closing_session_tasks.get(spec.session_id)
+                    if cleanup_task is None:
+                        existing = self._sessions.get(spec.session_id)
+                        if existing is not None:
+                            self._assert_session_compatible(existing.info, spec)
+                            if existing.extra_mounts_key != new_extra_mounts_key:
+                                self.logger.info(
+                                    "LangBot Box session extra_mounts changed, "
+                                    f"recreating: session_id={spec.session_id}"
+                                )
+                                cleanup_task = self._drop_session_locked(
+                                    spec.session_id
+                                )
+                                existing = None
+                            else:
+                                self._session_leases[spec.session_id] += 1
 
-                existing = None
-                if cleanup_task is None:
-                    existing = self._sessions.get(spec.session_id)
-                    if existing is not None:
-                        self._assert_session_compatible(existing.info, spec)
-                        backend = await self._get_backend()
-                        if existing.extra_mounts_key != new_extra_mounts_key:
-                            # A bind mount cannot be added to an already-running
-                            # container, so a session whose mount set changed (e.g. a
-                            # skill registered and activated after the container was
-                            # first created) must be recreated for the new mounts to
-                            # take effect. Without this the activated skill path
-                            # /workspace/.skills/<name> stays empty in the reused
-                            # container.
-                            self.logger.info(
-                                "LangBot Box session extra_mounts changed, recreating: "
-                                f"session_id={spec.session_id} "
-                                f"backend_session_id={existing.info.backend_session_id} "
-                                f"backend={existing.info.backend_name} "
-                                f"old_mounts={sorted(existing.extra_mounts_key)} "
-                                f"new_mounts={sorted(new_extra_mounts_key)}"
-                            )
-                            cleanup_task = self._drop_session_locked(spec.session_id)
-                            existing = None
-                        elif not await backend.is_session_alive(existing.info):
+                if cleanup_task is not None:
+                    await self._wait_for_session_cleanup(spec.session_id, cleanup_task)
+                    continue
+
+                backend = await self._get_backend()
+                if existing is not None:
+                    try:
+                        try:
+                            alive = await backend.is_session_alive(existing.info)
+                        except Exception as exc:
+                            alive = False
                             self.logger.warning(
-                                "LangBot Box session backend disappeared, recreating: "
+                                "LangBot Box session liveness probe failed: "
+                                f"session_id={spec.session_id} error={exc}"
+                            )
+                    finally:
+                        async with self._lock:
+                            self._session_leases[spec.session_id] -= 1
+                            if self._session_leases[spec.session_id] <= 0:
+                                self._session_leases.pop(spec.session_id, None)
+
+                    async with self._lock:
+                        current = self._sessions.get(spec.session_id)
+                        if current is existing and not existing.closing and alive:
+                            existing.info.last_used_at = dt.datetime.now(_UTC)
+                            if track_active_exec:
+                                self._active_exec_counts[spec.session_id] += 1
+                            self.logger.info(
+                                "LangBot Box session reused: "
                                 f"session_id={spec.session_id} "
                                 f"backend_session_id={existing.info.backend_session_id} "
                                 f"backend={existing.info.backend_name}"
                             )
+                            return existing
+                        if current is existing:
+                            self.logger.warning(
+                                "LangBot Box session backend disappeared, "
+                                f"recreating: session_id={spec.session_id}"
+                            )
                             cleanup_task = self._drop_session_locked(spec.session_id)
-                            existing = None
+                        else:
+                            cleanup_task = self._closing_session_tasks.get(
+                                spec.session_id
+                            )
+                    if cleanup_task is not None:
+                        await self._wait_for_session_cleanup(
+                            spec.session_id, cleanup_task
+                        )
+                    continue
 
-                if cleanup_task is None and existing is not None:
-                    existing.info.last_used_at = dt.datetime.now(_UTC)
-                    self.logger.info(
-                        "LangBot Box session reused: "
-                        f"session_id={spec.session_id} "
-                        f"backend_session_id={existing.info.backend_session_id} "
-                        f"backend={existing.info.backend_name}"
-                    )
-                    if track_active_exec:
-                        self._active_exec_counts[spec.session_id] += 1
-                    return existing
+                async with self._lock:
+                    if (
+                        len(self._sessions)
+                        + len(self._creating_session_tasks)
+                        + len(self._closing_session_tasks)
+                        >= self.max_sessions
+                    ):
+                        raise BoxCapacityExceededError(
+                            f"Box session capacity reached ({self.max_sessions})"
+                        )
+                    current_task = asyncio.current_task()
+                    if current_task is not None:
+                        self._creating_session_tasks[spec.session_id] = current_task
 
-                if cleanup_task is None:
-                    backend = await self._get_backend()
+                info: BoxSessionInfo | None = None
+                try:
                     info = await backend.start_session(spec)
                     runtime_session = _RuntimeSession(
                         info=info,
                         lock=asyncio.Lock(),
                         extra_mounts_key=new_extra_mounts_key,
                     )
-                    self._sessions[spec.session_id] = runtime_session
-                    self.logger.info(
-                        "LangBot Box session created: "
-                        f"session_id={spec.session_id} "
-                        f"backend_session_id={info.backend_session_id} "
-                        f"backend={info.backend_name} "
-                        f"image={info.image} "
-                        f"network={info.network.value} "
-                        f"host_path={info.host_path} "
-                        f"host_path_mode={info.host_path_mode.value} "
-                        f"mount_path={info.mount_path} "
-                        f"workspace_quota_mb={info.workspace_quota_mb}"
-                    )
-                    if track_active_exec:
-                        self._active_exec_counts[spec.session_id] += 1
-                    return runtime_session
+                    async with self._lock:
+                        if self._shutdown_in_progress:
+                            runtime_session.closing = True
+                        else:
+                            self._sessions[spec.session_id] = runtime_session
+                            if track_active_exec:
+                                self._active_exec_counts[spec.session_id] += 1
+                    if runtime_session.closing:
+                        await backend.stop_session(info)
+                        raise BoxRuntimeUnavailableError("Box runtime is shutting down")
+                finally:
+                    async with self._lock:
+                        if (
+                            self._creating_session_tasks.get(spec.session_id)
+                            is asyncio.current_task()
+                        ):
+                            self._creating_session_tasks.pop(spec.session_id, None)
 
-            if cleanup_task is not None:
-                await self._wait_for_session_cleanup(spec.session_id, cleanup_task)
+                self.logger.info(
+                    "LangBot Box session created: "
+                    f"session_id={spec.session_id} "
+                    f"backend_session_id={info.backend_session_id} "
+                    f"backend={info.backend_name} image={info.image} "
+                    f"network={info.network.value} host_path={info.host_path} "
+                    f"host_path_mode={info.host_path_mode.value} "
+                    f"mount_path={info.mount_path} "
+                    f"workspace_quota_mb={info.workspace_quota_mb}"
+                )
+                return runtime_session
+
+    async def _get_session_operation_lock(self, session_id: str) -> asyncio.Lock:
+        async with self._lock:
+            lock = self._session_operation_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_operation_locks[session_id] = lock
+            return lock
 
     async def _get_backend(self) -> BaseSandboxBackend:
         if self._backend is None:
-            self._backend = await self._select_backend()
+            async with self._backend_lock:
+                if self._backend is None:
+                    self._backend = await self._select_backend()
         if self._backend is None:
             raise BoxBackendUnavailableError(
                 "LangBot Box backend unavailable. Install and start Docker or nsjail before using exec."
@@ -630,6 +798,7 @@ class BoxRuntime:
         return None
 
     async def _reap_expired_sessions_locked(self) -> list[asyncio.Task[None]]:
+        self._reap_completed_processes()
         if self.session_ttl_sec <= 0:
             return []
 
@@ -640,6 +809,7 @@ class BoxRuntime:
             if not session.info.persistent
             and session.info.last_used_at < deadline
             and self._active_exec_counts.get(session_id, 0) <= 0
+            and self._session_leases.get(session_id, 0) <= 0
             and not any(mp.is_running for mp in session.managed_processes.values())
         ]
 
@@ -650,12 +820,48 @@ class BoxRuntime:
                 cleanup_tasks.append(cleanup_task)
         return cleanup_tasks
 
+    def _reap_completed_processes(self) -> None:
+        """Bound retained diagnostics without one sleeping task per process."""
+        now = dt.datetime.now(_UTC)
+        deadline = now - dt.timedelta(seconds=self.completed_process_retention_sec)
+        completed: list[tuple[dt.datetime, _RuntimeSession, str, _ManagedProcess]] = []
+        for session in self._sessions.values():
+            for process_id, managed_process in list(session.managed_processes.items()):
+                if managed_process.is_running or managed_process.exited_at is None:
+                    continue
+                if (
+                    self.completed_process_retention_sec <= 0
+                    or managed_process.exited_at <= deadline
+                ):
+                    if session.managed_processes.get(process_id) is managed_process:
+                        session.managed_processes.pop(process_id, None)
+                    continue
+                completed.append(
+                    (
+                        managed_process.exited_at,
+                        session,
+                        process_id,
+                        managed_process,
+                    )
+                )
+
+        overflow = len(completed) - max(self.max_completed_processes, 0)
+        if overflow <= 0:
+            return
+        for _, session, process_id, managed_process in sorted(
+            completed, key=lambda item: item[0]
+        )[:overflow]:
+            if session.managed_processes.get(process_id) is managed_process:
+                session.managed_processes.pop(process_id, None)
+
     def _drop_session_locked(self, session_id: str) -> asyncio.Task[None] | None:
         closing_task = self._closing_session_tasks.get(session_id)
         if closing_task is not None:
             return closing_task
 
         runtime_session = self._sessions.pop(session_id, None)
+        if runtime_session is not None:
+            runtime_session.closing = True
         self._active_exec_counts.pop(session_id, None)
         backend = self._backend
         if runtime_session is None or backend is None:
@@ -674,21 +880,23 @@ class BoxRuntime:
         backend: BaseSandboxBackend,
     ) -> None:
         try:
-            for mp in runtime_session.managed_processes.values():
-                await self._terminate_managed_process(mp)
+            async with runtime_session.lock:
+                for mp in list(runtime_session.managed_processes.values()):
+                    await self._terminate_managed_process(mp)
+                runtime_session.managed_processes.clear()
 
-            try:
-                self.logger.info(
-                    "LangBot Box session cleanup: "
-                    f"session_id={session_id} "
-                    f"backend_session_id={runtime_session.info.backend_session_id} "
-                    f"backend={runtime_session.info.backend_name}"
-                )
-                await backend.stop_session(runtime_session.info)
-            except Exception as exc:
-                self.logger.warning(
-                    f"Failed to clean up box session {session_id}: {exc}"
-                )
+                try:
+                    self.logger.info(
+                        "LangBot Box session cleanup: "
+                        f"session_id={session_id} "
+                        f"backend_session_id={runtime_session.info.backend_session_id} "
+                        f"backend={runtime_session.info.backend_name}"
+                    )
+                    await backend.stop_session(runtime_session.info)
+                except Exception as exc:
+                    self.logger.warning(
+                        f"Failed to clean up box session {session_id}: {exc}"
+                    )
         except Exception as exc:
             self.logger.warning(
                 f"Failed to finalize box session cleanup {session_id}: {exc}",
@@ -729,6 +937,7 @@ class BoxRuntime:
             "mount_path",
             "persistent",
             "cpus",
+            "memory_mb",
             "pids_limit",
             "read_only_rootfs",
             "workspace_quota_mb",
@@ -790,6 +999,14 @@ class BoxRuntime:
         self.logger.info(
             f"LangBot Box managed process exited: session_id={session_id} process_id={process_id} return_code={return_code}"
         )
+        # Retention is reaped synchronously from the in-memory registry. This
+        # avoids accumulating one five-minute sleeping task for every short-
+        # lived process while still preserving bounded exit diagnostics.
+        self._reap_completed_processes()
+
+    def _track_background_task(self, task: asyncio.Task) -> None:
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _terminate_managed_process(
         self, managed_process: _ManagedProcess

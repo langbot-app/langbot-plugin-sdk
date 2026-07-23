@@ -5,6 +5,7 @@ import json
 import logging
 
 from langbot_plugin.runtime.io import connection
+from langbot_plugin.runtime.io.connection import MAX_MESSAGE_BYTES, split_utf8_chunks
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ class StdioConnection(connection.Connection):
         async with self._send_lock:  # 确保同一时间只有一个send操作
             message_bytes = message.encode("utf-8")
             message_size = len(message_bytes)
+            if message_size > MAX_MESSAGE_BYTES:
+                raise ValueError(
+                    f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
+                )
 
             # For small messages, send directly
             if message_size <= self.chunk_size:
@@ -55,17 +60,19 @@ class StdioConnection(connection.Connection):
                 await self.stdin.drain()
 
                 # Send message in chunks
-                for i in range(0, message_size, self.chunk_size):
-                    chunk_data = message_bytes[i : i + self.chunk_size]
+                offset = 0
+                for chunk_text in split_utf8_chunks(message, self.chunk_size):
+                    chunk_size = len(chunk_text.encode("utf-8"))
                     chunk_msg = json.dumps(
                         {
                             "type": "chunk_data",
-                            "data": chunk_data.decode("utf-8", errors="replace"),
-                            "offset": i,
+                            "data": chunk_text,
+                            "offset": offset,
                         }
                     )
                     self.stdin.write(chunk_msg.encode("utf-8") + b"\n")
                     await self.stdin.drain()
+                    offset += chunk_size
                     # Small delay to prevent overwhelming the connection
                     await asyncio.sleep(0.001)
 
@@ -137,7 +144,12 @@ class StdioConnection(connection.Connection):
                                 if msg_data["type"] == "chunk_start":
                                     # Start receiving chunked message
                                     chunks = []
-                                    # total_size = msg_data.get("total_size", 0)  # Reserved for future use
+                                    total_size = int(msg_data.get("total_size", -1))
+                                    if not 0 <= total_size <= MAX_MESSAGE_BYTES:
+                                        raise ConnectionClosedError(
+                                            "Invalid runtime chunked message size"
+                                        )
+                                    received_size = 0
 
                                     while True:
                                         chunk_line = await self._read_single_line()
@@ -148,8 +160,27 @@ class StdioConnection(connection.Connection):
 
                                         chunk_data = json.loads(chunk_line)
                                         if chunk_data.get("type") == "chunk_data":
-                                            chunks.append(chunk_data.get("data", ""))
+                                            chunk_text = chunk_data.get("data", "")
+                                            if (
+                                                chunk_data.get("offset")
+                                                != received_size
+                                            ):
+                                                raise ConnectionClosedError(
+                                                    "Invalid runtime chunk offset"
+                                                )
+                                            received_size += len(
+                                                chunk_text.encode("utf-8")
+                                            )
+                                            if received_size > total_size:
+                                                raise ConnectionClosedError(
+                                                    "Runtime chunked message exceeds declared size"
+                                                )
+                                            chunks.append(chunk_text)
                                         elif chunk_data.get("type") == "chunk_end":
+                                            if received_size != total_size:
+                                                raise ConnectionClosedError(
+                                                    "Incomplete runtime chunked message"
+                                                )
                                             # Reconstruct original message
                                             return "".join(chunks)
 

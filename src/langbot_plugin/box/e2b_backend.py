@@ -458,6 +458,26 @@ class E2BSandboxBackend(BaseSandboxBackend):
         except Exception as exc:
             self.logger.warning(f"Failed to kill E2B sandbox: {exc}")
 
+    async def is_session_alive(self, session: BoxSessionInfo) -> bool:
+        """Probe the remote sandbox rather than trusting stale local metadata."""
+        if not _check_e2b_available():
+            return False
+        kwargs = {}
+        if self._api_key:
+            kwargs["api_key"] = self._api_key
+        if self._api_url:
+            kwargs["domain"] = self._api_url
+        try:
+            await _AsyncSandbox.connect(sandbox_id=session.backend_session_id, **kwargs)
+            return True
+        except Exception as exc:
+            self.logger.info(
+                "E2B sandbox liveness probe failed for %s: %s",
+                session.backend_session_id,
+                exc,
+            )
+            return False
+
     def _truncate_output(self, output: str, limit: int = _MAX_RAW_OUTPUT_BYTES) -> str:
         """Truncate output if exceeds the limit."""
         if len(output.encode("utf-8", errors="replace")) > limit:

@@ -33,7 +33,7 @@ from aiohttp import web
 from langbot_plugin.entities.io.actions.enums import CommonAction
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.entities.io.resp import ActionResponse
-from langbot_plugin.runtime.io.connection import Connection
+from langbot_plugin.runtime.io.connection import Connection, MAX_MESSAGE_BYTES
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.utils.log import configure_process_logging
 
@@ -68,6 +68,8 @@ class AiohttpWSConnection(Connection):
         self._send_lock = asyncio.Lock()
 
     async def send(self, message: str) -> None:
+        if len(message.encode("utf-8")) > MAX_MESSAGE_BYTES:
+            raise ValueError(f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit")
         async with self._send_lock:
             try:
                 await self._ws.send_str(message)
@@ -394,6 +396,10 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
             for task in done:
                 task.result()
         finally:
+            for task in (stdout_task, stdin_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(stdout_task, stdin_task, return_exceptions=True)
             await ws.close()
 
     return ws
@@ -406,7 +412,7 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
     """Handle action RPC over a single aiohttp WebSocket connection."""
     runtime: BoxRuntime = request.app["runtime"]
 
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=MAX_MESSAGE_BYTES)
     await ws.prepare(request)
 
     connection = AiohttpWSConnection(ws)
@@ -416,6 +422,11 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
     return ws
 
 
+async def handle_healthz(request: web.Request) -> web.Response:
+    """Return a lightweight liveness response for container orchestrators."""
+    return web.Response(text="ok\n")
+
+
 # ── App factory ──────────────────────────────────────────────────────
 
 
@@ -423,6 +434,7 @@ def create_app(runtime: BoxRuntime) -> web.Application:
     """Create the aiohttp app with all WebSocket routes on a single port."""
     app = web.Application()
     app["runtime"] = runtime
+    app.router.add_get("/healthz", handle_healthz)
     app.router.add_get("/rpc/ws", handle_rpc_ws)
     app.router.add_get(
         "/v1/sessions/{session_id}/managed-process/{process_id}/ws",
@@ -502,4 +514,7 @@ def main(args: argparse.Namespace) -> None:
     control_mode = "stdio" if args.stdio_control else "ws"
 
     configure_process_logging(stream=sys.stderr)
-    asyncio.run(_run_server(args.host, args.ws_control_port, control_mode))
+    try:
+        asyncio.run(_run_server(args.host, args.ws_control_port, control_mode))
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt, Box runtime stopped")
