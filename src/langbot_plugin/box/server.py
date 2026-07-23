@@ -28,7 +28,7 @@ import sys
 from typing import Any
 
 import pydantic
-from aiohttp import web
+from aiohttp import WSCloseCode, web
 
 from langbot_plugin.entities.io.actions.enums import CommonAction
 from langbot_plugin.entities.io.errors import ConnectionClosedError
@@ -47,6 +47,8 @@ from .models import BoxExecutionResult, BoxManagedProcessSpec, BoxSpec
 from .runtime import BoxRuntime
 
 logger = logging.getLogger("langbot.box.server")
+
+_ACTIVE_WEBSOCKETS_KEY = web.AppKey("active_websockets", set)
 
 
 def _result_to_dict(result: BoxExecutionResult) -> dict:
@@ -353,54 +355,63 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
         heartbeat=_MANAGED_PROCESS_WS_HEARTBEAT_SEC,
     )
     await ws.prepare(request)
+    active_websockets = request.app.setdefault(_ACTIVE_WEBSOCKETS_KEY, set())
+    active_websockets.add(ws)
 
-    async with managed_process.attach_lock:
-        process = managed_process.process
-        stdout = process.stdout
-        stdin = process.stdin
-        if stdout is None or stdin is None:
-            await ws.close(message=b"managed process stdio unavailable")
-            return ws
+    try:
+        async with managed_process.attach_lock:
+            process = managed_process.process
+            stdout = process.stdout
+            stdin = process.stdin
+            if stdout is None or stdin is None:
+                await ws.close(message=b"managed process stdio unavailable")
+                return ws
 
-        async def _stdout_to_ws() -> None:
-            while True:
-                line = await stdout.readline()
-                if not line:
-                    break
-                await ws.send_str(line.decode("utf-8", errors="replace").rstrip("\n"))
-                runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
-
-        async def _ws_to_stdin() -> None:
-            async for msg in ws:
-                if msg.type == web.WSMsgType.TEXT:
-                    stdin.write((msg.data + "\n").encode("utf-8"))
-                    await stdin.drain()
+            async def _stdout_to_ws() -> None:
+                while True:
+                    line = await stdout.readline()
+                    if not line:
+                        break
+                    await ws.send_str(
+                        line.decode("utf-8", errors="replace").rstrip("\n")
+                    )
                     runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
-                elif msg.type in (
-                    web.WSMsgType.CLOSE,
-                    web.WSMsgType.CLOSING,
-                    web.WSMsgType.CLOSED,
-                    web.WSMsgType.ERROR,
-                ):
-                    break
 
-        stdout_task = asyncio.create_task(_stdout_to_ws())
-        stdin_task = asyncio.create_task(_ws_to_stdin())
-        try:
-            done, pending = await asyncio.wait(
-                [stdout_task, stdin_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            for task in done:
-                task.result()
-        finally:
-            for task in (stdout_task, stdin_task):
-                if not task.done():
+            async def _ws_to_stdin() -> None:
+                async for msg in ws:
+                    if msg.type == web.WSMsgType.TEXT:
+                        stdin.write((msg.data + "\n").encode("utf-8"))
+                        await stdin.drain()
+                        runtime_session.info.last_used_at = dt.datetime.now(
+                            dt.timezone.utc
+                        )
+                    elif msg.type in (
+                        web.WSMsgType.CLOSE,
+                        web.WSMsgType.CLOSING,
+                        web.WSMsgType.CLOSED,
+                        web.WSMsgType.ERROR,
+                    ):
+                        break
+
+            stdout_task = asyncio.create_task(_stdout_to_ws())
+            stdin_task = asyncio.create_task(_ws_to_stdin())
+            try:
+                done, pending = await asyncio.wait(
+                    [stdout_task, stdin_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
                     task.cancel()
-            await asyncio.gather(stdout_task, stdin_task, return_exceptions=True)
-            await ws.close()
+                for task in done:
+                    task.result()
+            finally:
+                for task in (stdout_task, stdin_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(stdout_task, stdin_task, return_exceptions=True)
+                await ws.close()
+    finally:
+        active_websockets.discard(ws)
 
     return ws
 
@@ -414,10 +425,15 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
 
     ws = web.WebSocketResponse(max_msg_size=MAX_MESSAGE_BYTES)
     await ws.prepare(request)
+    active_websockets = request.app.setdefault(_ACTIVE_WEBSOCKETS_KEY, set())
+    active_websockets.add(ws)
 
     connection = AiohttpWSConnection(ws)
     handler = BoxServerHandler(connection, runtime)
-    await handler.run()
+    try:
+        await handler.run()
+    finally:
+        active_websockets.discard(ws)
 
     return ws
 
@@ -427,6 +443,22 @@ async def handle_healthz(request: web.Request) -> web.Response:
     return web.Response(text="ok\n")
 
 
+async def _close_active_websockets(app: web.Application) -> None:
+    """Close live clients before aiohttp waits for request handlers to drain."""
+    active_websockets = list(app.get(_ACTIVE_WEBSOCKETS_KEY, ()))
+    if active_websockets:
+        await asyncio.gather(
+            *(
+                ws.close(
+                    code=WSCloseCode.GOING_AWAY,
+                    message=b"Box runtime shutting down",
+                )
+                for ws in active_websockets
+            ),
+            return_exceptions=True,
+        )
+
+
 # ── App factory ──────────────────────────────────────────────────────
 
 
@@ -434,6 +466,8 @@ def create_app(runtime: BoxRuntime) -> web.Application:
     """Create the aiohttp app with all WebSocket routes on a single port."""
     app = web.Application()
     app["runtime"] = runtime
+    app[_ACTIVE_WEBSOCKETS_KEY] = set()
+    app.on_shutdown.append(_close_active_websockets)
     app.router.add_get("/healthz", handle_healthz)
     app.router.add_get("/rpc/ws", handle_rpc_ws)
     app.router.add_get(
