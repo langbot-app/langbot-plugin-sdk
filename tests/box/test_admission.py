@@ -124,10 +124,23 @@ def _grant(
     )
 
 
-def _runtime(tmp_path, *, readiness_cache_sec: int = 0):
+def _runtime(
+    tmp_path,
+    *,
+    readiness_cache_sec: int = 0,
+    unsafe_soft_storage_limits: bool = False,
+):
     logger = logging.getLogger("test.box.admission")
     backend = AdmissionBackend(logger)
-    with mock.patch("os.getenv", return_value=""):
+    unsafe_value = "true" if unsafe_soft_storage_limits else ""
+    with mock.patch(
+        "os.getenv",
+        side_effect=lambda name, default="": (
+            unsafe_value
+            if name == "LANGBOT_BOX_ALLOW_UNSAFE_SOFT_STORAGE_LIMITS"
+            else default
+        ),
+    ):
         runtime = BoxRuntime(logger, backends=[backend])
     runtime.init(
         {
@@ -417,6 +430,29 @@ async def test_managed_readiness_fails_closed_without_hard_storage_capability(
     assert readiness["checks"][capability] is False
     with pytest.raises(BoxReadinessError, match=capability):
         await runtime.execute(BoxSpec(session_id="global", cmd="true"), context)
+
+
+@pytest.mark.anyio
+async def test_explicit_nonproduction_override_only_relaxes_storage_checks(tmp_path):
+    runtime, backend = _runtime(tmp_path, unsafe_soft_storage_limits=True)
+    for capability in (
+        "hard_workspace_quota",
+        "hard_skill_storage_quota",
+        "bounded_ephemeral_storage",
+        "inode_quota",
+    ):
+        backend.readiness[capability] = False
+
+    readiness = await runtime.get_readiness(force=True)
+
+    assert readiness["ready"] is True, [
+        name for name, passed in readiness["checks"].items() if not passed
+    ]
+    assert readiness["unsafe_soft_storage_limits"] is True
+    backend.readiness["cgroup_v2"] = False
+    readiness = await runtime.get_readiness(force=True)
+    assert readiness["ready"] is False
+    assert readiness["checks"]["cgroup_v2"] is False
 
 
 def test_admission_enforcement_cannot_be_disabled_in_process(tmp_path):

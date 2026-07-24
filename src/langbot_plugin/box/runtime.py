@@ -64,6 +64,16 @@ if TYPE_CHECKING:
 _UTC = dt.timezone.utc
 _MANAGED_PROCESS_STDERR_PREVIEW_LIMIT = 4000
 _REAPER_INTERVAL_SEC = 30
+_UNSAFE_SOFT_STORAGE_LIMITS_ENV = "LANGBOT_BOX_ALLOW_UNSAFE_SOFT_STORAGE_LIMITS"
+
+
+def _unsafe_soft_storage_limits_enabled() -> bool:
+    return os.getenv(_UNSAFE_SOFT_STORAGE_LIMITS_ENV, "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _resolve_local_path(path_value: str, *, base: str | None = None) -> str:
@@ -133,6 +143,13 @@ class BoxRuntime:
         completed_process_retention_sec: int = 300,
     ):
         self.logger = logger
+        self._unsafe_soft_storage_limits = _unsafe_soft_storage_limits_enabled()
+        if self._unsafe_soft_storage_limits:
+            logger.warning(
+                "%s is enabled: managed sandboxes do not have hard byte/inode "
+                "storage quotas; use only in disposable non-production environments",
+                _UNSAFE_SOFT_STORAGE_LIMITS_ENV,
+            )
 
         # Load configuration from environment variable (passed by LangBot)
         self._box_config: dict = {}
@@ -1134,6 +1151,17 @@ class BoxRuntime:
                 "inode_quota",
             ):
                 checks[name] = backend_readiness.get(name) is True
+            if self._unsafe_soft_storage_limits:
+                # Operator-only escape hatch for disposable integration hosts
+                # whose filesystem cannot provide project/subvolume quotas.
+                # Namespace, mount, network and cgroup checks still fail closed.
+                for name in (
+                    "hard_workspace_quota",
+                    "hard_skill_storage_quota",
+                    "bounded_ephemeral_storage",
+                    "inode_quota",
+                ):
+                    checks[name] = True
             readiness_error = backend_readiness.get("error") or readiness_error
 
         result = {
@@ -1145,6 +1173,7 @@ class BoxRuntime:
                 "details": backend_readiness,
             },
             "checks": checks,
+            "unsafe_soft_storage_limits": self._unsafe_soft_storage_limits,
         }
         if readiness_error:
             result["error"] = readiness_error
