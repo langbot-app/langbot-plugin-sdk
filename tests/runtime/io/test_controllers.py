@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from http import HTTPStatus
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -125,6 +126,83 @@ async def test_stdio_client_controller_rejects_missing_pipes(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Failed to create subprocess pipes"):
         await controller.run(lambda connection: None)
+
+
+@pytest.mark.parametrize(
+    (
+        "exit_stage",
+        "expected_result",
+        "expected_terminate_calls",
+        "expected_kill_calls",
+    ),
+    [
+        ("graceful", True, 0, 0),
+        ("terminate", True, 1, 0),
+        ("kill", True, 1, 1),
+        ("never", False, 1, 1),
+    ],
+)
+async def test_stdio_client_process_stop_uses_bounded_signal_escalation(
+    monkeypatch,
+    exit_stage,
+    expected_result,
+    expected_terminate_calls,
+    expected_kill_calls,
+):
+    monkeypatch.setattr(
+        stdio_client,
+        "_PROCESS_GRACEFUL_EXIT_TIMEOUT_SEC",
+        0.001,
+    )
+    monkeypatch.setattr(
+        stdio_client,
+        "_PROCESS_TERMINATE_EXIT_TIMEOUT_SEC",
+        0.001,
+    )
+    monkeypatch.setattr(
+        stdio_client,
+        "_PROCESS_KILL_EXIT_TIMEOUT_SEC",
+        0.001,
+    )
+
+    class ControlledProcess:
+        def __init__(self):
+            self.returncode = None
+            self.terminate_calls = 0
+            self.kill_calls = 0
+            self.wait_calls = 0
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+        async def wait(self):
+            self.wait_calls += 1
+            if (
+                exit_stage == "graceful"
+                or exit_stage == "terminate"
+                and self.terminate_calls
+                or exit_stage == "kill"
+                and self.kill_calls
+            ):
+                self.returncode = (
+                    0
+                    if exit_stage == "graceful"
+                    else -15
+                    if exit_stage == "terminate"
+                    else -9
+                )
+                return self.returncode
+            await asyncio.Event().wait()
+
+    process = ControlledProcess()
+
+    assert await stdio_client.stop_process(process) is expected_result
+    assert process.terminate_calls == expected_terminate_calls
+    assert process.kill_calls == expected_kill_calls
+    assert process.wait_calls == 1 + expected_terminate_calls + expected_kill_calls
 
 
 async def test_stdio_server_controller_wraps_standard_streams(monkeypatch):

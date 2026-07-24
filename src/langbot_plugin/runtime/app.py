@@ -6,6 +6,7 @@ import hmac
 import logging
 import os
 import secrets
+import signal
 from collections.abc import Mapping
 
 import asyncio
@@ -285,19 +286,36 @@ class RuntimeApplication:
         self._shutdown_complete = True
 
 
+async def _run_with_shutdown(app: RuntimeApplication) -> None:
+    """Run the Runtime and turn container SIGTERM into an orderly shutdown."""
+
+    loop = asyncio.get_running_loop()
+    runtime_task = asyncio.current_task()
+    signal_handler_installed = False
+
+    if runtime_task is not None:
+        try:
+            loop.add_signal_handler(signal.SIGTERM, runtime_task.cancel)
+            signal_handler_installed = True
+        except (NotImplementedError, RuntimeError):
+            # Windows event loops do not expose POSIX signal handlers.
+            pass
+
+    try:
+        await app.run()
+    finally:
+        if signal_handler_installed:
+            loop.remove_signal_handler(signal.SIGTERM)
+        await app.shutdown()
+
+
 def main(args: argparse.Namespace):
     configure_process_logging()
 
     app = RuntimeApplication(args)
 
-    async def run_with_shutdown() -> None:
-        try:
-            await app.run()
-        finally:
-            await app.shutdown()
-
     try:
-        asyncio.run(run_with_shutdown())
+        asyncio.run(_run_with_shutdown(app))
     except asyncio.CancelledError:
         logger.info("Runtime application cancelled")
         return

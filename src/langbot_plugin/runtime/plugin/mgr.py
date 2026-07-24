@@ -1007,14 +1007,21 @@ class PluginManager:
                 await handler.shutdown_plugin()
             except Exception as exc:
                 logger.warning("Failed to notify revoked plugin worker: %s", exc)
-            await handler.conn.close()
+            close = getattr(handler, "close", None)
+            if close is not None:
+                await close()
+            else:
+                await handler.conn.close()
             if handler in self.plugin_handlers:
                 self.plugin_handlers.remove(handler)
             process = handler.stdio_process
             if process is not None and process.returncode is None:
-                process.kill()
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=2)
+                stopped = await stdio_client_controller.stop_process(process)
+                if not stopped:
+                    logger.error(
+                        "Plugin worker process did not exit after SIGKILL: %s",
+                        runtime.binding.installation_uuid,
+                    )
         runtime.plugin_handler = None
         if runtime.plugin_container is not None:
             self._binding_by_container_id.pop(id(runtime.plugin_container), None)
@@ -1707,17 +1714,9 @@ class PluginManager:
         if handler.stdio_process is not None:
             process = handler.stdio_process
             if process.returncode is None:
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=2)
-                except asyncio.TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=2)
-                    except asyncio.TimeoutError:
-                        with contextlib.suppress(ProcessLookupError):
-                            process.kill()
-                        await process.wait()
+                stopped = await stdio_client_controller.stop_process(process)
+                if not stopped:
+                    logger.error("Plugin process did not exit after SIGKILL")
             logger.info(
                 f"plugin process terminated: {plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}:{plugin_container.manifest.metadata.version}"
             )

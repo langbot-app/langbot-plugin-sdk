@@ -628,8 +628,12 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
     class FakeProcess:
         def __init__(self):
             self.returncode = None
+            self.terminated = False
             self.killed = False
             self.waited = False
+
+        def terminate(self):
+            self.terminated = True
 
         def kill(self):
             self.killed = True
@@ -637,6 +641,7 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
 
         async def wait(self):
             self.waited = True
+            self.returncode = 0
             return self.returncode
 
     process = FakeProcess()
@@ -659,7 +664,8 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
     handler.cancel_inflight_messages.assert_called_once_with()
     handler.shutdown_plugin.assert_awaited_once_with()
     handler.conn.close.assert_awaited_once_with()
-    assert process.killed is True
+    assert process.terminated is False
+    assert process.killed is False
     assert process.waited is True
     assert handler not in manager.plugin_handlers
     assert id(plugin_container) not in manager._binding_by_container_id
@@ -667,6 +673,78 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
     assert runtime.plugin_handler is None
     assert runtime.plugin_container is None
     assert runtime.launch_task is None
+
+
+@pytest.mark.parametrize(
+    "lifecycle_operation",
+    ["remove", "reconcile", "shutdown"],
+)
+async def test_installation_lifecycle_routes_allow_graceful_worker_exit(
+    tmp_path,
+    lifecycle_operation,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    events: list[str] = []
+
+    class GracefulProcess:
+        def __init__(self):
+            self.returncode = None
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+        async def wait(self):
+            events.append("wait")
+            self.returncode = 0
+            return self.returncode
+
+    process = GracefulProcess()
+
+    async def shutdown_plugin():
+        events.append("shutdown")
+
+    async def close_connection():
+        events.append("close")
+
+    handler = SimpleNamespace(
+        cancel_inflight_messages=lambda: events.append("cancel"),
+        shutdown_plugin=shutdown_plugin,
+        conn=SimpleNamespace(close=close_connection),
+        stdio_process=process,
+    )
+    runtime.plugin_handler = handler
+    manager.plugin_handlers.append(handler)
+
+    if lifecycle_operation == "remove":
+        await manager.remove_plugin_installation(binding)
+    elif lifecycle_operation == "reconcile":
+        await manager.reconcile_plugin_installations(())
+    else:
+        await manager.shutdown_all_plugins()
+
+    assert events == ["cancel", "shutdown", "close", "wait"]
+    assert process.terminate_calls == 0
+    assert process.kill_calls == 0
+    assert handler not in manager.plugin_handlers
+    assert runtime.plugin_handler is None
 
 
 async def test_launch_installation_fails_closed_without_current_ready_runtime(

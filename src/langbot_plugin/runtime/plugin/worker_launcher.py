@@ -230,7 +230,10 @@ class PluginWorkerLauncher:
                 "Dependency preparation requires the shared Runtime profile"
             )
 
-        requirements_path = staging.tmp_path / "requirements.txt"
+        jail_root_path = self._absolute_runtime_path(staging.jail_root_path)
+        site_packages_path = self._absolute_runtime_path(staging.site_packages_path)
+        tmp_path = self._absolute_runtime_path(staging.tmp_path)
+        requirements_path = tmp_path / "requirements.txt"
         requirements_path.write_text(
             "".join(f"{requirement}\n" for requirement in requirements),
             encoding="utf-8",
@@ -239,19 +242,19 @@ class PluginWorkerLauncher:
 
         runtime_prefix_mount = self._python_prefix_mount()
         self._ensure_jail_mount_targets(
-            staging.jail_root_path,
+            jail_root_path,
             extra_targets=(runtime_prefix_mount,) if runtime_prefix_mount else (),
         )
-        (staging.jail_root_path / "dependency-env").mkdir(exist_ok=True)
-        args = ["--mode", "o", "--chroot", str(staging.jail_root_path)]
+        (jail_root_path / "dependency-env").mkdir(exist_ok=True)
+        args = ["--mode", "o", "--chroot", str(jail_root_path)]
         args.append("--disable_clone_newnet")
         self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
         args.extend(
             [
                 "--bindmount",
-                f"{staging.site_packages_path}:/dependency-env",
+                f"{site_packages_path}:/dependency-env",
                 "--bindmount",
-                f"{staging.tmp_path}:/tmp",
+                f"{tmp_path}:/tmp",
                 "--mount",
                 "none:/proc:proc:rw",
                 "--mount",
@@ -316,9 +319,17 @@ class PluginWorkerLauncher:
                 "Shared plugin worker dependency environment does not match artifact"
             )
 
+        jail_root_path = self._absolute_runtime_path(launch_spec.paths.jail_root_path)
+        artifact_code_path = self._absolute_runtime_path(launch_spec.artifact.code_path)
+        dependency_site_packages_path = self._absolute_runtime_path(
+            dependency_environment.site_packages_path
+        )
+        home_path = self._absolute_runtime_path(launch_spec.paths.home_path)
+        tmp_path = self._absolute_runtime_path(launch_spec.paths.tmp_path)
+        data_path = self._absolute_runtime_path(launch_spec.paths.data_path)
         runtime_prefix_mount = self._python_prefix_mount()
         self._ensure_jail_mount_targets(
-            launch_spec.paths.jail_root_path,
+            jail_root_path,
             extra_targets=(runtime_prefix_mount,) if runtime_prefix_mount else (),
         )
         # Plugin installations are resident workers. NsJail defaults to a
@@ -330,7 +341,7 @@ class PluginWorkerLauncher:
             "--time_limit",
             "0",
             "--chroot",
-            str(launch_spec.paths.jail_root_path),
+            str(jail_root_path),
         ]
         args.append("--disable_clone_newnet")
         self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
@@ -338,15 +349,15 @@ class PluginWorkerLauncher:
         args.extend(
             [
                 "--bindmount_ro",
-                f"{launch_spec.artifact.code_path}:/plugin",
+                f"{artifact_code_path}:/plugin",
                 "--bindmount_ro",
-                f"{dependency_environment.site_packages_path}:/plugin-dependencies",
+                f"{dependency_site_packages_path}:/plugin-dependencies",
                 "--bindmount",
-                f"{launch_spec.paths.home_path}:/home",
+                f"{home_path}:/home",
                 "--bindmount",
-                f"{launch_spec.paths.tmp_path}:/tmp",
+                f"{tmp_path}:/tmp",
                 "--bindmount",
-                f"{launch_spec.paths.data_path}:/data",
+                f"{data_path}:/data",
                 "--mount",
                 "none:/proc:proc:rw",
                 "--mount",
@@ -427,6 +438,8 @@ class PluginWorkerLauncher:
                     "--use_cgroupv2",
                     "--cgroup_mem_max",
                     str(policy.max_memory_mb * 1024 * 1024),
+                    "--cgroup_mem_swap_max",
+                    "0",
                     "--cgroup_pids_max",
                     str(policy.max_pids),
                     "--cgroup_cpu_ms_per_sec",
@@ -516,6 +529,12 @@ class PluginWorkerLauncher:
         if self._path_covered_by_system_mount(self.python_prefix):
             return None
         return self.python_prefix
+
+    @staticmethod
+    def _absolute_runtime_path(path: str | os.PathLike[str]) -> pathlib.Path:
+        """Freeze Runtime-owned mount sources before nsjail changes cwd to root."""
+
+        return pathlib.Path(path).absolute()
 
     @staticmethod
     def _path_covered_by_system_mount(path: pathlib.Path) -> bool:

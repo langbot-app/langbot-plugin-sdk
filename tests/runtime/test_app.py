@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import signal
 
 import pytest
 
@@ -548,6 +549,41 @@ def test_runtime_main_configures_logging_and_runs_application(monkeypatch):
         ("run",),
         ("shutdown",),
     ]
+
+
+async def test_runtime_sigterm_cancels_run_and_awaits_shutdown(monkeypatch):
+    callbacks = {}
+    removed_signals = []
+    run_started = asyncio.Event()
+    shutdown_complete = asyncio.Event()
+    running_loop = asyncio.get_running_loop()
+
+    monkeypatch.setattr(
+        running_loop,
+        "add_signal_handler",
+        lambda sig, callback: callbacks.__setitem__(sig, callback),
+    )
+    monkeypatch.setattr(
+        running_loop,
+        "remove_signal_handler",
+        lambda sig: removed_signals.append(sig) or True,
+    )
+
+    class FakeApplication:
+        async def run(self):
+            run_started.set()
+            callbacks[signal.SIGTERM]()
+            await asyncio.Event().wait()
+
+        async def shutdown(self):
+            shutdown_complete.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await runtime_app._run_with_shutdown(FakeApplication())
+
+    assert run_started.is_set()
+    assert shutdown_complete.is_set()
+    assert removed_signals == [signal.SIGTERM]
 
 
 def test_runtime_main_handles_cancelled_error(monkeypatch):

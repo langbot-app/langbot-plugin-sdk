@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import pathlib
 import sys
 import zipfile
 
@@ -102,6 +103,7 @@ def test_shared_launcher_maps_only_trusted_policy_to_nsjail(tmp_path):
     args = launcher.build_nsjail_args(_launch_spec(tmp_path))
 
     assert args[args.index("--cgroup_mem_max") + 1] == str(384 * 1024 * 1024)
+    assert args[args.index("--cgroup_mem_swap_max") + 1] == "0"
     assert args[args.index("--cgroup_pids_max") + 1] == "73"
     assert args[args.index("--cgroup_cpu_ms_per_sec") + 1] == "1500"
     assert args[args.index("--time_limit") + 1] == "0"
@@ -164,6 +166,62 @@ def test_dependency_preparation_uses_isolated_writable_staging_only(tmp_path):
     )
     assert "third-party-demo==1.0.0" not in args
     assert not any(value.endswith(":/plugin") for value in args)
+
+
+def test_shared_launcher_absolutizes_runtime_paths_before_fixed_root_cwd(
+    tmp_path,
+    monkeypatch,
+):
+    runtime_cwd = tmp_path / "runtime-cwd"
+    runtime_cwd.mkdir()
+    monkeypatch.chdir(runtime_cwd)
+    launch_spec = _launch_spec(pathlib.Path("state"))
+    staging_root = pathlib.Path("dependency-staging")
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    controller = launcher.create_controller(launch_spec)
+    dependency_args = launcher.build_dependency_prepare_nsjail_args(
+        staging,
+        ["third-party-demo==1.0.0"],
+    )
+
+    assert controller.working_dir == "/"
+    assert not launch_spec.paths.jail_root_path.is_absolute()
+    assert controller.args[controller.args.index("--chroot") + 1] == str(
+        launch_spec.paths.jail_root_path.absolute()
+    )
+    assert f"{launch_spec.artifact.code_path.absolute()}:/plugin" in controller.args
+    assert (
+        f"{launch_spec.dependency_environment.site_packages_path.absolute()}"
+        ":/plugin-dependencies"
+    ) in controller.args
+    for source, target in (
+        (launch_spec.paths.home_path, "/home"),
+        (launch_spec.paths.tmp_path, "/tmp"),
+        (launch_spec.paths.data_path, "/data"),
+    ):
+        assert f"{source.absolute()}:{target}" in controller.args
+
+    assert dependency_args[dependency_args.index("--chroot") + 1] == str(
+        staging.jail_root_path.absolute()
+    )
+    assert f"{staging.site_packages_path.absolute()}:/dependency-env" in dependency_args
+    assert f"{staging.tmp_path.absolute()}:/tmp" in dependency_args
 
 
 def test_shared_launcher_fails_without_nsjail_or_required_cgroup():
