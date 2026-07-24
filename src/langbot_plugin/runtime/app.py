@@ -130,11 +130,26 @@ class RuntimeApplication:
         previous = self.context.activate_control_handler(handler)
         if previous is not None and previous is not handler:
             previous.invalidate()
+        mark_ready = getattr(
+            self.context.plugin_mgr,
+            "mark_control_connection_ready",
+            None,
+        )
+        if mark_ready is not None:
+            mark_ready()
 
-        async def run_active_handler():
-            close_task = None
+        async def run_active_handler() -> None:
+            async with self._control_handler_lock:
+                if self._closing:
+                    handler.invalidate()
+                    if self.context.is_active_control_handler(handler):
+                        self.context.control_handler = None
+                    await handler.close()
+                    return
+
+            close_task: asyncio.Task[None] | None = None
             if previous is not None and previous is not handler:
-                close_task = asyncio.create_task(previous.conn.close())
+                close_task = asyncio.create_task(previous.close())
             try:
                 await handler.run()
             finally:
@@ -146,10 +161,26 @@ class RuntimeApplication:
                             "Failed to close superseded control connection",
                             exc_info=True,
                         )
+                async with self._control_handler_lock:
+                    if self.context.is_active_control_handler(handler):
+                        self.context.control_handler = None
 
         task = asyncio.create_task(run_active_handler())
+        self._control_tasks.add(task)
+        task.add_done_callback(self._control_task_done)
         logger.info("Got control connection.")
         return task
+
+    def _control_task_done(self, task: asyncio.Task) -> None:
+        self._control_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Control connection task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     async def _start_legacy_plugin_workloads(self) -> None:
         """Start the OSS ``data/plugins`` bridge only after the handshake.
@@ -208,10 +239,23 @@ class RuntimeApplication:
                 self.context.ws_debug_server.run(new_plugin_debug_connection_callback)
             )
 
+        # Bind listeners before waiting for the immutable Runtime handshake.
+        # Otherwise LangBot has no transport on which to send SET_RUNTIME_CONFIG.
+        for coroutine in server_coroutines:
+            task = asyncio.create_task(coroutine)
+            self._server_tasks.add(task)
+        await asyncio.sleep(0)
+        for task in list(self._server_tasks):
+            if task.done() and not task.cancelled():
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
+
         # The transport tasks must start first so LangBot can deliver the
         # immutable Runtime handshake. Legacy plugin inspection and launch are
         # gated by the resulting profile inside this concurrent workload.
-        tasks.append(self._start_legacy_plugin_workloads())
+        workload_task = asyncio.create_task(self._start_legacy_plugin_workloads())
+        self._server_tasks.add(workload_task)
 
         if self._server_tasks:
             await asyncio.gather(*list(self._server_tasks))

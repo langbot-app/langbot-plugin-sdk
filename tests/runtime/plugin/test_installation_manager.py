@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import stat
 import zipfile
+from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -20,6 +23,7 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
     PluginDependencyEnvironment,
 )
 from langbot_plugin.runtime.plugin.mgr import PluginManager
+from langbot_plugin.runtime.plugin import mgr as manager_module
 
 
 def _package(
@@ -426,3 +430,269 @@ async def test_oss_desired_state_keeps_legacy_worker_without_shared_environment(
     assert "dependency_environment_digest" not in result
     assert len(scheduled) == 1
     assert scheduled[0].dependency_environment is None
+
+
+async def test_installation_supervisor_restarts_crashed_enabled_worker(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    runtime.enabled = True
+    second_generation_started = asyncio.Event()
+    calls = 0
+
+    async def launch(candidate):
+        nonlocal calls
+        assert candidate == binding
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("worker crashed")
+        second_generation_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(manager, "launch_plugin_installation", launch)
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr._PLUGIN_RESTART_INITIAL_DELAY_SEC",
+        0,
+    )
+
+    manager._schedule_installation_worker(runtime)
+    first_supervisor = runtime.launch_task
+    manager._schedule_installation_worker(runtime)
+    assert runtime.launch_task is first_supervisor
+    await asyncio.wait_for(second_generation_started.wait(), timeout=1)
+
+    assert calls == 2
+    assert runtime.launch_task is not None
+    assert runtime.launch_task in manager.plugin_run_tasks
+
+    await manager._stop_installation_worker(runtime)
+
+    assert runtime.launch_task is None
+    assert manager.plugin_run_tasks == []
+
+
+async def test_installation_supervisor_does_not_restart_fenced_worker(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    runtime.enabled = True
+    calls = 0
+
+    async def launch(candidate):
+        nonlocal calls
+        calls += 1
+        context.deactivate_installation_binding(candidate)
+
+    monkeypatch.setattr(manager, "launch_plugin_installation", launch)
+
+    manager._schedule_installation_worker(runtime)
+    task = runtime.launch_task
+    assert task is not None
+    await task
+    await asyncio.sleep(0)
+
+    assert calls == 1
+    assert runtime.launch_task is None
+    assert task not in manager.plugin_run_tasks
+
+
+async def test_launch_installation_builds_private_scoped_handler(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    dependency_root = tmp_path / "dependency"
+    dependency_site_packages = dependency_root / "site-packages"
+    dependency_site_packages.mkdir(parents=True)
+    runtime.dependency_environment = PluginDependencyEnvironment(
+        digest="b" * 64,
+        artifact_digest=digest,
+        requirements_digest="c" * 64,
+        runtime_fingerprint="d" * 64,
+        root_path=dependency_root,
+        site_packages_path=dependency_site_packages,
+    )
+    runtime.enabled = True
+    connection = object()
+    process = object()
+    captured = {}
+
+    class FakeController:
+        def __init__(self):
+            self.process = process
+
+        async def run(self, callback):
+            await callback(connection)
+
+    class FakePluginHandler:
+        def __init__(self, handler_connection, context, **kwargs):
+            captured["handler_connection"] = handler_connection
+            captured["handler_context"] = context
+            captured["handler_kwargs"] = kwargs
+
+    def create_controller(spec):
+        captured["launch_spec"] = spec
+        return FakeController()
+
+    async def add_plugin_handler(handler):
+        captured["handler"] = handler
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "create_controller",
+        create_controller,
+    )
+    monkeypatch.setattr(
+        manager_module.runtime_plugin_handler_cls,
+        "PluginConnectionHandler",
+        FakePluginHandler,
+    )
+    monkeypatch.setattr(manager, "add_plugin_handler", add_plugin_handler)
+
+    await manager.launch_plugin_installation(binding)
+
+    assert captured["launch_spec"].binding == binding
+    assert captured["launch_spec"].dependency_environment is (
+        runtime.dependency_environment
+    )
+    assert captured["handler_connection"] is connection
+    assert captured["handler_context"] is manager.context
+    assert captured["handler_kwargs"]["stdio_process"] is process
+    assert captured["handler_kwargs"]["file_storage_dir"] == str(
+        runtime.paths.root_path / "rpc-transfer"
+    )
+    assert captured["handler_kwargs"]["max_file_bytes"] == 512 * 1024 * 1024
+    assert runtime.plugin_handler is captured["handler"]
+    assert manager._pending_registrations == {}
+
+
+async def test_stop_installation_worker_reaps_handler_process_and_task(
+    tmp_path,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.killed = False
+            self.waited = False
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = FakeProcess()
+    plugin_container = object()
+    handler = SimpleNamespace(
+        cancel_inflight_messages=mock.Mock(),
+        shutdown_plugin=mock.AsyncMock(side_effect=RuntimeError("already exited")),
+        conn=SimpleNamespace(close=mock.AsyncMock()),
+        stdio_process=process,
+    )
+    runtime.plugin_handler = handler
+    runtime.plugin_container = plugin_container
+    manager.plugin_handlers.append(handler)
+    manager._binding_by_container_id[id(plugin_container)] = binding
+    launch_task = asyncio.create_task(asyncio.Event().wait())
+    runtime.launch_task = launch_task
+
+    await manager._stop_installation_worker(runtime)
+
+    handler.cancel_inflight_messages.assert_called_once_with()
+    handler.shutdown_plugin.assert_awaited_once_with()
+    handler.conn.close.assert_awaited_once_with()
+    assert process.killed is True
+    assert process.waited is True
+    assert handler not in manager.plugin_handlers
+    assert id(plugin_container) not in manager._binding_by_container_id
+    assert launch_task.cancelled()
+    assert runtime.plugin_handler is None
+    assert runtime.plugin_container is None
+    assert runtime.launch_task is None
+
+
+async def test_launch_installation_fails_closed_without_current_ready_runtime(
+    tmp_path,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+
+    await manager.launch_plugin_installation(binding)
+
+    runtime.enabled = True
+    with pytest.raises(ValueError, match="dependency environment"):
+        await manager.launch_plugin_installation(binding)
+
+    context.deactivate_installation_binding(binding)
+    with pytest.raises(ValueError, match="no longer current"):
+        await manager.launch_plugin_installation(binding)

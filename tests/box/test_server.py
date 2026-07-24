@@ -525,9 +525,7 @@ async def test_verify_shared_workspace_is_authenticated_host_control(
     assert response.data["sha256"] == "b" * 64
     mock_runtime.verify_shared_workspace.assert_called_once_with(marker_name)
 
-    unauthenticated = _new_handler(
-        mock_connection, mock_runtime, authenticated=False
-    )
+    unauthenticated = _new_handler(mock_connection, mock_runtime, authenticated=False)
     with pytest.raises(PermissionError, match="authentication"):
         await _invoke(
             unauthenticated,
@@ -637,12 +635,10 @@ async def test_grant_enforced_exec_passes_trusted_context_to_runtime(
 
     assert resp.code == 0
     assert resp.data["session_id"] == "global"
-    spec, = mock_runtime.execute.await_args.args
+    (spec,) = mock_runtime.execute.await_args.args
     assert spec.session_id == "caller-controlled"
     assert mock_runtime.execute.await_args.kwargs["action_context"] == _ACTION_CONTEXT
-    mock_runtime.require_sandbox_admission.assert_awaited_once_with(
-        _ACTION_CONTEXT
-    )
+    mock_runtime.require_sandbox_admission.assert_awaited_once_with(_ACTION_CONTEXT)
 
 
 # ── CREATE_SESSION ───────────────────────────────────────────────────
@@ -1108,9 +1104,7 @@ async def test_host_control_installs_grant_and_advances_generation_fence(
     )
 
 
-async def test_host_control_rejects_grant_for_another_instance(
-    handler, mock_runtime
-):
+async def test_host_control_rejects_grant_for_another_instance(handler, mock_runtime):
     mock_runtime.upsert_sandbox_admission_grant = mock.AsyncMock()
     grant = SandboxAdmissionGrant(
         instance_uuid="instance-b",
@@ -1149,9 +1143,7 @@ async def test_host_control_revokes_grant(handler, mock_runtime):
 
     assert resp.code == 0
     assert resp.data == {"revoked": True}
-    mock_runtime.revoke_sandbox_admission_grant.assert_awaited_once_with(
-        revocation
-    )
+    mock_runtime.revoke_sandbox_admission_grant.assert_awaited_once_with(revocation)
 
 
 async def test_init(handler, mock_runtime):
@@ -1251,7 +1243,7 @@ async def test_handle_rpc_ws_prepares_ws_and_runs_handler(mock_runtime):
 
 
 async def test_close_active_websockets_closes_every_client(mock_runtime):
-    app = create_app(mock_runtime)
+    app = create_app(mock_runtime, control_token=_CONTROL_TOKEN)
     first_ws = mock.MagicMock()
     first_ws.close = mock.AsyncMock()
     second_ws = mock.MagicMock()
@@ -1482,6 +1474,142 @@ async def test_managed_process_ws_stdio_unavailable_closes_ws(mock_runtime):
     assert result is fake_ws
     fake_ws.prepare.assert_awaited_once_with(request)
     fake_ws.close.assert_awaited_once()
+
+
+async def test_managed_process_ws_forwards_stdout_and_closes(mock_runtime):
+    class FakeStdout:
+        def __init__(self):
+            self.lines = [b"hello\n", b""]
+
+        async def readline(self):
+            return self.lines.pop(0)
+
+    class BlockingWebSocket:
+        def __init__(self):
+            self.sent = []
+            self.closed = False
+
+        async def prepare(self, _request):
+            return None
+
+        async def send_str(self, value):
+            self.sent.append(value)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+
+        async def close(self, **_kwargs):
+            self.closed = True
+
+    managed = mock.MagicMock()
+    managed.is_running = True
+    managed.process = SimpleNamespace(
+        stdout=FakeStdout(),
+        stdin=mock.MagicMock(),
+    )
+    managed.attach_lock = asyncio.Lock()
+    runtime_session = SimpleNamespace(
+        managed_processes={"default": managed},
+        info=SimpleNamespace(last_used_at=None),
+    )
+    mock_runtime._sessions = {_physical_session_id("s1"): runtime_session}
+    fake_ws = BlockingWebSocket()
+    request = _ws_request(mock_runtime, session_id="s1")
+
+    with mock.patch.object(server.web, "WebSocketResponse", return_value=fake_ws):
+        result = await handle_managed_process_ws(request)
+
+    assert result is fake_ws
+    assert fake_ws.sent == ["hello"]
+    assert fake_ws.closed is True
+    assert runtime_session.info.last_used_at is not None
+
+
+async def test_managed_process_ws_forwards_text_stdin(mock_runtime):
+    class BlockingStdout:
+        async def readline(self):
+            await asyncio.Event().wait()
+
+    class FakeStdin:
+        def __init__(self):
+            self.writes = []
+            self.drains = 0
+
+        def write(self, value):
+            self.writes.append(value)
+
+        async def drain(self):
+            self.drains += 1
+
+    class InputWebSocket:
+        def __init__(self):
+            self.messages = iter(
+                (
+                    SimpleNamespace(type=web.WSMsgType.TEXT, data="ping"),
+                    SimpleNamespace(type=web.WSMsgType.CLOSE, data=None),
+                )
+            )
+            self.closed = False
+
+        async def prepare(self, _request):
+            return None
+
+        async def send_str(self, _value):
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.messages)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        async def close(self, **_kwargs):
+            self.closed = True
+
+    stdin = FakeStdin()
+    managed = mock.MagicMock()
+    managed.is_running = True
+    managed.process = SimpleNamespace(
+        stdout=BlockingStdout(),
+        stdin=stdin,
+    )
+    managed.attach_lock = asyncio.Lock()
+    runtime_session = SimpleNamespace(
+        managed_processes={"default": managed},
+        info=SimpleNamespace(last_used_at=None),
+    )
+    mock_runtime._sessions = {_physical_session_id("s1"): runtime_session}
+    fake_ws = InputWebSocket()
+    request = _ws_request(mock_runtime, session_id="s1")
+
+    with mock.patch.object(server.web, "WebSocketResponse", return_value=fake_ws):
+        result = await handle_managed_process_ws(request)
+
+    assert result is fake_ws
+    assert stdin.writes == [b"ping\n"]
+    assert stdin.drains == 1
+    assert fake_ws.closed is True
+    assert runtime_session.info.last_used_at is not None
+
+
+async def test_managed_process_ws_requires_process_admission(mock_runtime):
+    mock_runtime.admission_required = True
+    mock_runtime.require_sandbox_admission = mock.AsyncMock(
+        return_value=SimpleNamespace(max_managed_processes=0)
+    )
+    request = _ws_request(mock_runtime, session_id="s1")
+
+    response = await handle_managed_process_ws(request)
+
+    assert response.status == 400
+    assert "does not permit managed process relay" in response.text
+    mock_runtime.require_sandbox_admission.assert_awaited_once_with(_ACTION_CONTEXT)
 
 
 async def test_active_managed_process_relay_closes_when_generation_advances(

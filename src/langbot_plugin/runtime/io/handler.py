@@ -17,6 +17,7 @@ import os
 import hashlib
 import base64
 import uuid
+import contextlib
 import contextvars
 import re
 import aiofiles
@@ -43,6 +44,8 @@ logger = logging.getLogger(__name__)
 FILE_STORAGE_DIR = "data/temp/lbp"
 SHARED_WORKER_FILE_STORAGE_DIR = "/tmp/lbp-rpc"
 FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
+MAX_INFLIGHT_ACTIONS = 128
+MAX_STREAM_QUEUE_SIZE = 128
 _SAFE_FILE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 _SAFE_FILE_EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 
@@ -103,7 +106,9 @@ class Handler(abc.ABC):
         self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
-        self._message_tasks: set[asyncio.Task] = set()
+        self._action_tasks: set[asyncio.Task[None]] = set()
+        self._closed = False
+        self._close_error: ConnectionClosedError | None = None
         self._bound_action_context = None
         self._current_action_context = contextvars.ContextVar(
             f"{self.__class__.__name__}_{id(self)}_action_context",
@@ -279,58 +284,76 @@ class Handler(abc.ABC):
 
     async def _handle_action(self, req_data: dict[str, Any]) -> None:
         seq_id = req_data.get("seq_id", -1)
-        action_name = str(req_data["action"])
+        action_name = str(req_data.get("action", ""))
+        context_token = None
         try:
+            request = ActionRequest.model_validate(req_data)
+            action_name = request.action
             if action_name not in self.actions:
                 raise ValueError(f"Action {action_name} not found")
 
-                if "action" in req_data:  # action request from peer
-                    try:
-                        request = ActionRequest.model_validate(req_data)
-                        if request.action not in self.actions:
-                            raise ValueError(f"Action {request.action} not found")
+            action_context = self.validate_inbound_action_context(
+                action_name,
+                request.context,
+            )
+            context_token = self._current_action_context.set(action_context)
 
-                        action_context = self.validate_inbound_action_context(
-                            request.action,
-                            request.context,
-                        )
-                        context_token = self._current_action_context.set(action_context)
+            response = self.actions[action_name](request.data)
+            if not isinstance(response, AsyncGenerator):
+                if isinstance(response, Coroutine):
+                    response = await response
+                response.seq_id = seq_id
+                await self.conn.send(json.dumps(response.model_dump()))
+            else:
+                async for chunk in response:
+                    assert isinstance(chunk, ActionResponse)
+                    chunk.seq_id = seq_id
+                    chunk.chunk_status = ChunkStatus.CONTINUE
+                    await self.conn.send(json.dumps(chunk.model_dump()))
 
-                        try:
-                            response = self.actions[request.action](request.data)
+                end_response = ActionResponse.success({})
+                end_response.seq_id = seq_id
+                end_response.chunk_status = ChunkStatus.END
+                await self.conn.send(json.dumps(end_response.model_dump()))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            traceback.print_exc()
+            error_response = ActionResponse.error(
+                f"{exc.__class__.__name__}: {str(exc)}"
+            )
+            error_response.seq_id = seq_id
+            with contextlib.suppress(ConnectionClosedError):
+                await self.conn.send(json.dumps(error_response.model_dump()))
+        finally:
+            if context_token is not None:
+                self._current_action_context.reset(context_token)
+            if action_name and not action_name.startswith("__"):
+                logger.info("[Action] %s", action_name)
 
-                            if not isinstance(response, AsyncGenerator):
-                                if isinstance(response, Coroutine):
-                                    response = await response
+    async def _send_overloaded_response(self, seq_id: int) -> None:
+        response = ActionResponse.error(
+            f"Runtime connection is busy (max {MAX_INFLIGHT_ACTIONS} concurrent actions)"
+        )
+        response.seq_id = seq_id
+        with contextlib.suppress(ConnectionClosedError):
+            await self.conn.send(json.dumps(response.model_dump()))
 
-                                response.seq_id = seq_id
-                                await self.conn.send(json.dumps(response.model_dump()))
-                            elif isinstance(response, AsyncGenerator):
-                                response_generator = response
-                                async for chunk in response_generator:
-                                    assert isinstance(chunk, ActionResponse)
-                                    chunk.seq_id = seq_id
-                                    chunk.chunk_status = ChunkStatus.CONTINUE
-                                    await self.conn.send(json.dumps(chunk.model_dump()))
+    def _action_task_done(self, task: asyncio.Task[None]) -> None:
+        self._action_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Runtime action task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
-                                end_response = ActionResponse.success({})
-                                end_response.seq_id = seq_id
-                                end_response.chunk_status = ChunkStatus.END
-                                await self.conn.send(
-                                    json.dumps(end_response.model_dump())
-                                )
-                        finally:
-                            self._current_action_context.reset(context_token)
-                    except Exception as e:
-                        traceback.print_exc()
-                        error_response = ActionResponse.error(
-                            f"{e.__class__.__name__}: {str(e)}"
-                        )
-                        error_response.seq_id = seq_id
-                        await self.conn.send(json.dumps(error_response.model_dump()))
-                    finally:
-                        if not req_data["action"].startswith("__"):
-                            logger.info(f"[Action] {req_data['action']}")
+    def _fail_pending(self, error: ConnectionClosedError) -> None:
+        for waiter in list(self.resp_waiters.values()):
+            if not waiter.done():
+                waiter.set_exception(error)
 
         for queue in list(self.resp_queues.values()):
             while queue.full():
@@ -338,23 +361,19 @@ class Handler(abc.ABC):
                     queue.get_nowait()
             queue.put_nowait(error)
 
-                    # Handle single response (for call_action)
-                    if seq_id in self.resp_waiters:
-                        self.resp_waiters[seq_id].set_result(response)
-
-                    # Handle streaming response (for call_action_generator)
-                    if seq_id in self.resp_queues:
-                        await self.resp_queues[seq_id].put(response)
-
-            message_task = asyncio.create_task(handle_message(message))
-            self._message_tasks.add(message_task)
-            message_task.add_done_callback(self._message_tasks.discard)
+    async def _cancel_action_tasks(self) -> None:
+        tasks = list(self._action_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._action_tasks.clear()
 
     def cancel_inflight_messages(self) -> None:
         """Cancel peer requests already accepted by this handler."""
 
-        for message_task in tuple(self._message_tasks):
-            message_task.cancel()
+        for action_task in tuple(self._action_tasks):
+            action_task.cancel()
 
     async def call_action(
         self,

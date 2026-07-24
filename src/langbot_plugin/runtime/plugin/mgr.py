@@ -15,8 +15,8 @@ import time
 import zipfile
 import yaml
 import logging
-import contextlib
 import uuid
+import sys
 from langbot_plugin.utils.platform import get_platform
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -110,7 +110,7 @@ class PluginInstallationRuntime:
     error_message: str | None = None
     plugin_container: runtime_plugin_container.PluginContainer | None = None
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
-    launch_task: asyncio.Task | None = None
+    launch_task: asyncio.Task[None] | None = None
 
 
 _REGISTRATION_CAPABILITY_TTL_SECONDS = 300.0
@@ -162,11 +162,20 @@ class PluginManager:
 
     plugin_run_tasks: list[asyncio.Task] = []
 
+    wait_for_control_connection: asyncio.Future[None] | None = None
+
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_handlers = []
         self.plugins = []
         self.plugin_run_tasks = []
+        self.wait_for_control_connection = None
+        self._control_connection_ready = asyncio.Event()
+        self._plugin_supervisors: dict[str, asyncio.Task[None]] = {}
+        self._desired_plugin_paths: set[str] = set()
+        self._shutting_down = False
+        self._dependency_errors: dict[str, str] = {}
+        self._plugin_operation_locks: dict[str, asyncio.Lock] = {}
         self._pending_registrations: dict[str, _PendingPluginRegistration] = {}
         self._installations: dict[InstallationBinding, PluginInstallationRuntime] = {}
         self._active_binding_by_uuid: dict[str, InstallationBinding] = {}
@@ -844,9 +853,78 @@ class PluginManager:
         if runtime.launch_task is not None and not runtime.launch_task.done():
             return
         runtime.launch_task = asyncio.create_task(
-            self.launch_plugin_installation(runtime.binding)
+            self._supervise_plugin_installation(runtime)
         )
         self.plugin_run_tasks.append(runtime.launch_task)
+        runtime.launch_task.add_done_callback(
+            lambda completed, owned_runtime=runtime: (
+                self._installation_supervisor_done(owned_runtime, completed)
+            )
+        )
+
+    def _installation_supervisor_done(
+        self,
+        runtime: PluginInstallationRuntime,
+        task: asyncio.Task[None],
+    ) -> None:
+        if runtime.launch_task is task:
+            runtime.launch_task = None
+        with contextlib.suppress(ValueError):
+            self.plugin_run_tasks.remove(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Plugin installation supervisor failed for %s",
+                runtime.binding.installation_uuid,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    async def _supervise_plugin_installation(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> None:
+        """Restart one desired tenant worker with bounded exponential backoff."""
+
+        binding = runtime.binding
+        delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+        while (
+            not self._shutting_down
+            and runtime.enabled
+            and self._installations.get(binding) is runtime
+            and self.context.is_current_installation_binding(binding)
+        ):
+            started_at = asyncio.get_running_loop().time()
+            try:
+                await self.launch_plugin_installation(binding)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Plugin installation worker failed: %s",
+                    binding.installation_uuid,
+                )
+
+            if (
+                self._shutting_down
+                or not runtime.enabled
+                or self._installations.get(binding) is not runtime
+                or not self.context.is_current_installation_binding(binding)
+            ):
+                return
+
+            uptime = asyncio.get_running_loop().time() - started_at
+            if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
+                delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+            logger.warning(
+                "Plugin installation worker exited unexpectedly; restarting %s "
+                "in %.1fs",
+                binding.installation_uuid,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
 
     async def launch_plugin_installation(
         self,
@@ -947,7 +1025,8 @@ class PluginManager:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        runtime.launch_task = None
+        if runtime.launch_task is task:
+            runtime.launch_task = None
 
     async def add_plugin_handler(
         self,
@@ -1413,25 +1492,23 @@ class PluginManager:
             # initialize plugin
             await handler.initialize_plugin(plugin_settings)
 
-        # refresh plugin container from plugin (components may have changed)
-        plugin_container_data = await handler.get_plugin_container()
-        refreshed = runtime_plugin_container.PluginContainer.from_dict(
-            plugin_container_data
-        )
-        refreshed_author = str(refreshed.manifest.metadata.author or "").strip()
-        refreshed_name = str(refreshed.manifest.metadata.name or "").strip()
-        if (refreshed_author, refreshed_name) != (plugin_author, plugin_name):
-            if installation_binding is not None:
-                assert installation_runtime is not None
-                installation_runtime.plugin_container = None
-                installation_runtime.plugin_handler = None
-                self._binding_by_container_id.pop(id(plugin_container), None)
-            else:
-                self.plugins.remove(plugin_container)
-            raise ValueError("Plugin changed its manifest identity after registration")
-        plugin_container.components = refreshed.components
-        plugin_container.manifest = refreshed.manifest
-        plugin_container.status = refreshed.status
+            # refresh plugin container from plugin (components may have changed)
+            plugin_container_data = await handler.get_plugin_container()
+            refreshed = runtime_plugin_container.PluginContainer.from_dict(
+                plugin_container_data
+            )
+            refreshed_author = str(refreshed.manifest.metadata.author or "").strip()
+            refreshed_name = str(refreshed.manifest.metadata.name or "").strip()
+            if (refreshed_author, refreshed_name) != (plugin_author, plugin_name):
+                raise ValueError(
+                    "Plugin changed its manifest identity after registration"
+                )
+            plugin_container.components = refreshed.components
+            plugin_container.manifest = refreshed.manifest
+            plugin_container.status = refreshed.status
+        except Exception:
+            await self.remove_plugin_container(plugin_container)
+            raise
 
     async def remove_plugin_container(
         self,
@@ -1588,9 +1665,14 @@ class PluginManager:
             raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
 
     async def shutdown_all_plugins(self):
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._desired_plugin_paths.clear()
+
         for runtime in list(self._installations.values()):
             await self._stop_installation_worker(runtime)
-        for plugin in self.plugins:
+        for plugin in list(self.plugins):
             await self.shutdown_plugin(plugin)
 
         tasks = list(self._plugin_supervisors.values())

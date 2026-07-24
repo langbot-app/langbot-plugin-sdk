@@ -192,9 +192,7 @@ class RuntimeContext:
             return binding
         if baseline.workspace_uuid != binding.workspace_uuid:
             raise ValueError("Plugin installation cannot move to another Workspace")
-        is_new_generation = (
-            binding.placement_generation > baseline.placement_generation
-        )
+        is_new_generation = binding.placement_generation > baseline.placement_generation
         is_new_revision = (
             binding.placement_generation == baseline.placement_generation
             and binding.runtime_revision > baseline.runtime_revision

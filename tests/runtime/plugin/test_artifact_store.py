@@ -231,7 +231,9 @@ def test_artifact_counts_actual_streamed_bytes(tmp_path, monkeypatch):
         def open(_info, _mode):
             return nullcontext(io.BytesIO(b"actual-bytes"))
 
-    monkeypatch.setattr(artifact_module.zipfile, "ZipFile", lambda *_args, **_kwargs: FakeArchive())
+    monkeypatch.setattr(
+        artifact_module.zipfile, "ZipFile", lambda *_args, **_kwargs: FakeArchive()
+    )
     monkeypatch.setattr(
         artifact_module,
         "_MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES",

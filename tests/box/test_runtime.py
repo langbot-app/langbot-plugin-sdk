@@ -230,9 +230,7 @@ def test_init_method_applies_config_and_resets_backend(logger):
     assert runtime._backend is None
 
 
-def test_verify_shared_workspace_reads_only_valid_nofollow_marker(
-    logger, tmp_path
-):
+def test_verify_shared_workspace_reads_only_valid_nofollow_marker(logger, tmp_path):
     runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
     root = tmp_path / "box"
     runtime.init(
@@ -260,9 +258,7 @@ def test_verify_shared_workspace_reads_only_valid_nofollow_marker(
         runtime.verify_shared_workspace("../shared/secret")
 
 
-def test_verify_shared_workspace_rejects_missing_and_symlink_markers(
-    logger, tmp_path
-):
+def test_verify_shared_workspace_rejects_missing_and_symlink_markers(logger, tmp_path):
     runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
     root = tmp_path / "box"
     runtime.init(

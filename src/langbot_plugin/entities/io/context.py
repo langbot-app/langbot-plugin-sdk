@@ -292,7 +292,9 @@ class RemovePluginInstallationRequest(pydantic.BaseModel):
 
 
 ActionEnvelopeContext = InstallationBinding | ActionContext
-_ACTION_ENVELOPE_CONTEXT_ADAPTER = pydantic.TypeAdapter(ActionEnvelopeContext)
+_ACTION_ENVELOPE_CONTEXT_ADAPTER: pydantic.TypeAdapter[ActionEnvelopeContext] = (
+    pydantic.TypeAdapter(ActionEnvelopeContext)
+)
 
 
 def parse_action_envelope_context(

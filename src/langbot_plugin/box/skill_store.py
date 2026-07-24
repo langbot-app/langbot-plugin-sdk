@@ -460,9 +460,7 @@ class BoxSkillStore:
         stat = os.stat(entry_path)
         return {
             "name": skill_name,
-            "display_name": str(
-                metadata.get("display_name") or skill_name
-            ).strip(),
+            "display_name": str(metadata.get("display_name") or skill_name).strip(),
             "description": str(metadata.get("description") or "").strip(),
             "instructions": instructions,
             "package_root": package_root,
@@ -770,16 +768,16 @@ class BoxSkillStore:
                 continue
 
             if member.file_size < 0 or member.compress_size < 0:
-                raise ValueError(f"Archive contains invalid size metadata: {member_name}")
+                raise ValueError(
+                    f"Archive contains invalid size metadata: {member_name}"
+                )
             if member.file_size > _MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES:
                 raise ValueError(
-                    "Archive entry exceeds the uncompressed size limit: "
-                    f"{member_name}"
+                    f"Archive entry exceeds the uncompressed size limit: {member_name}"
                 )
             if member.file_size and (
                 member.compress_size == 0
-                or member.file_size / member.compress_size
-                > _MAX_ZIP_COMPRESSION_RATIO
+                or member.file_size / member.compress_size > _MAX_ZIP_COMPRESSION_RATIO
             ):
                 raise ValueError(
                     f"Archive entry exceeds the compression ratio limit: {member_name}"
@@ -806,9 +804,10 @@ class BoxSkillStore:
             os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
             extracted_entry = 0
             try:
-                with archive.open(member, "r") as source, open(
-                    destination, "xb"
-                ) as target:
+                with (
+                    archive.open(member, "r") as source,
+                    open(destination, "xb") as target,
+                ):
                     while True:
                         chunk = source.read(_ZIP_COPY_CHUNK_BYTES)
                         if not chunk:

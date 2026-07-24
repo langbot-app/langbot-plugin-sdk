@@ -36,7 +36,7 @@ from langbot_plugin.entities.io.actions.enums import CommonAction
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.entities.io.context import ActionContext
-from langbot_plugin.runtime.io.connection import Connection
+from langbot_plugin.runtime.io.connection import Connection, MAX_MESSAGE_BYTES
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.utils.log import configure_process_logging
 
@@ -77,6 +77,7 @@ from .tenancy import (
 
 logger = logging.getLogger("langbot.box.server")
 
+_ACTIVE_WEBSOCKETS_KEY = web.AppKey("active_websockets", set)
 _APP_RUNTIME_KEY = "runtime"
 _APP_CONTROL_TOKEN_KEY = "_box_control_token"
 _APP_TRUSTED_INSTANCE_KEY = "_box_trusted_instance_uuid"
@@ -484,9 +485,7 @@ class BoxServerHandler(Handler):
         if self._runtime.admission_required:
             canonical_id = self._runtime.admission_policy.logical_session_id
             if str(logical_session_id or "").strip() != canonical_id:
-                raise BoxAdmissionError(
-                    "Managed sandbox session_id is runtime-owned"
-                )
+                raise BoxAdmissionError("Managed sandbox session_id is runtime-owned")
             logical_session_id = canonical_id
         return namespace_session_id(context, logical_session_id)
 
@@ -552,9 +551,7 @@ class BoxServerHandler(Handler):
                 spec = BoxSpec.model_validate(data)
                 context = self._action_context()
                 if self._runtime.admission_required:
-                    result = await self._runtime.execute(
-                        spec, action_context=context
-                    )
+                    result = await self._runtime.execute(spec, action_context=context)
                 else:
                     spec = spec.model_copy(
                         update={"session_id": self._session_id(spec.session_id)}
@@ -682,16 +679,16 @@ class BoxServerHandler(Handler):
                 raise PermissionError(
                     "Sandbox admission revocation does not match the trusted instance"
                 )
-            result = await self._runtime.revoke_sandbox_admission_grant(
-                revocation
-            )
+            result = await self._runtime.revoke_sandbox_admission_grant(revocation)
             return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.VERIFY_SHARED_WORKSPACE)
         async def verify_shared_workspace(data: dict[str, Any]) -> ActionResponse:
             self._require_host_control()
             try:
-                result = self._runtime.verify_shared_workspace(data.get("marker_name", ""))
+                result = self._runtime.verify_shared_workspace(
+                    data.get("marker_name", "")
+                )
             except Exception as exc:
                 return ActionResponse.error(f"BoxReadinessError: {exc}")
             return ActionResponse.success(result)
@@ -882,6 +879,7 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
     ws = web.WebSocketResponse(
         protocols=("mcp",),
         heartbeat=_MANAGED_PROCESS_WS_HEARTBEAT_SEC,
+        max_msg_size=MAX_MESSAGE_BYTES,
     )
     await ws.prepare(request)
     active_websockets = request.app.setdefault(_ACTIVE_WEBSOCKETS_KEY, set())
@@ -896,42 +894,61 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
                 await ws.close(message=b"managed process stdio unavailable")
                 return ws
 
-        async def _stdout_to_ws() -> None:
-            while True:
-                line = await stdout.readline()
-                if not line:
-                    break
-                generation_fence.require_current(action_context)
-                await ws.send_str(line.decode("utf-8", errors="replace").rstrip("\n"))
-                runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
-
-        async def _ws_to_stdin() -> None:
-            async for msg in ws:
-                if msg.type == web.WSMsgType.TEXT:
+            async def _stdout_to_ws() -> None:
+                while True:
+                    line = await stdout.readline()
+                    if not line:
+                        break
                     generation_fence.require_current(action_context)
-                    stdin.write((msg.data + "\n").encode("utf-8"))
-                    await stdin.drain()
+                    await ws.send_str(
+                        line.decode("utf-8", errors="replace").rstrip("\n")
+                    )
                     runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
 
-        stdout_task = asyncio.create_task(_stdout_to_ws())
-        stdin_task = asyncio.create_task(_ws_to_stdin())
-        stale_task = asyncio.create_task(
-            generation_fence.wait_until_stale(action_context)
-        )
-        try:
-            done, pending = await asyncio.wait(
-                [stdout_task, stdin_task, stale_task],
-                return_when=asyncio.FIRST_COMPLETED,
+            async def _ws_to_stdin() -> None:
+                async for msg in ws:
+                    if msg.type == web.WSMsgType.TEXT:
+                        generation_fence.require_current(action_context)
+                        stdin.write((msg.data + "\n").encode("utf-8"))
+                        await stdin.drain()
+                        runtime_session.info.last_used_at = dt.datetime.now(
+                            dt.timezone.utc
+                        )
+                    elif msg.type in (
+                        web.WSMsgType.CLOSE,
+                        web.WSMsgType.CLOSING,
+                        web.WSMsgType.CLOSED,
+                        web.WSMsgType.ERROR,
+                    ):
+                        break
+
+            stdout_task = asyncio.create_task(_stdout_to_ws())
+            stdin_task = asyncio.create_task(_ws_to_stdin())
+            stale_task = asyncio.create_task(
+                generation_fence.wait_until_stale(action_context)
             )
-            for task in pending:
-                task.cancel()
-            for task in done:
-                task.result()
-        finally:
-            for task in (stdout_task, stdin_task, stale_task):
-                if not task.done():
+            try:
+                done, pending = await asyncio.wait(
+                    [stdout_task, stdin_task, stale_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
                     task.cancel()
-            await ws.close()
+                for task in done:
+                    task.result()
+            finally:
+                for task in (stdout_task, stdin_task, stale_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(
+                    stdout_task,
+                    stdin_task,
+                    stale_task,
+                    return_exceptions=True,
+                )
+                await ws.close()
+    finally:
+        active_websockets.discard(ws)
 
     return ws
 
@@ -963,7 +980,10 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
         trusted_instance_uuid=trusted_instance_uuid,
         generation_fence=generation_fence,
     )
-    await handler.run()
+    try:
+        await handler.run()
+    finally:
+        active_websockets.discard(ws)
 
     return ws
 
@@ -983,6 +1003,23 @@ async def handle_readyz(request: web.Request) -> web.Response:
         readiness,
         status=200 if readiness.get("ready") else 503,
     )
+
+
+async def _close_active_websockets(app: web.Application) -> None:
+    """Close live clients before aiohttp waits for request handlers to drain."""
+
+    active_websockets = list(app.get(_ACTIVE_WEBSOCKETS_KEY, ()))
+    if active_websockets:
+        await asyncio.gather(
+            *(
+                ws.close(
+                    code=WSCloseCode.GOING_AWAY,
+                    message=b"Box runtime shutting down",
+                )
+                for ws in active_websockets
+            ),
+            return_exceptions=True,
+        )
 
 
 # ── App factory ──────────────────────────────────────────────────────
@@ -1010,6 +1047,8 @@ def create_app(
         )
     }
     app[_APP_GENERATION_FENCE_KEY] = generation_fence or BoxGenerationFence()
+    app[_ACTIVE_WEBSOCKETS_KEY] = set()
+    app.on_shutdown.append(_close_active_websockets)
     app.router.add_get("/healthz", handle_healthz)
     app.router.add_get("/readyz", handle_readyz)
     app.router.add_get("/rpc/ws", handle_rpc_ws)

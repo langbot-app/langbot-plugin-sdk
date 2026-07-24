@@ -20,7 +20,7 @@ protocol_logger.setLevel(logging.WARNING)
 
 def process_http_request(connection, request):
     """Serve a quiet HTTP health endpoint alongside the WebSocket endpoint."""
-    if request.path == "/healthz":
+    if getattr(request, "path", None) == "/healthz":
         return connection.respond(HTTPStatus.OK, "ok\n")
     return None
 
@@ -52,6 +52,9 @@ class WebSocketServerController(Controller):
         self._new_connection_callback = new_connection_callback
 
         async def authenticate_request(connection, request):
+            health_response = process_http_request(connection, request)
+            if health_response is not None:
+                return health_response
             for header, expected_value in self.expected_headers.items():
                 supplied_value = request.headers.get(header, "")
                 if not supplied_value or not hmac.compare_digest(
@@ -70,10 +73,16 @@ class WebSocketServerController(Controller):
             self.handle_connection,
             self.host,
             self.port,
+            max_size=MAX_MESSAGE_BYTES,
             process_request=authenticate_request,
+            logger=protocol_logger,
         )
         logger.info(f"WebSocket server started on {self.host}:{self.port}")
-        await server.wait_closed()
+        try:
+            await server.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
 
     async def handle_connection(self, websocket: websockets.ServerConnection):
         logger.info(f"New connection from {websocket.remote_address}")

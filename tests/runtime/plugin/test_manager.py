@@ -1153,13 +1153,18 @@ async def test_plugin_supervisor_restarts_after_crash(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_register_plugin_rolls_back_container_when_initialize_fails():
     manager = _manager()
-    manager.context = SimpleNamespace(control_handler=FakeControlHandler())
+    manager.context = _bound_runtime_context(FakeControlHandler())
     plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
     handler = FakeHandler(plugin)
     handler.initialize_plugin = AsyncMock(side_effect=RuntimeError("init failed"))
+    registration_capability = _registration_capability(manager, plugin)
 
     with pytest.raises(RuntimeError, match="init failed"):
-        await manager.register_plugin(handler, plugin.model_dump())
+        await manager.register_plugin(
+            handler,
+            plugin.model_dump(),
+            registration_capability=registration_capability,
+        )
 
     assert manager.plugins == []
     assert manager.plugin_handlers == []

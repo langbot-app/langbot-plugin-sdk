@@ -156,11 +156,11 @@ action replays the authoritative set, while tenant-scoped
 installation. Newer placement generations or Runtime revisions fence the old
 worker immediately; stale or cross-Workspace transitions fail closed.
 
-Reconcile and control reconnect restore desired installations, but the current
-Supervisor does not yet attach a crash-completion callback with bounded
-backoff. An unexpectedly exited enabled worker is therefore restored by the
-next apply/reconcile cycle, not immediately. Production shared deployment must
-close and verify that reliability gap before activation.
+Each enabled installation is owned by an installation-scoped Supervisor.
+Unexpected worker exit is recovered with bounded exponential backoff. Disable,
+remove, placement generation changes, Runtime revision changes, and shutdown
+fence the old Supervisor before it can relaunch, while reconcile and control
+reconnect restore the authoritative desired set.
 
 Plugin packages are verified against `artifact_digest` and extracted once into
 a read-only `artifacts/sha256/<digest>/code` tree. Installations may share that

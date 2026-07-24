@@ -153,9 +153,7 @@ async def test_missing_and_zero_session_grants_fail_closed(tmp_path):
     with pytest.raises(BoxAdmissionError, match="grant is missing"):
         await runtime.execute(BoxSpec(session_id="anything", cmd="true"), context)
 
-    await runtime.upsert_sandbox_admission_grant(
-        _grant(context, max_sessions=0)
-    )
+    await runtime.upsert_sandbox_admission_grant(_grant(context, max_sessions=0))
     with pytest.raises(BoxAdmissionError, match="does not permit sessions"):
         await runtime.execute(BoxSpec(session_id="anything", cmd="true"), context)
     assert backend.started_specs == []
@@ -165,9 +163,7 @@ async def test_missing_and_zero_session_grants_fail_closed(tmp_path):
 async def test_expired_grant_is_rejected_and_cleans_persistent_session(tmp_path):
     runtime, backend = _runtime(tmp_path)
     context = _context()
-    await runtime.upsert_sandbox_admission_grant(
-        _grant(context, expires_in=0.03)
-    )
+    await runtime.upsert_sandbox_admission_grant(_grant(context, expires_in=0.03))
     await runtime.execute(BoxSpec(session_id="first", cmd="true"), context)
 
     await asyncio.sleep(0.04)
@@ -227,9 +223,7 @@ async def test_same_global_id_is_isolated_between_workspaces(tmp_path):
     assert first_result.session_id != second_result.session_id
     assert len(backend.started_specs) == 2
     assert backend.started_specs[0].host_path != backend.started_specs[1].host_path
-    assert {spec.network for spec in backend.started_specs} == {
-        BoxNetworkMode.OFF
-    }
+    assert {spec.network for spec in backend.started_specs} == {BoxNetworkMode.OFF}
 
 
 @pytest.mark.anyio

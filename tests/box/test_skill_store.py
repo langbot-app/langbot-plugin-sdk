@@ -826,12 +826,12 @@ def test_safe_extract_zip_streams_without_extractall(tmp_path, monkeypatch):
     monkeypatch.setattr(
         zipfile.ZipFile,
         "extractall",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("extractall used")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("extractall used")
+        ),
     )
 
-    preview = store.preview_zip_upload(
-        file_bytes=_skill_zip(), filename="demo.zip"
-    )
+    preview = store.preview_zip_upload(file_bytes=_skill_zip(), filename="demo.zip")
 
     assert [item["name"] for item in preview] == ["demo"]
 
@@ -871,20 +871,14 @@ def test_zip_upload_rejects_per_entry_and_total_uncompressed_caps(
     per_entry = io.BytesIO()
     with zipfile.ZipFile(per_entry, "w", compression=zipfile.ZIP_STORED) as archive:
         archive.writestr("pkg/SKILL.md", b"x" * 33)
-    monkeypatch.setattr(
-        skill_store_module, "_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES", 32
-    )
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES", 32)
     with pytest.raises(ValueError, match="entry exceeds the uncompressed size"):
         _make_store(tmp_path).preview_zip_upload(
             file_bytes=per_entry.getvalue(), filename="pkg.zip"
         )
 
-    monkeypatch.setattr(
-        skill_store_module, "_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES", 64
-    )
-    monkeypatch.setattr(
-        skill_store_module, "_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 10
-    )
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES", 64)
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 10)
     total = io.BytesIO()
     with zipfile.ZipFile(total, "w", compression=zipfile.ZIP_STORED) as archive:
         archive.writestr("pkg/a", b"a" * 6)
@@ -897,9 +891,7 @@ def test_zip_upload_rejects_per_entry_and_total_uncompressed_caps(
 
 def test_zip_upload_rejects_compression_ratio_and_symlink(tmp_path, monkeypatch):
     ratio = io.BytesIO()
-    with zipfile.ZipFile(
-        ratio, "w", compression=zipfile.ZIP_DEFLATED
-    ) as archive:
+    with zipfile.ZipFile(ratio, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("pkg/SKILL.md", b"a" * 4096)
     monkeypatch.setattr(skill_store_module, "_MAX_ZIP_COMPRESSION_RATIO", 2.0)
     with pytest.raises(ValueError, match="compression ratio"):

@@ -40,6 +40,9 @@ class FakePluginManager:
     async def shutdown_all_plugins(self):
         self.calls.append("shutdown_all")
 
+    def mark_control_connection_ready(self):
+        self.calls.append("control_ready")
+
     def is_registration_capability_pending(self, capability):
         return capability == "pending-registration-capability"
 
@@ -76,6 +79,11 @@ class FakeControlHandler:
 
     async def run(self):
         self.calls.append("run")
+
+    async def close(self):
+        close = getattr(self.connection, "close", None)
+        if close is not None:
+            await close()
 
     def invalidate(self):
         self.invalidated = True
@@ -244,7 +252,7 @@ async def test_set_control_handler_runs_handler(monkeypatch):
     task = app.set_control_handler(handler)
     await task
 
-    assert not hasattr(app.context, "control_handler")
+    assert app.context.control_handler is None
     assert handler.calls == ["run"]
 
 
@@ -265,19 +273,42 @@ async def test_new_control_handler_fences_and_closes_previous_handler(monkeypatc
         FakeServerController,
     )
     app = runtime_app.RuntimeApplication(_args())
+
+    class BlockingControlHandler(FakeControlHandler):
+        def __init__(self, connection, context):
+            super().__init__(connection, context)
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def run(self):
+            self.calls.append("run")
+            self.started.set()
+            await self.release.wait()
+
+        async def close(self):
+            await super().close()
+            self.release.set()
+
     old_connection = FakeConnection()
     new_connection = FakeConnection()
-    old_handler = FakeControlHandler(old_connection, app.context)
-    new_handler = FakeControlHandler(new_connection, app.context)
+    old_handler = BlockingControlHandler(old_connection, app.context)
+    new_handler = BlockingControlHandler(new_connection, app.context)
 
-    await app.set_control_handler(old_handler)
-    await app.set_control_handler(new_handler)
+    old_task = app.set_control_handler(old_handler)
+    await old_handler.started.wait()
+    new_task = app.set_control_handler(new_handler)
+    await new_handler.started.wait()
 
     assert app.context.control_handler is new_handler
     assert old_handler.invalidated is True
     assert old_connection.closed is True
     assert new_handler.invalidated is False
     assert new_connection.closed is False
+
+    new_handler.release.set()
+    await new_task
+    await old_task
+    assert app.context.control_handler is None
 
 
 async def test_runtime_application_run_coordinates_servers_and_plugin_manager(
@@ -319,6 +350,7 @@ async def test_runtime_application_run_coordinates_servers_and_plugin_manager(
     manager = FakePluginManager.instances[-1]
     assert sorted(manager.calls) == [
         "add_plugin_handler",
+        "control_ready",
         "ensure_deps",
         "launch_all",
     ]
@@ -359,7 +391,7 @@ async def test_runtime_application_run_can_skip_deps_and_plugin_launch(monkeypat
 
     await app.run()
 
-    assert FakePluginManager.instances[-1].calls == [
+    assert sorted(FakePluginManager.instances[-1].calls) == [
         "add_plugin_handler",
         "control_ready",
     ]
@@ -424,7 +456,7 @@ async def test_runtime_application_run_uses_websocket_control_server(monkeypatch
 
     assert app.context.ws_control_server.callbacks
     assert FakeControlHandler.instances[-1].calls == ["run"]
-    assert FakePluginManager.instances[-1].calls == [
+    assert sorted(FakePluginManager.instances[-1].calls) == [
         "add_plugin_handler",
         "control_ready",
     ]

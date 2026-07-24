@@ -213,9 +213,7 @@ async def test_verify_shared_workspace_uses_host_control_action(client, handler)
 
 
 @pytest.mark.anyio
-async def test_upsert_sandbox_admission_grant_uses_host_control_action(
-    client, handler
-):
+async def test_upsert_sandbox_admission_grant_uses_host_control_action(client, handler):
     handler.call_action.return_value = {"installed": True}
     grant = SandboxAdmissionGrant(
         instance_uuid="instance-a",
@@ -237,9 +235,7 @@ async def test_upsert_sandbox_admission_grant_uses_host_control_action(
 
 
 @pytest.mark.anyio
-async def test_revoke_sandbox_admission_grant_uses_monotonic_tombstone(
-    client, handler
-):
+async def test_revoke_sandbox_admission_grant_uses_monotonic_tombstone(client, handler):
     handler.call_action.return_value = {"revoked": True}
     revocation = SandboxAdmissionRevocation(
         instance_uuid="instance-a",

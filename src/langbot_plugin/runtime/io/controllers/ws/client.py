@@ -43,6 +43,7 @@ class WebSocketClientController(Controller):
                 self.ws_url,
                 open_timeout=10,
                 proxy=None,
+                max_size=MAX_MESSAGE_BYTES,
                 additional_headers=self.additional_headers or None,
             ) as websocket:
                 connection = ws_connection.WebSocketConnection(websocket)

@@ -189,6 +189,7 @@ def _translate_action_error(exc: Exception) -> BoxError:
         BoxAdmissionError,
         BoxManagedProcessConflictError,
         BoxManagedProcessNotFoundError,
+        BoxCapacityExceededError,
         BoxReadinessError,
         BoxSessionConflictError,
         BoxSessionNotFoundError,
@@ -199,6 +200,7 @@ def _translate_action_error(exc: Exception) -> BoxError:
     _ERROR_PREFIX_MAP: list[tuple[str, type[BoxError]]] = [
         ("BoxAdmissionError:", BoxAdmissionError),
         ("BoxReadinessError:", BoxReadinessError),
+        ("BoxCapacityExceededError:", BoxCapacityExceededError),
         ("BoxValidationError:", BoxValidationError),
         ("BoxSessionNotFoundError:", BoxSessionNotFoundError),
         ("BoxSessionConflictError:", BoxSessionConflictError),

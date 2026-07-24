@@ -25,6 +25,10 @@ class BoxReadinessError(BoxError):
     """Raised when strict sandbox isolation is not ready."""
 
 
+class BoxCapacityExceededError(BoxError):
+    """Raised when a configured runtime capacity limit is reached."""
+
+
 class BoxSessionConflictError(BoxError):
     """Raised when an existing session cannot satisfy a new request."""
 

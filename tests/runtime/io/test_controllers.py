@@ -151,11 +151,18 @@ async def test_websocket_client_controller_invokes_connection_callback(monkeypat
     captured = {}
     websocket = FakeWebSocket()
 
-    def fake_connect(url, open_timeout, proxy="__unset__", additional_headers=None):
+    def fake_connect(
+        url,
+        open_timeout,
+        proxy="__unset__",
+        additional_headers=None,
+        max_size=None,
+    ):
         captured["url"] = url
         captured["open_timeout"] = open_timeout
         captured["proxy"] = proxy
         captured["additional_headers"] = additional_headers
+        captured["max_size"] = max_size
         return FakeWebSocketConnectContext(websocket)
 
     async def callback(connection):
@@ -174,6 +181,7 @@ async def test_websocket_client_controller_invokes_connection_callback(monkeypat
     # Internal control-plane connections must bypass proxy auto-detection.
     assert captured["proxy"] is None
     assert captured["additional_headers"] is None
+    assert captured["max_size"] == ws_client.MAX_MESSAGE_BYTES
     assert isinstance(captured["connection"], WebSocketConnection)
     assert "failure" not in captured
 
@@ -182,7 +190,13 @@ async def test_websocket_client_controller_reports_connection_failure(monkeypatc
     captured = {}
     error = OSError("network down")
 
-    def fake_connect(url, open_timeout, proxy=None, additional_headers=None):
+    def fake_connect(
+        url,
+        open_timeout,
+        proxy=None,
+        additional_headers=None,
+        max_size=None,
+    ):
         raise error
 
     async def callback(connection):
@@ -204,8 +218,15 @@ async def test_websocket_client_controller_sends_additional_headers(monkeypatch)
     captured = {}
     websocket = FakeWebSocket()
 
-    def fake_connect(url, open_timeout, proxy=None, additional_headers=None):
+    def fake_connect(
+        url,
+        open_timeout,
+        proxy=None,
+        additional_headers=None,
+        max_size=None,
+    ):
         captured["additional_headers"] = additional_headers
+        captured["max_size"] = max_size
         return FakeWebSocketConnectContext(websocket)
 
     async def callback(connection):
@@ -224,6 +245,7 @@ async def test_websocket_client_controller_sends_additional_headers(monkeypatch)
     await controller.run(callback)
 
     assert captured["additional_headers"] == {"X-Control-Token": "secret"}
+    assert captured["max_size"] == ws_client.MAX_MESSAGE_BYTES
     assert isinstance(captured["connection"], WebSocketConnection)
 
 
