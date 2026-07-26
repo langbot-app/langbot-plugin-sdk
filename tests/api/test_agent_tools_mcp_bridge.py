@@ -6,6 +6,7 @@ import os
 import time
 import urllib.request
 
+import pydantic
 import pytest
 
 from langbot_plugin.api.agent_tools import (
@@ -13,6 +14,7 @@ from langbot_plugin.api.agent_tools import (
     AgentRunMCPAccess,
     AgentRunExternalTools,
     AgentRunMCPBridge,
+    agent_tool,
 )
 from langbot_plugin.api.agent_tools.asset_gateway import AgentAssetGateway
 from langbot_plugin.api.agent_tools.daemon import (
@@ -106,6 +108,23 @@ class FakeRunAPI:
                 "properties": {"city": {"type": "string"}},
             },
         }
+
+
+class CustomQuestionArgs(pydantic.BaseModel):
+    question: str
+
+
+class CustomExternalTools(AgentRunExternalTools):
+    def _available_tool_names(self) -> set[str]:
+        return {"ask_user_question"}
+
+    @agent_tool(
+        name="ask_user_question",
+        description="Ask the user a question.",
+        args_model=CustomQuestionArgs,
+    )
+    async def ask_user_question(self, args: CustomQuestionArgs) -> dict:
+        return {"question": args.question}
 
 
 def test_agent_run_external_tools_are_annotation_backed() -> None:
@@ -470,6 +489,26 @@ def test_agent_run_mcp_access_returns_remote_http_config_and_tunnel() -> None:
             assert tunnel is not None
             assert tunnel.ssh_args()[0] == "-R"
             assert tunnel.local_port == tunnel.remote_port
+        finally:
+            access.stop()
+
+    asyncio.run(run_probe())
+
+
+def test_agent_run_mcp_access_uses_custom_external_tools() -> None:
+    async def run_probe() -> None:
+        api = FakeRunAPI()
+        tools = CustomExternalTools(api, _ctx())
+        access = AgentRunMCPAccess(api, _ctx(), tools=tools)
+        access.start()
+        try:
+            bridge = access.handle
+            assert isinstance(bridge, AgentRunMCPBridge)
+            response = await bridge.handle_http_mcp_request(
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+            )
+            assert response["result"]["tools"] == tools.mcp_tools()
+            assert response["result"]["tools"][0]["name"] == "ask_user_question"
         finally:
             access.stop()
 

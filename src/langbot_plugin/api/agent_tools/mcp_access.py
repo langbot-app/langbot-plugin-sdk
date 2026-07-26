@@ -9,6 +9,7 @@ from langbot_plugin.api.agent_tools.asset_gateway import (
     get_default_agent_asset_gateway,
 )
 from langbot_plugin.api.agent_tools.mcp_bridge import AgentRunMCPBridge
+from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_config import (
     AgentMCPReverseTunnel,
     AgentMCPServerConfig,
@@ -39,6 +40,7 @@ class AgentRunMCPAccess:
         gateway_public_url: str = "",
         gateway_request_timeout: float = 60.0,
         gateway_token_ttl: float = 3600.0,
+        tools: AgentRunExternalTools | None = None,
     ) -> None:
         self.api = api
         self.ctx = ctx
@@ -55,6 +57,7 @@ class AgentRunMCPAccess:
         self.gateway_public_url = gateway_public_url
         self.gateway_request_timeout = gateway_request_timeout
         self.gateway_token_ttl = gateway_token_ttl
+        self.tools = tools
         self._handle: AgentRunMCPBridge | AgentAssetGatewayRegistration | None = None
         self._server_config: AgentMCPServerConfig | None = None
         self._reverse_tunnel: AgentMCPReverseTunnel | None = None
@@ -76,6 +79,8 @@ class AgentRunMCPAccess:
             return
 
         if self.mode == "gateway":
+            if self.tools is not None:
+                raise ValueError("Custom AgentRunner tools require ephemeral MCP access mode")
             gateway = get_default_agent_asset_gateway(
                 host=self.gateway_host,
                 port=self.gateway_port,
@@ -97,12 +102,21 @@ class AgentRunMCPAccess:
             self._reverse_tunnel = self._remote_reverse_tunnel(external_public_url)
             return
 
-        bridge = AgentRunMCPBridge.from_run_api(
-            self.api,
-            self.ctx,
-            host=self.bridge_host,
-            port=self.bridge_port,
-            request_timeout=self.bridge_request_timeout,
+        bridge = (
+            AgentRunMCPBridge(
+                self.tools,
+                host=self.bridge_host,
+                port=self.bridge_port,
+                request_timeout=self.bridge_request_timeout,
+            )
+            if self.tools is not None
+            else AgentRunMCPBridge.from_run_api(
+                self.api,
+                self.ctx,
+                host=self.bridge_host,
+                port=self.bridge_port,
+                request_timeout=self.bridge_request_timeout,
+            )
         )
         bridge.start()
 
