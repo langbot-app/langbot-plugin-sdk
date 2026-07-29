@@ -170,6 +170,26 @@ def test_artifact_rejects_compression_bombs(tmp_path, monkeypatch):
         _install_untrusted_package(tmp_path, package)
 
 
+def test_artifact_rejects_oversized_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(artifact_module, "_MAX_ARTIFACT_MANIFEST_BYTES", 128)
+    manifest = (
+        b"kind: Plugin\n"
+        b"metadata:\n"
+        b"  author: tester\n"
+        b"  name: demo\n"
+        b"  version: 1.0.0\n" + b"# padding\n" * 16
+    )
+    package_buffer = io.BytesIO()
+    with zipfile.ZipFile(package_buffer, "w") as archive:
+        archive.writestr("manifest.yaml", manifest)
+        archive.writestr("main.py", b"VALUE = 1")
+
+    with pytest.raises(ValueError, match="manifest.yaml exceeds the size limit"):
+        _install_untrusted_package(tmp_path, package_buffer.getvalue())
+
+    assert not list((tmp_path / "plugin-runtime" / "artifacts" / "sha256").glob("*"))
+
+
 @pytest.mark.parametrize("file_type", [stat.S_IFLNK, stat.S_IFIFO, stat.S_IFDIR])
 def test_artifact_rejects_links_and_nonregular_entries(tmp_path, file_type):
     unsafe = zipfile.ZipInfo("unsafe-entry")

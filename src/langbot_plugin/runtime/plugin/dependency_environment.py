@@ -11,7 +11,7 @@ import shutil
 import stat
 import tempfile
 import weakref
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -25,6 +25,8 @@ _ENVIRONMENT_SCHEMA_VERSION = 1
 _READY_MARKER = ".ready.json"
 _MAX_REQUIREMENTS_BYTES = 1024 * 1024
 _MAX_REQUIREMENT_COUNT = 1024
+_MAX_ENVIRONMENT_ENTRIES = 100_000
+_MAX_ENVIRONMENT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -279,7 +281,8 @@ class PluginDependencyEnvironmentStore:
     ) -> tuple[tuple[str, ...], str]:
         requirements_path = artifact.code_path / "requirements.txt"
         try:
-            content = requirements_path.read_bytes()
+            with requirements_path.open("rb") as requirements_file:
+                content = requirements_file.read(_MAX_REQUIREMENTS_BYTES + 1)
         except FileNotFoundError:
             content = b""
         except OSError as exc:
@@ -360,9 +363,30 @@ class PluginDependencyEnvironmentStore:
             )
 
     @staticmethod
-    def _validate_tree_entries(root_path: pathlib.Path) -> None:
+    def _iter_bounded_tree(
+        root_path: pathlib.Path,
+    ) -> Iterator[tuple[pathlib.Path, int]]:
+        entries = 0
+        total_bytes = 0
         for path in root_path.rglob("*"):
-            mode = path.lstat().st_mode
+            entries += 1
+            if entries > _MAX_ENVIRONMENT_ENTRIES:
+                raise DependencyEnvironmentPreparationError(
+                    "Prepared dependency environment contains too many entries"
+                )
+            metadata = path.lstat()
+            mode = metadata.st_mode
+            if stat.S_ISREG(mode):
+                total_bytes += metadata.st_size
+                if total_bytes > _MAX_ENVIRONMENT_TOTAL_BYTES:
+                    raise DependencyEnvironmentPreparationError(
+                        "Prepared dependency environment exceeds the total size limit"
+                    )
+            yield path, mode
+
+    @classmethod
+    def _validate_tree_entries(cls, root_path: pathlib.Path) -> None:
+        for _, mode in cls._iter_bounded_tree(root_path):
             if stat.S_ISLNK(mode):
                 raise DependencyEnvironmentPreparationError(
                     "Prepared dependency environment contains a symbolic link"
@@ -372,11 +396,11 @@ class PluginDependencyEnvironmentStore:
                     "Prepared dependency environment contains a special file"
                 )
 
-    @staticmethod
-    def _make_tree_read_only(root_path: pathlib.Path) -> None:
-        for path in root_path.rglob("*"):
-            mode = stat.S_IMODE(path.stat().st_mode)
-            if path.is_dir():
+    @classmethod
+    def _make_tree_read_only(cls, root_path: pathlib.Path) -> None:
+        for path, raw_mode in cls._iter_bounded_tree(root_path):
+            mode = stat.S_IMODE(raw_mode)
+            if stat.S_ISDIR(raw_mode):
                 path.chmod((mode & ~0o222) | 0o555)
             else:
                 path.chmod((mode & ~0o222) | 0o444)

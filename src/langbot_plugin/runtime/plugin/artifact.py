@@ -22,6 +22,7 @@ _VERIFIED_MARKER = ".verified-sha256"
 _MAX_ARTIFACT_ENTRIES = 512
 _MAX_ARTIFACT_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
 _MAX_ARTIFACT_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_MAX_ARTIFACT_MANIFEST_BYTES = 1024 * 1024
 _MAX_ARTIFACT_COMPRESSION_RATIO = 100.0
 _ARTIFACT_COPY_CHUNK_BYTES = 64 * 1024
 
@@ -343,8 +344,12 @@ class PluginArtifactStore:
     def _read_manifest(code_path: pathlib.Path) -> tuple[str, str, str]:
         manifest_path = code_path / "manifest.yaml"
         try:
-            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
+            with manifest_path.open("rb") as manifest_file:
+                content = manifest_file.read(_MAX_ARTIFACT_MANIFEST_BYTES + 1)
+            if len(content) > _MAX_ARTIFACT_MANIFEST_BYTES:
+                raise ValueError("Plugin artifact manifest.yaml exceeds the size limit")
+            manifest = yaml.safe_load(content.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
             raise ValueError("Plugin artifact manifest.yaml is unavailable") from exc
         if not isinstance(manifest, dict) or manifest.get("kind") != "Plugin":
             raise ValueError("Plugin artifact manifest must have kind=Plugin")

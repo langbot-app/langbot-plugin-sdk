@@ -8,6 +8,9 @@ import zipfile
 
 import pytest
 
+from langbot_plugin.runtime.plugin import (
+    dependency_environment as dependency_environment_module,
+)
 from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
 from langbot_plugin.runtime.plugin.dependency_environment import (
     DependencyEnvironmentPreparationError,
@@ -207,3 +210,55 @@ async def test_shared_requirements_reject_pip_control_options(tmp_path):
             runtime_fingerprint="runtime-v1",
             installer=installer,
         )
+
+
+async def test_dependency_environment_rejects_too_many_entries(tmp_path, monkeypatch):
+    artifact = _artifact(tmp_path)
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    monkeypatch.setattr(dependency_environment_module, "_MAX_ENVIRONMENT_ENTRIES", 2)
+
+    async def installer(staging, requirements):
+        del requirements
+        for index in range(3):
+            (staging.site_packages_path / f"entry-{index}.py").write_text(
+                "VALUE = 1\n",
+                encoding="utf-8",
+            )
+
+    with pytest.raises(
+        DependencyEnvironmentPreparationError,
+        match="contains too many entries",
+    ):
+        await store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+
+    assert list(store.environments_path.iterdir()) == []
+
+
+async def test_dependency_environment_rejects_total_size_limit(tmp_path, monkeypatch):
+    artifact = _artifact(tmp_path)
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    monkeypatch.setattr(
+        dependency_environment_module,
+        "_MAX_ENVIRONMENT_TOTAL_BYTES",
+        8,
+    )
+
+    async def installer(staging, requirements):
+        del requirements
+        (staging.site_packages_path / "oversized.py").write_bytes(b"x" * 9)
+
+    with pytest.raises(
+        DependencyEnvironmentPreparationError,
+        match="exceeds the total size limit",
+    ):
+        await store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+
+    assert list(store.environments_path.iterdir()) == []
