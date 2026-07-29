@@ -46,7 +46,9 @@ class StdioConnection(connection.Connection):
                     f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
                 )
             if message_size > self.chunk_size * MAX_MESSAGE_FRAGMENTS:
-                raise ValueError("Runtime message would require too many stdio fragments")
+                raise ValueError(
+                    "Runtime message would require too many stdio fragments"
+                )
 
             # For small messages, send directly
             if message_size <= self.chunk_size:

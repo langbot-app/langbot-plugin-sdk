@@ -1285,9 +1285,7 @@ async def test_run_server_cleans_runtime_when_app_setup_fails(monkeypatch):
     monkeypatch.setattr(
         server,
         "create_app",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("setup failed")
-        ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("setup failed")),
     )
 
     with pytest.raises(RuntimeError, match="setup failed"):

@@ -191,21 +191,21 @@ async def test_expired_grant_is_rejected_and_cleans_persistent_session(tmp_path)
 def test_admission_expiry_uses_bounded_heap_without_global_grant_scan(tmp_path):
     class NoGlobalItemsScan(dict):
         def items(self):
-            raise AssertionError('admission reap scanned every Workspace grant')
+            raise AssertionError("admission reap scanned every Workspace grant")
 
         def values(self):
-            raise AssertionError('admission reap scanned every Workspace grant')
+            raise AssertionError("admission reap scanned every Workspace grant")
 
     runtime, _ = _runtime(tmp_path)
     now = dt.datetime.now(_UTC)
     last_grant = None
     for index in range(1_000):
-        context = _context(workspace=f'workspace-{index}')
+        context = _context(workspace=f"workspace-{index}")
         last_grant = _grant(context, expires_in=3_600)
         runtime._admission_grants[last_grant.workspace_key] = last_grant
         runtime._index_admission_expiry_locked(last_grant)
 
-    expired_context = _context(workspace='expired-workspace')
+    expired_context = _context(workspace="expired-workspace")
     expired = _grant(expired_context, expires_in=-1)
     runtime._admission_grants[expired.workspace_key] = expired
     runtime._index_admission_expiry_locked(expired)
@@ -216,9 +216,7 @@ def test_admission_expiry_uses_bounded_heap_without_global_grant_scan(tmp_path):
     assert len(runtime._admission_grants) == 1_000
 
     assert last_grant is not None
-    runtime._admission_grants = {
-        last_grant.workspace_key: last_grant
-    }
+    runtime._admission_grants = {last_grant.workspace_key: last_grant}
     runtime._admission_expiry_heap = []
     for _ in range(3_000):
         runtime._index_admission_expiry_locked(last_grant)

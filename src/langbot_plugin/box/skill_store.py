@@ -160,9 +160,7 @@ class BoxSkillStore:
                 if isinstance(value, str)
             )
             if retained_text_bytes > _MAX_SKILL_LIST_TOTAL_TEXT_BYTES:
-                raise ValueError(
-                    "Skill listing exceeds the configured text limit"
-                )
+                raise ValueError("Skill listing exceeds the configured text limit")
             skills.append(skill)
         skills.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return [self._serialize_skill(skill) for skill in skills]
@@ -938,9 +936,7 @@ class BoxSkillStore:
         max_skills: int = _MAX_DISCOVERED_SKILLS,
     ) -> list[tuple[str, str]]:
         discovered: list[tuple[str, str]] = []
-        queue: collections.deque[tuple[str, int]] = collections.deque(
-            [(root_path, 0)]
-        )
+        queue: collections.deque[tuple[str, int]] = collections.deque([(root_path, 0)])
         seen: set[str] = set()
         scanned_entries = 0
 

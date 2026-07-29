@@ -230,9 +230,7 @@ class Handler(abc.ABC):
         ):
             return await asyncio.to_thread(
                 lambda: json.dumps(
-                    payload.model_dump()
-                    if hasattr(payload, "model_dump")
-                    else payload
+                    payload.model_dump() if hasattr(payload, "model_dump") else payload
                 )
             )
 
@@ -497,9 +495,7 @@ class Handler(abc.ABC):
             this_seq_id,
             action.value,
             data,
-            resolved_context := self.resolve_outbound_action_context(
-                action_context
-            ),
+            resolved_context := self.resolve_outbound_action_context(action_context),
         )
         # wait for response
         if self._closed:
@@ -542,9 +538,7 @@ class Handler(abc.ABC):
             this_seq_id,
             action.value,
             data,
-            resolved_context := self.resolve_outbound_action_context(
-                action_context
-            ),
+            resolved_context := self.resolve_outbound_action_context(action_context),
         )
 
         # Create a queue for streaming responses
@@ -752,10 +746,7 @@ class Handler(abc.ABC):
     # ====== file transfer ======
     async def send_file(self, file_bytes: bytes, file_extension: str) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
-        if (
-            self.max_file_bytes is not None
-            and len(file_bytes) > self.max_file_bytes
-        ):
+        if self.max_file_bytes is not None and len(file_bytes) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
         hash_value = hashlib.sha256(file_bytes).hexdigest()[:16]
         if not isinstance(file_extension, str):

@@ -178,9 +178,7 @@ class LangBotAPIProxy:
 
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
-        encoded = (await asyncio.to_thread(base64.b64encode, value)).decode(
-            "utf-8"
-        )
+        encoded = (await asyncio.to_thread(base64.b64encode, value)).decode("utf-8")
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.SET_PLUGIN_STORAGE,
             {"key": key, "value_base64": encoded},
@@ -212,9 +210,7 @@ class LangBotAPIProxy:
 
     async def set_workspace_storage(self, key: str, value: bytes) -> None:
         """Set a workspace storage value"""
-        encoded = (await asyncio.to_thread(base64.b64encode, value)).decode(
-            "utf-8"
-        )
+        encoded = (await asyncio.to_thread(base64.b64encode, value)).decode("utf-8")
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.SET_WORKSPACE_STORAGE,
             {"key": key, "value_base64": encoded},

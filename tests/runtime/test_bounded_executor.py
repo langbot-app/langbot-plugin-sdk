@@ -186,9 +186,7 @@ def test_blocking_cleanup_waits_for_capacity_instead_of_leaking_work():
         blocker = asyncio.create_task(asyncio.to_thread(block))
         while not started.is_set():
             await asyncio.sleep(0)
-        cleanup = asyncio.create_task(
-            run_blocking_cleanup(cleaned.set)
-        )
+        cleanup = asyncio.create_task(run_blocking_cleanup(cleaned.set))
         await asyncio.sleep(0.03)
         assert not cleanup.done()
         release.set()

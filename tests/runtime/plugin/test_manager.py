@@ -458,9 +458,7 @@ async def test_windows_launch_cancellation_reaps_worker(monkeypatch, tmp_path):
         AsyncMock(side_effect=stop_process),
     )
     plugin_path = _write_installed_plugin(tmp_path)
-    launch_task = asyncio.create_task(
-        _manager().launch_plugin(str(plugin_path))
-    )
+    launch_task = asyncio.create_task(_manager().launch_plugin(str(plugin_path)))
     await process.wait_started.wait()
     launch_task.cancel()
 

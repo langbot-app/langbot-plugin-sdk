@@ -394,9 +394,7 @@ class PluginRuntimeHandler(Handler):
             """
             if self.shutdown_callback is not None:
                 if self._shutdown_task is None or self._shutdown_task.done():
-                    self._shutdown_task = asyncio.create_task(
-                        self.shutdown_callback()
-                    )
+                    self._shutdown_task = asyncio.create_task(self.shutdown_callback())
 
                     def shutdown_done(task: asyncio.Task[None]) -> None:
                         if task.cancelled():

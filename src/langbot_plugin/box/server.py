@@ -1076,9 +1076,7 @@ def _runtime_resource_stats(runtime: BoxRuntime) -> dict[str, Any]:
     event_loop_monitor = getattr(runtime, "event_loop_monitor", None)
     return {
         "event_loop": (
-            event_loop_monitor.snapshot()
-            if event_loop_monitor is not None
-            else {}
+            event_loop_monitor.snapshot() if event_loop_monitor is not None else {}
         ),
         "blocking_executor": (
             blocking_executor.snapshot() if blocking_executor is not None else {}
@@ -1227,9 +1225,7 @@ async def _run_server(host: str, port: int, mode: str) -> None:
 
         # Start aiohttp — serves managed-process relay and (in ws mode)
         # also the action RPC endpoint, all on the same port.
-        generation_fence = BoxGenerationFence(
-            max_records=runtime.max_admission_records
-        )
+        generation_fence = BoxGenerationFence(max_records=runtime.max_admission_records)
         try:
             ws_app = create_app(
                 runtime,

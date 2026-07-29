@@ -218,13 +218,9 @@ class NsjailBackend(BaseSandboxBackend):
         def prepare_probe_path() -> pathlib.Path:
             workspace_root = pathlib.Path(workspace_path).resolve()
             if not workspace_root.is_dir():
-                raise RuntimeError(
-                    "managed sandbox workspace path is not a directory"
-                )
+                raise RuntimeError("managed sandbox workspace path is not a directory")
             if not os.access(workspace_root, os.R_OK | os.W_OK | os.X_OK):
-                raise RuntimeError(
-                    "managed sandbox workspace path is not writable"
-                )
+                raise RuntimeError("managed sandbox workspace path is not writable")
             return pathlib.Path(
                 tempfile.mkdtemp(
                     prefix=".box-readiness-",
@@ -232,9 +228,7 @@ class NsjailBackend(BaseSandboxBackend):
                 )
             )
 
-        probe_path = await bounded_executor.run_blocking_atomic(
-            prepare_probe_path
-        )
+        probe_path = await bounded_executor.run_blocking_atomic(prepare_probe_path)
         marker_name = ".mounted"
         marker_path = probe_path / marker_name
         session_info: BoxSessionInfo | None = None
@@ -265,8 +259,7 @@ class NsjailBackend(BaseSandboxBackend):
                 host_net_namespace = ""
 
             mount_isolation = result.ok and await asyncio.to_thread(
-                lambda: marker_path.is_file()
-                and marker_path.read_text() == "readiness"
+                lambda: marker_path.is_file() and marker_path.read_text() == "readiness"
             )
             network_isolation = bool(
                 result.ok
@@ -330,9 +323,7 @@ class NsjailBackend(BaseSandboxBackend):
             (session_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
         try:
-            await bounded_executor.run_blocking_atomic(
-                prepare_session_directory
-            )
+            await bounded_executor.run_blocking_atomic(prepare_session_directory)
         except BaseException:
             await bounded_executor.run_blocking_cleanup(
                 shutil.rmtree,
@@ -432,9 +423,7 @@ class NsjailBackend(BaseSandboxBackend):
 
         try:
             await bounded_executor.run_blocking_cleanup(
-                lambda: shutil.rmtree(session_dir)
-                if session_dir.exists()
-                else None
+                lambda: shutil.rmtree(session_dir) if session_dir.exists() else None
             )
         except Exception as exc:
             self.logger.warning(
@@ -513,16 +502,12 @@ class NsjailBackend(BaseSandboxBackend):
         if not self._base_dir.exists():
             return
         self._kill_orphaned_session_processes_sync(current_instance_id)
-        current_prefix = (
-            f"{current_instance_id}_" if current_instance_id else None
-        )
+        current_prefix = f"{current_instance_id}_" if current_instance_id else None
         for entry in self._base_dir.iterdir():
             try:
                 if not entry.is_dir():
                     continue
-                if current_prefix is not None and entry.name.startswith(
-                    current_prefix
-                ):
+                if current_prefix is not None and entry.name.startswith(current_prefix):
                     continue
             except OSError as exc:
                 self.logger.warning(
@@ -928,17 +913,13 @@ class NsjailBackend(BaseSandboxBackend):
         if not proc_dir.exists():
             return
         base_prefix = f"{self._base_dir}{os.sep}"
-        current_prefix = (
-            f"{current_instance_id}_" if current_instance_id else None
-        )
+        current_prefix = f"{current_instance_id}_" if current_instance_id else None
         for pid_dir in proc_dir.iterdir():
             if not pid_dir.name.isdigit():
                 continue
             try:
                 cmdline = (
-                    (pid_dir / "cmdline")
-                    .read_bytes()
-                    .decode("utf-8", errors="replace")
+                    (pid_dir / "cmdline").read_bytes().decode("utf-8", errors="replace")
                 )
                 if self._nsjail_bin not in cmdline:
                     continue

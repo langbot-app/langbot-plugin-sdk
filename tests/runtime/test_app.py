@@ -212,9 +212,7 @@ def test_runtime_application_initializes_websocket_control_mode(monkeypatch):
     assert app.context.ws_control_server.kwargs["expected_headers"] == {
         PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER: "c" * 48,
     }
-    health_snapshot = app.context.ws_control_server.kwargs[
-        "health_snapshot_provider"
-    ]()
+    health_snapshot = app.context.ws_control_server.kwargs["health_snapshot_provider"]()
     assert health_snapshot["live"] is True
     assert health_snapshot["resources"]["event_loop"]["running"] is False
     assert "plugin_debug_key" not in str(health_snapshot)

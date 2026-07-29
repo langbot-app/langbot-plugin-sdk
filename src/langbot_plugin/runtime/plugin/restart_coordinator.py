@@ -61,9 +61,7 @@ class RestartPermit:
         self.mark_ready()
         if not self._probe_active:
             return
-        await _complete_state_transition(
-            self._coordinator._record_probe_success()
-        )
+        await _complete_state_transition(self._coordinator._record_probe_success())
         self._probe_active = False
 
     async def record_failure(self) -> None:

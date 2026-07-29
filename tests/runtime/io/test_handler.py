@@ -149,9 +149,7 @@ async def test_handler_json_codec_uses_workspace_bounded_thread(monkeypatch):
     monkeypatch.setattr(handler_module.asyncio, "to_thread", fake_to_thread)
 
     assert await handler._decode_message('{"ok": true}') == {"ok": True}
-    assert json.loads(await handler._encode_message({"ok": True})) == {
-        "ok": True
-    }
+    assert json.loads(await handler._encode_message({"ok": True})) == {"ok": True}
     assert calls[0] == (json.loads, "workspace-a")
     assert calls[1][1] == "workspace-a"
     assert len(calls) == 2

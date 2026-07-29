@@ -820,16 +820,10 @@ def test_kill_orphaned_processes_scans_proc_once(
     for pid_dir in (old_pid, current_pid, unrelated_pid):
         pid_dir.mkdir(parents=True)
     (old_pid / "cmdline").write_bytes(
-        (
-            f"nsjail\0--chroot\0"
-            f"{tmp_base}/oldinst_sess1_abc/root\0"
-        ).encode()
+        (f"nsjail\0--chroot\0{tmp_base}/oldinst_sess1_abc/root\0").encode()
     )
     (current_pid / "cmdline").write_bytes(
-        (
-            f"nsjail\0--chroot\0"
-            f"{tmp_base}/test123_sess2_def/root\0"
-        ).encode()
+        (f"nsjail\0--chroot\0{tmp_base}/test123_sess2_def/root\0").encode()
     )
     (unrelated_pid / "cmdline").write_bytes(b"python\0worker.py\0")
 

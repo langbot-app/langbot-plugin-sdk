@@ -358,7 +358,9 @@ class Image(MessageComponent):
                     response.raise_for_status()
                     return (
                         await _read_httpx_body_limited(response),
-                        response.headers.get("Content-Type", "application/octet-stream"),
+                        response.headers.get(
+                            "Content-Type", "application/octet-stream"
+                        ),
                     )
         elif self.base64:
             mime_type = "image/jpeg"

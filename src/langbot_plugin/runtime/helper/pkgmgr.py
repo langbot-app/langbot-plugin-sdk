@@ -263,9 +263,13 @@ async def install_single_async(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, stdout_total, stderr_bytes, stderr_total, timed_out = (
-        await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
-    )
+    (
+        stdout_bytes,
+        stdout_total,
+        stderr_bytes,
+        stderr_total,
+        timed_out,
+    ) = await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
     stdout_text = _render_captured_output(stdout_bytes, stdout_total)
     stderr_text = _render_captured_output(stderr_bytes, stderr_total)
     if timed_out:
@@ -559,9 +563,13 @@ async def install_requirements_isolated(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stdout_total, stderr, stderr_total, timed_out = (
-        await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
-    )
+    (
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+        timed_out,
+    ) = await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
     output = _render_captured_output(stdout, stdout_total)
     output += _render_captured_output(stderr, stderr_total)
     if timed_out:
@@ -609,9 +617,13 @@ print(json.dumps([missing, version_mismatch]))
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stdout_total, stderr, stderr_total, timed_out = (
-        await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
-    )
+    (
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+        timed_out,
+    ) = await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
     if timed_out:
         return list(deps), []
     if proc.returncode != 0:

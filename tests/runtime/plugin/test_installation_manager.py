@@ -589,9 +589,12 @@ async def test_installation_supervisor_restarts_crashed_enabled_worker(
     manager._schedule_installation_worker(runtime)
     assert runtime.launch_task is first_supervisor
     await asyncio.wait_for(second_generation_started.wait(), timeout=1)
-    async with asyncio.timeout(1):
+
+    async def wait_for_launches_to_finish():
         while manager.restart_coordinator.snapshot()["active_launches"]:
             await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_launches_to_finish(), timeout=1)
 
     assert calls == 2
     assert runtime.launch_task is not None

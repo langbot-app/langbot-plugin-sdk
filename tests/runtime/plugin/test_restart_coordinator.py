@@ -5,9 +5,18 @@ import asyncio
 import pytest
 
 from langbot_plugin.entities.io.context import PluginWorkerPolicy
+from typing import cast
 from langbot_plugin.runtime.plugin.restart_coordinator import (
     PluginRestartCoordinator,
 )
+
+
+async def _wait_until(predicate, *, timeout: float = 1.0) -> None:
+    async def _poll():
+        while not predicate():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(_poll(), timeout=timeout)
 
 
 def _policy(**overrides) -> PluginWorkerPolicy:
@@ -135,12 +144,12 @@ async def test_cancelled_acquire_does_not_leak_launch_slot():
     )
     await coordinator._state_lock.acquire()
     acquire_task = asyncio.create_task(coordinator.acquire())
-    async with asyncio.timeout(1):
-        while (
-            coordinator._launch_semaphore is None
-            or not coordinator._launch_semaphore.locked()
-        ):
-            await asyncio.sleep(0)
+    await _wait_until(
+        lambda: (
+            coordinator._launch_semaphore is not None
+            and coordinator._launch_semaphore.locked()
+        )
+    )
 
     acquire_task.cancel()
     coordinator._state_lock.release()
@@ -165,9 +174,7 @@ async def test_open_circuit_bounds_cooldown_waiters_and_timers():
     await failed.record_failure()
 
     waiting = [asyncio.create_task(coordinator.acquire()) for _ in range(100)]
-    async with asyncio.timeout(1):
-        while coordinator.snapshot()["gate_waiters"] < 2:
-            await asyncio.sleep(0)
+    await _wait_until(lambda: cast(int, coordinator.snapshot()["gate_waiters"]) >= 2)
 
     snapshot = coordinator.snapshot()
     assert snapshot["active_launches"] == 0
