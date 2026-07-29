@@ -111,6 +111,10 @@ def test_runtime_config_models_are_frozen_and_instance_scoped():
     assert config.runtime_profile == "oss_dev"
     assert policy.require_hard_limits is False
     assert policy.effective_worker_capacity == 8
+    assert policy.max_concurrent_restarts == 1
+    assert policy.restart_failure_threshold == 8
+    assert policy.restart_failure_window_seconds == 30
+    assert policy.restart_circuit_open_seconds == 60
     with pytest.raises(ValidationError):
         identity.runtime_id = "runtime-boot-2"
     with pytest.raises(ValidationError):
@@ -122,6 +126,45 @@ def test_runtime_config_models_are_frozen_and_instance_scoped():
                 "workspace_uuid": "workspace-a",
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "max_concurrent_restarts",
+            9,
+            "cannot exceed effective worker capacity",
+        ),
+        (
+            "restart_failure_threshold",
+            10_001,
+            "cannot exceed max_installations",
+        ),
+        (
+            "restart_failure_window_seconds",
+            3601,
+            "cannot exceed 3600",
+        ),
+        (
+            "restart_circuit_open_seconds",
+            3601,
+            "cannot exceed 3600",
+        ),
+    ],
+)
+def test_worker_restart_policy_rejects_unsafe_limits(field, value, message):
+    policy = {
+        "max_cpus": 1.0,
+        "max_memory_mb": 512,
+        "max_pids": 128,
+        "max_open_files": 256,
+        "max_file_size_mb": 512,
+        field: value,
+    }
+
+    with pytest.raises(ValidationError, match=message):
+        PluginWorkerPolicy.model_validate(policy)
 
 
 @pytest.mark.parametrize(

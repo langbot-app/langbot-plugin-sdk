@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from langbot_plugin.entities.io.context import PluginWorkerPolicy
+from langbot_plugin.runtime.plugin.restart_coordinator import (
+    PluginRestartCoordinator,
+)
+
+
+def _policy(**overrides) -> PluginWorkerPolicy:
+    values = {
+        "max_cpus": 1.0,
+        "max_memory_mb": 512,
+        "max_pids": 128,
+        "max_open_files": 256,
+        "max_file_size_mb": 512,
+        "max_concurrent_restarts": 2,
+        "restart_failure_threshold": 2,
+        "restart_failure_window_seconds": 1.0,
+        "restart_circuit_open_seconds": 0.02,
+    }
+    values.update(overrides)
+    return PluginWorkerPolicy(**values)
+
+
+async def test_restart_launches_are_globally_bounded():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(_policy())
+
+    first = await coordinator.acquire()
+    second = await coordinator.acquire()
+    third_task = asyncio.create_task(coordinator.acquire())
+    await asyncio.sleep(0)
+
+    assert not third_task.done()
+    assert coordinator.snapshot()["active_launches"] == 2
+
+    first.mark_ready()
+    third = await asyncio.wait_for(third_task, timeout=1)
+
+    assert coordinator.snapshot()["active_launches"] == 2
+
+    await second.abandon()
+    await third.abandon()
+    assert coordinator.snapshot()["active_launches"] == 0
+
+
+async def test_failure_threshold_opens_circuit_and_one_probe_closes_it():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(_policy())
+
+    first = await coordinator.acquire()
+    await first.record_failure()
+    second = await coordinator.acquire()
+    await second.record_failure()
+
+    snapshot = coordinator.snapshot()
+    assert snapshot["state"] == "open"
+    assert snapshot["circuit_open_total"] == 1
+
+    probe_task = asyncio.create_task(coordinator.acquire())
+    probe = await asyncio.wait_for(probe_task, timeout=1)
+    assert probe.is_half_open_probe is True
+
+    waiting_task = asyncio.create_task(coordinator.acquire())
+    await asyncio.sleep(0)
+    assert not waiting_task.done()
+
+    probe.mark_ready()
+    await probe.mark_stable()
+    admitted = await asyncio.wait_for(waiting_task, timeout=1)
+
+    snapshot = coordinator.snapshot()
+    assert snapshot["state"] == "closed"
+    assert snapshot["failures_in_window"] == 0
+
+    await admitted.abandon()
+
+
+async def test_failed_half_open_probe_reopens_circuit():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(
+        _policy(
+            max_concurrent_restarts=1,
+            restart_failure_threshold=1,
+        )
+    )
+
+    failed = await coordinator.acquire()
+    await failed.record_failure()
+    probe = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+    assert probe.is_half_open_probe is True
+
+    await probe.record_failure()
+
+    snapshot = coordinator.snapshot()
+    assert snapshot["state"] == "open"
+    assert snapshot["restart_failures_total"] == 2
+    assert snapshot["circuit_open_total"] == 2
+
+
+async def test_abandoned_probe_releases_slot_without_counting_failure():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(
+        _policy(
+            max_concurrent_restarts=1,
+            restart_failure_threshold=1,
+        )
+    )
+
+    failed = await coordinator.acquire()
+    await failed.record_failure()
+    probe = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+    failures_before = coordinator.snapshot()["restart_failures_total"]
+
+    await probe.abandon()
+    replacement_probe = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+
+    assert replacement_probe.is_half_open_probe is True
+    assert coordinator.snapshot()["restart_failures_total"] == failures_before
+
+    await replacement_probe.abandon()
+
+
+async def test_cancelled_acquire_does_not_leak_launch_slot():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(
+        _policy(
+            max_concurrent_restarts=1,
+            restart_failure_threshold=1,
+        )
+    )
+    await coordinator._state_lock.acquire()
+    acquire_task = asyncio.create_task(coordinator.acquire())
+    async with asyncio.timeout(1):
+        while coordinator.snapshot()["active_launches"] == 0:
+            await asyncio.sleep(0)
+
+    acquire_task.cancel()
+    coordinator._state_lock.release()
+    with pytest.raises(asyncio.CancelledError):
+        await acquire_task
+
+    assert coordinator.snapshot()["active_launches"] == 0
+    replacement = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+    await replacement.abandon()
+
+
+def test_restart_policy_is_immutable_after_configuration():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(_policy())
+    coordinator.configure(_policy())
+
+    with pytest.raises(ValueError, match="cannot be changed"):
+        coordinator.configure(_policy(restart_failure_threshold=3))

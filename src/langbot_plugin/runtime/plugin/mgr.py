@@ -8,7 +8,7 @@ import typing
 from typing import AsyncGenerator
 import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import enum
 import pathlib
 import tempfile
@@ -68,6 +68,10 @@ from langbot_plugin.runtime.plugin.worker_launcher import (
     PluginWorkerLaunchSpec,
     PluginWorkerLauncher,
 )
+from langbot_plugin.runtime.plugin.restart_coordinator import (
+    PluginRestartCoordinator,
+    RestartPermit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +117,7 @@ class PluginInstallationRuntime:
     plugin_container: runtime_plugin_container.PluginContainer | None = None
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
     launch_task: asyncio.Task[None] | None = None
+    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 _REGISTRATION_CAPABILITY_TTL_SECONDS = 300.0
@@ -193,6 +198,10 @@ class PluginManager:
             self.artifact_store.base_path
         )
         self.worker_launcher = PluginWorkerLauncher()
+        self.restart_coordinator = PluginRestartCoordinator()
+        initial_policy = getattr(context, "worker_policy", None)
+        if isinstance(initial_policy, PluginWorkerPolicy):
+            self.restart_coordinator.configure(initial_policy)
 
     @property
     def installation_runtimes(
@@ -206,6 +215,7 @@ class PluginManager:
         runtime_profile: typing.Literal["oss_dev", "shared"],
     ) -> None:
         self.worker_launcher.configure(policy, runtime_profile)
+        self.restart_coordinator.configure(policy)
 
     def _worker_capacity_would_be_exceeded(
         self,
@@ -214,9 +224,7 @@ class PluginManager:
         policy = getattr(self.context, "worker_policy", None)
         if policy is None:
             raise ValueError("Plugin worker policy is unavailable")
-        current_binding = self._active_binding_by_uuid.get(
-            binding.installation_uuid
-        )
+        current_binding = self._active_binding_by_uuid.get(binding.installation_uuid)
         current_runtime = (
             self._installations.get(current_binding)
             if current_binding is not None
@@ -564,8 +572,7 @@ class PluginManager:
             and active_supervisors >= policy.effective_worker_capacity
         ):
             raise RuntimeError(
-                "Plugin worker capacity reached "
-                f"({policy.effective_worker_capacity})"
+                f"Plugin worker capacity reached ({policy.effective_worker_capacity})"
             )
 
         self._desired_plugin_paths.add(plugin_path)
@@ -668,10 +675,12 @@ class PluginManager:
                 )
                 child_env[PLUGIN_REGISTRATION_CAPABILITY_ENV] = registration_capability
 
-                process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
-                    *cmd_args,
-                    env=child_env,
-                    cwd=plugin_path,
+                process: asyncio.subprocess.Process = (
+                    await asyncio.create_subprocess_exec(
+                        *cmd_args,
+                        env=child_env,
+                        cwd=plugin_path,
+                    )
                 )
 
                 try:
@@ -918,9 +927,7 @@ class PluginManager:
         """Replay the authoritative instance desired state after reconnect."""
 
         async with self._installation_operation_lock:
-            return await self._reconcile_plugin_installations_unlocked(
-                desired_states
-            )
+            return await self._reconcile_plugin_installations_unlocked(desired_states)
 
     async def _reconcile_plugin_installations_unlocked(
         self,
@@ -932,9 +939,7 @@ class PluginManager:
         if policy is None:
             raise ValueError("Plugin worker policy is unavailable")
         if len(desired_states) > policy.max_installations:
-            raise ValueError(
-                "Plugin desired state exceeds the installation capacity"
-            )
+            raise ValueError("Plugin desired state exceeds the installation capacity")
         installation_uuids = [
             desired.binding.installation_uuid for desired in desired_states
         ]
@@ -1031,20 +1036,26 @@ class PluginManager:
         self,
         runtime: PluginInstallationRuntime,
     ) -> None:
-        """Restart one desired tenant worker with bounded exponential backoff."""
+        """Restart one tenant worker behind the Runtime-wide storm gate."""
 
         binding = runtime.binding
         delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+        attempt_number = 0
         while (
             not self._shutting_down
             and runtime.enabled
             and self._installations.get(binding) is runtime
             and self.context.is_current_installation_binding(binding)
         ):
+            permit: RestartPermit | None = None
+            if attempt_number > 0:
+                permit = await self.restart_coordinator.acquire()
             started_at = asyncio.get_running_loop().time()
             try:
-                await self.launch_plugin_installation(binding)
+                await self._run_installation_worker_attempt(runtime, permit)
             except asyncio.CancelledError:
+                if permit is not None:
+                    await permit.abandon()
                 raise
             except Exception:
                 logger.exception(
@@ -1058,8 +1069,14 @@ class PluginManager:
                 or self._installations.get(binding) is not runtime
                 or not self.context.is_current_installation_binding(binding)
             ):
+                if permit is not None:
+                    await permit.abandon()
                 return
 
+            if permit is None:
+                await self.restart_coordinator.record_unadmitted_failure()
+            else:
+                await permit.record_failure()
             uptime = asyncio.get_running_loop().time() - started_at
             if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
                 delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
@@ -1072,6 +1089,61 @@ class PluginManager:
             )
             await asyncio.sleep(restart_delay)
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
+            attempt_number += 1
+
+    async def _run_installation_worker_attempt(
+        self,
+        runtime: PluginInstallationRuntime,
+        permit: RestartPermit | None,
+    ) -> None:
+        """Run one worker, enforcing readiness and half-open stability."""
+
+        runtime.ready_event.clear()
+        worker_task = asyncio.create_task(
+            self.launch_plugin_installation(runtime.binding)
+        )
+        ready_task = asyncio.create_task(runtime.ready_event.wait())
+        stable_task: asyncio.Task[None] | None = None
+        try:
+            done, _ = await asyncio.wait(
+                {worker_task, ready_task},
+                timeout=_PLUGIN_READY_TIMEOUT_SEC,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if worker_task in done:
+                await worker_task
+                return
+            if ready_task not in done:
+                raise TimeoutError(
+                    "Plugin installation worker did not become ready within "
+                    f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+                )
+
+            if permit is not None:
+                permit.mark_ready()
+            if permit is None or not permit.is_half_open_probe:
+                await worker_task
+                return
+
+            stable_task = asyncio.create_task(asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC))
+            done, _ = await asyncio.wait(
+                {worker_task, stable_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stable_task in done:
+                await permit.mark_stable()
+            await worker_task
+        finally:
+            for task in (ready_task, stable_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (ready_task, stable_task) if task is not None),
+                return_exceptions=True,
+            )
+            if not worker_task.done():
+                worker_task.cancel()
+                await asyncio.gather(worker_task, return_exceptions=True)
 
     async def launch_plugin_installation(
         self,
@@ -1769,6 +1841,8 @@ class PluginManager:
             plugin_container.components = refreshed.components
             plugin_container.manifest = refreshed.manifest
             plugin_container.status = refreshed.status
+            if installation_runtime is not None:
+                installation_runtime.ready_event.set()
         except Exception:
             await self.remove_plugin_container(plugin_container)
             raise

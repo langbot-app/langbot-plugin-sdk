@@ -129,6 +129,10 @@ context and accepts this frozen payload:
     "max_pids": 128,
     "max_open_files": 256,
     "max_file_size_mb": 512,
+    "max_concurrent_restarts": 1,
+    "restart_failure_threshold": 8,
+    "restart_failure_window_seconds": 30.0,
+    "restart_circuit_open_seconds": 60.0,
     "require_hard_limits": true
   },
   "runtime_profile": "shared",
@@ -161,6 +165,14 @@ Unexpected worker exit is recovered with bounded exponential backoff. Disable,
 remove, placement generation changes, Runtime revision changes, and shutdown
 fence the old Supervisor before it can relaunch, while reconcile and control
 reconnect restore the authoritative desired set.
+
+Restart attempts also pass through one Runtime-wide coordinator. Launches are
+globally bounded until a worker completes initialization; repeated unexpected
+exits in the configured window open a circuit. After cooldown, exactly one
+half-open probe may launch, and it must remain stable before the circuit closes.
+A child that does not become ready within 30 seconds is cancelled and reaped.
+Aggregate coordinator counters are exposed through Runtime health without
+installation or Workspace identity.
 
 Plugin packages are verified against `artifact_digest` and extracted once into
 a read-only `artifacts/sha256/<digest>/code` tree. Installations may share that

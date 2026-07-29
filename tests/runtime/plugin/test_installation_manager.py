@@ -574,6 +574,7 @@ async def test_installation_supervisor_restarts_crashed_enabled_worker(
         calls += 1
         if calls == 1:
             raise RuntimeError("worker crashed")
+        runtime.ready_event.set()
         second_generation_started.set()
         await asyncio.Event().wait()
 
@@ -588,15 +589,56 @@ async def test_installation_supervisor_restarts_crashed_enabled_worker(
     manager._schedule_installation_worker(runtime)
     assert runtime.launch_task is first_supervisor
     await asyncio.wait_for(second_generation_started.wait(), timeout=1)
+    async with asyncio.timeout(1):
+        while manager.restart_coordinator.snapshot()["active_launches"]:
+            await asyncio.sleep(0)
 
     assert calls == 2
     assert runtime.launch_task is not None
     assert runtime.launch_task in manager.plugin_run_tasks
+    assert manager.restart_coordinator.snapshot()["active_launches"] == 0
+    assert manager.restart_coordinator.snapshot()["restart_failures_total"] == 1
 
     await manager._stop_installation_worker(runtime)
 
     assert runtime.launch_task is None
     assert manager.plugin_run_tasks == []
+
+
+async def test_installation_worker_ready_timeout_cancels_hung_process(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    runtime.enabled = True
+    cancelled = asyncio.Event()
+
+    async def launch(_candidate):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(manager, "launch_plugin_installation", launch)
+    monkeypatch.setattr(manager_module, "_PLUGIN_READY_TIMEOUT_SEC", 0.01)
+
+    with pytest.raises(TimeoutError, match="did not become ready"):
+        await manager._run_installation_worker_attempt(runtime, None)
+
+    assert cancelled.is_set()
 
 
 async def test_installation_supervisor_does_not_restart_fenced_worker(

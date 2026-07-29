@@ -70,9 +70,7 @@ class RuntimeContext:
         event_loop_monitor = self.event_loop_monitor
         return {
             "event_loop": (
-                event_loop_monitor.snapshot()
-                if event_loop_monitor is not None
-                else {}
+                event_loop_monitor.snapshot() if event_loop_monitor is not None else {}
             ),
             "blocking_executor": (
                 self.blocking_executor.snapshot()
@@ -83,11 +81,14 @@ class RuntimeContext:
             "legacy_supervisors": len(
                 getattr(plugin_manager, "_plugin_supervisors", ())
             ),
-            "installation_runtimes": len(
-                getattr(plugin_manager, "_installations", ())
-            ),
+            "installation_runtimes": len(getattr(plugin_manager, "_installations", ())),
             "pending_registrations": len(
                 getattr(plugin_manager, "_pending_registrations", ())
+            ),
+            "restart_coordinator": (
+                plugin_manager.restart_coordinator.snapshot()
+                if hasattr(plugin_manager, "restart_coordinator")
+                else {"configured": False}
             ),
         }
 

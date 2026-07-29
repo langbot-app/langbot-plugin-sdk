@@ -39,6 +39,10 @@ class PluginWorkerPolicy(pydantic.BaseModel):
     max_total_cpus: float = 8.0
     max_total_memory_mb: int = 8192
     max_installations: int = 10_000
+    max_concurrent_restarts: int = 1
+    restart_failure_threshold: int = 8
+    restart_failure_window_seconds: float = 30.0
+    restart_circuit_open_seconds: float = 60.0
     require_hard_limits: bool = False
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
@@ -58,6 +62,8 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         "max_workers",
         "max_total_memory_mb",
         "max_installations",
+        "max_concurrent_restarts",
+        "restart_failure_threshold",
         mode="before",
     )
     @classmethod
@@ -73,12 +79,30 @@ class PluginWorkerPolicy(pydantic.BaseModel):
             raise ValueError("require_hard_limits must be a boolean")
         return value
 
-    @pydantic.field_validator("max_cpus", "max_total_cpus")
+    @pydantic.field_validator(
+        "max_cpus",
+        "max_total_cpus",
+        "restart_failure_window_seconds",
+        "restart_circuit_open_seconds",
+        mode="before",
+    )
+    @classmethod
+    def validate_numeric_limits(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("must be a positive number")
+        return value
+
+    @pydantic.field_validator(
+        "max_cpus",
+        "max_total_cpus",
+        "restart_failure_window_seconds",
+        "restart_circuit_open_seconds",
+    )
     @classmethod
     def validate_max_cpus(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
-            raise ValueError("max_cpus must be finite and greater than 0")
-        return value
+            raise ValueError("must be finite and greater than 0")
+        return float(value)
 
     @pydantic.field_validator(
         "max_memory_mb",
@@ -88,6 +112,8 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         "max_workers",
         "max_total_memory_mb",
         "max_installations",
+        "max_concurrent_restarts",
+        "restart_failure_threshold",
     )
     @classmethod
     def validate_positive_integer_limit(cls, value: int) -> int:
@@ -100,11 +126,23 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         if self.max_total_cpus < self.max_cpus:
             raise ValueError("max_total_cpus cannot be lower than max_cpus")
         if self.max_total_memory_mb < self.max_memory_mb:
-            raise ValueError(
-                "max_total_memory_mb cannot be lower than max_memory_mb"
-            )
+            raise ValueError("max_total_memory_mb cannot be lower than max_memory_mb")
         if self.max_installations < self.max_workers:
             raise ValueError("max_installations cannot be lower than max_workers")
+        if self.max_concurrent_restarts > self.effective_worker_capacity:
+            raise ValueError(
+                "max_concurrent_restarts cannot exceed effective worker capacity"
+            )
+        if self.restart_failure_threshold > self.max_installations:
+            raise ValueError(
+                "restart_failure_threshold cannot exceed max_installations"
+            )
+        if self.restart_failure_window_seconds > 3600:
+            raise ValueError(
+                "restart_failure_window_seconds cannot exceed 3600 seconds"
+            )
+        if self.restart_circuit_open_seconds > 3600:
+            raise ValueError("restart_circuit_open_seconds cannot exceed 3600 seconds")
         return self
 
     @property
