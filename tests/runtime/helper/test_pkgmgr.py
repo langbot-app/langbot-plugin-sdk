@@ -56,17 +56,18 @@ def test_parse_downloaded_bytes_supports_common_pip_units():
 def test_install_single_builds_pip_command_and_returns_parsed_download_size(
     monkeypatch,
 ):
-    class Result:
-        returncode = 0
-        stdout = "Downloading pkg.whl (1 kB)"
-        stderr = ""
-
     calls = []
     monkeypatch.setattr(pkgmgr, "get_pip_index_args", lambda: ["-i", "https://mirror"])
     monkeypatch.setattr(
         pkgmgr.subprocess,
-        "run",
-        lambda cmd, **kwargs: calls.append((cmd, kwargs)) or Result(),
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("bounded helper should be patched"),
+    )
+    monkeypatch.setattr(
+        pkgmgr,
+        "_run_subprocess_bounded_sync",
+        lambda cmd, **kwargs: calls.append((cmd, kwargs))
+        or (0, "Downloading pkg.whl (1 kB)"),
     )
 
     returncode, downloaded, output = pkgmgr.install_single("demo", ["--no-deps"])
@@ -100,8 +101,15 @@ def test_install_single_async_builds_pip_command_and_parses_output(monkeypatch):
     class Proc:
         returncode = 0
 
-        async def communicate(self):
-            return b"Downloading async.whl (2 kB)", b""
+        def __init__(self):
+            self.stdout = asyncio.StreamReader()
+            self.stdout.feed_data(b"Downloading async.whl (2 kB)")
+            self.stdout.feed_eof()
+            self.stderr = asyncio.StreamReader()
+            self.stderr.feed_eof()
+
+        async def wait(self):
+            return self.returncode
 
     calls = []
 
@@ -123,25 +131,30 @@ def test_install_single_async_builds_pip_command_and_parses_output(monkeypatch):
 class _BlockingProcess:
     def __init__(self):
         self.returncode = None
-        self.communicate_started = asyncio.Event()
+        self.wait_started = asyncio.Event()
+        self._done = asyncio.Event()
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
         self.terminated = False
         self.killed = False
-
-    async def communicate(self):
-        self.communicate_started.set()
-        if self.returncode is not None:
-            return b"", b""
-        await asyncio.Future()
 
     def terminate(self):
         self.terminated = True
         self.returncode = -15
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+        self._done.set()
 
     def kill(self):
         self.killed = True
         self.returncode = -9
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+        self._done.set()
 
     async def wait(self):
+        self.wait_started.set()
+        await self._done.wait()
         return self.returncode
 
 
@@ -154,7 +167,7 @@ async def test_install_single_async_reaps_subprocess_when_cancelled(monkeypatch)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     task = asyncio.create_task(pkgmgr.install_single_async("demo"))
-    await process.communicate_started.wait()
+    await process.wait_started.wait()
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -162,6 +175,18 @@ async def test_install_single_async_reaps_subprocess_when_cancelled(monkeypatch)
 
     assert process.terminated
     assert not process.killed
+
+
+@pytest.mark.asyncio
+async def test_read_bounded_stream_discards_excess_bytes():
+    stream = asyncio.StreamReader()
+    stream.feed_data(b"abcdefghij")
+    stream.feed_eof()
+
+    retained, total = await pkgmgr._read_bounded_stream(stream, max_bytes=4)
+
+    assert retained == b"abcd"
+    assert total == 10
 
 
 def test_get_plugin_python_returns_absolute_venv_interpreter(tmp_path):
@@ -227,7 +252,7 @@ async def test_install_requirements_reaps_subprocess_when_cancelled(
     )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     task = asyncio.create_task(pkgmgr.install_requirements_isolated(str(tmp_path)))
-    await process.communicate_started.wait()
+    await process.wait_started.wait()
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

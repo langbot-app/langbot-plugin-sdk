@@ -17,8 +17,12 @@ from langbot_plugin.entities.io.errors import (
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
 from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.io.connection import Connection
-from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.runtime.io import handler as handler_module
+from langbot_plugin.runtime.io.handler import FILE_CHUNK_LENGTH, Handler
 from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
+from langbot_plugin.runtime.bounded_executor import (
+    current_blocking_work_scope,
+)
 
 from tests.helpers.protocol import ProtocolConnection
 
@@ -132,6 +136,27 @@ def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installati
         handler.bind_action_context(workspace_binding)
 
 
+@pytest.mark.asyncio
+async def test_handler_json_codec_uses_workspace_bounded_thread(monkeypatch):
+    handler = Handler(QueueConnection())
+    handler.bind_action_context(_action_context(workspace_uuid="workspace-a"))
+    calls = []
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        calls.append((fn, current_blocking_work_scope()))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", fake_to_thread)
+
+    assert await handler._decode_message('{"ok": true}') == {"ok": True}
+    assert json.loads(await handler._encode_message({"ok": True})) == {
+        "ok": True
+    }
+    assert calls[0] == (json.loads, "workspace-a")
+    assert calls[1][1] == "workspace-a"
+    assert len(calls) == 2
+
+
 def test_handler_preserves_complete_installation_binding_and_rejects_downgrade():
     handler = Handler(QueueConnection())
     binding = InstallationBinding(
@@ -168,14 +193,19 @@ async def test_run_exposes_validated_context_to_action_and_rejects_mismatch():
 
     @handler.action(SampleAction.ECHO)
     async def echo(_data):
-        seen.append(handler.current_action_context)
+        seen.append(
+            (
+                handler.current_action_context,
+                current_blocking_work_scope(),
+            )
+        )
         return ActionResponse.success({})
 
     run_task = asyncio.create_task(handler.run())
     await conn.send_peer_request("echo", {}, seq_id=1)
     [success] = await conn.sent_messages(1)
     assert success["code"] == 0
-    assert seen == [binding]
+    assert seen == [(binding, binding.workspace_uuid)]
 
     await conn.send_peer_request(
         "echo",
@@ -186,7 +216,7 @@ async def test_run_exposes_validated_context_to_action_and_rejects_mismatch():
     responses = await conn.sent_messages(2)
     assert responses[1]["code"] == 1
     assert "does not match connection Workspace" in responses[1]["message"]
-    assert seen == [binding]
+    assert seen == [(binding, binding.workspace_uuid)]
 
     await conn.close_peer()
     await run_task
@@ -808,6 +838,76 @@ async def test_file_chunk_action_enforces_aggregate_handler_limit(tmp_path):
         )
 
     assert await handler.read_local_file("limited.bin") == b"1234"
+
+
+@pytest.mark.asyncio
+async def test_file_chunk_action_rejects_oversized_chunk_before_decode(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path,
+        max_file_bytes=FILE_CHUNK_LENGTH * 2,
+    )
+    decode_called = False
+
+    def fail_if_decoded(*args, **kwargs):
+        nonlocal decode_called
+        decode_called = True
+        raise AssertionError("oversized payload must be rejected before decoding")
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.io.handler.base64.b64decode",
+        fail_if_decoded,
+    )
+
+    with pytest.raises(ValueError, match="protocol limit"):
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "oversized.bin",
+                "chunk_base64": "A" * ((((FILE_CHUNK_LENGTH + 2) // 3) * 4) + 1),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    assert not decode_called
+
+
+@pytest.mark.asyncio
+async def test_file_chunk_action_bounds_active_transfers_and_close_cleans_files(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(handler_module, "MAX_ACTIVE_FILE_TRANSFERS", 2)
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path,
+        max_file_bytes=1024,
+    )
+    chunk_handler = handler.actions[CommonAction.FILE_CHUNK.value]
+
+    async def write(file_key: str) -> None:
+        await chunk_handler(
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"x").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+
+    await write("first.bin")
+    await write("second.bin")
+    with pytest.raises(ValueError, match="transfer capacity"):
+        await write("third.bin")
+
+    await handler.delete_local_file("first.bin")
+    await write("third.bin")
+    await handler.close()
+
+    assert not (tmp_path / "second.bin").exists()
+    assert not (tmp_path / "third.bin").exists()
 
 
 @pytest.mark.asyncio

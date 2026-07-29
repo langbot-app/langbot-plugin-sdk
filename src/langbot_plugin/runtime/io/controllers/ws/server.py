@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import inspect
+import json
 from http import HTTPStatus
 import websockets
 from collections.abc import Awaitable, Mapping
@@ -18,10 +19,32 @@ protocol_logger = logging.getLogger(f"{__name__}.protocol")
 protocol_logger.setLevel(logging.WARNING)
 
 
-def process_http_request(connection, request):
-    """Serve a quiet HTTP health endpoint alongside the WebSocket endpoint."""
+def process_http_request(
+    connection,
+    request,
+    health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None,
+):
+    """Serve aggregate JSON health alongside the WebSocket endpoint."""
+
     if getattr(request, "path", None) == "/healthz":
-        return connection.respond(HTTPStatus.OK, "ok\n")
+        try:
+            payload: Mapping[str, Any] = (
+                health_snapshot_provider()
+                if health_snapshot_provider is not None
+                else {"live": True}
+            )
+            body = json.dumps(
+                payload,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except Exception:
+            logger.exception("Failed to build Plugin Runtime health snapshot")
+            return connection.respond(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                '{"live":false}\n',
+            )
+        return connection.respond(HTTPStatus.OK, body + "\n")
     return None
 
 
@@ -39,11 +62,13 @@ class WebSocketServerController(Controller):
         request_authenticator: (
             Callable[[Mapping[str, str]], bool | Awaitable[bool]] | None
         ) = None,
+        health_snapshot_provider: Callable[[], Mapping[str, Any]] | None = None,
     ):
         self.port = port
         self.host = host
         self.expected_headers = dict(expected_headers or {})
         self.request_authenticator = request_authenticator
+        self.health_snapshot_provider = health_snapshot_provider
 
     async def run(
         self,
@@ -52,7 +77,11 @@ class WebSocketServerController(Controller):
         self._new_connection_callback = new_connection_callback
 
         async def authenticate_request(connection, request):
-            health_response = process_http_request(connection, request)
+            health_response = process_http_request(
+                connection,
+                request,
+                self.health_snapshot_provider,
+            )
             if health_response is not None:
                 return health_response
             for header, expected_value in self.expected_headers.items():

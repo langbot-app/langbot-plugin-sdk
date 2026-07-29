@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Literal
+from typing import Any, Literal
 
 from langbot_plugin.runtime.io.controllers.stdio import (
     server as stdio_controller_server,
@@ -41,6 +41,8 @@ class RuntimeContext:
 
     def __init__(self):
         self.control_handler = None
+        self.blocking_executor: Any | None = None
+        self.event_loop_monitor: Any | None = None
         self.runtime_identity: RuntimeIdentity | None = None
         self.worker_policy: PluginWorkerPolicy | None = None
         self.runtime_profile: Literal["oss_dev", "shared"] | None = None
@@ -55,6 +57,39 @@ class RuntimeContext:
         self._workspace_binding_ready = asyncio.Event()
         self._installation_bindings: dict[str, InstallationBinding] = {}
         self._installation_watermarks: dict[str, InstallationBinding] = {}
+
+    def get_runtime_resource_stats(self) -> dict[str, Any]:
+        """Return aggregate O(1) counters safe for public health probes."""
+
+        plugin_manager = self.plugin_mgr
+        handlers = getattr(
+            plugin_manager,
+            "plugin_handlers",
+            getattr(plugin_manager, "handlers", ()),
+        )
+        event_loop_monitor = self.event_loop_monitor
+        return {
+            "event_loop": (
+                event_loop_monitor.snapshot()
+                if event_loop_monitor is not None
+                else {}
+            ),
+            "blocking_executor": (
+                self.blocking_executor.snapshot()
+                if self.blocking_executor is not None
+                else {}
+            ),
+            "plugin_handlers": len(handlers),
+            "legacy_supervisors": len(
+                getattr(plugin_manager, "_plugin_supervisors", ())
+            ),
+            "installation_runtimes": len(
+                getattr(plugin_manager, "_installations", ())
+            ),
+            "pending_registrations": len(
+                getattr(plugin_manager, "_pending_registrations", ())
+            ),
+        }
 
     @property
     def workspace_binding(self) -> ActionContext | None:
@@ -189,6 +224,15 @@ class RuntimeContext:
             binding.installation_uuid
         )
         if baseline is None:
+            assert self.worker_policy is not None
+            if (
+                len(self._installation_watermarks)
+                >= self.worker_policy.max_installations
+            ):
+                raise ValueError(
+                    "Plugin installation fence capacity reached; "
+                    "refusing an unbounded desired-state allocation"
+                )
             return binding
         if baseline.workspace_uuid != binding.workspace_uuid:
             raise ValueError("Plugin installation cannot move to another Workspace")
@@ -209,6 +253,19 @@ class RuntimeContext:
 
         binding = self.validate_installation_candidate(action_context)
         previous = self._installation_bindings.get(binding.installation_uuid)
+        if (
+            previous is None
+            and binding.installation_uuid not in self._installation_watermarks
+        ):
+            assert self.worker_policy is not None
+            if (
+                len(self._installation_watermarks)
+                >= self.worker_policy.max_installations
+            ):
+                raise ValueError(
+                    "Plugin installation fence capacity reached; "
+                    "refusing an unbounded desired-state allocation"
+                )
         self._installation_bindings[binding.installation_uuid] = binding
         self._installation_watermarks[binding.installation_uuid] = binding
         return previous

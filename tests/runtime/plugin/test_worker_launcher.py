@@ -507,6 +507,70 @@ async def test_dependency_installer_kills_timed_out_nsjail(
     assert process.wait_calls == 2
 
 
+async def test_dependency_installer_cancellation_kills_and_reaps_nsjail(
+    tmp_path,
+    monkeypatch,
+):
+    staging_root = tmp_path / "staging"
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    class HangingProcess:
+        def __init__(self):
+            self.returncode = None
+            self.wait_started = asyncio.Event()
+            self.exit_requested = asyncio.Event()
+            self.killed = False
+
+        async def wait(self):
+            self.wait_started.set()
+            await self.exit_requested.wait()
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+            self.exit_requested.set()
+
+    process = HangingProcess()
+
+    async def create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    task = asyncio.create_task(
+        launcher._install_dependency_environment(
+            staging,
+            ["private-package==1.0.0"],
+        )
+    )
+    await process.wait_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert process.killed is True
+    assert process.returncode == -9
+
+
 async def test_dependency_installer_skips_empty_requirements(tmp_path, monkeypatch):
     launcher = PluginWorkerLauncher(
         nsjail_path="/usr/bin/nsjail",

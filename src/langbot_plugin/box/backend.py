@@ -99,6 +99,29 @@ class BaseSandboxBackend(abc.ABC):
         """Remove lingering containers from previous runs. No-op by default."""
         pass
 
+    @staticmethod
+    async def _terminate_process(
+        process: asyncio.subprocess.Process,
+        *,
+        timeout_sec: float = 2.0,
+    ) -> None:
+        """Terminate and reap a cancelled backend CLI without orphaning it."""
+
+        if process.returncode is not None:
+            return
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout_sec)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+
 
 class CLISandboxBackend(BaseSandboxBackend):
     command: str
@@ -398,6 +421,14 @@ class CLISandboxBackend(BaseSandboxBackend):
             process.kill()
             timed_out = True
             await process.wait()
+        except asyncio.CancelledError:
+            await self._terminate_process(process)
+            await asyncio.gather(
+                stdout_task,
+                stderr_task,
+                return_exceptions=True,
+            )
+            raise
 
         stdout_bytes, stdout_total = await stdout_task
         stderr_bytes, stderr_total = await stderr_task

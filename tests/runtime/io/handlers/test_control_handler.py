@@ -444,6 +444,14 @@ async def test_control_handler_get_debug_info_returns_runtime_settings(monkeypat
     assert response["data"] == {
         "plugin_debug_key": "debug-key",
         "ws_debug_port": 5401,
+        "resources": {
+            "event_loop": {},
+            "blocking_executor": {},
+            "plugin_handlers": 0,
+            "legacy_supervisors": 0,
+            "installation_runtimes": 0,
+            "pending_registrations": 0,
+        },
     }
 
 

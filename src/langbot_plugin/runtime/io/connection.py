@@ -4,6 +4,11 @@ import abc
 
 
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+# A byte limit alone is insufficient: an untrusted peer can fragment one
+# message into millions of empty or one-byte frames and exhaust Python object
+# memory long before reaching MAX_MESSAGE_BYTES. Legitimate SDK senders use at
+# most 1,024 stdio chunks or 256 default WebSocket fragments at the byte cap.
+MAX_MESSAGE_FRAGMENTS = 4096
 
 
 def split_utf8_chunks(message: str, max_bytes: int) -> list[str]:

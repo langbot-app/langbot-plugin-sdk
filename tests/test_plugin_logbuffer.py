@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
+from langbot_plugin.runtime.plugin.logbuffer import MAX_LOG_LINE_BYTES, PluginLogBuffer
 
 
 def test_parses_standard_log_line_level():
@@ -98,3 +98,19 @@ def test_attach_stream_reads_to_eof():
     logs = asyncio.run(run())
     assert len(logs) == 1
     assert logs[0]["text"].endswith("streamed")
+
+
+def test_attach_stream_drains_and_clips_line_without_newline():
+    async def run():
+        reader = asyncio.StreamReader(limit=1024)
+        reader.feed_data(b"x" * (MAX_LOG_LINE_BYTES * 3))
+        reader.feed_eof()
+        buf = PluginLogBuffer()
+        await buf.attach_stream(reader)
+        return buf.get_logs()
+
+    logs = asyncio.run(run())
+    assert len(logs) == 1
+    assert logs[0]["text"].startswith("x" * 100)
+    assert f"clipped at {MAX_LOG_LINE_BYTES} bytes" in logs[0]["text"]
+    assert len(logs[0]["text"]) < MAX_LOG_LINE_BYTES + 100

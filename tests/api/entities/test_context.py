@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import gc
+import weakref
+
 import pytest
 
 from langbot_plugin.api.entities import context as context_module
@@ -103,6 +106,19 @@ def test_event_context_from_event_assigns_monotonic_id_and_caches_context():
     assert context_module.cached_event_contexts[0] is first
     assert context_module.cached_event_contexts[1] is second
     assert first.event_name == "PersonMessageReceived"
+
+
+def test_event_context_cache_does_not_keep_completed_events_alive():
+    context_module.cached_event_contexts.clear()
+    context_module.global_eid_index = 0
+
+    context = EventContext.from_event(_event())
+    context_ref = weakref.ref(context)
+    del context
+    gc.collect()
+
+    assert context_ref() is None
+    assert not context_module.cached_event_contexts
 
 
 def test_event_context_prevent_flags_are_mutable_runtime_state():

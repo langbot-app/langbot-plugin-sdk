@@ -110,6 +110,7 @@ def test_runtime_config_models_are_frozen_and_instance_scoped():
     assert config.cloud_service_url == "https://space.example"
     assert config.runtime_profile == "oss_dev"
     assert policy.require_hard_limits is False
+    assert policy.effective_worker_capacity == 8
     with pytest.raises(ValidationError):
         identity.runtime_id = "runtime-boot-2"
     with pytest.raises(ValidationError):

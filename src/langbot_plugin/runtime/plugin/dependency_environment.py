@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import tempfile
+import weakref
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -17,6 +18,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from langbot_plugin.runtime.plugin.artifact import PluginArtifact
+from langbot_plugin.runtime import bounded_executor
 
 
 _ENVIRONMENT_SCHEMA_VERSION = 1
@@ -64,7 +66,9 @@ class PluginDependencyEnvironmentStore:
     def __init__(self, base_path: str | os.PathLike = "data/plugin-runtime"):
         self.base_path = pathlib.Path(base_path)
         self.environments_path = self.base_path / "environments" / "sha256"
-        self._prepare_locks: dict[str, asyncio.Lock] = {}
+        self._prepare_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
 
     async def prepare(
         self,
@@ -73,7 +77,10 @@ class PluginDependencyEnvironmentStore:
         runtime_fingerprint: str,
         installer: DependencyInstaller,
     ) -> PluginDependencyEnvironment:
-        requirements, requirements_digest = self._read_requirements(artifact)
+        requirements, requirements_digest = await asyncio.to_thread(
+            self._read_requirements,
+            artifact,
+        )
         digest = self._environment_digest(
             artifact.digest,
             requirements_digest,
@@ -86,13 +93,13 @@ class PluginDependencyEnvironmentStore:
             runtime_fingerprint=runtime_fingerprint,
         )
 
-        ready = self.get_ready(digest, expected=expected)
+        ready = await asyncio.to_thread(self.get_ready, digest, expected=expected)
         if ready is not None:
             return ready
 
         lock = self._prepare_locks.setdefault(digest, asyncio.Lock())
         async with lock:
-            ready = self.get_ready(digest, expected=expected)
+            ready = await asyncio.to_thread(self.get_ready, digest, expected=expected)
             if ready is not None:
                 return ready
             return await self._prepare_locked(
@@ -149,56 +156,121 @@ class PluginDependencyEnvironmentStore:
         requirements: Sequence[str],
         installer: DependencyInstaller,
     ) -> PluginDependencyEnvironment:
-        self.environments_path.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary_root = pathlib.Path(
-            tempfile.mkdtemp(prefix=f".{digest}.", dir=self.environments_path)
-        )
-        staging = DependencyEnvironmentStaging(
-            root_path=temporary_root,
-            site_packages_path=temporary_root / "site-packages",
-            scratch_path=temporary_root / ".scratch",
-            jail_root_path=temporary_root / ".scratch" / "root",
-            tmp_path=temporary_root / ".scratch" / "tmp",
-        )
-        staging.site_packages_path.mkdir(mode=0o700)
-        staging.jail_root_path.mkdir(parents=True, mode=0o700)
-        staging.tmp_path.mkdir(mode=0o700)
+        def create_staging() -> DependencyEnvironmentStaging:
+            self.environments_path.mkdir(
+                parents=True,
+                exist_ok=True,
+                mode=0o700,
+            )
+            temporary_root = pathlib.Path(
+                tempfile.mkdtemp(
+                    prefix=f".{digest}.",
+                    dir=self.environments_path,
+                )
+            )
+            staging = DependencyEnvironmentStaging(
+                root_path=temporary_root,
+                site_packages_path=temporary_root / "site-packages",
+                scratch_path=temporary_root / ".scratch",
+                jail_root_path=temporary_root / ".scratch" / "root",
+                tmp_path=temporary_root / ".scratch" / "tmp",
+            )
+            try:
+                staging.site_packages_path.mkdir(mode=0o700)
+                staging.jail_root_path.mkdir(parents=True, mode=0o700)
+                staging.tmp_path.mkdir(mode=0o700)
+            except BaseException:
+                shutil.rmtree(temporary_root, ignore_errors=True)
+                raise
+            return staging
+
+        staging_task = asyncio.create_task(asyncio.to_thread(create_staging))
+        try:
+            staging = await asyncio.shield(staging_task)
+        except asyncio.CancelledError:
+            staging = await staging_task
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                staging.root_path,
+                True,
+            )
+            raise
+        temporary_root = staging.root_path
 
         try:
             await installer(staging, requirements)
             # Validate structure before reading distribution metadata: a build
             # backend is untrusted and could otherwise make the Runtime follow
             # a link outside the staging tree while verifying its output.
-            self._validate_tree_entries(staging.site_packages_path)
-            self._validate_installed_requirements(
+            await bounded_executor.run_blocking_atomic(
+                self._validate_tree_entries,
+                staging.site_packages_path,
+            )
+            await bounded_executor.run_blocking_atomic(
+                self._validate_installed_requirements,
                 staging.site_packages_path,
                 requirements,
             )
-            shutil.rmtree(staging.scratch_path)
-            self._make_tree_read_only(staging.site_packages_path)
-            self._write_marker(temporary_root / _READY_MARKER, expected)
-            temporary_root.chmod(0o555)
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                staging.scratch_path,
+            )
+            await bounded_executor.run_blocking_atomic(
+                self._make_tree_read_only,
+                staging.site_packages_path,
+            )
+            await bounded_executor.run_blocking_atomic(
+                self._write_marker,
+                temporary_root / _READY_MARKER,
+                expected,
+            )
+            await bounded_executor.run_blocking_atomic(
+                temporary_root.chmod,
+                0o555,
+            )
 
             target_root = self.environments_path / digest
             try:
-                os.rename(temporary_root, target_root)
+                await bounded_executor.run_blocking_atomic(
+                    os.rename,
+                    temporary_root,
+                    target_root,
+                )
             except OSError:
                 # Another Runtime process may have completed the exact same
                 # environment while this process was preparing its staging tree.
-                ready = self.get_ready(digest, expected=expected)
+                ready = await asyncio.to_thread(
+                    self.get_ready,
+                    digest,
+                    expected=expected,
+                )
                 if ready is None:
                     raise
-                shutil.rmtree(temporary_root, ignore_errors=True)
+                await bounded_executor.run_blocking_cleanup(
+                    shutil.rmtree,
+                    temporary_root,
+                    True,
+                )
                 return ready
-            self._fsync_directory(self.environments_path)
+            await bounded_executor.run_blocking_atomic(
+                self._fsync_directory,
+                self.environments_path,
+            )
 
-            ready = self.get_ready(digest, expected=expected)
+            ready = await bounded_executor.run_blocking_atomic(
+                self.get_ready,
+                digest,
+                expected=expected,
+            )
             if ready is None:  # pragma: no cover - publication invariant
                 raise RuntimeError("Dependency environment publication failed")
             return ready
         except BaseException:
-            if temporary_root.exists():
-                shutil.rmtree(temporary_root, ignore_errors=True)
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                temporary_root,
+                True,
+            )
             raise
 
     @staticmethod

@@ -1,3 +1,4 @@
+import httpx
 import pytest  # type: ignore
 from datetime import datetime
 from langbot_plugin.api.entities.builtin.platform.message import (
@@ -11,6 +12,7 @@ from langbot_plugin.api.entities.builtin.platform.message import (
     Forward,
     ForwardMessageNode,
     ForwardMessageDiaplay,
+    _read_httpx_body_limited,
 )
 
 
@@ -319,6 +321,14 @@ def test_message_chain_with_image():
     assert len(chain) == 2
     assert isinstance(chain[0], Image)
     assert chain[0].image_id == "test_image_id"
+
+
+@pytest.mark.asyncio
+async def test_image_remote_body_is_bounded():
+    response = httpx.Response(200, content=b"oversized")
+
+    with pytest.raises(ValueError, match="exceeds"):
+        await _read_httpx_body_limited(response, max_bytes=4)
 
 
 def test_message_chain_validation():

@@ -35,6 +35,10 @@ class PluginWorkerPolicy(pydantic.BaseModel):
     max_pids: int
     max_open_files: int
     max_file_size_mb: int
+    max_workers: int = 16
+    max_total_cpus: float = 8.0
+    max_total_memory_mb: int = 8192
+    max_installations: int = 10_000
     require_hard_limits: bool = False
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
@@ -51,6 +55,9 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         "max_pids",
         "max_open_files",
         "max_file_size_mb",
+        "max_workers",
+        "max_total_memory_mb",
+        "max_installations",
         mode="before",
     )
     @classmethod
@@ -66,7 +73,7 @@ class PluginWorkerPolicy(pydantic.BaseModel):
             raise ValueError("require_hard_limits must be a boolean")
         return value
 
-    @pydantic.field_validator("max_cpus")
+    @pydantic.field_validator("max_cpus", "max_total_cpus")
     @classmethod
     def validate_max_cpus(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
@@ -78,12 +85,40 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         "max_pids",
         "max_open_files",
         "max_file_size_mb",
+        "max_workers",
+        "max_total_memory_mb",
+        "max_installations",
     )
     @classmethod
     def validate_positive_integer_limit(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("must be greater than 0")
         return value
+
+    @pydantic.model_validator(mode="after")
+    def validate_aggregate_limits(self):
+        if self.max_total_cpus < self.max_cpus:
+            raise ValueError("max_total_cpus cannot be lower than max_cpus")
+        if self.max_total_memory_mb < self.max_memory_mb:
+            raise ValueError(
+                "max_total_memory_mb cannot be lower than max_memory_mb"
+            )
+        if self.max_installations < self.max_workers:
+            raise ValueError("max_installations cannot be lower than max_workers")
+        return self
+
+    @property
+    def effective_worker_capacity(self) -> int:
+        """Conservative process cap implied by count, CPU, and memory budgets."""
+
+        return max(
+            min(
+                self.max_workers,
+                int(self.max_total_cpus // self.max_cpus),
+                self.max_total_memory_mb // self.max_memory_mb,
+            ),
+            1,
+        )
 
 
 class ActionContext(pydantic.BaseModel):

@@ -188,6 +188,43 @@ async def test_expired_grant_is_rejected_and_cleans_persistent_session(tmp_path)
     assert len(backend.stopped_sessions) == 1
 
 
+def test_admission_expiry_uses_bounded_heap_without_global_grant_scan(tmp_path):
+    class NoGlobalItemsScan(dict):
+        def items(self):
+            raise AssertionError('admission reap scanned every Workspace grant')
+
+        def values(self):
+            raise AssertionError('admission reap scanned every Workspace grant')
+
+    runtime, _ = _runtime(tmp_path)
+    now = dt.datetime.now(_UTC)
+    last_grant = None
+    for index in range(1_000):
+        context = _context(workspace=f'workspace-{index}')
+        last_grant = _grant(context, expires_in=3_600)
+        runtime._admission_grants[last_grant.workspace_key] = last_grant
+        runtime._index_admission_expiry_locked(last_grant)
+
+    expired_context = _context(workspace='expired-workspace')
+    expired = _grant(expired_context, expires_in=-1)
+    runtime._admission_grants[expired.workspace_key] = expired
+    runtime._index_admission_expiry_locked(expired)
+    runtime._admission_grants = NoGlobalItemsScan(runtime._admission_grants)
+
+    assert runtime._reap_expired_admissions_locked(now) == []
+    assert expired.workspace_key not in runtime._admission_grants
+    assert len(runtime._admission_grants) == 1_000
+
+    assert last_grant is not None
+    runtime._admission_grants = {
+        last_grant.workspace_key: last_grant
+    }
+    runtime._admission_expiry_heap = []
+    for _ in range(3_000):
+        runtime._index_admission_expiry_locked(last_grant)
+    assert len(runtime._admission_expiry_heap) <= 1_026
+
+
 @pytest.mark.anyio
 async def test_concurrent_requests_create_one_global_persistent_offline_session(
     tmp_path,
@@ -374,6 +411,42 @@ async def test_same_entitlement_revision_cannot_change_limits(tmp_path):
     with pytest.raises(BoxAdmissionError, match="without a new entitlement revision"):
         await runtime.upsert_sandbox_admission_grant(
             _grant(context, revision=7, max_sessions=0)
+        )
+
+
+@pytest.mark.anyio
+async def test_admission_fence_records_are_bounded_without_blocking_renewal(tmp_path):
+    runtime, _ = _runtime(tmp_path)
+    runtime.max_admission_records = 1
+    first = _context(workspace="workspace-a")
+    second = _context(workspace="workspace-b")
+
+    await runtime.upsert_sandbox_admission_grant(_grant(first, revision=1))
+    await runtime.upsert_sandbox_admission_grant(_grant(first, revision=2))
+
+    with pytest.raises(BoxAdmissionError, match="record capacity reached"):
+        await runtime.upsert_sandbox_admission_grant(_grant(second, revision=1))
+
+    status = await runtime.get_status()
+    assert status["limits"]["max_admission_records"] == 1
+
+
+@pytest.mark.anyio
+async def test_admission_revocation_cannot_bypass_fence_record_capacity(tmp_path):
+    runtime, _ = _runtime(tmp_path)
+    runtime.max_admission_records = 1
+    first = _context(workspace="workspace-a")
+    second = _context(workspace="workspace-b")
+
+    await runtime.upsert_sandbox_admission_grant(_grant(first, revision=1))
+
+    with pytest.raises(BoxAdmissionError, match="record capacity reached"):
+        await runtime.revoke_sandbox_admission_grant(
+            SandboxAdmissionRevocation(
+                instance_uuid=second.instance_uuid,
+                workspace_uuid=second.workspace_uuid,
+                entitlement_revision=1,
+            )
         )
 
 

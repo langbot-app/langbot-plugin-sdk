@@ -11,7 +11,6 @@ from typing import (
     Union,
     AsyncIterator,
 )
-import traceback
 import random
 import os
 import hashlib
@@ -38,6 +37,7 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
 from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
+from langbot_plugin.runtime.bounded_executor import blocking_work_scope
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,8 @@ SHARED_WORKER_FILE_STORAGE_DIR = "/tmp/lbp-rpc"
 FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
 MAX_INFLIGHT_ACTIONS = 128
 MAX_STREAM_QUEUE_SIZE = 128
+MAX_ACTIVE_FILE_TRANSFERS = 128
+MAX_PROTOCOL_ERROR_CHARS = 4096
 _SAFE_FILE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 _SAFE_FILE_EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 
@@ -131,6 +133,7 @@ class Handler(abc.ABC):
             raise ValueError("max_file_bytes must be a positive integer")
         self.max_file_bytes = max_file_bytes
         self._file_transfer_lock = asyncio.Lock()
+        self._owned_transfer_files: set[str] = set()
 
         self._disconnect_callback = disconnect_callback
 
@@ -147,6 +150,11 @@ class Handler(abc.ABC):
             chunk_index = data["chunk_index"]
             chunk_amount = data["chunk_amount"]
             if (
+                not isinstance(chunk_base64, str)
+                or len(chunk_base64) > ((FILE_CHUNK_LENGTH + 2) // 3) * 4
+            ):
+                raise ValueError("File transfer chunk exceeds the protocol limit")
+            if (
                 isinstance(chunk_index, bool)
                 or not isinstance(chunk_index, int)
                 or isinstance(chunk_amount, bool)
@@ -157,7 +165,15 @@ class Handler(abc.ABC):
             ):
                 raise ValueError("Invalid file chunk position")
             chunk_bytes = base64.b64decode(chunk_base64, validate=True)
+            if len(chunk_bytes) > FILE_CHUNK_LENGTH:
+                raise ValueError("File transfer chunk exceeds the protocol limit")
             async with self._file_transfer_lock:
+                if (
+                    data["file_key"] not in self._owned_transfer_files
+                    and len(self._owned_transfer_files) >= MAX_ACTIVE_FILE_TRANSFERS
+                ):
+                    raise ValueError("Active file transfer capacity reached")
+                self._owned_transfer_files.add(data["file_key"])
                 # The first chunk replaces stale partial data for the same
                 # opaque transfer id; later chunks append. Runtime-side
                 # installation handlers cap the aggregate bytes written on
@@ -183,6 +199,82 @@ class Handler(abc.ABC):
                 async with aiofiles.open(file_path, mode) as f:
                     await f.write(chunk_bytes)
             return ActionResponse.success({})
+
+    def _message_blocking_scope(
+        self,
+        action_context: ActionEnvelopeContext | None = None,
+    ) -> str | None:
+        context = (
+            action_context
+            or self._current_action_context.get()
+            or self._bound_action_context
+        )
+        return getattr(context, "workspace_uuid", None)
+
+    async def _decode_message(self, message: str) -> Any:
+        """Parse peer JSON outside the shared event loop with tenant fairness."""
+
+        with blocking_work_scope(self._message_blocking_scope()):
+            return await asyncio.to_thread(json.loads, message)
+
+    async def _encode_message(
+        self,
+        payload: Any,
+        *,
+        action_context: ActionEnvelopeContext | None = None,
+    ) -> str:
+        """Serialize protocol JSON outside the shared event loop."""
+
+        with blocking_work_scope(
+            self._message_blocking_scope(action_context),
+        ):
+            return await asyncio.to_thread(
+                lambda: json.dumps(
+                    payload.model_dump()
+                    if hasattr(payload, "model_dump")
+                    else payload
+                )
+            )
+
+    async def _validate_message_model(
+        self,
+        model_type: Any,
+        payload: Any,
+    ) -> Any:
+        """Run potentially deep Pydantic validation outside the event loop."""
+
+        with blocking_work_scope(self._message_blocking_scope()):
+            return await asyncio.to_thread(model_type.model_validate, payload)
+
+    async def _send_message(
+        self,
+        payload: Any,
+        *,
+        action_context: ActionEnvelopeContext | None = None,
+    ) -> None:
+        """Keep serialization and transport chunking in one tenant scope."""
+
+        with blocking_work_scope(
+            self._message_blocking_scope(action_context),
+        ):
+            encoded = await self._encode_message(
+                payload,
+                action_context=action_context,
+            )
+            await self.conn.send(encoded)
+
+    async def _format_protocol_error(self, exc: BaseException) -> str:
+        def render() -> str:
+            message = str(exc)
+            if len(message) > MAX_PROTOCOL_ERROR_CHARS:
+                message = (
+                    message[:MAX_PROTOCOL_ERROR_CHARS]
+                    + "... [protocol error truncated]"
+                )
+            return f"{exc.__class__.__name__}: {message}"
+
+        with blocking_work_scope(self._message_blocking_scope()):
+            return await asyncio.to_thread(render)
 
     def set_disconnect_callback(
         self,
@@ -212,7 +304,7 @@ class Handler(abc.ABC):
                     continue
 
                 try:
-                    req_data = json.loads(message)
+                    req_data = await self._decode_message(message)
                 except (json.JSONDecodeError, TypeError) as exc:
                     logger.warning("Ignored malformed runtime message: %s", exc)
                     continue
@@ -241,6 +333,7 @@ class Handler(abc.ABC):
             self._close_error = disconnect_error
             self._fail_pending(disconnect_error)
             await self._cancel_action_tasks()
+            await self._cleanup_owned_transfers()
 
     async def close(self) -> None:
         """Close the transport and deterministically release connection-owned work."""
@@ -254,12 +347,19 @@ class Handler(abc.ABC):
             await self.conn.close()
         finally:
             await self._cancel_action_tasks()
+            await self._cleanup_owned_transfers()
 
     async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
         try:
-            response = ActionResponse.model_validate(req_data)
+            response = await self._validate_message_model(
+                ActionResponse,
+                req_data,
+            )
         except Exception as exc:
-            logger.warning("Ignored malformed runtime response: %s", exc)
+            logger.warning(
+                "Ignored malformed runtime response: %s",
+                exc.__class__.__name__,
+            )
             return
         waiter = self.resp_waiters.get(seq_id)
         if waiter is not None and not waiter.done():
@@ -287,7 +387,10 @@ class Handler(abc.ABC):
         action_name = str(req_data.get("action", ""))
         context_token = None
         try:
-            request = ActionRequest.model_validate(req_data)
+            request = await self._validate_message_model(
+                ActionRequest,
+                req_data,
+            )
             action_name = request.action
             if action_name not in self.actions:
                 raise ValueError(f"Action {action_name} not found")
@@ -298,38 +401,43 @@ class Handler(abc.ABC):
             )
             context_token = self._current_action_context.set(action_context)
 
-            response = self.actions[action_name](request.data)
-            if not isinstance(response, AsyncGenerator):
-                if isinstance(response, Coroutine):
-                    response = await response
-                response.seq_id = seq_id
-                await self.conn.send(json.dumps(response.model_dump()))
-            else:
-                async for chunk in response:
-                    assert isinstance(chunk, ActionResponse)
-                    chunk.seq_id = seq_id
-                    chunk.chunk_status = ChunkStatus.CONTINUE
-                    await self.conn.send(json.dumps(chunk.model_dump()))
+            with blocking_work_scope(getattr(action_context, "workspace_uuid", None)):
+                response = self.actions[action_name](request.data)
+                if not isinstance(response, AsyncGenerator):
+                    if isinstance(response, Coroutine):
+                        response = await response
+                    response.seq_id = seq_id
+                    await self._send_message(response)
+                else:
+                    async for chunk in response:
+                        assert isinstance(chunk, ActionResponse)
+                        chunk.seq_id = seq_id
+                        chunk.chunk_status = ChunkStatus.CONTINUE
+                        await self._send_message(chunk)
 
-                end_response = ActionResponse.success({})
-                end_response.seq_id = seq_id
-                end_response.chunk_status = ChunkStatus.END
-                await self.conn.send(json.dumps(end_response.model_dump()))
+                    end_response = ActionResponse.success({})
+                    end_response.seq_id = seq_id
+                    end_response.chunk_status = ChunkStatus.END
+                    await self._send_message(end_response)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            traceback.print_exc()
+            logger.warning(
+                "Runtime action %s failed with %s",
+                action_name or "<unknown>",
+                exc.__class__.__name__,
+            )
             error_response = ActionResponse.error(
-                f"{exc.__class__.__name__}: {str(exc)}"
+                await self._format_protocol_error(exc)
             )
             error_response.seq_id = seq_id
             with contextlib.suppress(ConnectionClosedError):
-                await self.conn.send(json.dumps(error_response.model_dump()))
+                await self._send_message(error_response)
         finally:
             if context_token is not None:
                 self._current_action_context.reset(context_token)
             if action_name and not action_name.startswith("__"):
-                logger.info("[Action] %s", action_name)
+                logger.debug("[Action] %s", action_name)
 
     async def _send_overloaded_response(self, seq_id: int) -> None:
         response = ActionResponse.error(
@@ -337,7 +445,7 @@ class Handler(abc.ABC):
         )
         response.seq_id = seq_id
         with contextlib.suppress(ConnectionClosedError):
-            await self.conn.send(json.dumps(response.model_dump()))
+            await self._send_message(response)
 
     def _action_task_done(self, task: asyncio.Task[None]) -> None:
         self._action_tasks.discard(task)
@@ -389,7 +497,9 @@ class Handler(abc.ABC):
             this_seq_id,
             action.value,
             data,
-            self.resolve_outbound_action_context(action_context),
+            resolved_context := self.resolve_outbound_action_context(
+                action_context
+            ),
         )
         # wait for response
         if self._closed:
@@ -397,7 +507,10 @@ class Handler(abc.ABC):
         future = asyncio.get_running_loop().create_future()
         self.resp_waiters[this_seq_id] = future
         try:
-            await self.conn.send(json.dumps(request.model_dump()))
+            await self._send_message(
+                request,
+                action_context=resolved_context,
+            )
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
                 raise ActionCallError(f"{response.message}")
@@ -429,7 +542,9 @@ class Handler(abc.ABC):
             this_seq_id,
             action.value,
             data,
-            self.resolve_outbound_action_context(action_context),
+            resolved_context := self.resolve_outbound_action_context(
+                action_context
+            ),
         )
 
         # Create a queue for streaming responses
@@ -441,7 +556,10 @@ class Handler(abc.ABC):
         self.resp_queues[this_seq_id] = queue
 
         try:
-            await self.conn.send(json.dumps(request.model_dump()))
+            await self._send_message(
+                request,
+                action_context=resolved_context,
+            )
             while True:
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
@@ -676,16 +794,50 @@ class Handler(abc.ABC):
         return file_key
 
     async def read_local_file(self, file_key: str) -> bytes:
+        file_path = _file_storage_path(file_key, self.file_storage_dir)
+        if self.max_file_bytes is not None:
+            try:
+                file_size = await asyncio.to_thread(os.path.getsize, file_path)
+            except FileNotFoundError:
+                raise
+            if file_size > self.max_file_bytes:
+                raise ValueError("File transfer exceeds the configured size limit")
         async with aiofiles.open(
-            _file_storage_path(file_key, self.file_storage_dir),
+            file_path,
             "rb",
         ) as f:
-            return await f.read()
+            content = await f.read(
+                self.max_file_bytes + 1 if self.max_file_bytes is not None else -1
+            )
+        if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
+            raise ValueError("File transfer exceeds the configured size limit")
+        return content
 
     async def delete_local_file(self, file_key: str) -> None:
-        try:
-            await aiofiles.os.remove(
-                _file_storage_path(file_key, self.file_storage_dir)
-            )
-        except FileNotFoundError:
-            return
+        async with self._file_transfer_lock:
+            try:
+                await aiofiles.os.remove(
+                    _file_storage_path(file_key, self.file_storage_dir)
+                )
+            except FileNotFoundError:
+                pass
+            finally:
+                self._owned_transfer_files.discard(file_key)
+
+    async def _cleanup_owned_transfers(self) -> None:
+        async with self._file_transfer_lock:
+            file_keys = tuple(self._owned_transfer_files)
+            self._owned_transfer_files.clear()
+            for file_key in file_keys:
+                try:
+                    await aiofiles.os.remove(
+                        _file_storage_path(file_key, self.file_storage_dir)
+                    )
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    logger.warning(
+                        "Failed to clean runtime transfer file %s: %s",
+                        file_key,
+                        exc,
+                    )

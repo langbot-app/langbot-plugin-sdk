@@ -161,6 +161,36 @@ async def test_failure_removes_staging_and_does_not_poison_digest(tmp_path):
     assert ready.site_packages_path.is_dir()
 
 
+async def test_cancellation_removes_dependency_staging(tmp_path):
+    artifact = _artifact(tmp_path)
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    install_started = asyncio.Event()
+    release_install = asyncio.Event()
+
+    async def installer(staging, requirements):
+        del requirements
+        (staging.site_packages_path / "partial.py").write_text(
+            "PARTIAL = True\n",
+            encoding="utf-8",
+        )
+        install_started.set()
+        await release_install.wait()
+
+    prepare_task = asyncio.create_task(
+        store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+    )
+    await install_started.wait()
+    prepare_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await prepare_task
+    assert list(store.environments_path.iterdir()) == []
+
+
 async def test_shared_requirements_reject_pip_control_options(tmp_path):
     artifact = _artifact(tmp_path, "--extra-index-url https://attacker.invalid\n")
     store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")

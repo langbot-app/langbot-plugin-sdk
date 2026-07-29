@@ -424,6 +424,54 @@ async def test_windows_launch_uses_minimal_env_and_fences_runtime_url(
 
 
 @pytest.mark.asyncio
+async def test_windows_launch_cancellation_reaps_worker(monkeypatch, tmp_path):
+    class HangingProcess:
+        def __init__(self):
+            self.returncode = None
+            self.wait_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def wait(self):
+            self.wait_started.set()
+            await self.release.wait()
+
+    process = HangingProcess()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    async def stop_process(stopped_process):
+        assert stopped_process is process
+        process.returncode = -9
+        process.release.set()
+        return True
+
+    monkeypatch.setattr(manager_module, "get_platform", lambda: "win32")
+    monkeypatch.setattr(
+        manager_module.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setattr(
+        manager_module.stdio_client_controller,
+        "stop_process",
+        AsyncMock(side_effect=stop_process),
+    )
+    plugin_path = _write_installed_plugin(tmp_path)
+    launch_task = asyncio.create_task(
+        _manager().launch_plugin(str(plugin_path))
+    )
+    await process.wait_started.wait()
+    launch_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await launch_task
+    manager_module.stdio_client_controller.stop_process.assert_awaited_once_with(
+        process
+    )
+
+
+@pytest.mark.asyncio
 async def test_launch_all_plugins_waits_for_trusted_workspace_binding(monkeypatch):
     context = RuntimeContext()
     context.ws_debug_port = 18080
@@ -605,6 +653,34 @@ async def test_install_plugin_from_file_rejects_same_version_duplicate(
 
     with pytest.raises(ValueError, match="already exists"):
         await manager.install_plugin_from_file(_plugin_zip(version="1.0.0"))
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_from_file_reuses_verified_extractor(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    with zipfile.ZipFile(io.BytesIO(_plugin_zip()), "r") as source:
+        manifest = source.read("manifest.yaml")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.yaml", manifest)
+        archive.writestr("../escaped.py", "unsafe")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        await manager.install_plugin_from_file(buffer.getvalue())
+
+    assert not (tmp_path / "escaped.py").exists()
+
+
+def test_idle_plugin_operation_locks_are_not_retained():
+    manager = _manager()
+    lock = manager._get_plugin_operation_lock("tester", "transient")
+
+    manager._forget_plugin_operation_lock("tester", "transient", lock)
+
+    assert manager._plugin_operation_locks == {}
 
 
 @pytest.mark.asyncio

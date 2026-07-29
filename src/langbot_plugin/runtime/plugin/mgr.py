@@ -9,12 +9,13 @@ from typing import AsyncGenerator
 import asyncio
 import contextlib
 from dataclasses import dataclass
-import io
 import enum
+import pathlib
+import tempfile
 import time
-import zipfile
 import yaml
 import logging
+import random
 import uuid
 import sys
 from langbot_plugin.utils.platform import get_platform
@@ -25,6 +26,7 @@ from langbot_plugin.runtime.io.controllers.stdio import (
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
+from langbot_plugin.runtime import bounded_executor
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
@@ -180,7 +182,13 @@ class PluginManager:
         self._installations: dict[InstallationBinding, PluginInstallationRuntime] = {}
         self._active_binding_by_uuid: dict[str, InstallationBinding] = {}
         self._binding_by_container_id: dict[int, InstallationBinding] = {}
+        # Capacity is instance-wide, so lifecycle operations for different
+        # installations must share one admission critical section.  Per-plugin
+        # locks cannot prevent concurrent tenants from all observing the same
+        # pre-admission worker count.
+        self._installation_operation_lock = asyncio.Lock()
         self.artifact_store = PluginArtifactStore()
+        self._artifact_store_lock = asyncio.Lock()
         self.dependency_environment_store = PluginDependencyEnvironmentStore(
             self.artifact_store.base_path
         )
@@ -198,6 +206,28 @@ class PluginManager:
         runtime_profile: typing.Literal["oss_dev", "shared"],
     ) -> None:
         self.worker_launcher.configure(policy, runtime_profile)
+
+    def _worker_capacity_would_be_exceeded(
+        self,
+        binding: InstallationBinding,
+    ) -> bool:
+        policy = getattr(self.context, "worker_policy", None)
+        if policy is None:
+            raise ValueError("Plugin worker policy is unavailable")
+        current_binding = self._active_binding_by_uuid.get(
+            binding.installation_uuid
+        )
+        current_runtime = (
+            self._installations.get(current_binding)
+            if current_binding is not None
+            else None
+        )
+        if current_runtime is not None and current_runtime.enabled:
+            return False
+        enabled_count = sum(
+            1 for runtime in self._installations.values() if runtime.enabled
+        )
+        return enabled_count >= policy.effective_worker_capacity
 
     @staticmethod
     def _installed_plugin_identity(plugin_path: str) -> tuple[str, str]:
@@ -255,6 +285,15 @@ class PluginManager:
         ):
             raise ValueError("Plugin registration binding is no longer current")
 
+        self._prune_expired_registration_capabilities()
+        policy = getattr(self.context, "worker_policy", None)
+        pending_limit = max(
+            (policy.effective_worker_capacity * 2 if policy is not None else 0),
+            32,
+        )
+        if len(self._pending_registrations) >= pending_limit:
+            raise RuntimeError("Plugin registration capability capacity reached")
+
         capability = secrets.token_urlsafe(48)
         self._pending_registrations[capability] = _PendingPluginRegistration(
             plugin_author=author,
@@ -265,10 +304,7 @@ class PluginManager:
         )
         return capability
 
-    def _find_pending_registration_key(self, capability: str) -> str | None:
-        supplied = str(capability or "").strip()
-        if not supplied:
-            return None
+    def _prune_expired_registration_capabilities(self) -> None:
         now = time.monotonic()
         expired = [
             key
@@ -277,6 +313,12 @@ class PluginManager:
         ]
         for key in expired:
             self._pending_registrations.pop(key, None)
+
+    def _find_pending_registration_key(self, capability: str) -> str | None:
+        supplied = str(capability or "").strip()
+        if not supplied:
+            return None
+        self._prune_expired_registration_capabilities()
         for key in self._pending_registrations:
             if secrets.compare_digest(key, supplied):
                 return key
@@ -485,6 +527,9 @@ class PluginManager:
         plugin_paths = [
             path for path in glob.glob("data/plugins/*") if os.path.isdir(path)
         ]
+        current_paths = set(plugin_paths)
+        for stale_path in self._dependency_errors.keys() - current_paths:
+            self._dependency_errors.pop(stale_path, None)
         await asyncio.gather(*(reconcile(path) for path in plugin_paths))
 
     async def launch_all_plugins(self):
@@ -495,7 +540,10 @@ class PluginManager:
             if not os.path.isdir(plugin_path):
                 continue
 
-            self.start_plugin_supervisor(plugin_path)
+            try:
+                self.start_plugin_supervisor(plugin_path)
+            except RuntimeError as exc:
+                logger.error("Skipped plugin worker at %s: %s", plugin_path, exc)
 
         logger.info(f"launch all plugins: {len(self.plugin_run_tasks)}")
         if self.plugin_run_tasks:
@@ -506,6 +554,19 @@ class PluginManager:
         existing = self._plugin_supervisors.get(plugin_path)
         if existing is not None and not existing.done():
             return existing
+
+        policy = getattr(self.context, "worker_policy", None)
+        active_supervisors = sum(
+            1 for task in self._plugin_supervisors.values() if not task.done()
+        )
+        if (
+            policy is not None
+            and active_supervisors >= policy.effective_worker_capacity
+        ):
+            raise RuntimeError(
+                "Plugin worker capacity reached "
+                f"({policy.effective_worker_capacity})"
+            )
 
         self._desired_plugin_paths.add(plugin_path)
         task = asyncio.create_task(self._supervise_plugin(plugin_path))
@@ -519,6 +580,7 @@ class PluginManager:
     def _supervisor_done(self, plugin_path: str, task: asyncio.Task[None]) -> None:
         if self._plugin_supervisors.get(plugin_path) is task:
             self._plugin_supervisors.pop(plugin_path, None)
+            self._desired_plugin_paths.discard(plugin_path)
         with contextlib.suppress(ValueError):
             self.plugin_run_tasks.remove(task)
         if task.cancelled():
@@ -556,12 +618,13 @@ class PluginManager:
             uptime = asyncio.get_running_loop().time() - started_at
             if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
                 delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+            restart_delay = delay * random.uniform(0.8, 1.2)
             logger.warning(
                 "Plugin process exited unexpectedly; restarting %s in %.1fs",
                 plugin_path,
-                delay,
+                restart_delay,
             )
-            await asyncio.sleep(delay)
+            await asyncio.sleep(restart_delay)
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
 
     async def stop_plugin_supervisor(self, plugin_path: str) -> None:
@@ -605,20 +668,24 @@ class PluginManager:
                 )
                 child_env[PLUGIN_REGISTRATION_CAPABILITY_ENV] = registration_capability
 
-                process: asyncio.subprocess.Process = (
-                    await asyncio.create_subprocess_exec(
-                        *cmd_args,
-                        env=child_env,
-                        cwd=plugin_path,
-                    )
+                process: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
+                    *cmd_args,
+                    env=child_env,
+                    cwd=plugin_path,
                 )
 
-                # hold the process
-                task = asyncio.create_task(process.wait())
-
-                # the plugin will connect to the runtime via ws automatically
-
-                await task
+                try:
+                    # The plugin connects to the Runtime via WebSocket.
+                    await process.wait()
+                finally:
+                    if getattr(process, "returncode", 0) is None:
+                        stopped = await stdio_client_controller.stop_process(process)
+                        if not stopped:
+                            logger.error(
+                                "Windows plugin worker did not exit after SIGKILL: %s/%s",
+                                plugin_author,
+                                plugin_name,
+                            )
             else:
                 python_path = sys.executable
 
@@ -662,15 +729,57 @@ class PluginManager:
     ) -> dict[str, typing.Any]:
         """Apply one desired installation and fence an older worker first."""
 
-        binding = self.context.validate_installation_candidate(binding)
-        artifact = (
-            self.artifact_store.install_package(
-                artifact_package,
-                binding.artifact_digest,
+        async with self._installation_operation_lock:
+            return await self._apply_plugin_installation_unlocked(
+                binding,
+                artifact_package=artifact_package,
+                enabled=enabled,
             )
-            if artifact_package is not None
-            else self.artifact_store.get_verified(binding.artifact_digest)
-        )
+
+    async def _apply_plugin_installation_unlocked(
+        self,
+        binding: InstallationBinding,
+        *,
+        artifact_package: bytes | None = None,
+        enabled: bool = True,
+    ) -> dict[str, typing.Any]:
+        """Apply while the instance-wide installation admission lock is held."""
+
+        binding = self.context.validate_installation_candidate(binding)
+        async with self._artifact_store_lock:
+            artifact = (
+                await asyncio.to_thread(
+                    self.artifact_store.install_package,
+                    artifact_package,
+                    binding.artifact_digest,
+                )
+                if artifact_package is not None
+                else await asyncio.to_thread(
+                    self.artifact_store.get_verified,
+                    binding.artifact_digest,
+                )
+            )
+            paths = (
+                await asyncio.to_thread(
+                    self.artifact_store.ensure_installation_paths,
+                    binding,
+                )
+                if artifact is not None
+                else None
+            )
+
+        if enabled and self._worker_capacity_would_be_exceeded(binding):
+            policy = self.context.worker_policy
+            assert policy is not None
+            return {
+                "installation_uuid": binding.installation_uuid,
+                "state": "failed",
+                "error_code": "worker_capacity_exceeded",
+                "message": (
+                    "Plugin worker capacity reached "
+                    f"({policy.effective_worker_capacity})"
+                ),
+            }
 
         previous = self.context.activate_installation_binding(binding)
         if previous is not None and previous != binding:
@@ -689,7 +798,7 @@ class PluginManager:
             current = PluginInstallationRuntime(
                 binding=binding,
                 artifact=artifact,
-                paths=self.artifact_store.ensure_installation_paths(binding),
+                paths=paths,
                 enabled=enabled,
             )
             self._installations[binding] = current
@@ -787,6 +896,13 @@ class PluginManager:
     ) -> dict[str, typing.Any]:
         """Remove exactly the active desired binding and revoke its worker."""
 
+        async with self._installation_operation_lock:
+            return await self._remove_plugin_installation_unlocked(binding)
+
+    async def _remove_plugin_installation_unlocked(
+        self,
+        binding: InstallationBinding,
+    ) -> dict[str, typing.Any]:
         binding = self.context.deactivate_installation_binding(binding)
         await self._revoke_installation_runtime(binding)
         self._active_binding_by_uuid.pop(binding.installation_uuid, None)
@@ -800,6 +916,36 @@ class PluginManager:
         desired_states: tuple[PluginInstallationDesiredState, ...],
     ) -> dict[str, typing.Any]:
         """Replay the authoritative instance desired state after reconnect."""
+
+        async with self._installation_operation_lock:
+            return await self._reconcile_plugin_installations_unlocked(
+                desired_states
+            )
+
+    async def _reconcile_plugin_installations_unlocked(
+        self,
+        desired_states: tuple[PluginInstallationDesiredState, ...],
+    ) -> dict[str, typing.Any]:
+        """Reconcile while the instance-wide installation lock is held."""
+
+        policy = self.context.worker_policy
+        if policy is None:
+            raise ValueError("Plugin worker policy is unavailable")
+        if len(desired_states) > policy.max_installations:
+            raise ValueError(
+                "Plugin desired state exceeds the installation capacity"
+            )
+        installation_uuids = [
+            desired.binding.installation_uuid for desired in desired_states
+        ]
+        if len(set(installation_uuids)) != len(installation_uuids):
+            raise ValueError("Plugin desired state contains duplicate installations")
+        enabled_count = sum(1 for desired in desired_states if desired.enabled)
+        if enabled_count > policy.effective_worker_capacity:
+            raise ValueError(
+                "Plugin desired state exceeds the aggregate worker capacity "
+                f"({policy.effective_worker_capacity})"
+            )
 
         desired_by_uuid = {
             desired.binding.installation_uuid: desired for desired in desired_states
@@ -823,7 +969,7 @@ class PluginManager:
         missing_artifacts: list[str] = []
         failed_installations: list[dict[str, str]] = []
         for desired in desired_states:
-            result = await self.apply_plugin_installation(
+            result = await self._apply_plugin_installation_unlocked(
                 desired.binding,
                 enabled=desired.enabled,
             )
@@ -917,13 +1063,14 @@ class PluginManager:
             uptime = asyncio.get_running_loop().time() - started_at
             if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
                 delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+            restart_delay = delay * random.uniform(0.8, 1.2)
             logger.warning(
                 "Plugin installation worker exited unexpectedly; restarting %s "
                 "in %.1fs",
                 binding.installation_uuid,
-                delay,
+                restart_delay,
             )
-            await asyncio.sleep(delay)
+            await asyncio.sleep(restart_delay)
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
 
     async def launch_plugin_installation(
@@ -949,33 +1096,33 @@ class PluginManager:
             plugin_path=str(runtime.artifact.code_path),
             binding=binding,
         )
-        controller = self.worker_launcher.create_controller(
-            PluginWorkerLaunchSpec(
-                binding=binding,
-                artifact=runtime.artifact,
-                paths=runtime.paths,
-                registration_capability=capability,
-                dependency_environment=runtime.dependency_environment,
-            )
-        )
-
-        async def new_plugin_connection_callback(connection: Connection):
-            if not self.context.is_current_installation_binding(binding):
-                await connection.close()
-                return
-            plugin_handler = runtime_plugin_handler_cls.PluginConnectionHandler(
-                connection,
-                self.context,
-                stdio_process=controller.process,
-                file_storage_dir=str(runtime.paths.root_path / "rpc-transfer"),
-                max_file_bytes=(
-                    self.context.worker_policy.max_file_size_mb * 1024 * 1024
-                ),
-            )
-            runtime.plugin_handler = plugin_handler
-            await self.add_plugin_handler(plugin_handler)
-
         try:
+            controller = self.worker_launcher.create_controller(
+                PluginWorkerLaunchSpec(
+                    binding=binding,
+                    artifact=runtime.artifact,
+                    paths=runtime.paths,
+                    registration_capability=capability,
+                    dependency_environment=runtime.dependency_environment,
+                )
+            )
+
+            async def new_plugin_connection_callback(connection: Connection):
+                if not self.context.is_current_installation_binding(binding):
+                    await connection.close()
+                    return
+                plugin_handler = runtime_plugin_handler_cls.PluginConnectionHandler(
+                    connection,
+                    self.context,
+                    stdio_process=controller.process,
+                    file_storage_dir=str(runtime.paths.root_path / "rpc-transfer"),
+                    max_file_bytes=(
+                        self.context.worker_policy.max_file_size_mb * 1024 * 1024
+                    ),
+                )
+                runtime.plugin_handler = plugin_handler
+                await self.add_plugin_handler(plugin_handler)
+
             await controller.run(new_plugin_connection_callback)
         except asyncio.CancelledError:
             logger.info(
@@ -1068,32 +1215,74 @@ class PluginManager:
         self, plugin_file: bytes
     ) -> tuple[str, str, str, str]:
         """Validate and extract a package into an isolated staging directory."""
-        with zipfile.ZipFile(io.BytesIO(plugin_file), "r") as manifest_file:
-            manifest = yaml.safe_load(manifest_file.read("manifest.yaml"))
+        staging_root = pathlib.Path("data") / ".plugin-staging"
 
-        plugin_name = manifest["metadata"]["name"]
-        plugin_author = manifest["metadata"]["author"]
-        plugin_version = manifest["metadata"]["version"]
-
-        self._validate_install_target(plugin_author, plugin_name, plugin_version)
-
-        staging_path = os.path.join(
-            "data",
-            ".plugin-staging",
-            f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
-        )
-
-        def extract() -> None:
-            os.makedirs(staging_path, exist_ok=False)
+        def extract_verified() -> tuple[pathlib.Path, str, str, str]:
+            staging_root.mkdir(parents=True, exist_ok=True)
+            pending_path = pathlib.Path(
+                tempfile.mkdtemp(prefix=".pending-", dir=staging_root)
+            )
             try:
-                with zipfile.ZipFile(io.BytesIO(plugin_file), "r") as archive:
-                    archive.extractall(staging_path)
+                PluginArtifactStore._extract_verified_zip(plugin_file, pending_path)
+                plugin_author, plugin_name, plugin_version = (
+                    PluginArtifactStore._read_manifest(pending_path)
+                )
+                return (
+                    pending_path,
+                    plugin_author,
+                    plugin_name,
+                    plugin_version,
+                )
             except Exception:
-                shutil.rmtree(staging_path, ignore_errors=True)
+                shutil.rmtree(pending_path, ignore_errors=True)
                 raise
 
-        await asyncio.to_thread(extract)
-        return staging_path, plugin_author, plugin_name, plugin_version
+        extract_task = asyncio.create_task(asyncio.to_thread(extract_verified))
+        try:
+            (
+                pending_path,
+                plugin_author,
+                plugin_name,
+                plugin_version,
+            ) = await asyncio.shield(extract_task)
+        except asyncio.CancelledError:
+            (
+                pending_path,
+                _plugin_author,
+                _plugin_name,
+                _plugin_version,
+            ) = await extract_task
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                pending_path,
+                True,
+            )
+            raise
+        staging_path: pathlib.Path | None = None
+        try:
+            self._validate_install_target(plugin_author, plugin_name, plugin_version)
+            staging_path = staging_root / (
+                f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}"
+            )
+            await bounded_executor.run_blocking_atomic(
+                os.replace,
+                pending_path,
+                staging_path,
+            )
+        except BaseException:
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                pending_path,
+                True,
+            )
+            if staging_path is not None:
+                await bounded_executor.run_blocking_cleanup(
+                    shutil.rmtree,
+                    staging_path,
+                    True,
+                )
+            raise
+        return str(staging_path), plugin_author, plugin_name, plugin_version
 
     def _validate_install_target(
         self, plugin_author: str, plugin_name: str, plugin_version: str
@@ -1123,6 +1312,21 @@ class PluginManager:
             self._plugin_operation_locks[key] = lock
         return lock
 
+    def _forget_plugin_operation_lock(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        lock: asyncio.Lock,
+    ) -> None:
+        key = f"{plugin_author}/{plugin_name}"
+        waiters = getattr(lock, "_waiters", None) or ()
+        if (
+            not lock.locked()
+            and not any(not waiter.done() for waiter in waiters)
+            and self._plugin_operation_locks.get(key) is lock
+        ):
+            self._plugin_operation_locks.pop(key, None)
+
     async def install_plugin_from_marketplace(
         self, plugin_author: str, plugin_name: str, plugin_version: str
     ) -> tuple[str, str, str, str]:
@@ -1143,25 +1347,49 @@ class PluginManager:
         if old_plugin is not None:
             await self.shutdown_plugin(old_plugin)
 
-        backup_path: str | None = None
+        def activate_files() -> str | None:
+            backup_path: str | None = None
+            try:
+                if os.path.isdir(target_path):
+                    backup_path = os.path.join(
+                        "data",
+                        ".plugin-backups",
+                        f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
+                    )
+                    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+                    os.replace(target_path, backup_path)
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                os.replace(staging_path, target_path)
+            except Exception:
+                if backup_path is not None and os.path.isdir(backup_path):
+                    os.replace(backup_path, target_path)
+                raise
+            return backup_path
+
+        operation_task = asyncio.create_task(asyncio.to_thread(activate_files))
         try:
-            if os.path.isdir(target_path):
-                backup_path = os.path.join(
-                    "data",
-                    ".plugin-backups",
-                    f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}",
+            return await asyncio.shield(operation_task)
+        except asyncio.CancelledError:
+            backup_path = await operation_task
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                target_path,
+                True,
+            )
+            if backup_path is not None:
+                await bounded_executor.run_blocking_atomic(
+                    os.replace,
+                    backup_path,
+                    target_path,
                 )
-                os.makedirs(os.path.dirname(backup_path), exist_ok=True)
-                os.replace(target_path, backup_path)
-            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-            os.replace(staging_path, target_path)
+                if not self._shutting_down:
+                    self.start_plugin_supervisor(target_path)
+            raise
         except Exception:
-            if backup_path is not None and os.path.isdir(backup_path):
-                os.replace(backup_path, target_path)
-            if os.path.isdir(target_path) and not self._shutting_down:
+            target_exists = await asyncio.to_thread(os.path.isdir, target_path)
+            if target_exists and not self._shutting_down:
                 self.start_plugin_supervisor(target_path)
             raise
-        return backup_path
 
     async def _wait_for_plugin_ready(
         self, plugin_author: str, plugin_name: str, timeout: float
@@ -1192,9 +1420,21 @@ class PluginManager:
         if current is not None:
             await self.shutdown_plugin(current)
         await self.stop_plugin_supervisor(target_path)
-        shutil.rmtree(target_path, ignore_errors=True)
-        if backup_path is not None and os.path.isdir(backup_path):
-            os.replace(backup_path, target_path)
+        await bounded_executor.run_blocking_cleanup(
+            shutil.rmtree,
+            target_path,
+            True,
+        )
+        restore_backup = backup_path is not None and await asyncio.to_thread(
+            os.path.isdir,
+            backup_path,
+        )
+        if restore_backup:
+            await bounded_executor.run_blocking_atomic(
+                os.replace,
+                backup_path,
+                target_path,
+            )
             self.start_plugin_supervisor(target_path)
 
     async def install_plugin(
@@ -1261,8 +1501,11 @@ class PluginManager:
             logger.info("installing isolated plugin dependencies")
             yield {"current_action": "installing dependencies"}
             requirements_file = os.path.join(plugin_path, "requirements.txt")
-            if os.path.exists(requirements_file):
-                deps = pkgmgr_helper.parse_requirements(requirements_file)
+            if await asyncio.to_thread(os.path.exists, requirements_file):
+                deps = await asyncio.to_thread(
+                    pkgmgr_helper.parse_requirements,
+                    requirements_file,
+                )
                 python_path = await pkgmgr_helper.ensure_plugin_environment(plugin_path)
                 total_downloaded = 0
                 started_at = time.time()
@@ -1355,18 +1598,31 @@ class PluginManager:
                 plugin_author, plugin_name, _PLUGIN_READY_TIMEOUT_SEC
             )
             if backup_path is not None:
-                shutil.rmtree(backup_path, ignore_errors=True)
+                await bounded_executor.run_blocking_cleanup(
+                    shutil.rmtree,
+                    backup_path,
+                    True,
+                )
         except BaseException:
             if activated:
                 await self._rollback_plugin_activation(
                     plugin_author, plugin_name, backup_path
                 )
             else:
-                shutil.rmtree(plugin_path, ignore_errors=True)
+                await bounded_executor.run_blocking_cleanup(
+                    shutil.rmtree,
+                    plugin_path,
+                    True,
+                )
             raise
         finally:
             if lock_acquired:
                 operation_lock.release()
+            self._forget_plugin_operation_lock(
+                plugin_author,
+                plugin_name,
+                operation_lock,
+            )
 
     async def register_plugin(
         self,
@@ -1539,11 +1795,18 @@ class PluginManager:
         plugin_name: str,
     ):
         operation_lock = self._get_plugin_operation_lock(plugin_author, plugin_name)
-        async with operation_lock:
-            async for progress in self._restart_plugin_unlocked(
-                plugin_author, plugin_name
-            ):
-                yield progress
+        try:
+            async with operation_lock:
+                async for progress in self._restart_plugin_unlocked(
+                    plugin_author, plugin_name
+                ):
+                    yield progress
+        finally:
+            self._forget_plugin_operation_lock(
+                plugin_author,
+                plugin_name,
+                operation_lock,
+            )
 
     async def _restart_plugin_unlocked(
         self,
@@ -1593,11 +1856,18 @@ class PluginManager:
         plugin_name: str,
     ):
         operation_lock = self._get_plugin_operation_lock(plugin_author, plugin_name)
-        async with operation_lock:
-            async for progress in self._delete_plugin_unlocked(
-                plugin_author, plugin_name
-            ):
-                yield progress
+        try:
+            async with operation_lock:
+                async for progress in self._delete_plugin_unlocked(
+                    plugin_author, plugin_name
+                ):
+                    yield progress
+        finally:
+            self._forget_plugin_operation_lock(
+                plugin_author,
+                plugin_name,
+                operation_lock,
+            )
 
     async def _delete_plugin_unlocked(
         self,
@@ -1622,7 +1892,11 @@ class PluginManager:
                     yield {"current_action": "removing plugin container"}
                     await self.remove_plugin_container(plugin)
                     yield {"current_action": "deleting plugin files"}
-                    shutil.rmtree(self.get_plugin_path(plugin_author, plugin_name))
+                    await bounded_executor.run_blocking_cleanup(
+                        shutil.rmtree,
+                        self.get_plugin_path(plugin_author, plugin_name),
+                    )
+                    self._dependency_errors.pop(plugin_path, None)
                     yield {"current_action": "plugin deleted"}
                     break
         else:

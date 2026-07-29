@@ -40,6 +40,20 @@ _MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
 _MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 _MAX_ZIP_COMPRESSION_RATIO = 100.0
 _ZIP_COPY_CHUNK_BYTES = 64 * 1024
+_MAX_SKILL_TEXT_BYTES = 1024 * 1024
+
+
+def _read_utf8_text_limited(path: str, *, subject: str) -> str:
+    if os.path.getsize(path) > _MAX_SKILL_TEXT_BYTES:
+        raise ValueError(f"{subject} exceeds the {_MAX_SKILL_TEXT_BYTES}-byte limit")
+    with open(path, "rb") as file:
+        content = file.read(_MAX_SKILL_TEXT_BYTES + 1)
+    if len(content) > _MAX_SKILL_TEXT_BYTES:
+        raise ValueError(f"{subject} exceeds the {_MAX_SKILL_TEXT_BYTES}-byte limit")
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{subject} is not valid UTF-8 text") from exc
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -346,13 +360,10 @@ class BoxSkillStore:
         if not os.path.isfile(target_path):
             raise ValueError(f"Skill file not found: {relative_path}")
 
-        try:
-            with open(target_path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except UnicodeDecodeError as exc:
-            raise ValueError(
-                f"Skill file is not valid UTF-8 text: {relative_path}"
-            ) from exc
+        content = _read_utf8_text_limited(
+            target_path,
+            subject=f"Skill file {relative_path}",
+        )
 
         return {
             "skill": {"name": skill["name"]},
@@ -365,6 +376,12 @@ class BoxSkillStore:
         target_path, relative_path = self._resolve_skill_path(
             skill, path, expect_directory=False
         )
+        encoded_content = content.encode("utf-8")
+        if len(encoded_content) > _MAX_SKILL_TEXT_BYTES:
+            raise ValueError(
+                f"Skill file {relative_path} exceeds the "
+                f"{_MAX_SKILL_TEXT_BYTES}-byte limit"
+            )
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -372,7 +389,7 @@ class BoxSkillStore:
         return {
             "skill": {"name": skill["name"]},
             "path": relative_path.replace(os.sep, "/"),
-            "bytes_written": len(content.encode("utf-8")),
+            "bytes_written": len(encoded_content),
         }
 
     def preview_zip_upload(
@@ -451,8 +468,10 @@ class BoxSkillStore:
     ) -> dict:
         package_root = self._normalize_package_root(package_root)
         entry_path = os.path.join(package_root, entry_file)
-        with open(entry_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = _read_utf8_text_limited(
+            entry_path,
+            subject=f"Skill entry file {entry_file}",
+        )
 
         metadata, instructions = parse_frontmatter(content)
         dir_name = os.path.basename(os.path.normpath(package_root))

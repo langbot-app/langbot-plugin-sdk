@@ -21,6 +21,10 @@ from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_cls
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_cls
 from langbot_plugin.runtime import context
+from langbot_plugin.runtime.bounded_executor import (
+    configure_bounded_default_executor_from_env,
+)
+from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
 from langbot_plugin.runtime.settings import settings
 from langbot_plugin.runtime.security import (
     PLUGIN_DEBUG_KEY_HEADER,
@@ -53,6 +57,8 @@ class RuntimeApplication:
         if getattr(args, "pypi_trusted_host", ""):
             os.environ["LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"] = args.pypi_trusted_host
         self.context = context.RuntimeContext()
+        self.event_loop_monitor = EventLoopLagMonitor()
+        self.context.event_loop_monitor = self.event_loop_monitor
         self._server_tasks: set[asyncio.Task] = set()
         self._control_tasks: set[asyncio.Task] = set()
         self._control_handler_lock = asyncio.Lock()
@@ -98,6 +104,7 @@ class RuntimeApplication:
                     expected_headers={
                         PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER: control_token,
                     },
+                    health_snapshot_provider=self._health_snapshot,
                 )
             )
 
@@ -106,7 +113,16 @@ class RuntimeApplication:
         self.context.ws_debug_server = ws_controller_server.WebSocketServerController(
             self.args.ws_debug_port,
             request_authenticator=self._authenticate_plugin_request,
+            health_snapshot_provider=self._health_snapshot,
         )
+
+    def _health_snapshot(self) -> dict[str, object]:
+        """Return public aggregate health without credentials or tenant IDs."""
+
+        return {
+            "live": not self._closing,
+            "resources": self.context.get_runtime_resource_stats(),
+        }
 
     def _authenticate_plugin_request(self, headers: Mapping[str, str]) -> bool:
         """Admit explicit debug clients or one pending installed plugin."""
@@ -289,6 +305,15 @@ class RuntimeApplication:
 async def _run_with_shutdown(app: RuntimeApplication) -> None:
     """Run the Runtime and turn container SIGTERM into an orderly shutdown."""
 
+    app.blocking_executor = configure_bounded_default_executor_from_env(
+        thread_name_prefix="langbot-plugin-runtime-blocking",
+    )
+    runtime_context = getattr(app, "context", None)
+    if runtime_context is not None:
+        runtime_context.blocking_executor = app.blocking_executor
+    event_loop_monitor = getattr(app, "event_loop_monitor", None)
+    if event_loop_monitor is not None:
+        event_loop_monitor.start()
     loop = asyncio.get_running_loop()
     runtime_task = asyncio.current_task()
     signal_handler_installed = False
@@ -306,7 +331,11 @@ async def _run_with_shutdown(app: RuntimeApplication) -> None:
     finally:
         if signal_handler_installed:
             loop.remove_signal_handler(signal.SIGTERM)
-        await app.shutdown()
+        try:
+            await app.shutdown()
+        finally:
+            if event_loop_monitor is not None:
+                await event_loop_monitor.stop()
 
 
 def main(args: argparse.Namespace):

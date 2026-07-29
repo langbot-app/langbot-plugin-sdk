@@ -55,6 +55,10 @@ addopts = "-ra"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.coverage.run]
 branch = true

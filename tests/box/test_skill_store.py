@@ -766,6 +766,27 @@ def test_read_skill_file_non_utf8_raises(tmp_path):
         store.read_skill_file("binskill", "blob.bin")
 
 
+def test_read_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    created = store.create_skill({"name": "large-read", "instructions": "x"})
+    monkeypatch.setattr(skill_store_module, "_MAX_SKILL_TEXT_BYTES", 128)
+    target = os.path.join(created["package_root"], "large.txt")
+    with open(target, "wb") as file:
+        file.write(b"x" * 129)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        store.read_skill_file("large-read", "large.txt")
+
+
+def test_write_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    store.create_skill({"name": "large-write", "instructions": "x"})
+    monkeypatch.setattr(skill_store_module, "_MAX_SKILL_TEXT_BYTES", 128)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        store.write_skill_file("large-write", "large.txt", "x" * 129)
+
+
 def test_read_skill_file_missing_raises(tmp_path):
     store = _make_store(tmp_path)
     store.create_skill({"name": "s", "instructions": "x"})

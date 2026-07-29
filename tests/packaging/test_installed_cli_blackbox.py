@@ -351,3 +351,7 @@ def test_installed_lbp_run_stdio_runtime_protocol(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()

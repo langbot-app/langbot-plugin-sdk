@@ -6,6 +6,7 @@ import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
+import heapq
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING
 import pydantic
 
 from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
 
 from .backend import BaseSandboxBackend, DockerBackend
 from .nsjail_backend import NsjailBackend
@@ -55,7 +57,6 @@ from .security import validate_shared_workspace_probe_name
 from .tenancy import (
     box_namespace,
     namespace_session_id,
-    workspace_session_namespace_prefix,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +64,10 @@ if TYPE_CHECKING:
 
 _UTC = dt.timezone.utc
 _MANAGED_PROCESS_STDERR_PREVIEW_LIMIT = 4000
+_MANAGED_PROCESS_STDERR_READ_BYTES = 64 * 1024
+_MANAGED_PROCESS_STDERR_LOG_CHUNKS_PER_WINDOW = 4
+_MANAGED_PROCESS_STDERR_LOG_WINDOW_SEC = 1.0
+_MANAGED_PROCESS_STDERR_LOG_EXCERPT_CHARS = 512
 _REAPER_INTERVAL_SEC = 30
 _UNSAFE_SOFT_STORAGE_LIMITS_ENV = "LANGBOT_BOX_ALLOW_UNSAFE_SOFT_STORAGE_LIMITS"
 
@@ -103,6 +108,7 @@ class _ManagedProcess:
 class _RuntimeSession:
     info: BoxSessionInfo
     lock: asyncio.Lock
+    workspace_key: tuple[str, str] | None = None
     managed_processes: dict[str, _ManagedProcess] = dataclasses.field(
         default_factory=dict
     )
@@ -180,6 +186,14 @@ class BoxRuntime:
         self.max_completed_processes = int(
             limits.get("max_completed_processes", max_completed_processes)
         )
+        self.max_admission_records = max(
+            int(limits.get("max_admission_records", 100_000)),
+            1,
+        )
+        self.max_rpc_file_bytes = max(
+            int(limits.get("max_rpc_file_bytes", 20 * 1024 * 1024)),
+            1,
+        )
         self.completed_process_retention_sec = int(
             limits.get(
                 "completed_process_retention_sec", completed_process_retention_sec
@@ -188,6 +202,9 @@ class BoxRuntime:
         self._backend: BaseSandboxBackend | None = None
         self._backend_lock = asyncio.Lock()
         self._sessions: dict[str, _RuntimeSession] = {}
+        self._expirable_session_ids: set[str] = set()
+        self._managed_process_session_ids: set[str] = set()
+        self._session_ids_by_workspace: dict[tuple[str, str], set[str]] = {}
         self._lock = asyncio.Lock()
         self._session_operation_locks: weakref.WeakValueDictionary[
             str, asyncio.Lock
@@ -202,14 +219,17 @@ class BoxRuntime:
         self._background_tasks: set[asyncio.Task] = set()
         self.instance_id = uuid.uuid4().hex[:12]
         self.skill_store = BoxSkillStore(self._box_config)
+        self.skill_operation_lock = asyncio.Lock()
         self._admission_policy = SandboxAdmissionPolicy()
         self._admission_config_error: str | None = None
         self._admission_grants: dict[tuple[str, str], SandboxAdmissionGrant] = {}
+        self._admission_expiry_heap: list[tuple[float, tuple[str, str], int, int]] = []
         self._admission_revisions: dict[tuple[str, str], int] = {}
         self._admission_generations: dict[tuple[str, str], int] = {}
         self._admission_limit_fingerprints: dict[tuple[str, str], tuple[int, int]] = {}
         self._revoked_admission_revisions: dict[tuple[str, str], int] = {}
         self._readiness_cache: tuple[float, dict] | None = None
+        self.event_loop_monitor = EventLoopLagMonitor()
         self._refresh_admission_policy()
 
     def _create_e2b_backend(self, logger: logging.Logger) -> "E2BSandboxBackend | None":
@@ -239,6 +259,7 @@ class BoxRuntime:
                 )
 
         self.start_background_reaper()
+        self.event_loop_monitor.start()
 
     def init(self, config: dict) -> None:
         """Initialize with full box configuration from LangBot.
@@ -254,6 +275,14 @@ class BoxRuntime:
         )
         self.max_completed_processes = int(
             limits.get("max_completed_processes", self.max_completed_processes)
+        )
+        self.max_admission_records = max(
+            int(limits.get("max_admission_records", self.max_admission_records)),
+            1,
+        )
+        self.max_rpc_file_bytes = max(
+            int(limits.get("max_rpc_file_bytes", self.max_rpc_file_bytes)),
+            1,
         )
         self.completed_process_retention_sec = int(
             limits.get(
@@ -548,10 +577,13 @@ class BoxRuntime:
         )
 
     def _workspace_session_ids_locked(self, context: ActionContext) -> list[str]:
-        prefix = workspace_session_namespace_prefix(context)
-        return [
-            session_id for session_id in self._sessions if session_id.startswith(prefix)
-        ]
+        context = ActionContext.model_validate(context).without_installation()
+        return list(
+            self._session_ids_by_workspace.get(
+                (context.instance_uuid, context.workspace_uuid),
+                (),
+            )
+        )
 
     def _drop_workspace_sessions_locked(
         self, context: ActionContext
@@ -568,14 +600,57 @@ class BoxRuntime:
     ) -> list[asyncio.Task[None]]:
         current_time = now or dt.datetime.now(_UTC)
         cleanup_tasks: list[asyncio.Task[None]] = []
-        for key, grant in tuple(self._admission_grants.items()):
-            if not grant.is_expired(current_time):
+        deadline = current_time.timestamp()
+        while (
+            self._admission_expiry_heap
+            and self._admission_expiry_heap[0][0] <= deadline
+        ):
+            expires_at, key, revision, generation = heapq.heappop(
+                self._admission_expiry_heap
+            )
+            grant = self._admission_grants.get(key)
+            if grant is None:
+                continue
+            if (
+                grant.expires_at.timestamp() != expires_at
+                or grant.entitlement_revision != revision
+                or grant.execution_generation != generation
+                or not grant.is_expired(current_time)
+            ):
+                # A renewed/replaced grant owns a newer heap entry.
                 continue
             self._admission_grants.pop(key, None)
             cleanup_tasks.extend(
                 self._drop_workspace_sessions_locked(self._grant_context(grant))
             )
         return cleanup_tasks
+
+    def _index_admission_expiry_locked(
+        self,
+        grant: SandboxAdmissionGrant,
+    ) -> None:
+        heapq.heappush(
+            self._admission_expiry_heap,
+            (
+                grant.expires_at.timestamp(),
+                grant.workspace_key,
+                grant.entitlement_revision,
+                grant.execution_generation,
+            ),
+        )
+        compact_limit = len(self._admission_grants) * 2 + 1_024
+        if len(self._admission_expiry_heap) <= compact_limit:
+            return
+        self._admission_expiry_heap = [
+            (
+                current.expires_at.timestamp(),
+                current.workspace_key,
+                current.entitlement_revision,
+                current.execution_generation,
+            )
+            for current in self._admission_grants.values()
+        ]
+        heapq.heapify(self._admission_expiry_heap)
 
     def _require_admission_locked(
         self, action_context: ActionContext
@@ -650,6 +725,14 @@ class BoxRuntime:
         installed_grant = grant
         async with self._lock:
             cleanup_tasks.extend(self._reap_expired_admissions_locked(now))
+            if (
+                key not in self._admission_revisions
+                and len(self._admission_revisions) >= self.max_admission_records
+            ):
+                raise BoxAdmissionError(
+                    "Sandbox admission record capacity reached; "
+                    "refusing an unbounded Workspace fence allocation"
+                )
             revoked_revision = self._revoked_admission_revisions.get(key, 0)
             if grant.entitlement_revision <= revoked_revision:
                 raise BoxAdmissionError("Sandbox admission grant revision was revoked")
@@ -688,6 +771,7 @@ class BoxRuntime:
                 installed_grant = current
             else:
                 self._admission_grants[key] = grant
+                self._index_admission_expiry_locked(grant)
                 self._admission_revisions[key] = grant.entitlement_revision
                 self._admission_generations[key] = grant.execution_generation
                 self._admission_limit_fingerprints[key] = limit_fingerprint
@@ -729,6 +813,14 @@ class BoxRuntime:
         key = revocation.workspace_key
         cleanup_tasks: list[asyncio.Task[None]] = []
         async with self._lock:
+            if (
+                key not in self._admission_revisions
+                and len(self._admission_revisions) >= self.max_admission_records
+            ):
+                raise BoxAdmissionError(
+                    "Sandbox admission record capacity reached; "
+                    "refusing an unbounded Workspace fence allocation"
+                )
             highest_revision = self._admission_revisions.get(key, 0)
             revoked_revision = self._revoked_admission_revisions.get(key, 0)
             if revocation.entitlement_revision < max(
@@ -837,11 +929,11 @@ class BoxRuntime:
     async def stop_background_reaper(self) -> None:
         task = self._reaper_task
         self._reaper_task = None
-        if task is None:
-            return
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await self.event_loop_monitor.stop()
 
     async def _reaper_loop(self) -> None:
         while self.session_ttl_sec > 0 or self.admission_required:
@@ -978,7 +1070,8 @@ class BoxRuntime:
                     )
                 running = sum(
                     1
-                    for session in self._sessions.values()
+                    for session_id in self._managed_process_session_ids
+                    if (session := self._sessions.get(session_id)) is not None
                     for managed_id, managed in session.managed_processes.items()
                     if managed.is_running
                     and not (session is runtime_session and managed_id == process_id)
@@ -999,6 +1092,10 @@ class BoxRuntime:
                     )
                     await self._terminate_managed_process(existing)
                     del runtime_session.managed_processes[process_id]
+                    self._sync_managed_process_session_index(
+                        session_id,
+                        runtime_session,
+                    )
 
                 backend = await self._get_backend()
                 process = await backend.start_managed_process(
@@ -1015,6 +1112,7 @@ class BoxRuntime:
                 stderr_chunks=collections.deque(),
             )
             runtime_session.managed_processes[process_id] = managed_process
+            self._managed_process_session_ids.add(session_id)
             runtime_session.info.last_used_at = dt.datetime.now(_UTC)
             self._track_background_task(
                 asyncio.create_task(
@@ -1059,6 +1157,10 @@ class BoxRuntime:
                     f"session {session_id} has no managed process with process_id={process_id}"
                 )
             await self._terminate_managed_process(managed_process)
+            self._sync_managed_process_session_index(
+                session_id,
+                runtime_session,
+            )
             runtime_session.info.last_used_at = dt.datetime.now(_UTC)
             self.logger.info(
                 f"LangBot Box managed process stopped: session_id={session_id} process_id={process_id}"
@@ -1220,6 +1322,18 @@ class BoxRuntime:
     def get_sessions(self) -> list[dict]:
         return [self._session_to_dict(s.info) for s in self._sessions.values()]
 
+    def get_sessions_for_workspace(
+        self,
+        action_context: ActionContext,
+    ) -> list[dict]:
+        """Return sessions using the Workspace index instead of a global scan."""
+
+        return [
+            self._session_to_dict(self._sessions[session_id].info)
+            for session_id in self._workspace_session_ids_locked(action_context)
+            if session_id in self._sessions
+        ]
+
     def get_session(self, session_id: str) -> dict:
         runtime_session = self._sessions.get(session_id)
         if runtime_session is None:
@@ -1242,7 +1356,8 @@ class BoxRuntime:
             "active_sessions": len(self._sessions),
             "managed_processes": sum(
                 1
-                for runtime_session in self._sessions.values()
+                for session_id in self._managed_process_session_ids
+                if (runtime_session := self._sessions.get(session_id)) is not None
                 for mp in runtime_session.managed_processes.values()
                 if mp.is_running
             ),
@@ -1251,6 +1366,8 @@ class BoxRuntime:
                 "max_sessions": self.max_sessions,
                 "max_managed_processes": self.max_managed_processes,
                 "max_completed_processes": self.max_completed_processes,
+                "max_admission_records": self.max_admission_records,
+                "max_rpc_file_bytes": self.max_rpc_file_bytes,
             },
         }
 
@@ -1378,9 +1495,19 @@ class BoxRuntime:
                 info: BoxSessionInfo | None = None
                 try:
                     info = await backend.start_session(spec)
+                    workspace_key = None
+                    if action_context is not None:
+                        context = ActionContext.model_validate(
+                            action_context
+                        ).without_installation()
+                        workspace_key = (
+                            context.instance_uuid,
+                            context.workspace_uuid,
+                        )
                     runtime_session = _RuntimeSession(
                         info=info,
                         lock=asyncio.Lock(),
+                        workspace_key=workspace_key,
                         extra_mounts_key=new_extra_mounts_key,
                     )
                     async with self._lock:
@@ -1388,6 +1515,13 @@ class BoxRuntime:
                             runtime_session.closing = True
                         else:
                             self._sessions[spec.session_id] = runtime_session
+                            if not runtime_session.info.persistent:
+                                self._expirable_session_ids.add(spec.session_id)
+                            if workspace_key is not None:
+                                self._session_ids_by_workspace.setdefault(
+                                    workspace_key,
+                                    set(),
+                                ).add(spec.session_id)
                             if track_active_exec:
                                 self._active_exec_counts[spec.session_id] += 1
                     if runtime_session.closing:
@@ -1503,15 +1637,19 @@ class BoxRuntime:
             return []
 
         deadline = dt.datetime.now(_UTC) - dt.timedelta(seconds=self.session_ttl_sec)
-        expired_session_ids = [
-            session_id
-            for session_id, session in self._sessions.items()
-            if not session.info.persistent
-            and session.info.last_used_at < deadline
-            and self._active_exec_counts.get(session_id, 0) <= 0
-            and self._session_leases.get(session_id, 0) <= 0
-            and not any(mp.is_running for mp in session.managed_processes.values())
-        ]
+        expired_session_ids: list[str] = []
+        for session_id in tuple(self._expirable_session_ids):
+            session = self._sessions.get(session_id)
+            if session is None:
+                self._expirable_session_ids.discard(session_id)
+                continue
+            if (
+                session.info.last_used_at < deadline
+                and self._active_exec_counts.get(session_id, 0) <= 0
+                and self._session_leases.get(session_id, 0) <= 0
+                and not any(mp.is_running for mp in session.managed_processes.values())
+            ):
+                expired_session_ids.append(session_id)
 
         cleanup_tasks: list[asyncio.Task[None]] = []
         for session_id in expired_session_ids:
@@ -1524,8 +1662,14 @@ class BoxRuntime:
         """Bound retained diagnostics without one sleeping task per process."""
         now = dt.datetime.now(_UTC)
         deadline = now - dt.timedelta(seconds=self.completed_process_retention_sec)
-        completed: list[tuple[dt.datetime, _RuntimeSession, str, _ManagedProcess]] = []
-        for session in self._sessions.values():
+        completed: list[
+            tuple[dt.datetime, str, _RuntimeSession, str, _ManagedProcess]
+        ] = []
+        for session_id in tuple(self._managed_process_session_ids):
+            session = self._sessions.get(session_id)
+            if session is None:
+                self._managed_process_session_ids.discard(session_id)
+                continue
             for process_id, managed_process in list(session.managed_processes.items()):
                 if managed_process.is_running or managed_process.exited_at is None:
                     continue
@@ -1539,20 +1683,36 @@ class BoxRuntime:
                 completed.append(
                     (
                         managed_process.exited_at,
+                        session_id,
                         session,
                         process_id,
                         managed_process,
                     )
                 )
+            self._sync_managed_process_session_index(session_id, session)
 
         overflow = len(completed) - max(self.max_completed_processes, 0)
         if overflow <= 0:
             return
-        for _, session, process_id, managed_process in sorted(
+        for _, session_id, session, process_id, managed_process in sorted(
             completed, key=lambda item: item[0]
         )[:overflow]:
             if session.managed_processes.get(process_id) is managed_process:
                 session.managed_processes.pop(process_id, None)
+                self._sync_managed_process_session_index(
+                    session_id,
+                    session,
+                )
+
+    def _sync_managed_process_session_index(
+        self,
+        session_id: str,
+        runtime_session: _RuntimeSession,
+    ) -> None:
+        if runtime_session.managed_processes:
+            self._managed_process_session_ids.add(session_id)
+        else:
+            self._managed_process_session_ids.discard(session_id)
 
     def _drop_session_locked(self, session_id: str) -> asyncio.Task[None] | None:
         closing_task = self._closing_session_tasks.get(session_id)
@@ -1560,8 +1720,21 @@ class BoxRuntime:
             return closing_task
 
         runtime_session = self._sessions.pop(session_id, None)
+        self._expirable_session_ids.discard(session_id)
+        self._managed_process_session_ids.discard(session_id)
         if runtime_session is not None:
             runtime_session.closing = True
+            if runtime_session.workspace_key is not None:
+                workspace_session_ids = self._session_ids_by_workspace.get(
+                    runtime_session.workspace_key
+                )
+                if workspace_session_ids is not None:
+                    workspace_session_ids.discard(session_id)
+                    if not workspace_session_ids:
+                        self._session_ids_by_workspace.pop(
+                            runtime_session.workspace_key,
+                            None,
+                        )
         self._active_exec_counts.pop(session_id, None)
         backend = self._backend
         if runtime_session is None or backend is None:
@@ -1584,6 +1757,7 @@ class BoxRuntime:
                 for mp in list(runtime_session.managed_processes.values()):
                     await self._terminate_managed_process(mp)
                 runtime_session.managed_processes.clear()
+                self._managed_process_session_ids.discard(session_id)
 
                 try:
                     self.logger.info(
@@ -1660,9 +1834,23 @@ class BoxRuntime:
         if stream is None:
             return
 
+        log_window_started = time.monotonic()
+        logged_chunks = 0
+        suppressed_chunks = 0
+
+        def flush_suppressed() -> None:
+            nonlocal suppressed_chunks
+            if suppressed_chunks:
+                self.logger.warning(
+                    "LangBot Box suppressed managed-process stderr chunks: "
+                    f"session_id={session_id} process_id={process_id} "
+                    f"suppressed={suppressed_chunks}"
+                )
+                suppressed_chunks = 0
+
         try:
             while True:
-                chunk = await stream.readline()
+                chunk = await stream.read(_MANAGED_PROCESS_STDERR_READ_BYTES)
                 if not chunk:
                     break
                 text = chunk.decode("utf-8", errors="replace").rstrip()
@@ -1679,13 +1867,27 @@ class BoxRuntime:
                 ):
                     removed = managed_process.stderr_chunks.popleft()
                     managed_process.stderr_total_len -= len(removed) + 1
-                self.logger.info(
-                    f"LangBot Box managed process stderr: session_id={session_id} process_id={process_id} {text}"
-                )
+
+                now = time.monotonic()
+                if now - log_window_started >= _MANAGED_PROCESS_STDERR_LOG_WINDOW_SEC:
+                    flush_suppressed()
+                    log_window_started = now
+                    logged_chunks = 0
+                if logged_chunks < _MANAGED_PROCESS_STDERR_LOG_CHUNKS_PER_WINDOW:
+                    excerpt = text[:_MANAGED_PROCESS_STDERR_LOG_EXCERPT_CHARS]
+                    self.logger.info(
+                        "LangBot Box managed process stderr: "
+                        f"session_id={session_id} process_id={process_id} {excerpt}"
+                    )
+                    logged_chunks += 1
+                else:
+                    suppressed_chunks += 1
         except Exception as exc:
             self.logger.warning(
                 f"Failed to drain managed process stderr for {session_id}/{process_id}: {exc}"
             )
+        finally:
+            flush_suppressed()
 
     async def _watch_managed_process(
         self, session_id: str, process_id: str, managed_process: _ManagedProcess

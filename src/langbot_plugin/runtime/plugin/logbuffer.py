@@ -24,6 +24,8 @@ _KNOWN_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 # Default ring-buffer capacity (number of log lines retained per plugin).
 DEFAULT_MAX_LINES = 1000
+MAX_LOG_LINE_BYTES = 64 * 1024
+_LOG_READ_CHUNK_BYTES = 64 * 1024
 
 
 class PluginLogBuffer:
@@ -113,13 +115,40 @@ class PluginLogBuffer:
         self._buffer.clear()
 
     async def attach_stream(self, stream: asyncio.StreamReader) -> None:
-        """Continuously read lines from a stream into the buffer until EOF."""
+        """Continuously drain stderr without retaining an unbounded log line."""
+        pending = bytearray()
+        truncated = False
+
+        def flush_line() -> None:
+            nonlocal truncated
+            if not pending and not truncated:
+                return
+            text = bytes(pending).decode("utf-8", errors="replace")
+            if truncated:
+                text += f"... [log line clipped at {MAX_LOG_LINE_BYTES} bytes]"
+            self.add_line(text)
+            pending.clear()
+            truncated = False
+
         try:
             while True:
-                line_bytes = await stream.readline()
-                if not line_bytes:
+                chunk = await stream.read(_LOG_READ_CHUNK_BYTES)
+                if not chunk:
                     break
-                self.add_line(line_bytes.decode("utf-8", errors="replace"))
+                offset = 0
+                while offset < len(chunk):
+                    newline = chunk.find(b"\n", offset)
+                    end = len(chunk) if newline < 0 else newline + 1
+                    part = chunk[offset:end]
+                    remaining = MAX_LOG_LINE_BYTES - len(pending)
+                    if remaining > 0:
+                        pending.extend(part[:remaining])
+                    if len(part) > remaining:
+                        truncated = True
+                    offset = end
+                    if newline >= 0:
+                        flush_line()
+            flush_line()
         except Exception as e:  # noqa: BLE001 - reader must never crash the runtime
             logger.debug(f"Plugin log stream reader stopped: {e}")
 

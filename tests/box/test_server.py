@@ -114,6 +114,16 @@ def mock_runtime():
     """
     runtime = mock.MagicMock()
     runtime.admission_required = False
+    runtime.max_admission_records = 100
+    runtime.max_rpc_file_bytes = 20 * 1024 * 1024
+    runtime.skill_operation_lock = asyncio.Lock()
+    runtime.blocking_executor = None
+    runtime.event_loop_monitor = None
+    runtime._sessions = {}
+    runtime._managed_process_session_ids = set()
+    runtime._creating_session_tasks = {}
+    runtime._closing_session_tasks = {}
+    runtime._background_tasks = set()
 
     runtime.get_backend_info = mock.AsyncMock(
         return_value={"name": "docker", "available": True}
@@ -130,6 +140,9 @@ def mock_runtime():
     runtime.create_session = mock.AsyncMock(return_value={"session_id": "s1"})
     runtime.get_session = mock.MagicMock(return_value={"session_id": "s1"})
     runtime.get_sessions = mock.MagicMock(return_value=[{"session_id": "s1"}])
+    runtime.get_sessions_for_workspace = mock.MagicMock(
+        return_value=[{"session_id": "s1"}]
+    )
     runtime.delete_session = mock.AsyncMock()
     runtime.start_managed_process = mock.AsyncMock(
         return_value={"process_id": "default", "status": "running"}
@@ -359,7 +372,9 @@ async def test_generation_advance_retires_old_sessions_and_rejects_rollback(
 
     old_physical_id = namespace_session_id(_ACTION_CONTEXT, "shared")
     sessions = [{"session_id": old_physical_id}]
-    mock_runtime.get_sessions.side_effect = lambda: list(sessions)
+    mock_runtime.get_sessions_for_workspace.side_effect = lambda _context: list(
+        sessions
+    )
 
     async def delete_session(session_id):
         sessions[:] = [
@@ -387,6 +402,54 @@ async def test_generation_advance_retires_old_sessions_and_rejects_rollback(
             LangBotToBoxAction.GET_SESSIONS,
             {},
         )
+    # RPC-only Workspaces do not allocate relay Events. The Event is created
+    # lazily only when a managed-process relay actually waits on the fence.
+    assert generation_fence._stale_events == {}
+
+
+def test_generation_fence_workspace_records_are_bounded():
+    generation_fence = BoxGenerationFence(max_records=1)
+    advanced = _ACTION_CONTEXT.model_copy(update={"placement_generation": 2})
+    second_workspace = _ACTION_CONTEXT.model_copy(
+        update={"workspace_uuid": "workspace-b"}
+    )
+
+    generation_fence.observe(_ACTION_CONTEXT)
+    generation_fence.observe(advanced)
+
+    with pytest.raises(PermissionError, match="fence capacity reached"):
+        generation_fence.observe(second_workspace)
+
+
+def test_generation_fence_advance_does_not_scan_other_workspaces():
+    class NoGlobalItemsScan(dict):
+        def items(self):
+            raise AssertionError("generation advance scanned every Workspace")
+
+    generation_fence = BoxGenerationFence(max_records=1_000)
+    contexts = [
+        ActionContext(
+            instance_uuid="instance-a",
+            workspace_uuid=f"workspace-{index}",
+            placement_generation=1,
+        )
+        for index in range(1_000)
+    ]
+    for context in contexts:
+        generation_fence.observe(context)
+
+    previous_event = asyncio.Event()
+    generation_fence._stale_events[("instance-a", "workspace-500", 1)] = previous_event
+    generation_fence._stale_events = NoGlobalItemsScan(generation_fence._stale_events)
+    generation_fence._active_tasks = NoGlobalItemsScan(generation_fence._active_tasks)
+
+    generation_fence.observe(
+        contexts[500].model_copy(update={"placement_generation": 2})
+    )
+
+    assert previous_event.is_set()
+    assert ("instance-a", "workspace-500", 1) not in generation_fence._stale_events
+    assert ("instance-a", "workspace-500", 2) not in generation_fence._stale_events
 
 
 async def test_generation_advance_cancels_inflight_old_rpc_and_retires_late_session(
@@ -410,7 +473,7 @@ async def test_generation_advance_cancels_inflight_old_rpc_and_retires_late_sess
     sessions: list[dict[str, str]] = []
     old_session_id = namespace_session_id(_ACTION_CONTEXT, "late")
 
-    async def execute_old(_spec):
+    async def execute_old(_spec, **_kwargs):
         started.set()
         try:
             await asyncio.Event().wait()
@@ -426,7 +489,9 @@ async def test_generation_advance_cancels_inflight_old_rpc_and_retires_late_sess
         raise BoxSessionNotFoundError(f"session {session_id} not found")
 
     mock_runtime.execute.side_effect = execute_old
-    mock_runtime.get_sessions.side_effect = lambda: list(sessions)
+    mock_runtime.get_sessions_for_workspace.side_effect = lambda _context: list(
+        sessions
+    )
     mock_runtime.delete_session.side_effect = delete_session
 
     old_task = asyncio.create_task(
@@ -635,6 +700,7 @@ async def test_grant_enforced_exec_passes_trusted_context_to_runtime(
 
     assert resp.code == 0
     assert resp.data["session_id"] == "global"
+    mock_runtime.execute.assert_awaited_once()
     (spec,) = mock_runtime.execute.await_args.args
     assert spec.session_id == "caller-controlled"
     assert mock_runtime.execute.await_args.kwargs["action_context"] == _ACTION_CONTEXT
@@ -696,7 +762,7 @@ async def test_grant_enforced_session_lookup_rejects_non_global_id(
 
 
 async def test_get_sessions_wraps_list(handler, mock_runtime):
-    mock_runtime.get_sessions.return_value = [
+    mock_runtime.get_sessions_for_workspace.return_value = [
         {"session_id": _physical_session_id("a")},
         {"session_id": _physical_session_id("b")},
         {"session_id": "ws-other-foreign"},
@@ -1191,10 +1257,173 @@ def test_create_ws_relay_app_is_alias(mock_runtime):
     assert app["runtime"] is mock_runtime
 
 
+async def test_run_server_cleans_runtime_when_app_setup_fails(monkeypatch):
+    calls = []
+
+    class FakeRuntime:
+        max_admission_records = 100
+
+        def __init__(self, *, logger):
+            self.logger = logger
+
+        async def initialize(self):
+            calls.append("initialize")
+
+        async def shutdown(self):
+            calls.append("shutdown")
+
+        async def stop_background_reaper(self):
+            calls.append("stop_background_reaper")
+
+    monkeypatch.setenv(server.BOX_CONTROL_TOKEN_ENV, _CONTROL_TOKEN)
+    monkeypatch.setattr(server, "BoxRuntime", FakeRuntime)
+    monkeypatch.setattr(
+        server,
+        "configure_bounded_default_executor_from_env",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        server,
+        "create_app",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("setup failed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="setup failed"):
+        await server._run_server("127.0.0.1", 5410, "ws")
+
+    assert calls == ["initialize", "shutdown", "stop_background_reaper"]
+
+
+async def test_run_server_fails_closed_and_cleans_up_on_ws_bind_error(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeRuntime:
+        max_admission_records = 100
+
+        def __init__(self, *, logger):
+            self.logger = logger
+
+        async def initialize(self):
+            calls.append("initialize")
+
+        async def shutdown(self):
+            calls.append("shutdown")
+
+        async def stop_background_reaper(self):
+            calls.append("stop_background_reaper")
+
+    class FakeRunner:
+        def __init__(self, _app):
+            pass
+
+        async def setup(self):
+            calls.append("runner_setup")
+
+        async def cleanup(self):
+            calls.append("runner_cleanup")
+
+    class FakeSite:
+        def __init__(self, _runner, _host, _port):
+            pass
+
+        async def start(self):
+            raise OSError("address in use")
+
+    monkeypatch.setenv(server.BOX_CONTROL_TOKEN_ENV, _CONTROL_TOKEN)
+    monkeypatch.setattr(server, "BoxRuntime", FakeRuntime)
+    monkeypatch.setattr(
+        server,
+        "configure_bounded_default_executor_from_env",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(server.web, "AppRunner", FakeRunner)
+    monkeypatch.setattr(server.web, "TCPSite", FakeSite)
+
+    with pytest.raises(OSError, match="address in use"):
+        await server._run_server("127.0.0.1", 5410, "ws")
+
+    assert calls == [
+        "initialize",
+        "runner_setup",
+        "runner_cleanup",
+        "shutdown",
+        "stop_background_reaper",
+    ]
+
+
 async def test_healthz_is_liveness_only():
-    response = await handle_healthz(mock.MagicMock())
+    blocking_executor = mock.MagicMock()
+    blocking_executor.snapshot.return_value = {
+        "max_workers": 8,
+        "max_pending": 128,
+        "inflight": 0,
+    }
+    running = SimpleNamespace(is_running=True)
+    completed = SimpleNamespace(is_running=False)
+    runtime = SimpleNamespace(
+        blocking_executor=blocking_executor,
+        _sessions={
+            "session-a": SimpleNamespace(
+                managed_processes={
+                    "running": running,
+                    "completed": completed,
+                }
+            )
+        },
+        _creating_session_tasks=set(),
+        _closing_session_tasks=set(),
+        _background_tasks=set(),
+    )
+    request = mock.MagicMock()
+    request.app = {server._APP_RUNTIME_KEY: runtime}
+
+    response = await handle_healthz(request)
+
     assert response.status == 200
     assert '"live": true' in response.text
+    assert '"sessions": 1' in response.text
+    assert '"managed_processes": 1' in response.text
+    assert '"completed_processes": 1' in response.text
+    assert '"max_pending": 128' in response.text
+    assert '"event_loop": {}' in response.text
+
+
+async def test_healthz_does_not_scan_sessions_without_managed_processes():
+    class NoGlobalIterationDict(dict):
+        def __iter__(self):
+            raise AssertionError("Box health globally scanned persistent sessions")
+
+        def items(self):
+            raise AssertionError("Box health globally scanned persistent sessions")
+
+        def values(self):
+            raise AssertionError("Box health globally scanned persistent sessions")
+
+    runtime = SimpleNamespace(
+        blocking_executor=None,
+        _sessions=NoGlobalIterationDict(
+            {
+                "workspace-a": SimpleNamespace(managed_processes={}),
+                "workspace-b": SimpleNamespace(managed_processes={}),
+            }
+        ),
+        _managed_process_session_ids=set(),
+        _creating_session_tasks=set(),
+        _closing_session_tasks=set(),
+        _background_tasks=set(),
+    )
+    request = mock.MagicMock()
+    request.app = {server._APP_RUNTIME_KEY: runtime}
+
+    response = await handle_healthz(request)
+
+    assert response.status == 200
+    assert '"sessions": 2' in response.text
+    assert '"managed_processes": 0' in response.text
 
 
 async def test_readyz_returns_503_when_strict_checks_fail(mock_runtime):
@@ -1208,6 +1437,8 @@ async def test_readyz_returns_503_when_strict_checks_fail(mock_runtime):
 
     assert response.status == 503
     assert '"ready": false' in response.text
+    assert '"resources":' in response.text
+    assert '"event_loop": {}' in response.text
 
 
 # ── handle_rpc_ws ────────────────────────────────────────────────────
@@ -1479,10 +1710,14 @@ async def test_managed_process_ws_stdio_unavailable_closes_ws(mock_runtime):
 async def test_managed_process_ws_forwards_stdout_and_closes(mock_runtime):
     class FakeStdout:
         def __init__(self):
-            self.lines = [b"hello\n", b""]
+            # A plugin may emit a large payload without a newline. The relay
+            # must consume bounded chunks instead of readline(), whose stream
+            # limit can otherwise terminate the attachment.
+            self.chunks = [b"x" * (64 * 1024), b"tail", b""]
 
-        async def readline(self):
-            return self.lines.pop(0)
+        async def read(self, max_bytes):
+            assert max_bytes == 64 * 1024
+            return self.chunks.pop(0)
 
     class BlockingWebSocket:
         def __init__(self):
@@ -1523,14 +1758,14 @@ async def test_managed_process_ws_forwards_stdout_and_closes(mock_runtime):
         result = await handle_managed_process_ws(request)
 
     assert result is fake_ws
-    assert fake_ws.sent == ["hello"]
+    assert fake_ws.sent == ["x" * (64 * 1024), "tail"]
     assert fake_ws.closed is True
     assert runtime_session.info.last_used_at is not None
 
 
 async def test_managed_process_ws_forwards_text_stdin(mock_runtime):
     class BlockingStdout:
-        async def readline(self):
+        async def read(self, _max_bytes):
             await asyncio.Event().wait()
 
     class FakeStdin:
@@ -1616,7 +1851,7 @@ async def test_active_managed_process_relay_closes_when_generation_advances(
     mock_runtime,
 ):
     class BlockingStdout:
-        async def readline(self):
+        async def read(self, _max_bytes):
             await asyncio.Event().wait()
 
     class FakeStdin:

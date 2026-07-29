@@ -468,6 +468,7 @@ class ControlConnectionHandler(handler.Handler):
                 {
                     "plugin_debug_key": runtime_settings.plugin_debug_key,
                     "ws_debug_port": self.context.ws_debug_port,
+                    "resources": self.context.get_runtime_resource_stats(),
                 }
             )
 

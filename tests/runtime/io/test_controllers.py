@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from http import HTTPStatus
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -391,7 +392,39 @@ def test_websocket_server_health_endpoint():
     )
 
     assert result is response
-    connection.respond.assert_called_once_with(HTTPStatus.OK, "ok\n")
+    connection.respond.assert_called_once_with(
+        HTTPStatus.OK,
+        '{"live":true}\n',
+    )
+
+
+def test_websocket_server_health_endpoint_exposes_aggregate_snapshot():
+    connection = MagicMock()
+    response = object()
+    connection.respond.return_value = response
+
+    result = ws_server.process_http_request(
+        connection,
+        SimpleNamespace(path="/healthz"),
+        lambda: {
+            "live": True,
+            "resources": {
+                "event_loop": {"recent_max_lag_ms": 12.5},
+                "plugin_handlers": 3,
+            },
+        },
+    )
+
+    assert result is response
+    status, body = connection.respond.call_args.args
+    assert status is HTTPStatus.OK
+    assert json.loads(body) == {
+        "live": True,
+        "resources": {
+            "event_loop": {"recent_max_lag_ms": 12.5},
+            "plugin_handlers": 3,
+        },
+    }
 
 
 def test_websocket_server_non_health_request_continues_handshake():

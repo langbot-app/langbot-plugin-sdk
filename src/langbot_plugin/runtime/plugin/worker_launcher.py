@@ -26,6 +26,7 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
     PluginDependencyEnvironmentStore,
 )
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
+from langbot_plugin.runtime import bounded_executor
 from langbot_plugin.runtime.security import (
     PLUGIN_REGISTRATION_CAPABILITY_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
@@ -190,7 +191,11 @@ class PluginWorkerLauncher:
     ) -> None:
         if not requirements:
             return
-        args = self.build_dependency_prepare_nsjail_args(staging, requirements)
+        args = await bounded_executor.run_blocking_atomic(
+            self.build_dependency_prepare_nsjail_args,
+            staging,
+            requirements,
+        )
         process = await asyncio.create_subprocess_exec(
             str(self.nsjail_path),
             *args,
@@ -210,6 +215,14 @@ class PluginWorkerLauncher:
             raise DependencyEnvironmentPreparationError(
                 "Plugin dependency installation timed out"
             ) from exc
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            raise
         if process.returncode != 0:
             # Never reflect pip output: configured indexes and backend errors
             # can contain credentials. The exit code is stable and sufficient

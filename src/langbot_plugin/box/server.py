@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import datetime as dt
 import hmac
 import logging
@@ -38,6 +39,9 @@ from langbot_plugin.entities.io.resp import ActionResponse
 from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.runtime.io.connection import Connection, MAX_MESSAGE_BYTES
 from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.runtime.bounded_executor import (
+    configure_bounded_default_executor_from_env,
+)
 from langbot_plugin.utils.log import configure_process_logging
 
 from .actions import LangBotToBoxAction
@@ -136,10 +140,14 @@ class BoxGenerationFence:
     because its namespace intentionally excludes the generation.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_records: int = 100_000) -> None:
+        self._max_records = max(int(max_records), 1)
         self._current: dict[tuple[str, str], int] = {}
         self._stale_events: dict[tuple[str, str, int], asyncio.Event] = {}
         self._active_tasks: dict[tuple[str, str, int], set[asyncio.Task[Any]]] = {}
+        self._active_task_keys_by_workspace: dict[
+            tuple[str, str], set[tuple[str, str, int]]
+        ] = {}
 
     @staticmethod
     def _workspace_key(context: ActionContext) -> tuple[str, str]:
@@ -156,28 +164,35 @@ class BoxGenerationFence:
         context = ActionContext.model_validate(action_context).without_installation()
         key = self._workspace_key(context)
         current = self._current.get(key)
+        if current is None and len(self._current) >= self._max_records:
+            raise PermissionError(
+                "Box generation fence capacity reached; "
+                "refusing an unbounded Workspace allocation"
+            )
         if current is not None and context.placement_generation < current:
             raise PermissionError("Stale Box placement generation")
         if current == context.placement_generation:
             return False
 
         self._current[key] = context.placement_generation
-        for event_key, event in tuple(self._stale_events.items()):
-            if event_key[:2] == key and event_key[2] < context.placement_generation:
-                event.set()
+        if current is not None:
+            previous_event = self._stale_events.pop((*key, current), None)
+            if previous_event is not None:
+                # Existing waiters keep their Event reference. The fence only
+                # needs to index the current generation for future waiters.
+                previous_event.set()
         try:
             observing_task = asyncio.current_task()
         except RuntimeError:
             observing_task = None
-        for task_key, tasks in tuple(self._active_tasks.items()):
-            if task_key[:2] != key or task_key[2] >= context.placement_generation:
+        task_keys = self._active_task_keys_by_workspace.get(key, ())
+        for task_key in tuple(task_keys):
+            if task_key[2] >= context.placement_generation:
                 continue
+            tasks = self._active_tasks.get(task_key, ())
             for task in tuple(tasks):
                 if task is not observing_task and not task.done():
                     task.cancel()
-        self._stale_events.setdefault(
-            (*key, context.placement_generation), asyncio.Event()
-        )
         return True
 
     def require_current(self, action_context: ActionContext) -> None:
@@ -210,6 +225,10 @@ class BoxGenerationFence:
         task_key = (*self._workspace_key(context), context.placement_generation)
         if task is not None:
             self._active_tasks.setdefault(task_key, set()).add(task)
+            self._active_task_keys_by_workspace.setdefault(
+                self._workspace_key(context),
+                set(),
+            ).add(task_key)
         try:
             await self._retire_stale_sessions(runtime, context)
             self.require_current(context)
@@ -243,6 +262,12 @@ class BoxGenerationFence:
         tasks.discard(task)
         if not tasks:
             self._active_tasks.pop(task_key, None)
+            workspace_key = task_key[:2]
+            workspace_task_keys = self._active_task_keys_by_workspace.get(workspace_key)
+            if workspace_task_keys is not None:
+                workspace_task_keys.discard(task_key)
+                if not workspace_task_keys:
+                    self._active_task_keys_by_workspace.pop(workspace_key, None)
 
     async def _retire_stale_sessions(
         self,
@@ -260,7 +285,7 @@ class BoxGenerationFence:
         workspace_prefix = workspace_session_namespace_prefix(current_context)
         stale_session_ids = [
             str(session.get("session_id") or "")
-            for session in runtime.get_sessions()
+            for session in runtime.get_sessions_for_workspace(context)
             if str(session.get("session_id") or "").startswith(workspace_prefix)
             and not str(session.get("session_id") or "").startswith(current_prefix)
         ]
@@ -381,11 +406,16 @@ class BoxServerHandler(Handler):
         trusted_instance_uuid: str,
         generation_fence: BoxGenerationFence | None = None,
     ):
-        super().__init__(connection)
+        super().__init__(
+            connection,
+            max_file_bytes=runtime.max_rpc_file_bytes,
+        )
         self._runtime = runtime
         self._host_control_authenticated = bool(host_control_authenticated)
         self._trusted_instance_uuid = normalize_instance_uuid(trusted_instance_uuid)
-        self._generation_fence = generation_fence or BoxGenerationFence()
+        self._generation_fence = generation_fence or BoxGenerationFence(
+            max_records=runtime.max_admission_records
+        )
         inherited_file_chunk = self.actions[CommonAction.FILE_CHUNK.value]
 
         async def authenticated_file_chunk(data: dict[str, Any]) -> ActionResponse:
@@ -492,11 +522,19 @@ class BoxServerHandler(Handler):
     def _skill_store(self):
         return self._runtime.skill_store.scoped(box_namespace(self._action_context()))
 
+    async def _call_skill_store(self, method_name: str, *args, **kwargs):
+        scoped_store = self._skill_store()
+        method = getattr(scoped_store, method_name)
+        async with self._runtime.skill_operation_lock:
+            return await asyncio.to_thread(method, *args, **kwargs)
+
     def _workspace_sessions(self) -> list[dict]:
         prefix = session_namespace_prefix(self._action_context())
         return [
             self._logical_session_data(session)
-            for session in self._runtime.get_sessions()
+            for session in self._runtime.get_sessions_for_workspace(
+                self._action_context()
+            )
             if str(session.get("session_id") or "").startswith(prefix)
         ]
 
@@ -556,7 +594,10 @@ class BoxServerHandler(Handler):
                     spec = spec.model_copy(
                         update={"session_id": self._session_id(spec.session_id)}
                     )
-                    result = await self._runtime.execute(spec)
+                    result = await self._runtime.execute(
+                        spec,
+                        action_context=context,
+                    )
             except pydantic.ValidationError as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(
@@ -576,7 +617,10 @@ class BoxServerHandler(Handler):
                     spec = spec.model_copy(
                         update={"session_id": self._session_id(spec.session_id)}
                     )
-                    info = await self._runtime.create_session(spec)
+                    info = await self._runtime.create_session(
+                        spec,
+                        action_context=context,
+                    )
             except pydantic.ValidationError as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(self._logical_session_data(info))
@@ -686,8 +730,9 @@ class BoxServerHandler(Handler):
         async def verify_shared_workspace(data: dict[str, Any]) -> ActionResponse:
             self._require_host_control()
             try:
-                result = self._runtime.verify_shared_workspace(
-                    data.get("marker_name", "")
+                result = await asyncio.to_thread(
+                    self._runtime.verify_shared_workspace,
+                    data.get("marker_name", ""),
                 )
             except Exception as exc:
                 return ActionResponse.error(f"BoxReadinessError: {exc}")
@@ -695,17 +740,24 @@ class BoxServerHandler(Handler):
 
         @self.action(LangBotToBoxAction.LIST_SKILLS)
         async def list_skills(data: dict[str, Any]) -> ActionResponse:
-            return ActionResponse.success({"skills": self._skill_store().list_skills()})
+            skills = await self._call_skill_store("list_skills")
+            return ActionResponse.success({"skills": skills})
 
         @self.action(LangBotToBoxAction.GET_SKILL)
         async def get_skill(data: dict[str, Any]) -> ActionResponse:
-            skill = self._skill_store().get_skill(data["name"])
+            skill = await self._call_skill_store(
+                "get_skill",
+                data["name"],
+            )
             return ActionResponse.success({"skill": skill})
 
         @self.action(LangBotToBoxAction.CREATE_SKILL)
         async def create_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._skill_store().create_skill(data["skill"])
+                skill = await self._call_skill_store(
+                    "create_skill",
+                    data["skill"],
+                )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success({"skill": skill})
@@ -713,7 +765,11 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.UPDATE_SKILL)
         async def update_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._skill_store().update_skill(data["name"], data["skill"])
+                skill = await self._call_skill_store(
+                    "update_skill",
+                    data["name"],
+                    data["skill"],
+                )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success({"skill": skill})
@@ -721,7 +777,10 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.DELETE_SKILL)
         async def delete_skill(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._skill_store().delete_skill(data["name"])
+                result = await self._call_skill_store(
+                    "delete_skill",
+                    data["name"],
+                )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
@@ -729,7 +788,10 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.SCAN_SKILL_DIRECTORY)
         async def scan_skill_directory(data: dict[str, Any]) -> ActionResponse:
             try:
-                skill = self._skill_store().scan_directory(data["path"])
+                skill = await self._call_skill_store(
+                    "scan_directory",
+                    data["path"],
+                )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(skill)
@@ -737,7 +799,8 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.LIST_SKILL_FILES)
         async def list_skill_files(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._skill_store().list_skill_files(
+                result = await self._call_skill_store(
+                    "list_skill_files",
                     data["name"],
                     data.get("path", "."),
                     include_hidden=bool(data.get("include_hidden", False)),
@@ -750,7 +813,11 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.READ_SKILL_FILE)
         async def read_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._skill_store().read_skill_file(data["name"], data["path"])
+                result = await self._call_skill_store(
+                    "read_skill_file",
+                    data["name"],
+                    data["path"],
+                )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(result)
@@ -758,8 +825,11 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.WRITE_SKILL_FILE)
         async def write_skill_file(data: dict[str, Any]) -> ActionResponse:
             try:
-                result = self._skill_store().write_skill_file(
-                    data["name"], data["path"], data.get("content", "")
+                result = await self._call_skill_store(
+                    "write_skill_file",
+                    data["name"],
+                    data["path"],
+                    data.get("content", ""),
                 )
             except Exception as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
@@ -770,7 +840,8 @@ class BoxServerHandler(Handler):
             try:
                 file_bytes = await self.read_local_file(data["file_key"])
                 await self.delete_local_file(data["file_key"])
-                result = self._skill_store().preview_zip_upload(
+                result = await self._call_skill_store(
+                    "preview_zip_upload",
                     file_bytes=file_bytes,
                     filename=data.get("filename", "skill.zip"),
                     source_subdir=data.get("source_subdir") or "",
@@ -785,7 +856,8 @@ class BoxServerHandler(Handler):
             try:
                 file_bytes = await self.read_local_file(data["file_key"])
                 await self.delete_local_file(data["file_key"])
-                result = self._skill_store().install_zip_upload(
+                result = await self._call_skill_store(
+                    "install_zip_upload",
                     file_bytes=file_bytes,
                     filename=data.get("filename", "skill.zip"),
                     source_paths=data.get("source_paths") or [],
@@ -896,13 +968,11 @@ async def handle_managed_process_ws(request: web.Request) -> web.StreamResponse:
 
             async def _stdout_to_ws() -> None:
                 while True:
-                    line = await stdout.readline()
-                    if not line:
+                    chunk = await stdout.read(64 * 1024)
+                    if not chunk:
                         break
                     generation_fence.require_current(action_context)
-                    await ws.send_str(
-                        line.decode("utf-8", errors="replace").rstrip("\n")
-                    )
+                    await ws.send_str(chunk.decode("utf-8", errors="replace"))
                     runtime_session.info.last_used_at = dt.datetime.now(dt.timezone.utc)
 
             async def _ws_to_stdin() -> None:
@@ -988,17 +1058,62 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
     return ws
 
 
+def _runtime_resource_stats(runtime: BoxRuntime) -> dict[str, Any]:
+    """Return aggregate O(active-process-session) public health counters."""
+
+    blocking_executor = getattr(runtime, "blocking_executor", None)
+    managed_session_ids = getattr(
+        runtime,
+        "_managed_process_session_ids",
+        runtime._sessions,
+    )
+    managed_processes = [
+        managed
+        for session_id in managed_session_ids
+        if (session := runtime._sessions.get(session_id)) is not None
+        for managed in session.managed_processes.values()
+    ]
+    event_loop_monitor = getattr(runtime, "event_loop_monitor", None)
+    return {
+        "event_loop": (
+            event_loop_monitor.snapshot()
+            if event_loop_monitor is not None
+            else {}
+        ),
+        "blocking_executor": (
+            blocking_executor.snapshot() if blocking_executor is not None else {}
+        ),
+        "sessions": len(runtime._sessions),
+        "managed_processes": sum(
+            1 for managed in managed_processes if managed.is_running
+        ),
+        "completed_processes": sum(
+            1 for managed in managed_processes if not managed.is_running
+        ),
+        "creating_session_tasks": len(runtime._creating_session_tasks),
+        "closing_session_tasks": len(runtime._closing_session_tasks),
+        "background_tasks": len(runtime._background_tasks),
+    }
+
+
 async def handle_healthz(request: web.Request) -> web.Response:
     """Process liveness probe; it intentionally does not claim isolation readiness."""
 
-    return web.json_response({"live": True})
+    runtime: BoxRuntime = request.app[_APP_RUNTIME_KEY]
+    return web.json_response(
+        {
+            "live": True,
+            "resources": _runtime_resource_stats(runtime),
+        }
+    )
 
 
 async def handle_readyz(request: web.Request) -> web.Response:
     """Strict readiness probe used by shared managed-sandbox deployments."""
 
     runtime: BoxRuntime = request.app[_APP_RUNTIME_KEY]
-    readiness = await runtime.get_readiness()
+    readiness = dict(await runtime.get_readiness())
+    readiness["resources"] = _runtime_resource_stats(runtime)
     return web.json_response(
         readiness,
         status=200 if readiness.get("ready") else 503,
@@ -1046,7 +1161,9 @@ def create_app(
             else None
         )
     }
-    app[_APP_GENERATION_FENCE_KEY] = generation_fence or BoxGenerationFence()
+    app[_APP_GENERATION_FENCE_KEY] = generation_fence or BoxGenerationFence(
+        max_records=runtime.max_admission_records
+    )
     app[_ACTIVE_WEBSOCKETS_KEY] = set()
     app.on_shutdown.append(_close_active_websockets)
     app.router.add_get("/healthz", handle_healthz)
@@ -1086,6 +1203,9 @@ def create_ws_relay_app(
 
 
 async def _run_server(host: str, port: int, mode: str) -> None:
+    blocking_executor = configure_bounded_default_executor_from_env(
+        thread_name_prefix="langbot-box-runtime-blocking",
+    )
     control_token = validate_control_token(os.environ.get(BOX_CONTROL_TOKEN_ENV, ""))
     configured_instance_uuid = (
         os.environ.get(BOX_TRUSTED_INSTANCE_ENV, "").strip() or None
@@ -1098,28 +1218,36 @@ async def _run_server(host: str, port: int, mode: str) -> None:
         configured_instance_uuid = normalize_instance_uuid(configured_instance_uuid)
 
     runtime = BoxRuntime(logger=logger)
-    await runtime.initialize()
-
-    # Start aiohttp — serves managed-process relay and (in ws mode)
-    # also the action RPC endpoint, all on the same port.
+    runtime.blocking_executor = blocking_executor
     runner: web.AppRunner | None = None
+    initialized = False
     try:
-        ws_app = create_app(
-            runtime,
-            control_token=control_token,
-            trusted_instance_uuid=configured_instance_uuid,
-        )
-        generation_fence = ws_app[_APP_GENERATION_FENCE_KEY]
-        runner = web.AppRunner(ws_app)
-        await runner.setup()
-        site = web.TCPSite(runner, host, port)
-        await site.start()
-        logger.info(f"Box server listening on {host}:{port}")
-    except OSError as exc:
-        logger.warning(f"Box server failed to bind {host}:{port}: {exc}")
-        logger.warning("Managed process WebSocket attach will be unavailable.")
+        await runtime.initialize()
+        initialized = True
 
-    try:
+        # Start aiohttp — serves managed-process relay and (in ws mode)
+        # also the action RPC endpoint, all on the same port.
+        generation_fence = BoxGenerationFence(
+            max_records=runtime.max_admission_records
+        )
+        try:
+            ws_app = create_app(
+                runtime,
+                control_token=control_token,
+                trusted_instance_uuid=configured_instance_uuid,
+                generation_fence=generation_fence,
+            )
+            runner = web.AppRunner(ws_app)
+            await runner.setup()
+            site = web.TCPSite(runner, host, port)
+            await site.start()
+            logger.info(f"Box server listening on {host}:{port}")
+        except OSError as exc:
+            logger.warning(f"Box server failed to bind {host}:{port}: {exc}")
+            logger.warning("Managed process WebSocket attach will be unavailable.")
+            if mode != "stdio":
+                raise
+
         if mode == "stdio":
             from langbot_plugin.runtime.io.controllers.stdio.server import (
                 StdioServerController,
@@ -1146,10 +1274,14 @@ async def _run_server(host: str, port: int, mode: str) -> None:
             stop_event = asyncio.Event()
             await stop_event.wait()
     finally:
-        await runtime.shutdown()
-        await runtime.stop_background_reaper()
         if runner is not None:
-            await runner.cleanup()
+            with contextlib.suppress(Exception):
+                await runner.cleanup()
+        if initialized:
+            try:
+                await runtime.shutdown()
+            finally:
+                await runtime.stop_background_reaper()
 
 
 def main(args: argparse.Namespace) -> None:

@@ -212,6 +212,12 @@ def test_runtime_application_initializes_websocket_control_mode(monkeypatch):
     assert app.context.ws_control_server.kwargs["expected_headers"] == {
         PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER: "c" * 48,
     }
+    health_snapshot = app.context.ws_control_server.kwargs[
+        "health_snapshot_provider"
+    ]()
+    assert health_snapshot["live"] is True
+    assert health_snapshot["resources"]["event_loop"]["running"] is False
+    assert "plugin_debug_key" not in str(health_snapshot)
     assert app.context.ws_debug_server.port == 5501
 
 
@@ -584,6 +590,36 @@ async def test_runtime_sigterm_cancels_run_and_awaits_shutdown(monkeypatch):
     assert run_started.is_set()
     assert shutdown_complete.is_set()
     assert removed_signals == [signal.SIGTERM]
+
+
+async def test_run_with_shutdown_owns_event_loop_monitor_lifecycle(monkeypatch):
+    monkeypatch.setattr(
+        runtime_app,
+        "configure_bounded_default_executor_from_env",
+        lambda **_kwargs: object(),
+    )
+    calls = []
+
+    class FakeMonitor:
+        def start(self):
+            calls.append("monitor_start")
+
+        async def stop(self):
+            calls.append("monitor_stop")
+
+    class FakeApplication:
+        event_loop_monitor = FakeMonitor()
+        context = None
+
+        async def run(self):
+            calls.append("run")
+
+        async def shutdown(self):
+            calls.append("shutdown")
+
+    await runtime_app._run_with_shutdown(FakeApplication())
+
+    assert calls == ["monitor_start", "run", "shutdown", "monitor_stop"]
 
 
 def test_runtime_main_handles_cancelled_error(monkeypatch):

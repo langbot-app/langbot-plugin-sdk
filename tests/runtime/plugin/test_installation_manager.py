@@ -130,6 +130,120 @@ async def test_manager_indexes_same_artifact_installations_by_complete_binding(
     assert context.is_current_installation_binding(binding_b)
 
 
+async def test_instance_worker_capacity_blocks_new_process_but_allows_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    context.worker_policy = context.worker_policy.model_copy(
+        update={
+            "max_workers": 1,
+            "max_total_cpus": 1.0,
+            "max_total_memory_mb": 512,
+            "require_hard_limits": False,
+        }
+    )
+    context.runtime_profile = "oss_dev"
+    manager.configure_worker_runtime(context.worker_policy, "oss_dev")
+    monkeypatch.setattr(manager, "_schedule_installation_worker", lambda _runtime: None)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    first = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    second = _binding("installation-b", digest, workspace_uuid="workspace-b")
+
+    started = await manager.apply_plugin_installation(
+        first,
+        artifact_package=package,
+        enabled=True,
+    )
+    rejected = await manager.apply_plugin_installation(second, enabled=True)
+    replacement = await manager.apply_plugin_installation(
+        _binding(
+            "installation-a",
+            digest,
+            workspace_uuid="workspace-a",
+            revision=2,
+        ),
+        enabled=True,
+    )
+
+    assert started["state"] == "starting"
+    assert rejected["error_code"] == "worker_capacity_exceeded"
+    assert replacement["state"] == "starting"
+
+    with pytest.raises(ValueError, match="aggregate worker capacity"):
+        await manager.reconcile_plugin_installations(
+            (
+                PluginInstallationDesiredState(binding=first),
+                PluginInstallationDesiredState(binding=second),
+            )
+        )
+
+
+async def test_installation_lifecycle_serializes_dependency_preparation_across_tenants(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package(requirements="third-party-demo==1.0.0\n")
+    digest = hashlib.sha256(package).hexdigest()
+    first = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    second = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    await manager.apply_plugin_installation(
+        first,
+        artifact_package=package,
+        enabled=False,
+    )
+    await manager.apply_plugin_installation(second, enabled=False)
+
+    first_prepare_started = asyncio.Event()
+    release_prepare = asyncio.Event()
+    active_prepares = 0
+    max_active_prepares = 0
+
+    async def prepare(store, artifact):
+        nonlocal active_prepares, max_active_prepares
+        active_prepares += 1
+        max_active_prepares = max(max_active_prepares, active_prepares)
+        first_prepare_started.set()
+        try:
+            await release_prepare.wait()
+        finally:
+            active_prepares -= 1
+        root = store.base_path / "serialized-environment"
+        site_packages = root / "site-packages"
+        site_packages.mkdir(parents=True, exist_ok=True)
+        return PluginDependencyEnvironment(
+            digest="b" * 64,
+            artifact_digest=artifact.digest,
+            requirements_digest="c" * 64,
+            runtime_fingerprint="d" * 64,
+            root_path=root,
+            site_packages_path=site_packages,
+        )
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        prepare,
+    )
+    monkeypatch.setattr(manager, "_schedule_installation_worker", lambda _runtime: None)
+
+    first_task = asyncio.create_task(
+        manager.apply_plugin_installation(first, enabled=True)
+    )
+    await first_prepare_started.wait()
+    second_task = asyncio.create_task(
+        manager.apply_plugin_installation(second, enabled=True)
+    )
+    await asyncio.sleep(0)
+
+    assert active_prepares == 1
+    release_prepare.set()
+    await asyncio.gather(first_task, second_task)
+    assert max_active_prepares == 1
+
+
 async def test_new_revision_revokes_old_binding_and_stale_reapply_fails(tmp_path):
     context, manager = _manager(tmp_path)
     package = _package()

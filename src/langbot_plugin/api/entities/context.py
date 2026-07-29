@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import weakref
 
 import pydantic
 
@@ -12,7 +13,9 @@ import langbot_plugin.api.entities.events as events_module
 
 global_eid_index = 0
 
-cached_event_contexts: dict[int, EventContext] = {}
+cached_event_contexts: weakref.WeakValueDictionary[int, EventContext] = (
+    weakref.WeakValueDictionary()
+)
 
 
 class EventContext(WorkspaceExecutionScope):

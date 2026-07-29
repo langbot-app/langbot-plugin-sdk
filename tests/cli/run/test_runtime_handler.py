@@ -4,6 +4,8 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
     KnowledgeEngine,
@@ -21,7 +23,12 @@ from langbot_plugin.api.entities.builtin.rag.models import (
     ParseResult,
 )
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
-from langbot_plugin.cli.run.handler import PluginRuntimeHandler, _resolve_asset_path
+import langbot_plugin.cli.run.handler as runtime_handler_module
+from langbot_plugin.cli.run.handler import (
+    PluginRuntimeHandler,
+    _read_runtime_ui_file_limited,
+    _resolve_asset_path,
+)
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.entities.io.context import ActionContext
 
@@ -189,6 +196,15 @@ def test_resolve_asset_path_accepts_assets_and_component_page_files(
     assert _resolve_asset_path("components/pages/settings.html") == page_file.resolve()
     assert _resolve_asset_path("components/tools/secret.txt") is None
     assert _resolve_asset_path(str(assets_file.resolve())) is None
+
+
+async def test_runtime_ui_file_read_is_bounded(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_handler_module, "MAX_RUNTIME_UI_FILE_BYTES", 4)
+    asset = tmp_path / "large.bin"
+    asset.write_bytes(b"12345")
+
+    with pytest.raises(ValueError, match="Plugin UI file exceeds"):
+        await _read_runtime_ui_file_limited(asset)
 
 
 async def test_plugin_runtime_handler_initializes_plugin_and_returns_container():
@@ -700,6 +716,29 @@ async def test_plugin_runtime_handler_shutdown_schedules_callback():
         await asyncio.wait_for(called.wait(), timeout=1)
 
     assert response["data"] == {}
+
+
+async def test_plugin_runtime_handler_coalesces_shutdown_callbacks():
+    handler, _initialized = _handler()
+    started = 0
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def shutdown():
+        nonlocal started
+        started += 1
+        entered.set()
+        await release.wait()
+
+    handler.shutdown_callback = shutdown
+
+    async with ProtocolSession(handler) as session:
+        await session.request(RuntimeToPluginAction.SHUTDOWN.value, seq_id=1)
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await session.request(RuntimeToPluginAction.SHUTDOWN.value, seq_id=2)
+        assert started == 1
+        release.set()
+        await asyncio.wait_for(handler._shutdown_task, timeout=1)
 
 
 async def test_plugin_runtime_handler_plugin_diagnostic_logs(caplog):

@@ -7,6 +7,7 @@ directory management, and cgroup detection logic.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from unittest import mock
@@ -481,6 +482,8 @@ def test_build_resource_limits_cgroup(backend):
     assert "--cgroup_mem_max" in args
     mem_idx = args.index("--cgroup_mem_max")
     assert args[mem_idx + 1] == str(1024 * 1024 * 1024)
+    swap_idx = args.index("--cgroup_mem_swap_max")
+    assert args[swap_idx + 1] == "0"
 
     pids_idx = args.index("--cgroup_pids_max")
     assert args[pids_idx + 1] == "256"
@@ -566,6 +569,59 @@ async def test_exec_timeout(backend, tmp_base):
 
     assert result.status == BoxExecutionStatus.TIMED_OUT
     assert result.exit_code is None
+
+
+@pytest.mark.anyio
+async def test_run_nsjail_cancellation_terminates_and_reaps_process(
+    backend,
+    monkeypatch,
+):
+    class EmptyStream:
+        async def read(self, _size):
+            return b""
+
+    class HangingProcess:
+        def __init__(self):
+            self.returncode = None
+            self.stdout = EmptyStream()
+            self.stderr = EmptyStream()
+            self.wait_started = asyncio.Event()
+            self.exit_requested = asyncio.Event()
+            self.terminated = False
+
+        async def wait(self):
+            self.wait_started.set()
+            await self.exit_requested.wait()
+            self.returncode = -15
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.exit_requested.set()
+
+        def kill(self):
+            self.exit_requested.set()
+
+    process = HangingProcess()
+
+    async def create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(
+        nsjail_backend_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    task = asyncio.create_task(
+        backend._run_nsjail(["nsjail", "--help"], timeout_sec=60)
+    )
+    await process.wait_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert process.terminated is True
+    assert process.returncode == -15
 
 
 # ── cgroup detection ──────────────────────────────────────────────────
