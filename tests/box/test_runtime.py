@@ -280,6 +280,48 @@ def test_init_method_applies_config_and_resets_backend(logger):
     assert runtime._backend is None
 
 
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("max_sessions", 5_001),
+        ("max_sessions", True),
+        ("max_managed_processes", 1_025),
+        ("max_completed_processes", 10_001),
+        ("max_admission_records", 250_001),
+        ("max_rpc_file_bytes", 100 * 1024 * 1024 + 1),
+        ("completed_process_retention_sec", 86_401),
+    ],
+)
+def test_runtime_rejects_limits_above_hard_capacity(logger, name, value):
+    payload = {"limits": {name: value}}
+    with mock.patch(
+        "os.getenv",
+        side_effect=lambda key, default="": json.dumps(payload)
+        if key == "LANGBOT_BOX_CONFIG"
+        else default,
+    ):
+        with pytest.raises(ValueError, match=rf"box\.limits\.{name}"):
+            BoxRuntime(logger, backends=[FakeBackend(logger)])
+
+
+def test_runtime_config_update_is_atomic_when_limit_is_invalid(logger):
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+    original_config = dict(runtime._box_config)
+    original_max_sessions = runtime.max_sessions
+
+    with pytest.raises(ValueError, match=r"box\.limits\.max_sessions"):
+        runtime.init(
+            {
+                "backend": "fake",
+                "limits": {"max_sessions": 5_001},
+            }
+        )
+
+    assert runtime._box_config == original_config
+    assert runtime.max_sessions == original_max_sessions
+
+
 def test_verify_shared_workspace_reads_only_valid_nofollow_marker(logger, tmp_path):
     runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
     root = tmp_path / "box"

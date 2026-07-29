@@ -70,6 +70,12 @@ _MANAGED_PROCESS_STDERR_LOG_WINDOW_SEC = 1.0
 _MANAGED_PROCESS_STDERR_LOG_EXCERPT_CHARS = 512
 _REAPER_INTERVAL_SEC = 30
 _UNSAFE_SOFT_STORAGE_LIMITS_ENV = "LANGBOT_BOX_ALLOW_UNSAFE_SOFT_STORAGE_LIMITS"
+MAX_RUNTIME_SESSIONS = 5_000
+MAX_RUNTIME_MANAGED_PROCESSES = 1_024
+MAX_RUNTIME_COMPLETED_PROCESSES = 10_000
+MAX_RUNTIME_ADMISSION_RECORDS = 250_000
+MAX_RUNTIME_RPC_FILE_BYTES = 100 * 1024 * 1024
+MAX_RUNTIME_COMPLETED_RETENTION_SEC = 86_400
 
 
 def _unsafe_soft_storage_limits_enabled() -> bool:
@@ -79,6 +85,22 @@ def _unsafe_soft_storage_limits_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def _bounded_runtime_limit(
+    limits: dict,
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = limits.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"box.limits.{name} must be an integer")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"box.limits.{name} must be between {minimum} and {maximum}")
+    return value
 
 
 def _resolve_local_path(path_value: str, *, base: str | None = None) -> str:
@@ -179,25 +201,49 @@ class BoxRuntime:
         self.backends = backends
         self.session_ttl_sec = session_ttl_sec
         limits = self._box_config.get("limits") or {}
-        self.max_sessions = int(limits.get("max_sessions", max_sessions))
-        self.max_managed_processes = int(
-            limits.get("max_managed_processes", max_managed_processes)
+        if not isinstance(limits, dict):
+            raise ValueError("box.limits must be an object")
+        self.max_sessions = _bounded_runtime_limit(
+            limits,
+            "max_sessions",
+            max_sessions,
+            minimum=0,
+            maximum=MAX_RUNTIME_SESSIONS,
         )
-        self.max_completed_processes = int(
-            limits.get("max_completed_processes", max_completed_processes)
+        self.max_managed_processes = _bounded_runtime_limit(
+            limits,
+            "max_managed_processes",
+            max_managed_processes,
+            minimum=0,
+            maximum=MAX_RUNTIME_MANAGED_PROCESSES,
         )
-        self.max_admission_records = max(
-            int(limits.get("max_admission_records", 100_000)),
-            1,
+        self.max_completed_processes = _bounded_runtime_limit(
+            limits,
+            "max_completed_processes",
+            max_completed_processes,
+            minimum=0,
+            maximum=MAX_RUNTIME_COMPLETED_PROCESSES,
         )
-        self.max_rpc_file_bytes = max(
-            int(limits.get("max_rpc_file_bytes", 20 * 1024 * 1024)),
-            1,
+        self.max_admission_records = _bounded_runtime_limit(
+            limits,
+            "max_admission_records",
+            100_000,
+            minimum=1,
+            maximum=MAX_RUNTIME_ADMISSION_RECORDS,
         )
-        self.completed_process_retention_sec = int(
-            limits.get(
-                "completed_process_retention_sec", completed_process_retention_sec
-            )
+        self.max_rpc_file_bytes = _bounded_runtime_limit(
+            limits,
+            "max_rpc_file_bytes",
+            20 * 1024 * 1024,
+            minimum=1,
+            maximum=MAX_RUNTIME_RPC_FILE_BYTES,
+        )
+        self.completed_process_retention_sec = _bounded_runtime_limit(
+            limits,
+            "completed_process_retention_sec",
+            completed_process_retention_sec,
+            minimum=0,
+            maximum=MAX_RUNTIME_COMPLETED_RETENTION_SEC,
         )
         self._backend: BaseSandboxBackend | None = None
         self._backend_lock = asyncio.Lock()
@@ -267,29 +313,60 @@ class BoxRuntime:
         Called via RPC (INIT action) when connecting over WebSocket.
         """
         previous_admission_policy = self._admission_policy
-        self._box_config.update(config)
-        limits = self._box_config.get("limits") or {}
-        self.max_sessions = int(limits.get("max_sessions", self.max_sessions))
-        self.max_managed_processes = int(
-            limits.get("max_managed_processes", self.max_managed_processes)
+        candidate_config = dict(self._box_config)
+        candidate_config.update(config)
+        limits = candidate_config.get("limits") or {}
+        if not isinstance(limits, dict):
+            raise ValueError("box.limits must be an object")
+        max_sessions = _bounded_runtime_limit(
+            limits,
+            "max_sessions",
+            self.max_sessions,
+            minimum=0,
+            maximum=MAX_RUNTIME_SESSIONS,
         )
-        self.max_completed_processes = int(
-            limits.get("max_completed_processes", self.max_completed_processes)
+        max_managed_processes = _bounded_runtime_limit(
+            limits,
+            "max_managed_processes",
+            self.max_managed_processes,
+            minimum=0,
+            maximum=MAX_RUNTIME_MANAGED_PROCESSES,
         )
-        self.max_admission_records = max(
-            int(limits.get("max_admission_records", self.max_admission_records)),
-            1,
+        max_completed_processes = _bounded_runtime_limit(
+            limits,
+            "max_completed_processes",
+            self.max_completed_processes,
+            minimum=0,
+            maximum=MAX_RUNTIME_COMPLETED_PROCESSES,
         )
-        self.max_rpc_file_bytes = max(
-            int(limits.get("max_rpc_file_bytes", self.max_rpc_file_bytes)),
-            1,
+        max_admission_records = _bounded_runtime_limit(
+            limits,
+            "max_admission_records",
+            self.max_admission_records,
+            minimum=1,
+            maximum=MAX_RUNTIME_ADMISSION_RECORDS,
         )
-        self.completed_process_retention_sec = int(
-            limits.get(
-                "completed_process_retention_sec",
-                self.completed_process_retention_sec,
-            )
+        max_rpc_file_bytes = _bounded_runtime_limit(
+            limits,
+            "max_rpc_file_bytes",
+            self.max_rpc_file_bytes,
+            minimum=1,
+            maximum=MAX_RUNTIME_RPC_FILE_BYTES,
         )
+        completed_process_retention_sec = _bounded_runtime_limit(
+            limits,
+            "completed_process_retention_sec",
+            self.completed_process_retention_sec,
+            minimum=0,
+            maximum=MAX_RUNTIME_COMPLETED_RETENTION_SEC,
+        )
+        self._box_config = candidate_config
+        self.max_sessions = max_sessions
+        self.max_managed_processes = max_managed_processes
+        self.max_completed_processes = max_completed_processes
+        self.max_admission_records = max_admission_records
+        self.max_rpc_file_bytes = max_rpc_file_bytes
+        self.completed_process_retention_sec = completed_process_retention_sec
         self._apply_config_to_backends(config)
         self.skill_store.update_config(self._box_config)
         self._refresh_admission_policy()
