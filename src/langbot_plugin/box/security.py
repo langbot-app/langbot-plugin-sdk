@@ -38,19 +38,26 @@ BLOCKED_HOST_PATHS = (
 )
 
 
+def _validate_host_path(host_path: str, field_name: str) -> None:
+    real = os.path.realpath(host_path)
+    sep = os.sep
+    _norm = os.path.normcase
+    for blocked in BLOCKED_HOST_PATHS:
+        if _norm(real) == _norm(blocked) or _norm(real).startswith(
+            _norm(blocked) + sep
+        ):
+            raise BoxValidationError(
+                f"{field_name} {host_path} is blocked for security"
+            )
+
+
 def validate_sandbox_security(spec: BoxSpec) -> None:
     """Validate that a BoxSpec does not request dangerous container config.
 
     Raises BoxValidationError when the spec contains a blocked host_path.
     """
     if spec.host_path:
-        real = os.path.realpath(spec.host_path)
-        sep = os.sep
-        _norm = os.path.normcase
-        for blocked in BLOCKED_HOST_PATHS:
-            if _norm(real) == _norm(blocked) or _norm(real).startswith(
-                _norm(blocked) + sep
-            ):
-                raise BoxValidationError(
-                    f"host_path {spec.host_path} is blocked for security"
-                )
+        _validate_host_path(spec.host_path, "host_path")
+
+    for mount in spec.extra_mounts:
+        _validate_host_path(mount.host_path, "extra_mounts.host_path")
