@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import io
 import os
@@ -41,6 +42,11 @@ _MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 _MAX_ZIP_COMPRESSION_RATIO = 100.0
 _ZIP_COPY_CHUNK_BYTES = 64 * 1024
 _MAX_SKILL_TEXT_BYTES = 1024 * 1024
+_MAX_DISCOVERED_SKILLS = 1_000
+_MAX_SKILL_SCAN_ENTRIES = 10_000
+_MAX_SKILL_LIST_ENTRIES = 1_000
+_MAX_SKILL_DIRECTORY_ENTRIES = 10_000
+_MAX_SKILL_LIST_TOTAL_TEXT_BYTES = 16 * 1024 * 1024
 
 
 def _read_utf8_text_limited(path: str, *, subject: str) -> str:
@@ -140,13 +146,24 @@ class BoxSkillStore:
     def list_skills(self) -> list[dict]:
         os.makedirs(self.root, exist_ok=True)
         skills: list[dict] = []
+        retained_text_bytes = 0
         for package_root, entry_file in self._discover_skill_directories(
             self.root, max_depth=6
         ):
             try:
-                skills.append(self._load_skill_package(package_root, entry_file))
+                skill = self._load_skill_package(package_root, entry_file)
             except Exception:
                 continue
+            retained_text_bytes += sum(
+                len(value.encode("utf-8"))
+                for value in skill.values()
+                if isinstance(value, str)
+            )
+            if retained_text_bytes > _MAX_SKILL_LIST_TOTAL_TEXT_BYTES:
+                raise ValueError(
+                    "Skill listing exceeds the configured text limit"
+                )
+            skills.append(skill)
         skills.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return [self._serialize_skill(skill) for skill in skills]
 
@@ -317,31 +334,47 @@ class BoxSkillStore:
         include_hidden: bool = False,
         max_entries: int = 200,
     ) -> dict:
+        if (
+            isinstance(max_entries, bool)
+            or not isinstance(max_entries, int)
+            or max_entries <= 0
+        ):
+            raise ValueError("max_entries must be a positive integer")
+        max_entries = min(max_entries, _MAX_SKILL_LIST_ENTRIES)
         skill = self._require_skill(skill_name)
         target_dir, relative_path = self._resolve_skill_path(
             skill, path, expect_directory=True
         )
-        entries: list[dict] = []
         with os.scandir(target_dir) as iterator:
-            for entry in sorted(iterator, key=lambda item: item.name):
-                if not include_hidden and entry.name.startswith("."):
-                    continue
-                entry_rel_path = (
-                    entry.name
-                    if relative_path in ("", ".")
-                    else os.path.join(relative_path, entry.name)
-                )
-                is_dir = entry.is_dir()
-                entries.append(
-                    {
-                        "path": entry_rel_path.replace(os.sep, "/"),
-                        "name": entry.name,
-                        "is_dir": is_dir,
-                        "size": None if is_dir else entry.stat().st_size,
-                    }
-                )
-                if len(entries) >= max_entries:
-                    break
+            directory_entries = []
+            for entry in iterator:
+                if len(directory_entries) >= _MAX_SKILL_DIRECTORY_ENTRIES:
+                    raise ValueError(
+                        "Skill directory exceeds the configured entry limit"
+                    )
+                directory_entries.append(entry)
+        directory_entries.sort(key=lambda item: item.name)
+        visible_entries = [
+            entry
+            for entry in directory_entries
+            if include_hidden or not entry.name.startswith(".")
+        ]
+        entries: list[dict] = []
+        for entry in visible_entries[:max_entries]:
+            entry_rel_path = (
+                entry.name
+                if relative_path in ("", ".")
+                else os.path.join(relative_path, entry.name)
+            )
+            is_dir = entry.is_dir()
+            entries.append(
+                {
+                    "path": entry_rel_path.replace(os.sep, "/"),
+                    "name": entry.name,
+                    "is_dir": is_dir,
+                    "size": None if is_dir else entry.stat().st_size,
+                }
+            )
 
         return {
             "skill": {"name": skill["name"]},
@@ -349,7 +382,7 @@ class BoxSkillStore:
             if relative_path in ("", ".")
             else relative_path.replace(os.sep, "/"),
             "entries": entries,
-            "truncated": len(entries) >= max_entries,
+            "truncated": len(visible_entries) > max_entries,
         }
 
     def read_skill_file(self, skill_name: str, path: str) -> dict:
@@ -897,14 +930,22 @@ class BoxSkillStore:
         return None
 
     def _discover_skill_directories(
-        self, root_path: str, max_depth: int = 2
+        self,
+        root_path: str,
+        max_depth: int = 2,
+        *,
+        max_scan_entries: int = _MAX_SKILL_SCAN_ENTRIES,
+        max_skills: int = _MAX_DISCOVERED_SKILLS,
     ) -> list[tuple[str, str]]:
         discovered: list[tuple[str, str]] = []
-        queue: list[tuple[str, int]] = [(root_path, 0)]
+        queue: collections.deque[tuple[str, int]] = collections.deque(
+            [(root_path, 0)]
+        )
         seen: set[str] = set()
+        scanned_entries = 0
 
         while queue:
-            current_path, depth = queue.pop(0)
+            current_path, depth = queue.popleft()
             normalized_path = os.path.abspath(current_path)
             if normalized_path in seen:
                 continue
@@ -913,15 +954,26 @@ class BoxSkillStore:
             found = self._find_skill_entry(normalized_path)
             if found:
                 discovered.append(found)
+                if len(discovered) > max_skills:
+                    raise ValueError(
+                        "Skill discovery exceeded the configured package limit"
+                    )
                 continue
 
             if depth >= max_depth:
                 continue
 
             try:
-                entries = sorted(
-                    os.scandir(normalized_path), key=lambda entry: entry.name
-                )
+                with os.scandir(normalized_path) as iterator:
+                    entries = []
+                    for entry in iterator:
+                        scanned_entries += 1
+                        if scanned_entries > max_scan_entries:
+                            raise ValueError(
+                                "Skill discovery exceeded the configured entry limit"
+                            )
+                        entries.append(entry)
+                entries.sort(key=lambda entry: entry.name)
             except OSError:
                 continue
 

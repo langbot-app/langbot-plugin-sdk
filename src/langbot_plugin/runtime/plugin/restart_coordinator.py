@@ -3,10 +3,31 @@ from __future__ import annotations
 import asyncio
 import collections
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Callable
 
 from langbot_plugin.entities.io.context import PluginWorkerPolicy
+
+
+async def _complete_state_transition(operation: Awaitable[None]) -> None:
+    """Finish one tiny coordinator mutation even if its caller is cancelled.
+
+    A supervisor cancellation must not strand the circuit in half-open state.
+    Shield the mutation and preserve the caller's cancellation after the
+    coordinator lock has been released.
+    """
+
+    task = asyncio.create_task(operation)
+    caller_cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            caller_cancelled = True
+    task.result()
+    if caller_cancelled:
+        raise asyncio.CancelledError
 
 
 @dataclass(slots=True)
@@ -40,16 +61,23 @@ class RestartPermit:
         self.mark_ready()
         if not self._probe_active:
             return
+        await _complete_state_transition(
+            self._coordinator._record_probe_success()
+        )
         self._probe_active = False
-        await self._coordinator._record_probe_success()
 
     async def record_failure(self) -> None:
         """Record an unexpected exit and release every owned admission."""
 
         self.mark_ready()
         was_probe = self._probe_active
+        if was_probe:
+            await _complete_state_transition(
+                self._coordinator._record_failure(was_probe=True)
+            )
+        else:
+            await self._coordinator._record_failure(was_probe=False)
         self._probe_active = False
-        await self._coordinator._record_failure(was_probe=was_probe)
 
     async def abandon(self) -> None:
         """Release admission without treating intentional cancellation as failure."""
@@ -57,8 +85,8 @@ class RestartPermit:
         self.mark_ready()
         if not self._probe_active:
             return
+        await _complete_state_transition(self._coordinator._abandon_probe())
         self._probe_active = False
-        await self._coordinator._abandon_probe()
 
 
 class PluginRestartCoordinator:
@@ -82,6 +110,7 @@ class PluginRestartCoordinator:
         self._open_until = 0.0
         self._half_open_probe_inflight = False
         self._active_launches = 0
+        self._gate_waiters = 0
         self._restart_attempts_total = 0
         self._restart_failures_total = 0
         self._circuit_open_total = 0
@@ -140,14 +169,12 @@ class PluginRestartCoordinator:
         """Wait for one launch slot and any active circuit-breaker gate."""
 
         semaphore = self._require_configuration()
-        while True:
-            await semaphore.acquire()
-            self._active_launches += 1
-            launch_slot_owned = True
-            wait_event: asyncio.Event | None = None
-            wait_timeout: float | None = None
-
-            try:
+        await semaphore.acquire()
+        launch_slot_owned = True
+        try:
+            while True:
+                wait_event: asyncio.Event | None = None
+                wait_timeout: float | None = None
                 async with self._state_lock:
                     now = self._clock()
                     self._trim_failures(now)
@@ -160,28 +187,37 @@ class PluginRestartCoordinator:
                         else:
                             self._half_open_probe_inflight = True
                             self._restart_attempts_total += 1
+                            self._active_launches += 1
                             launch_slot_owned = False
                             return RestartPermit(self, is_half_open_probe=True)
                     else:
                         self._restart_attempts_total += 1
+                        self._active_launches += 1
                         launch_slot_owned = False
                         return RestartPermit(self, is_half_open_probe=False)
 
-                    self._release_launch_slot()
-                    launch_slot_owned = False
-            except BaseException:
-                if launch_slot_owned:
-                    self._release_launch_slot()
-                raise
-
-            assert wait_event is not None
-            if wait_timeout is None:
-                await wait_event.wait()
-                continue
-            try:
-                await asyncio.wait_for(wait_event.wait(), timeout=wait_timeout)
-            except asyncio.TimeoutError:
-                pass
+                # Keep the semaphore slot while the circuit is unavailable.
+                # At most max_concurrent_restarts tasks can therefore own a
+                # cooldown timer or wake on a probe state change; all other
+                # supervisors remain asleep in the semaphore FIFO.
+                assert wait_event is not None
+                self._gate_waiters += 1
+                try:
+                    if wait_timeout is None:
+                        await wait_event.wait()
+                    else:
+                        try:
+                            await asyncio.wait_for(
+                                wait_event.wait(),
+                                timeout=wait_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            pass
+                finally:
+                    self._gate_waiters -= 1
+        finally:
+            if launch_slot_owned:
+                semaphore.release()
 
     async def record_unadmitted_failure(self) -> None:
         """Count a failed initial launch before restart admission begins."""
@@ -247,6 +283,7 @@ class PluginRestartCoordinator:
             "configured": True,
             "state": state,
             "active_launches": self._active_launches,
+            "gate_waiters": self._gate_waiters,
             "max_concurrent_restarts": self._max_concurrent_restarts,
             "failures_in_window": len(self._failure_times),
             "failure_threshold": self._failure_threshold,

@@ -363,6 +363,20 @@ def test_list_skills_skips_corrupt_entries(tmp_path):
     assert "bad" not in names
 
 
+def test_skill_discovery_fails_fast_at_entry_limit(tmp_path):
+    store = _make_store(tmp_path)
+    root = tmp_path / "skills"
+    for index in range(3):
+        (root / f"directory-{index}").mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="entry limit"):
+        store._discover_skill_directories(
+            store.root,
+            max_depth=6,
+            max_scan_entries=2,
+        )
+
+
 def test_get_skill_returns_match_and_none_for_missing(tmp_path):
     store = _make_store(tmp_path)
     _write_skill_dir(tmp_path / "skills", "alpha")

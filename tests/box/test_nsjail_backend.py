@@ -798,12 +798,48 @@ async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
     (current_dir / "workspace").mkdir()
 
     with mock.patch.object(
-        backend, "_kill_session_processes", new_callable=mock.AsyncMock
-    ):
+        backend,
+        "_kill_orphaned_session_processes_sync",
+    ) as kill_processes:
         await backend.cleanup_orphaned_containers("test123")
 
+    kill_processes.assert_called_once_with("test123")
     assert not old_dir.exists()
     assert current_dir.exists()
+
+
+def test_kill_orphaned_processes_scans_proc_once(
+    backend,
+    tmp_base,
+    tmp_path,
+):
+    proc_dir = tmp_path / "proc"
+    old_pid = proc_dir / "101"
+    current_pid = proc_dir / "102"
+    unrelated_pid = proc_dir / "103"
+    for pid_dir in (old_pid, current_pid, unrelated_pid):
+        pid_dir.mkdir(parents=True)
+    (old_pid / "cmdline").write_bytes(
+        (
+            f"nsjail\0--chroot\0"
+            f"{tmp_base}/oldinst_sess1_abc/root\0"
+        ).encode()
+    )
+    (current_pid / "cmdline").write_bytes(
+        (
+            f"nsjail\0--chroot\0"
+            f"{tmp_base}/test123_sess2_def/root\0"
+        ).encode()
+    )
+    (unrelated_pid / "cmdline").write_bytes(b"python\0worker.py\0")
+
+    with mock.patch("os.kill") as kill:
+        backend._kill_orphaned_session_processes_sync(
+            "test123",
+            proc_dir=proc_dir,
+        )
+
+    kill.assert_called_once_with(101, 9)
 
 
 # ── output clipping ──────────────────────────────────────────────────

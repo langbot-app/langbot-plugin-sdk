@@ -493,26 +493,45 @@ class NsjailBackend(BaseSandboxBackend):
         )
 
     async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
-        if not await asyncio.to_thread(self._base_dir.exists):
-            return
-
-        entries = await asyncio.to_thread(
-            lambda: [
-                entry
-                for entry in self._base_dir.iterdir()
-                if entry.is_dir()
-                and not entry.name.startswith(f"{current_instance_id}_")
-            ]
+        await bounded_executor.run_blocking_cleanup(
+            self._cleanup_orphaned_sessions_sync,
+            current_instance_id,
         )
-        for entry in entries:
 
+    def _cleanup_orphaned_sessions_sync(
+        self,
+        current_instance_id: str,
+    ) -> None:
+        """Scan processes once and stream stale directory removal.
+
+        A crashed Runtime can leave many session directories. Scanning all of
+        /proc once per directory turns startup into O(sessions * processes)
+        work and materializes every directory in memory. Keep both dimensions
+        linear instead.
+        """
+
+        if not self._base_dir.exists():
+            return
+        self._kill_orphaned_session_processes_sync(current_instance_id)
+        current_prefix = (
+            f"{current_instance_id}_" if current_instance_id else None
+        )
+        for entry in self._base_dir.iterdir():
+            try:
+                if not entry.is_dir():
+                    continue
+                if current_prefix is not None and entry.name.startswith(
+                    current_prefix
+                ):
+                    continue
+            except OSError as exc:
+                self.logger.warning(
+                    f"Failed to inspect nsjail session dir {entry}: {exc}"
+                )
+                continue
             self.logger.info(f"Cleaning up orphaned nsjail session dir: {entry}")
             try:
-                await self._kill_session_processes(entry)
-                await bounded_executor.run_blocking_cleanup(
-                    shutil.rmtree,
-                    entry,
-                )
+                shutil.rmtree(entry)
             except Exception as exc:
                 self.logger.warning(
                     f"Failed to clean up orphaned nsjail dir {entry}: {exc}"
@@ -894,6 +913,48 @@ class NsjailBackend(BaseSandboxBackend):
                     pid = int(pid_dir.name)
                     os.kill(pid, signal.SIGKILL)
                     self.logger.info(f"Killed orphaned nsjail process {pid}")
+            except (OSError, ValueError):
+                continue
+
+    def _kill_orphaned_session_processes_sync(
+        self,
+        current_instance_id: str,
+        *,
+        proc_dir: pathlib.Path | None = None,
+    ) -> None:
+        """Kill nsjail processes under stale session directories in one pass."""
+
+        proc_dir = proc_dir or pathlib.Path("/proc")
+        if not proc_dir.exists():
+            return
+        base_prefix = f"{self._base_dir}{os.sep}"
+        current_prefix = (
+            f"{current_instance_id}_" if current_instance_id else None
+        )
+        for pid_dir in proc_dir.iterdir():
+            if not pid_dir.name.isdigit():
+                continue
+            try:
+                cmdline = (
+                    (pid_dir / "cmdline")
+                    .read_bytes()
+                    .decode("utf-8", errors="replace")
+                )
+                if self._nsjail_bin not in cmdline:
+                    continue
+                tail = cmdline.partition(base_prefix)[2]
+                if not tail:
+                    continue
+                session_name = tail.split("/", 1)[0].split("\0", 1)[0]
+                if not session_name:
+                    continue
+                if current_prefix is not None and session_name.startswith(
+                    current_prefix
+                ):
+                    continue
+                pid = int(pid_dir.name)
+                os.kill(pid, signal.SIGKILL)
+                self.logger.info(f"Killed orphaned nsjail process {pid}")
             except (OSError, ValueError):
                 continue
 

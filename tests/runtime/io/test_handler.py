@@ -841,6 +841,34 @@ async def test_file_chunk_action_enforces_aggregate_handler_limit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_send_file_rejects_oversized_payload_before_hashing(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path,
+        max_file_bytes=5,
+    )
+    hash_called = False
+
+    def fail_if_hashed(*args, **kwargs):
+        nonlocal hash_called
+        hash_called = True
+        raise AssertionError("oversized payload must be rejected before hashing")
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.io.handler.hashlib.sha256",
+        fail_if_hashed,
+    )
+
+    with pytest.raises(ValueError, match="configured size limit"):
+        await handler.send_file(b"123456", "bin")
+
+    assert hash_called is False
+
+
+@pytest.mark.asyncio
 async def test_file_chunk_action_rejects_oversized_chunk_before_decode(
     tmp_path,
     monkeypatch,

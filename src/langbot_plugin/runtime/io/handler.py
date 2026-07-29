@@ -752,6 +752,11 @@ class Handler(abc.ABC):
     # ====== file transfer ======
     async def send_file(self, file_bytes: bytes, file_extension: str) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
+        if (
+            self.max_file_bytes is not None
+            and len(file_bytes) > self.max_file_bytes
+        ):
+            raise ValueError("File transfer exceeds the configured size limit")
         hash_value = hashlib.sha256(file_bytes).hexdigest()[:16]
         if not isinstance(file_extension, str):
             raise ValueError("Invalid file transfer extension")

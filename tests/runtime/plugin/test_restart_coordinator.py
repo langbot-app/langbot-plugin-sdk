@@ -136,7 +136,10 @@ async def test_cancelled_acquire_does_not_leak_launch_slot():
     await coordinator._state_lock.acquire()
     acquire_task = asyncio.create_task(coordinator.acquire())
     async with asyncio.timeout(1):
-        while coordinator.snapshot()["active_launches"] == 0:
+        while (
+            coordinator._launch_semaphore is None
+            or not coordinator._launch_semaphore.locked()
+        ):
             await asyncio.sleep(0)
 
     acquire_task.cancel()
@@ -145,6 +148,65 @@ async def test_cancelled_acquire_does_not_leak_launch_slot():
         await acquire_task
 
     assert coordinator.snapshot()["active_launches"] == 0
+    replacement = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+    await replacement.abandon()
+
+
+async def test_open_circuit_bounds_cooldown_waiters_and_timers():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(
+        _policy(
+            max_concurrent_restarts=2,
+            restart_failure_threshold=1,
+            restart_circuit_open_seconds=0.2,
+        )
+    )
+    failed = await coordinator.acquire()
+    await failed.record_failure()
+
+    waiting = [asyncio.create_task(coordinator.acquire()) for _ in range(100)]
+    async with asyncio.timeout(1):
+        while coordinator.snapshot()["gate_waiters"] < 2:
+            await asyncio.sleep(0)
+
+    snapshot = coordinator.snapshot()
+    assert snapshot["active_launches"] == 0
+    assert snapshot["gate_waiters"] == 2
+    assert sum(task.done() for task in waiting) == 0
+
+    for task in waiting:
+        task.cancel()
+    await asyncio.gather(*waiting, return_exceptions=True)
+
+    assert coordinator.snapshot()["active_launches"] == 0
+    assert coordinator.snapshot()["gate_waiters"] == 0
+    replacement = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+    await replacement.abandon()
+
+
+async def test_cancelled_probe_abandon_finishes_state_transition():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(
+        _policy(
+            max_concurrent_restarts=1,
+            restart_failure_threshold=1,
+        )
+    )
+    failed = await coordinator.acquire()
+    await failed.record_failure()
+    probe = await asyncio.wait_for(coordinator.acquire(), timeout=1)
+    probe.mark_ready()
+
+    await coordinator._state_lock.acquire()
+    abandon_task = asyncio.create_task(probe.abandon())
+    await asyncio.sleep(0)
+    abandon_task.cancel()
+    coordinator._state_lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await abandon_task
+
+    assert coordinator.snapshot()["half_open_probe_inflight"] is False
     replacement = await asyncio.wait_for(coordinator.acquire(), timeout=1)
     await replacement.abandon()
 
