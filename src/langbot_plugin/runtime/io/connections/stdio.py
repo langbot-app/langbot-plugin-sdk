@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 
 from langbot_plugin.runtime.io import connection
-from langbot_plugin.runtime.io.connection import MAX_MESSAGE_BYTES, split_utf8_chunks
+from langbot_plugin.runtime.io.connection import (
+    MAX_MESSAGE_BYTES,
+    MAX_MESSAGE_FRAGMENTS,
+    split_utf8_chunks,
+)
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 
 logger = logging.getLogger(__name__)
@@ -34,11 +39,15 @@ class StdioConnection(connection.Connection):
     async def send(self, message: str) -> None:
         """Send message with chunking support for large data."""
         async with self._send_lock:  # 确保同一时间只有一个send操作
-            message_bytes = message.encode("utf-8")
+            message_bytes = await asyncio.to_thread(message.encode, "utf-8")
             message_size = len(message_bytes)
             if message_size > MAX_MESSAGE_BYTES:
                 raise ValueError(
                     f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
+                )
+            if message_size > self.chunk_size * MAX_MESSAGE_FRAGMENTS:
+                raise ValueError(
+                    "Runtime message would require too many stdio fragments"
                 )
 
             # For small messages, send directly
@@ -52,6 +61,12 @@ class StdioConnection(connection.Connection):
 
             # For large messages, send in chunks
             try:
+                del message_bytes
+                chunks = await asyncio.to_thread(
+                    split_utf8_chunks,
+                    message,
+                    self.chunk_size,
+                )
                 # Send start marker for chunked message
                 chunk_header = json.dumps(
                     {"type": "chunk_start", "total_size": message_size}
@@ -61,7 +76,7 @@ class StdioConnection(connection.Connection):
 
                 # Send message in chunks
                 offset = 0
-                for chunk_text in split_utf8_chunks(message, self.chunk_size):
+                for chunk_text in chunks:
                     chunk_size = len(chunk_text.encode("utf-8"))
                     chunk_msg = json.dumps(
                         {
@@ -102,27 +117,40 @@ class StdioConnection(connection.Connection):
         if self._process_exit_task is not None:
             tasks.append(self._process_exit_task)
 
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        try:
+            done, _ = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-        if self._process_exit_task is not None and self._process_exit_task in done:
-            raise ConnectionClosedError("Connection closed")
+            if self._process_exit_task is not None and self._process_exit_task in done:
+                raise ConnectionClosedError("Connection closed")
 
-        if read_task in done:
-            s_bytes = read_task.result()
-            if not s_bytes:
-                # EOF received - connection is closed
-                if self._process_exit_task is not None:
-                    if self._process_exit_task.done():
-                        await self._process_exit_task
-                        raise ConnectionClosedError("标准输出流已关闭，子进程已退出。")
+            if read_task in done:
+                s_bytes = read_task.result()
+                if not s_bytes:
+                    # EOF received - connection is closed
+                    if self._process_exit_task is not None:
+                        if self._process_exit_task.done():
+                            await self._process_exit_task
+                            raise ConnectionClosedError(
+                                "标准输出流已关闭，子进程已退出。"
+                            )
+                        else:
+                            raise ConnectionClosedError("标准输出流意外关闭。")
                     else:
-                        raise ConnectionClosedError("标准输出流意外关闭。")
-                else:
-                    # process is None but still received EOF - connection is closed
-                    raise ConnectionClosedError("标准输出流已关闭。")
-            return s_bytes.decode().strip()
+                        # process is None but still received EOF - connection is closed
+                        raise ConnectionClosedError("标准输出流已关闭。")
+                return s_bytes.decode().strip()
 
-        raise ConnectionClosedError("Unexpected error in reading")
+            raise ConnectionClosedError("Unexpected error in reading")
+        finally:
+            # If process.wait() wins, or this receive is cancelled, the pending
+            # readline task must not outlive its connection.
+            if not read_task.done():
+                read_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await read_task
 
     async def receive(self) -> str:
         """Receive message with chunked message support."""
@@ -150,9 +178,15 @@ class StdioConnection(connection.Connection):
                                             "Invalid runtime chunked message size"
                                         )
                                     received_size = 0
+                                    fragment_count = 0
 
                                     while True:
                                         chunk_line = await self._read_single_line()
+                                        fragment_count += 1
+                                        if fragment_count > MAX_MESSAGE_FRAGMENTS:
+                                            raise ConnectionClosedError(
+                                                "Runtime message has too many stdio fragments"
+                                            )
                                         if not chunk_line or not self._is_valid_json(
                                             chunk_line
                                         ):
@@ -182,7 +216,10 @@ class StdioConnection(connection.Connection):
                                                     "Incomplete runtime chunked message"
                                                 )
                                             # Reconstruct original message
-                                            return "".join(chunks)
+                                            return await asyncio.to_thread(
+                                                "".join,
+                                                chunks,
+                                            )
 
                                         # Yield control periodically
                                         if len(chunks) % 50 == 0:
@@ -211,3 +248,13 @@ class StdioConnection(connection.Connection):
 
     async def close(self) -> None:
         self.stdin.close()
+        wait_closed = getattr(self.stdin, "wait_closed", None)
+        if wait_closed is not None:
+            with contextlib.suppress(Exception):
+                await wait_closed()
+        if self._process_exit_task is not None:
+            if not self._process_exit_task.done():
+                self._process_exit_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._process_exit_task
+            self._process_exit_task = None

@@ -12,6 +12,14 @@ from langbot_plugin.cli.utils.page_components import (
     discover_plugin_components,
     populate_plugin_pages,
 )
+from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
+from langbot_plugin.runtime.bounded_executor import (
+    configure_bounded_default_executor_from_env,
+)
+
+
+def should_load_artifact_dotenv(runtime_profile: str) -> bool:
+    return runtime_profile != "shared"
 
 
 async def arun_plugin_process(
@@ -21,8 +29,14 @@ async def arun_plugin_process(
     pypi_index_url: str = "",
     pypi_trusted_host: str = "",
 ) -> None:
-    # read .env file
-    dotenv.load_dotenv(".env")
+    configure_bounded_default_executor_from_env(
+        thread_name_prefix="langbot-plugin-worker-blocking",
+    )
+    # Shared/production artifacts are immutable code and must never inject
+    # process environment. OSS development keeps the historical .env behavior.
+    runtime_profile = os.environ.get(PLUGIN_RUNTIME_PROFILE_ENV, "oss_dev")
+    if should_load_artifact_dotenv(runtime_profile):
+        dotenv.load_dotenv(".env")
 
     # Set plugin debug key from command line argument if provided
     if plugin_debug_key:

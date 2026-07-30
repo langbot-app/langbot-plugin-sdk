@@ -150,6 +150,12 @@ class LangBotToRuntimeAction(ActionType):
     # env/default.
     SET_RUNTIME_CONFIG = "set_runtime_config"
 
+    # Multi-tenant desired-state protocol. Reconcile is instance-scoped;
+    # apply/remove carry one complete InstallationBinding envelope.
+    RECONCILE_PLUGIN_INSTALLATIONS = "reconcile_plugin_installations"
+    APPLY_PLUGIN_INSTALLATION = "apply_plugin_installation"
+    REMOVE_PLUGIN_INSTALLATION = "remove_plugin_installation"
+
     # Page API
     PAGE_API = "page_api"
 

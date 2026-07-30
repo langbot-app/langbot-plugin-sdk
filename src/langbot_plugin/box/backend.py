@@ -67,12 +67,60 @@ class BaseSandboxBackend(abc.ABC):
     async def is_session_alive(self, session: BoxSessionInfo) -> bool:
         return True
 
+    async def get_readiness(
+        self,
+        *,
+        workspace_path: str | None = None,
+        strict: bool = False,
+    ) -> dict:
+        """Return backend isolation readiness.
+
+        Generic backends can report availability, but cannot claim the
+        cgroup/namespace/mount guarantees required by the managed nsjail mode.
+        """
+
+        available = await self.is_available()
+        return {
+            "available": available,
+            "cgroup_v2": False if strict else None,
+            "namespace_isolation": False if strict else None,
+            "mount_isolation": False if strict else None,
+            "network_isolation": False if strict else None,
+            "hard_workspace_quota": False if strict else None,
+            "hard_skill_storage_quota": False if strict else None,
+            "bounded_ephemeral_storage": False if strict else None,
+            "inode_quota": False if strict else None,
+        }
+
     async def start_managed_process(self, session: BoxSessionInfo, spec):
         raise BoxError(f"{self.name} backend does not support managed processes")
 
     async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
         """Remove lingering containers from previous runs. No-op by default."""
         pass
+
+    @staticmethod
+    async def _terminate_process(
+        process: asyncio.subprocess.Process,
+        *,
+        timeout_sec: float = 2.0,
+    ) -> None:
+        """Terminate and reap a cancelled backend CLI without orphaning it."""
+
+        if process.returncode is not None:
+            return
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout_sec)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
 
 
 class CLISandboxBackend(BaseSandboxBackend):
@@ -373,6 +421,14 @@ class CLISandboxBackend(BaseSandboxBackend):
             process.kill()
             timed_out = True
             await process.wait()
+        except asyncio.CancelledError:
+            await self._terminate_process(process)
+            await asyncio.gather(
+                stdout_task,
+                stderr_task,
+                return_exceptions=True,
+            )
+            raise
 
         stdout_bytes, stdout_total = await stdout_task
         stderr_bytes, stderr_total = await stderr_task

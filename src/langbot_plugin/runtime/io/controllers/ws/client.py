@@ -19,9 +19,11 @@ class WebSocketClientController(Controller):
         make_connection_failed_callback: Callable[
             [Controller, Exception | None], Coroutine[Any, Any, None]
         ],
+        additional_headers: dict[str, str] | None = None,
     ):
         self.ws_url = ws_url
         self.make_connection_failed_callback = make_connection_failed_callback
+        self.additional_headers = dict(additional_headers or {})
 
     async def run(
         self,
@@ -42,6 +44,7 @@ class WebSocketClientController(Controller):
                 open_timeout=10,
                 proxy=None,
                 max_size=MAX_MESSAGE_BYTES,
+                additional_headers=self.additional_headers or None,
             ) as websocket:
                 connection = ws_connection.WebSocketConnection(websocket)
                 await new_connection_callback(connection)

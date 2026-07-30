@@ -158,8 +158,11 @@ def test_installed_wheel_exposes_cli_and_packaged_templates(
             str(installed_wheel.python),
             "-c",
             (
+                "from importlib.metadata import version; "
                 "import importlib.resources as r; "
+                "from langbot_plugin.version import __version__; "
                 "from langbot_plugin.cli.gen.renderer import render_template; "
+                "assert __version__ == version('langbot-plugin'); "
                 "template = r.files('langbot_plugin').joinpath("
                 "'assets/templates/manifest.yaml.example'"
                 "); "
@@ -348,3 +351,7 @@ def test_installed_lbp_run_stdio_runtime_protocol(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()

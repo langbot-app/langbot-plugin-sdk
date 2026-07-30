@@ -95,6 +95,111 @@ Request shape:
 { "seq_id": 1, "action": "action_name", "data": {} }
 ```
 
+Tenant-scoped control actions must carry a complete, trusted installation
+binding without placing authority in the action payload:
+
+```json
+{
+  "seq_id": 1,
+  "action": "action_name",
+  "data": {},
+  "context": {
+    "instance_uuid": "instance-id",
+    "workspace_uuid": "workspace-id",
+    "placement_generation": 1,
+    "installation_uuid": "installation-id",
+    "runtime_revision": 1,
+    "artifact_digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+`SET_RUNTIME_CONFIG` is the instance-scoped handshake. It carries no Workspace
+context and accepts this frozen payload:
+
+```json
+{
+  "runtime_identity": {
+    "instance_uuid": "instance-id",
+    "runtime_id": "short-lived-runtime-id"
+  },
+  "worker_policy": {
+    "max_cpus": 1.0,
+    "max_memory_mb": 512,
+    "max_pids": 128,
+    "max_open_files": 256,
+    "max_file_size_mb": 512,
+    "max_concurrent_restarts": 1,
+    "restart_failure_threshold": 8,
+    "restart_failure_window_seconds": 30.0,
+    "restart_circuit_open_seconds": 60.0,
+    "require_hard_limits": true
+  },
+  "runtime_profile": "shared",
+  "cloud_service_url": "https://space.langbot.app"
+}
+```
+
+The Runtime identity and worker policy can be repeated exactly after a control
+reconnect but cannot be changed for the life of the Runtime process. A new
+authenticated control handler atomically supersedes the old handler; old
+requests fail even if the old transport has not finished closing.
+
+After the handshake, every tenant-scoped LangBot-to-Runtime action (including
+file chunks) requires the complete immutable tuple
+`(instance_uuid, workspace_uuid, placement_generation, installation_uuid,
+runtime_revision, artifact_digest)`. Missing context, a different instance, or
+an attempted generation/revision/artifact rebind fails closed. Instance-scoped
+actions reject tenant context. Plugin payload fields are never authoritative
+for these bindings.
+
+In the `shared` profile, `PluginManager` indexes desired state by the complete
+installation binding. The instance-scoped `RECONCILE_PLUGIN_INSTALLATIONS`
+action replays the authoritative set, while tenant-scoped
+`APPLY_PLUGIN_INSTALLATION` and `REMOVE_PLUGIN_INSTALLATION` actions change one
+installation. Newer placement generations or Runtime revisions fence the old
+worker immediately; stale or cross-Workspace transitions fail closed.
+
+Each enabled installation is owned by an installation-scoped Supervisor.
+Unexpected worker exit is recovered with bounded exponential backoff. Disable,
+remove, placement generation changes, Runtime revision changes, and shutdown
+fence the old Supervisor before it can relaunch, while reconcile and control
+reconnect restore the authoritative desired set.
+
+Restart attempts also pass through one Runtime-wide coordinator. Launches are
+globally bounded until a worker completes initialization; repeated unexpected
+exits in the configured window open a circuit. After cooldown, exactly one
+half-open probe may launch, and it must remain stable before the circuit closes.
+A child that does not become ready within 30 seconds is cancelled and reaped.
+Aggregate coordinator counters are exposed through Runtime health without
+installation or Workspace identity.
+
+Plugin packages are verified against `artifact_digest` and extracted once into
+a read-only `artifacts/sha256/<digest>/code` tree. Installations may share that
+code tree, but each gets a separate process and private `home`, `tmp`, and `data`
+directories. A worker receives a short-lived, one-use registration capability
+bound to the complete installation tuple; it cannot select its own tenant scope.
+
+Before a shared worker is launched, the Runtime prepares dependencies in a
+separate nsjail. The resulting `site-packages` tree is keyed by the verified
+artifact, requirements bytes, Python ABI, Runtime version, and installer schema,
+then atomically published under `environments/sha256/<environment-digest>`.
+Concurrent installations reuse the same ready tree. Workers mount it read-only;
+failed or partial preparations are removed and reported as the stable
+`dependency_prepare_failed` desired-state failure. Pip control options in an
+artifact's `requirements.txt` are rejected because only Runtime configuration
+may select indexes or trusted hosts.
+
+Shared workers launch through nsjail with policy-owned cgroup CPU, memory, and
+PID limits plus file/process rlimits. If `require_hard_limits` is true, missing
+nsjail or cgroup v2 delegation makes configuration fail closed. Artifact `.env`
+files are not loaded in the shared profile. The default `oss_dev` profile keeps
+the direct-process and `.env` behavior needed for local open-source development.
+The Runtime waits for this immutable profile handshake before inspecting legacy
+plugin state. A shared Runtime never scans, installs dependencies for, or
+launches the global `data/plugins` tree; only apply/reconcile desired state may
+start an installation worker.
+
 Response shape:
 
 ```json
@@ -104,12 +209,16 @@ Response shape:
 Core mechanics:
 
 - `seq_id` correlates responses to requests.
+- `context` carries trusted tenant/installation authority independently of
+  plugin-controlled `data`; it is mandatory on tenant control actions.
 - Messages with `action` are requests; messages with `code` are responses.
 - Each peer may initiate requests on the same connection.
 - `Handler.call_action()` waits for one response.
 - `Handler.call_action_generator()` consumes streamed responses.
 - Streaming emits `chunk_status: "continue"` chunks and ends with `"end"`.
-- File transfer uses `CommonAction.FILE_CHUNK` with 16KB base64 chunks stored under `data/temp/lbp/`.
+- File transfer uses `CommonAction.FILE_CHUNK` with 16KB base64 chunks stored
+  under `data/temp/lbp/`. Transfer keys are high-entropy opaque basenames; the
+  receiver rejects absolute paths, separators, `..`, and unsafe extensions.
 
 Action enums are the protocol contract:
 
@@ -155,7 +264,34 @@ The Runtime has two external channels:
 - **control channel**: LangBot ↔ Runtime, stdio or `:5400/control/ws` by default.
 - **debug channel**: plugin dev process ↔ Runtime, WebSocket `:5401/plugin/debug/ws` by default.
 
-Installed plugins are stored under `data/plugins/{author}__{name}`. Runtime plugin processes normally run as separate Python processes and connect back via stdio or debug WebSocket.
+Installed plugin processes do not authenticate with the shared debug key. For
+each child launch, the Runtime reads the installed `manifest.yaml`, issues a
+short-lived one-use registration capability bound to that author/name, and
+passes only that capability to the child. The capability is consumed before
+Host settings are requested, cannot be replayed, and the plugin must preserve
+the same manifest identity after initialization. On Windows the child receives
+an explicit environment allowlist, so Runtime and Box control secrets are not
+inherited.
+
+WebSocket control requires the high-entropy
+`LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN` in the
+`X-LangBot-Plugin-Runtime-Token` handshake header. The debug server never
+accepts an empty key: it validates an explicitly configured `PLUGIN_DEBUG_KEY`
+or generates one at process start, and `lbp run` sends that value in the
+`X-LangBot-Plugin-Debug-Key` handshake header for explicit development
+sessions. Windows production children use their one-use registration
+capability in `X-LangBot-Plugin-Registration-Capability` instead. The
+instance-scoped `SET_RUNTIME_CONFIG` handshake and per-action installation
+bindings are authorization fences after transport authentication; neither is a
+substitute for authenticating the peer.
+
+Legacy OSS plugins are stored under `data/plugins/{author}__{name}`. Runtime
+plugin processes normally run as separate Python processes and connect back via
+stdio or debug WebSocket. Shared workers instead use the digest-addressed
+artifact tree and installation-private paths described above. RPC transfer files
+created inside a shared worker use its private writable tmp mount; files accepted
+by the Supervisor are stored in an installation-private Runtime directory and
+enforce the instance file-size policy.
 
 ## Box Runtime
 
@@ -191,6 +327,14 @@ Default Box WebSocket endpoints on port `5410`:
 - `/v1/sessions/{session_id}/managed-process/ws`: legacy default process stdio relay.
 - `/v1/sessions/{session_id}/managed-process/{process_id}/ws`: named process stdio relay.
 
+Box keeps durable skill/storage paths in an `(instance, workspace)` namespace,
+while sandbox sessions and managed processes use an
+`(instance, workspace, placement_generation)` namespace. Authenticated tenant
+RPCs advance a monotonic generation fence, cancel in-flight older RPCs, and
+retire older sessions. Managed-process relay handshakes carry Workspace and
+generation in authenticated headers; an attached relay closes as soon as that
+generation becomes stale.
+
 There is no supported `python -m langbot_plugin.box` entrypoint; use `lbp box`.
 
 ## Backend Selection
@@ -213,6 +357,13 @@ When changing shared contracts:
 2. Install the local SDK into LangBot's virtualenv: `uv pip install .` from this repo while LangBot's `.venv` is active.
 3. Run LangBot with `uv run --no-sync ...` so `uv` does not replace the local SDK with the pinned PyPI package.
 4. Exercise the exact path changed: plugin stdio, plugin WebSocket, `lbp run`, `lbp rt`, `lbp box`, Box WebSocket, or Box stdio.
+
+Workspace action-context support starts in SDK `0.4.15`. The instance-scoped
+Runtime handshake and complete `InstallationBinding` extend that protocol on
+the multi-tenant branch and require a coordinated LangBot Core change before
+release. Until a matching SDK version is published, Core must pin the exact
+pushed SDK commit; the already-published `0.4.14` artifact does not contain any
+of these contracts and must not be used as a compatibility alias.
 
 The SDK `AGENTS.md` keeps the short command checklist; this file keeps the structural map.
 

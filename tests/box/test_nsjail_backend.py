@@ -7,6 +7,7 @@ directory management, and cgroup detection logic.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from unittest import mock
@@ -16,6 +17,7 @@ import pytest
 from langbot_plugin.box.nsjail_backend import (
     NsjailBackend,
 )
+from langbot_plugin.box import nsjail_backend as nsjail_backend_module
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -66,6 +68,81 @@ async def test_is_available_binary_exists(backend, tmp_base):
         result = await backend.is_available()
         assert result is True
         assert tmp_base.exists()
+
+
+@pytest.mark.anyio
+async def test_strict_readiness_reports_cgroup_namespace_mount_and_network(
+    backend, tmp_path
+):
+    backend._cgroup_v2_available = True
+    expected_probe = {
+        "namespace_isolation": True,
+        "mount_isolation": True,
+        "network_isolation": True,
+    }
+    with (
+        mock.patch.object(
+            backend, "is_available", new_callable=mock.AsyncMock, return_value=True
+        ),
+        mock.patch.object(
+            backend,
+            "_probe_isolation_readiness",
+            new_callable=mock.AsyncMock,
+            return_value=expected_probe,
+        ) as probe,
+    ):
+        readiness = await backend.get_readiness(
+            workspace_path=str(tmp_path), strict=True
+        )
+
+    assert readiness == {
+        "available": True,
+        "cgroup_v2": True,
+        "hard_workspace_quota": False,
+        "hard_skill_storage_quota": False,
+        "bounded_ephemeral_storage": False,
+        "inode_quota": False,
+        **expected_probe,
+    }
+    probe.assert_awaited_once_with(str(tmp_path))
+
+
+@pytest.mark.anyio
+async def test_isolation_probe_proves_bind_mount_and_distinct_network_namespace(
+    backend, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    now = "2024-01-01T00:00:00+00:00"
+
+    async def start_session(spec):
+        pathlib.Path(spec.host_path, ".mounted").write_text("readiness")
+        return BoxSessionInfo(
+            session_id=spec.session_id,
+            backend_name="nsjail",
+            backend_session_id=str(tmp_path / "session"),
+            image=spec.image,
+            network=spec.network,
+            host_path=spec.host_path,
+            created_at=now,
+            last_used_at=now,
+        )
+
+    backend.start_session = mock.AsyncMock(side_effect=start_session)
+    backend.exec = mock.AsyncMock(return_value=mock.Mock(ok=True, stdout="net:[222]\n"))
+    backend.stop_session = mock.AsyncMock()
+    with mock.patch("os.readlink", return_value="net:[111]"):
+        readiness = await backend._probe_isolation_readiness(str(workspace))
+
+    assert readiness == {
+        "namespace_isolation": True,
+        "mount_isolation": True,
+        "network_isolation": True,
+    }
+    submitted_spec = backend.start_session.await_args.args[0]
+    assert submitted_spec.network is BoxNetworkMode.OFF
+    assert submitted_spec.host_path.startswith(str(workspace))
+    backend.stop_session.assert_awaited_once()
 
 
 # ── start_session ─────────────────────────────────────────────────────
@@ -405,6 +482,8 @@ def test_build_resource_limits_cgroup(backend):
     assert "--cgroup_mem_max" in args
     mem_idx = args.index("--cgroup_mem_max")
     assert args[mem_idx + 1] == str(1024 * 1024 * 1024)
+    swap_idx = args.index("--cgroup_mem_swap_max")
+    assert args[swap_idx + 1] == "0"
 
     pids_idx = args.index("--cgroup_pids_max")
     assert args[pids_idx + 1] == "256"
@@ -492,6 +571,59 @@ async def test_exec_timeout(backend, tmp_base):
     assert result.exit_code is None
 
 
+@pytest.mark.anyio
+async def test_run_nsjail_cancellation_terminates_and_reaps_process(
+    backend,
+    monkeypatch,
+):
+    class EmptyStream:
+        async def read(self, _size):
+            return b""
+
+    class HangingProcess:
+        def __init__(self):
+            self.returncode = None
+            self.stdout = EmptyStream()
+            self.stderr = EmptyStream()
+            self.wait_started = asyncio.Event()
+            self.exit_requested = asyncio.Event()
+            self.terminated = False
+
+        async def wait(self):
+            self.wait_started.set()
+            await self.exit_requested.wait()
+            self.returncode = -15
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.exit_requested.set()
+
+        def kill(self):
+            self.exit_requested.set()
+
+    process = HangingProcess()
+
+    async def create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(
+        nsjail_backend_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    task = asyncio.create_task(
+        backend._run_nsjail(["nsjail", "--help"], timeout_sec=60)
+    )
+    await process.wait_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert process.terminated is True
+    assert process.returncode == -15
+
+
 # ── cgroup detection ──────────────────────────────────────────────────
 
 
@@ -538,8 +670,66 @@ def test_detect_cgroup_v2_subtree_writable():
         mock.patch.object(pathlib.Path, "write_text", fake_write_text),
     ):
         assert NsjailBackend._detect_cgroup_v2() is True
-    # Probe must enable then disable to leave host config untouched.
-    assert writes == ["+memory", "-memory"]
+    # Probe must validate every limit controller and leave host config untouched.
+    assert writes == [
+        "+memory",
+        "-memory",
+        "+pids",
+        "-pids",
+        "+cpu",
+        "-cpu",
+    ]
+
+
+def test_detect_cgroup_v2_rejects_partial_controller_delegation():
+    def fake_exists(self):
+        return str(self) in (
+            "/sys/fs/cgroup",
+            "/sys/fs/cgroup/cgroup.controllers",
+            "/sys/fs/cgroup/cgroup.subtree_control",
+        )
+
+    def fake_read_text(self, *a, **k):
+        if str(self).endswith("cgroup.controllers"):
+            return "cpu memory"
+        return ""
+
+    with (
+        mock.patch.object(pathlib.Path, "exists", fake_exists),
+        mock.patch.object(pathlib.Path, "read_text", fake_read_text),
+    ):
+        assert NsjailBackend._detect_cgroup_v2() is False
+
+
+def test_readonly_system_symlink_is_recreated_without_bind_mount(
+    backend, tmp_path, monkeypatch
+):
+    host_root = tmp_path / "host"
+    (host_root / "usr" / "bin").mkdir(parents=True)
+    host_link = host_root / "bin"
+    host_link.symlink_to("usr/bin")
+    monkeypatch.setattr(
+        nsjail_backend_module, "_READONLY_SYSTEM_MOUNTS", [str(host_link)]
+    )
+    monkeypatch.setattr(nsjail_backend_module, "_READONLY_ETC_ENTRIES", [])
+
+    session = BoxSessionInfo(
+        session_id="symlink",
+        backend_name="nsjail",
+        backend_session_id=str(tmp_path / "session"),
+        image="python:3.12",
+        network=BoxNetworkMode.OFF,
+        created_at="2024-01-01T00:00:00+00:00",
+        last_used_at="2024-01-01T00:00:00+00:00",
+    )
+    spec = BoxSpec(session_id="symlink", cmd="true")
+    jail_root = tmp_path / "jail"
+    backend._ensure_chroot_mount_targets(jail_root, session, spec)
+
+    jail_link = jail_root / str(host_link).lstrip("/")
+    assert jail_link.is_symlink()
+    assert jail_link.readlink() == host_link.readlink()
+    assert backend._build_readonly_mounts(BoxNetworkMode.OFF) == []
 
 
 def test_detect_cgroup_v2_private_cgroupns_ebusy_returns_false():
@@ -608,12 +798,42 @@ async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
     (current_dir / "workspace").mkdir()
 
     with mock.patch.object(
-        backend, "_kill_session_processes", new_callable=mock.AsyncMock
-    ):
+        backend,
+        "_kill_orphaned_session_processes_sync",
+    ) as kill_processes:
         await backend.cleanup_orphaned_containers("test123")
 
+    kill_processes.assert_called_once_with("test123")
     assert not old_dir.exists()
     assert current_dir.exists()
+
+
+def test_kill_orphaned_processes_scans_proc_once(
+    backend,
+    tmp_base,
+    tmp_path,
+):
+    proc_dir = tmp_path / "proc"
+    old_pid = proc_dir / "101"
+    current_pid = proc_dir / "102"
+    unrelated_pid = proc_dir / "103"
+    for pid_dir in (old_pid, current_pid, unrelated_pid):
+        pid_dir.mkdir(parents=True)
+    (old_pid / "cmdline").write_bytes(
+        (f"nsjail\0--chroot\0{tmp_base}/oldinst_sess1_abc/root\0").encode()
+    )
+    (current_pid / "cmdline").write_bytes(
+        (f"nsjail\0--chroot\0{tmp_base}/test123_sess2_def/root\0").encode()
+    )
+    (unrelated_pid / "cmdline").write_bytes(b"python\0worker.py\0")
+
+    with mock.patch("os.kill") as kill:
+        backend._kill_orphaned_session_processes_sync(
+            "test123",
+            proc_dir=proc_dir,
+        )
+
+    kill.assert_called_once_with(101, 9)
 
 
 # ── output clipping ──────────────────────────────────────────────────

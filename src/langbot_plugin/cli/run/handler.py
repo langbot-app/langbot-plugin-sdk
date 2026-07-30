@@ -39,6 +39,21 @@ from langbot_plugin.api.proxies.event_context import EventContextProxy
 from langbot_plugin.api.proxies.execute_context import ExecuteContextProxy
 
 logger = logging.getLogger(__name__)
+MAX_RUNTIME_UI_FILE_BYTES = 4 * 1024 * 1024
+
+
+async def _read_runtime_ui_file_limited(path: str | Path) -> bytes:
+    if await asyncio.to_thread(os.path.getsize, path) > MAX_RUNTIME_UI_FILE_BYTES:
+        raise ValueError(
+            f"Plugin UI file exceeds the {MAX_RUNTIME_UI_FILE_BYTES}-byte limit"
+        )
+    async with aiofiles.open(path, "rb") as file:
+        content = await file.read(MAX_RUNTIME_UI_FILE_BYTES + 1)
+    if len(content) > MAX_RUNTIME_UI_FILE_BYTES:
+        raise ValueError(
+            f"Plugin UI file exceeds the {MAX_RUNTIME_UI_FILE_BYTES}-byte limit"
+        )
+    return content
 
 
 def _resolve_asset_path(file_key: str) -> Path | None:
@@ -89,9 +104,13 @@ class PluginRuntimeHandler(Handler):
     ):
         super().__init__(connection)
         self.name = "FromRuntime"
+        self._shutdown_task: asyncio.Task[None] | None = None
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
         async def initialize_plugin(data: dict[str, typing.Any]) -> ActionResponse:
+            action_context = self.current_action_context
+            if action_context is not None:
+                self.bind_action_context(action_context)
             await plugin_initialize_callback(data["plugin_settings"])
             return ActionResponse.success({})
 
@@ -106,9 +125,7 @@ class PluginRuntimeHandler(Handler):
                 return ActionResponse.success(
                     {"plugin_icon_file_key": "", "mime_type": ""}
                 )
-            async with aiofiles.open(icon_path, "rb") as f:
-                # icon_base64 = base64.b64encode(f.read()).decode("utf-8")
-                icon_bytes = await f.read()
+            icon_bytes = await _read_runtime_ui_file_limited(icon_path)
 
             mime_type = mimetypes.guess_type(icon_path)[0]
 
@@ -129,8 +146,7 @@ class PluginRuntimeHandler(Handler):
             if not os.path.exists(readme_path):
                 readme_path = "README.md"
 
-            async with aiofiles.open(readme_path, "rb") as f:
-                readme_bytes = await f.read()
+            readme_bytes = await _read_runtime_ui_file_limited(readme_path)
             readme_file_key = await self.send_file(readme_bytes, "md")
             return ActionResponse.success(
                 {
@@ -148,8 +164,7 @@ class PluginRuntimeHandler(Handler):
                     {"file_file_key": None, "mime_type": None}
                 )
 
-            async with aiofiles.open(file_path, "rb") as f:
-                file_bytes = await f.read()
+            file_bytes = await _read_runtime_ui_file_limited(file_path)
 
             mime_type = (
                 mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
@@ -260,6 +275,7 @@ class PluginRuntimeHandler(Handler):
             tool_parameters = data["tool_parameters"]
             session = data["session"]
             query_id = data["query_id"]
+            query_uuid = data.get("query_uuid")
 
             for component in self.plugin_container.components:
                 if component.manifest.kind == Tool.__kind__:
@@ -273,7 +289,7 @@ class PluginRuntimeHandler(Handler):
 
                     tool_instance = component.component_instance
 
-                    # 检查 call 方法是否接受 session 和 query_id 参数，如果接受则传入，否则只传 tool_parameters
+                    # Pass only the context parameters supported by the plugin.
                     import inspect
 
                     call_sig = inspect.signature(tool_instance.call)
@@ -281,9 +297,10 @@ class PluginRuntimeHandler(Handler):
 
                     if "session" in params and "query_id" in params:
                         session = provider_session.Session.model_validate(session)
-                        resp = await tool_instance.call(
-                            tool_parameters, session=session, query_id=query_id
-                        )
+                        call_kwargs = {"session": session, "query_id": query_id}
+                        if "query_uuid" in params:
+                            call_kwargs["query_uuid"] = query_uuid
+                        resp = await tool_instance.call(tool_parameters, **call_kwargs)
                     else:
                         resp = await tool_instance.call(tool_parameters)
 
@@ -376,8 +393,20 @@ class PluginRuntimeHandler(Handler):
             In production mode, this will just acknowledge the shutdown.
             """
             if self.shutdown_callback is not None:
-                # In debug mode, trigger reconnection
-                asyncio.create_task(self.shutdown_callback())
+                if self._shutdown_task is None or self._shutdown_task.done():
+                    self._shutdown_task = asyncio.create_task(self.shutdown_callback())
+
+                    def shutdown_done(task: asyncio.Task[None]) -> None:
+                        if task.cancelled():
+                            return
+                        exc = task.exception()
+                        if exc is not None:
+                            logger.error(
+                                "Plugin debug shutdown callback failed",
+                                exc_info=exc,
+                            )
+
+                    self._shutdown_task.add_done_callback(shutdown_done)
 
             return ActionResponse.success({})
 
@@ -534,9 +563,14 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success(result.model_dump(mode="json"))
 
-    async def register_plugin(self, prod_mode: bool = False) -> dict[str, typing.Any]:
-        # Read PLUGIN_DEBUG_KEY from environment variable
-        plugin_debug_key = os.environ.get("PLUGIN_DEBUG_KEY", "")
+    async def register_plugin(
+        self,
+        prod_mode: bool = False,
+        registration_capability: str = "",
+    ) -> dict[str, typing.Any]:
+        # The shared key is only a development credential. Installed plugin
+        # processes authenticate with a launch-scoped, one-use capability.
+        plugin_debug_key = "" if prod_mode else os.environ.get("PLUGIN_DEBUG_KEY", "")
 
         resp = await self.call_action(
             PluginToRuntimeAction.REGISTER_PLUGIN,
@@ -544,6 +578,9 @@ class PluginRuntimeHandler(Handler):
                 "plugin_container": self.plugin_container.model_dump(),
                 "prod_mode": prod_mode,
                 "plugin_debug_key": plugin_debug_key,
+                "registration_capability": (
+                    registration_capability if prod_mode else ""
+                ),
             },
         )
         return resp

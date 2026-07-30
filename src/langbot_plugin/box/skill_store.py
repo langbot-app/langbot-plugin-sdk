@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import io
 import os
 import posixpath
 import shutil
+import stat
 import tempfile
 import zipfile
 from pathlib import Path
@@ -26,9 +28,38 @@ _PUBLIC_SKILL_FIELDS = (
     "instructions",
     "package_root",
     "entry_file",
+    "python_project",
     "created_at",
     "updated_at",
 )
+
+# Skill uploads are untrusted. These fixed Runtime-owned caps apply to both
+# preview and installation and are deliberately not configurable per tenant.
+_MAX_ZIP_COMPRESSED_BYTES = 20 * 1024 * 1024
+_MAX_ZIP_ENTRIES = 512
+_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
+_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+_MAX_ZIP_COMPRESSION_RATIO = 100.0
+_ZIP_COPY_CHUNK_BYTES = 64 * 1024
+_MAX_SKILL_TEXT_BYTES = 1024 * 1024
+_MAX_DISCOVERED_SKILLS = 1_000
+_MAX_SKILL_SCAN_ENTRIES = 10_000
+_MAX_SKILL_LIST_ENTRIES = 1_000
+_MAX_SKILL_DIRECTORY_ENTRIES = 10_000
+_MAX_SKILL_LIST_TOTAL_TEXT_BYTES = 16 * 1024 * 1024
+
+
+def _read_utf8_text_limited(path: str, *, subject: str) -> str:
+    if os.path.getsize(path) > _MAX_SKILL_TEXT_BYTES:
+        raise ValueError(f"{subject} exceeds the {_MAX_SKILL_TEXT_BYTES}-byte limit")
+    with open(path, "rb") as file:
+        content = file.read(_MAX_SKILL_TEXT_BYTES + 1)
+    if len(content) > _MAX_SKILL_TEXT_BYTES:
+        raise ValueError(f"{subject} exceeds the {_MAX_SKILL_TEXT_BYTES}-byte limit")
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{subject} is not valid UTF-8 text") from exc
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -73,8 +104,22 @@ def build_skill_md(metadata: dict, instructions: str) -> str:
 class BoxSkillStore:
     """Skill package storage owned by the Box runtime process."""
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: dict | None = None, *, namespace: str | None = None):
         self._config = config or {}
+        self._namespace = namespace
+
+    def scoped(self, namespace: str) -> BoxSkillStore:
+        """Return an immutable Workspace view over the configured skill store."""
+
+        normalized = str(namespace or "").strip()
+        if (
+            not normalized
+            or "/" in normalized
+            or "\\" in normalized
+            or normalized in {".", ".."}
+        ):
+            raise ValueError("Invalid Box skill namespace")
+        return BoxSkillStore(self._config, namespace=normalized)
 
     def update_config(self, config: dict) -> None:
         self._config = config or {}
@@ -93,18 +138,30 @@ class BoxSkillStore:
         skills_root_path = Path(skills_root).expanduser()
         if not skills_root_path.is_absolute():
             skills_root_path = host_root_path / skills_root_path
-        return str(skills_root_path.resolve())
+        resolved_root = skills_root_path.resolve()
+        if self._namespace is not None:
+            resolved_root = resolved_root / "tenants" / self._namespace
+        return str(resolved_root)
 
     def list_skills(self) -> list[dict]:
         os.makedirs(self.root, exist_ok=True)
         skills: list[dict] = []
+        retained_text_bytes = 0
         for package_root, entry_file in self._discover_skill_directories(
             self.root, max_depth=6
         ):
             try:
-                skills.append(self._load_skill_package(package_root, entry_file))
+                skill = self._load_skill_package(package_root, entry_file)
             except Exception:
                 continue
+            retained_text_bytes += sum(
+                len(value.encode("utf-8"))
+                for value in skill.values()
+                if isinstance(value, str)
+            )
+            if retained_text_bytes > _MAX_SKILL_LIST_TOTAL_TEXT_BYTES:
+                raise ValueError("Skill listing exceeds the configured text limit")
+            skills.append(skill)
         skills.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return [self._serialize_skill(skill) for skill in skills]
 
@@ -114,12 +171,33 @@ class BoxSkillStore:
                 return skill
         return None
 
+    def resolve_skill_package_root(self, skill_name: str) -> str:
+        """Return a trusted package root for a Runtime-owned sandbox mount.
+
+        Only Workspace-scoped stores may resolve mounts. The result comes from
+        the store's own discovery, is canonicalized back under that Workspace's
+        root, and never incorporates a Core-supplied host path.
+        """
+
+        if self._namespace is None:
+            raise ValueError("Skill sandbox mounts require a Workspace-scoped store")
+        skill_name = self._validate_skill_name(skill_name)
+        skill = self._require_skill(skill_name)
+        package_root = self._require_scoped_path(
+            str(skill.get("package_root") or ""), "skill package"
+        )
+        if not os.path.isdir(package_root):
+            raise ValueError(f'Skill "{skill_name}" package directory is unavailable')
+        return package_root
+
     def create_skill(self, data: dict) -> dict:
         name = self._validate_skill_name(data.get("name", ""))
         if self.get_skill(name):
             raise ValueError(f'Skill with name "{name}" already exists')
 
         package_root = self._normalize_package_root(data.get("package_root", ""))
+        if self._namespace is not None and package_root:
+            self._require_scoped_path(package_root, "package_root")
         managed_root = self._managed_skill_path(name)
         target_root = managed_root
         imported_skill_data: dict | None = None
@@ -210,6 +288,8 @@ class BoxSkillStore:
         return {"deleted": skill_name}
 
     def scan_directory(self, path: str) -> dict:
+        if self._namespace is not None:
+            path = self._require_scoped_path(path, "scan path")
         if not os.path.isdir(path):
             raise ValueError(f"Directory does not exist: {path}")
 
@@ -227,6 +307,24 @@ class BoxSkillStore:
         package_root, entry_file = discovered[0]
         return self._load_skill_package(package_root, entry_file)
 
+    def _require_scoped_path(self, path: str, label: str) -> str:
+        """Keep host-path operations inside this Workspace's skill root.
+
+        A scoped Box Runtime is shared by mutually untrusted Workspaces. Host
+        paths supplied over RPC are therefore routing input, not authority.
+        ``realpath`` also prevents a symlink inside one tenant root from being
+        used to import or scan another tenant's files.
+        """
+
+        candidate = self._normalize_package_root(path)
+        scoped_root = self._normalize_package_root(self.root)
+        if not candidate or (
+            candidate != scoped_root
+            and not candidate.startswith(f"{scoped_root}{os.sep}")
+        ):
+            raise ValueError(f"{label} must stay within the Workspace skill root")
+        return candidate
+
     def list_skill_files(
         self,
         skill_name: str,
@@ -234,31 +332,47 @@ class BoxSkillStore:
         include_hidden: bool = False,
         max_entries: int = 200,
     ) -> dict:
+        if (
+            isinstance(max_entries, bool)
+            or not isinstance(max_entries, int)
+            or max_entries <= 0
+        ):
+            raise ValueError("max_entries must be a positive integer")
+        max_entries = min(max_entries, _MAX_SKILL_LIST_ENTRIES)
         skill = self._require_skill(skill_name)
         target_dir, relative_path = self._resolve_skill_path(
             skill, path, expect_directory=True
         )
-        entries: list[dict] = []
         with os.scandir(target_dir) as iterator:
-            for entry in sorted(iterator, key=lambda item: item.name):
-                if not include_hidden and entry.name.startswith("."):
-                    continue
-                entry_rel_path = (
-                    entry.name
-                    if relative_path in ("", ".")
-                    else os.path.join(relative_path, entry.name)
-                )
-                is_dir = entry.is_dir()
-                entries.append(
-                    {
-                        "path": entry_rel_path.replace(os.sep, "/"),
-                        "name": entry.name,
-                        "is_dir": is_dir,
-                        "size": None if is_dir else entry.stat().st_size,
-                    }
-                )
-                if len(entries) >= max_entries:
-                    break
+            directory_entries = []
+            for entry in iterator:
+                if len(directory_entries) >= _MAX_SKILL_DIRECTORY_ENTRIES:
+                    raise ValueError(
+                        "Skill directory exceeds the configured entry limit"
+                    )
+                directory_entries.append(entry)
+        directory_entries.sort(key=lambda item: item.name)
+        visible_entries = [
+            entry
+            for entry in directory_entries
+            if include_hidden or not entry.name.startswith(".")
+        ]
+        entries: list[dict] = []
+        for entry in visible_entries[:max_entries]:
+            entry_rel_path = (
+                entry.name
+                if relative_path in ("", ".")
+                else os.path.join(relative_path, entry.name)
+            )
+            is_dir = entry.is_dir()
+            entries.append(
+                {
+                    "path": entry_rel_path.replace(os.sep, "/"),
+                    "name": entry.name,
+                    "is_dir": is_dir,
+                    "size": None if is_dir else entry.stat().st_size,
+                }
+            )
 
         return {
             "skill": {"name": skill["name"]},
@@ -266,7 +380,7 @@ class BoxSkillStore:
             if relative_path in ("", ".")
             else relative_path.replace(os.sep, "/"),
             "entries": entries,
-            "truncated": len(entries) >= max_entries,
+            "truncated": len(visible_entries) > max_entries,
         }
 
     def read_skill_file(self, skill_name: str, path: str) -> dict:
@@ -277,13 +391,10 @@ class BoxSkillStore:
         if not os.path.isfile(target_path):
             raise ValueError(f"Skill file not found: {relative_path}")
 
-        try:
-            with open(target_path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except UnicodeDecodeError as exc:
-            raise ValueError(
-                f"Skill file is not valid UTF-8 text: {relative_path}"
-            ) from exc
+        content = _read_utf8_text_limited(
+            target_path,
+            subject=f"Skill file {relative_path}",
+        )
 
         return {
             "skill": {"name": skill["name"]},
@@ -296,6 +407,12 @@ class BoxSkillStore:
         target_path, relative_path = self._resolve_skill_path(
             skill, path, expect_directory=False
         )
+        encoded_content = content.encode("utf-8")
+        if len(encoded_content) > _MAX_SKILL_TEXT_BYTES:
+            raise ValueError(
+                f"Skill file {relative_path} exceeds the "
+                f"{_MAX_SKILL_TEXT_BYTES}-byte limit"
+            )
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -303,7 +420,7 @@ class BoxSkillStore:
         return {
             "skill": {"name": skill["name"]},
             "path": relative_path.replace(os.sep, "/"),
-            "bytes_written": len(content.encode("utf-8")),
+            "bytes_written": len(encoded_content),
         }
 
     def preview_zip_upload(
@@ -316,6 +433,7 @@ class BoxSkillStore:
     ) -> list[dict]:
         if not file_bytes:
             raise ValueError("Uploaded file is empty")
+        self._validate_zip_upload_size(file_bytes)
 
         tmp_dir = tempfile.mkdtemp(prefix="langbot_box_skill_preview_")
         try:
@@ -341,6 +459,7 @@ class BoxSkillStore:
     ) -> list[dict]:
         if not file_bytes:
             raise ValueError("Uploaded file is empty")
+        self._validate_zip_upload_size(file_bytes)
 
         tmp_dir = tempfile.mkdtemp(prefix="langbot_box_skill_upload_")
         try:
@@ -380,21 +499,32 @@ class BoxSkillStore:
     ) -> dict:
         package_root = self._normalize_package_root(package_root)
         entry_path = os.path.join(package_root, entry_file)
-        with open(entry_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = _read_utf8_text_limited(
+            entry_path,
+            subject=f"Skill entry file {entry_file}",
+        )
 
         metadata, instructions = parse_frontmatter(content)
         dir_name = os.path.basename(os.path.normpath(package_root))
+        skill_name = self._validate_skill_name(metadata.get("name") or dir_name)
         stat = os.stat(entry_path)
         return {
-            "name": str(metadata.get("name") or dir_name).strip(),
-            "display_name": str(
-                metadata.get("display_name") or metadata.get("name") or dir_name
-            ).strip(),
+            "name": skill_name,
+            "display_name": str(metadata.get("display_name") or skill_name).strip(),
             "description": str(metadata.get("description") or "").strip(),
             "instructions": instructions,
             "package_root": package_root,
             "entry_file": entry_file,
+            "python_project": any(
+                os.path.isfile(os.path.join(package_root, filename))
+                for filename in (
+                    "requirements.txt",
+                    "pyproject.toml",
+                    "setup.py",
+                    "setup.cfg",
+                )
+            )
+            or os.path.isdir(os.path.join(package_root, ".venv")),
             "created_at": dt.datetime.fromtimestamp(
                 stat.st_ctime, tz=dt.timezone.utc
             ).isoformat(),
@@ -573,6 +703,14 @@ class BoxSkillStore:
         return extract_dir
 
     @staticmethod
+    def _validate_zip_upload_size(file_bytes: bytes) -> None:
+        if len(file_bytes) > _MAX_ZIP_COMPRESSED_BYTES:
+            raise ValueError(
+                "Uploaded archive exceeds the compressed size limit "
+                f"({_MAX_ZIP_COMPRESSED_BYTES} bytes)"
+            )
+
+    @staticmethod
     def _uploaded_skill_target_stem(filename: str) -> str:
         stem = os.path.splitext(os.path.basename(str(filename or "").strip()))[0]
         safe_stem = "".join(
@@ -615,29 +753,139 @@ class BoxSkillStore:
 
     @staticmethod
     def _safe_extract_zip(archive: zipfile.ZipFile, target_dir: str) -> None:
+        """Validate and stream-extract a bounded ZIP archive.
+
+        ``ZipFile.extractall`` is intentionally avoided: all metadata limits are
+        checked before the first file is written and every member is then copied
+        through an explicit byte counter. This prevents path traversal, symlink
+        materialization, metadata-only size lies, and decompression bombs.
+        """
+
         target_root = os.path.realpath(target_dir)
         os.makedirs(target_root, exist_ok=True)
+        members = archive.infolist()
+        if len(members) > _MAX_ZIP_ENTRIES:
+            raise ValueError(
+                f"Archive contains too many entries (maximum {_MAX_ZIP_ENTRIES})"
+            )
 
-        for member in archive.infolist():
-            member_name = member.filename
-            if not member_name or member_name.endswith("/"):
-                continue
+        validated: list[tuple[zipfile.ZipInfo, str, bool]] = []
+        seen_paths: set[str] = set()
+        total_compressed = 0
+        total_uncompressed = 0
+        for member in members:
+            member_name = str(member.filename or "")
+            if not member_name or "\x00" in member_name:
+                raise ValueError("Archive contains an unsafe empty or NUL path")
 
-            normalized = posixpath.normpath(member_name)
+            portable_name = member_name.replace("\\", "/")
+            normalized = posixpath.normpath(portable_name)
+            first_component = normalized.split("/", 1)[0]
             if (
-                normalized.startswith("../")
-                or normalized == ".."
-                or os.path.isabs(normalized)
+                portable_name.startswith("/")
+                or normalized in {"", ".", ".."}
+                or normalized.startswith("../")
+                or (len(first_component) >= 2 and first_component[1] == ":")
             ):
                 raise ValueError(f"Archive contains an unsafe path: {member_name}")
 
-            destination = os.path.realpath(os.path.join(target_root, normalized))
+            destination = os.path.realpath(
+                os.path.join(target_root, *normalized.split("/"))
+            )
             if destination != target_root and not destination.startswith(
                 f"{target_root}{os.sep}"
             ):
                 raise ValueError(f"Archive contains an unsafe path: {member_name}")
 
-        archive.extractall(target_root)
+            destination_key = os.path.normcase(destination)
+            if destination_key in seen_paths:
+                raise ValueError(f"Archive contains a duplicate path: {member_name}")
+            seen_paths.add(destination_key)
+
+            unix_mode = (member.external_attr >> 16) & 0xFFFF
+            file_type = stat.S_IFMT(unix_mode)
+            is_directory = member.is_dir() or portable_name.endswith("/")
+            if file_type == stat.S_IFLNK:
+                raise ValueError(f"Archive contains a symbolic link: {member_name}")
+            if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+                raise ValueError(f"Archive contains a non-regular entry: {member_name}")
+            if is_directory:
+                if member.file_size != 0:
+                    raise ValueError(
+                        f"Archive directory has unexpected content: {member_name}"
+                    )
+                validated.append((member, destination, True))
+                continue
+
+            if member.file_size < 0 or member.compress_size < 0:
+                raise ValueError(
+                    f"Archive contains invalid size metadata: {member_name}"
+                )
+            if member.file_size > _MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    f"Archive entry exceeds the uncompressed size limit: {member_name}"
+                )
+            if member.file_size and (
+                member.compress_size == 0
+                or member.file_size / member.compress_size > _MAX_ZIP_COMPRESSION_RATIO
+            ):
+                raise ValueError(
+                    f"Archive entry exceeds the compression ratio limit: {member_name}"
+                )
+            total_compressed += member.compress_size
+            total_uncompressed += member.file_size
+            if total_compressed > _MAX_ZIP_COMPRESSED_BYTES:
+                raise ValueError("Archive exceeds the compressed size limit")
+            if total_uncompressed > _MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+                raise ValueError("Archive exceeds the total uncompressed size limit")
+            validated.append((member, destination, False))
+
+        if total_uncompressed and (
+            total_compressed == 0
+            or total_uncompressed / total_compressed > _MAX_ZIP_COMPRESSION_RATIO
+        ):
+            raise ValueError("Archive exceeds the aggregate compression ratio limit")
+
+        extracted_total = 0
+        for member, destination, is_directory in validated:
+            if is_directory:
+                os.makedirs(destination, mode=0o755, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(destination), mode=0o755, exist_ok=True)
+            extracted_entry = 0
+            try:
+                with (
+                    archive.open(member, "r") as source,
+                    open(destination, "xb") as target,
+                ):
+                    while True:
+                        chunk = source.read(_ZIP_COPY_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        extracted_entry += len(chunk)
+                        extracted_total += len(chunk)
+                        if extracted_entry > _MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES:
+                            raise ValueError(
+                                "Archive entry exceeds the uncompressed size limit: "
+                                f"{member.filename}"
+                            )
+                        if extracted_total > _MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+                            raise ValueError(
+                                "Archive exceeds the total uncompressed size limit"
+                            )
+                        target.write(chunk)
+            except Exception:
+                try:
+                    os.unlink(destination)
+                except OSError:
+                    pass
+                raise
+            if extracted_entry != member.file_size:
+                raise ValueError(
+                    f"Archive entry size changed while extracting: {member.filename}"
+                )
+            source_mode = (member.external_attr >> 16) & 0o777
+            os.chmod(destination, 0o755 if source_mode & 0o111 else 0o644)
 
     def _resolve_skill_path(
         self, skill: dict, path: str, *, expect_directory: bool
@@ -680,14 +928,20 @@ class BoxSkillStore:
         return None
 
     def _discover_skill_directories(
-        self, root_path: str, max_depth: int = 2
+        self,
+        root_path: str,
+        max_depth: int = 2,
+        *,
+        max_scan_entries: int = _MAX_SKILL_SCAN_ENTRIES,
+        max_skills: int = _MAX_DISCOVERED_SKILLS,
     ) -> list[tuple[str, str]]:
         discovered: list[tuple[str, str]] = []
-        queue: list[tuple[str, int]] = [(root_path, 0)]
+        queue: collections.deque[tuple[str, int]] = collections.deque([(root_path, 0)])
         seen: set[str] = set()
+        scanned_entries = 0
 
         while queue:
-            current_path, depth = queue.pop(0)
+            current_path, depth = queue.popleft()
             normalized_path = os.path.abspath(current_path)
             if normalized_path in seen:
                 continue
@@ -696,20 +950,31 @@ class BoxSkillStore:
             found = self._find_skill_entry(normalized_path)
             if found:
                 discovered.append(found)
+                if len(discovered) > max_skills:
+                    raise ValueError(
+                        "Skill discovery exceeded the configured package limit"
+                    )
                 continue
 
             if depth >= max_depth:
                 continue
 
             try:
-                entries = sorted(
-                    os.scandir(normalized_path), key=lambda entry: entry.name
-                )
+                with os.scandir(normalized_path) as iterator:
+                    entries = []
+                    for entry in iterator:
+                        scanned_entries += 1
+                        if scanned_entries > max_scan_entries:
+                            raise ValueError(
+                                "Skill discovery exceeded the configured entry limit"
+                            )
+                        entries.append(entry)
+                entries.sort(key=lambda entry: entry.name)
             except OSError:
                 continue
 
             for entry in entries:
-                if entry.is_dir():
+                if entry.is_dir(follow_symlinks=False):
                     queue.append((entry.path, depth + 1))
 
         return discovered

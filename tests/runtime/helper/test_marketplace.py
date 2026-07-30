@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from langbot_plugin.runtime.helper import marketplace
@@ -28,6 +30,8 @@ class FakeResponse:
     def __init__(self, *, status_code=200, json_data=None, content=b""):
         self.status_code = status_code
         self._json_data = json_data or {}
+        if json_data is not None and not content:
+            content = json.dumps(json_data).encode()
         self.content = content
         self.text = "response text"
         self.headers = {"content-length": str(len(content))}
@@ -131,3 +135,12 @@ async def test_list_plugins_validates_each_plugin(fake_client):
     plugins = await marketplace.list_plugins()
 
     assert [plugin.plugin_id for plugin in plugins] == ["tester/demo"]
+
+
+@pytest.mark.asyncio
+async def test_plugin_download_rejects_oversized_package(fake_client, monkeypatch):
+    monkeypatch.setattr(marketplace, "_MAX_PLUGIN_PACKAGE_BYTES", 4)
+    fake_client.response = FakeResponse(content=b"12345")
+
+    with pytest.raises(RuntimeError, match="exceeds the runtime limit"):
+        await marketplace.download_plugin("tester", "demo", "0.1.0")

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import io
 import os
+import stat
 import zipfile
 
 import pytest
+
+import langbot_plugin.box.skill_store as skill_store_module
 
 from langbot_plugin.box.skill_store import (
     BoxSkillStore,
@@ -104,6 +107,70 @@ def test_skill_store_installs_zip_under_configured_relative_skills_root(tmp_path
 
     store.write_skill_file("demo", "notes.txt", "updated")
     assert store.read_skill_file("demo", "notes.txt")["content"] == "updated"
+
+
+def test_scoped_skill_stores_isolate_same_named_skill_between_workspaces(tmp_path):
+    base_store = _make_store(tmp_path)
+    first_store = base_store.scoped("workspace-a")
+    second_store = base_store.scoped("workspace-b")
+
+    first_skill = first_store.install_zip_upload(
+        file_bytes=_skill_zip("demo"),
+        filename="demo.zip",
+    )[0]
+    second_skill = second_store.install_zip_upload(
+        file_bytes=_skill_zip("demo"),
+        filename="demo.zip",
+    )[0]
+
+    assert first_store.root != second_store.root
+    assert [skill["name"] for skill in first_store.list_skills()] == ["demo"]
+    assert [skill["name"] for skill in second_store.list_skills()] == ["demo"]
+    assert first_skill["package_root"].startswith(first_store.root + os.sep)
+    assert second_skill["package_root"].startswith(second_store.root + os.sep)
+    assert first_skill["package_root"] != second_skill["package_root"]
+
+
+def test_scoped_skill_store_rejects_cross_workspace_scan_and_import(tmp_path):
+    base_store = _make_store(tmp_path)
+    first_store = base_store.scoped("workspace-a")
+    second_store = base_store.scoped("workspace-b")
+    stolen = second_store.create_skill(
+        {
+            "name": "private",
+            "instructions": "workspace-b secret",
+        }
+    )
+
+    with pytest.raises(ValueError, match="Workspace skill root"):
+        first_store.scan_directory(stolen["package_root"])
+    with pytest.raises(ValueError, match="Workspace skill root"):
+        first_store.create_skill(
+            {
+                "name": "stolen",
+                "package_root": stolen["package_root"],
+            }
+        )
+
+
+def test_scoped_skill_store_does_not_follow_directory_symlinks(tmp_path):
+    base_store = _make_store(tmp_path)
+    first_store = base_store.scoped("workspace-a")
+    second_store = base_store.scoped("workspace-b")
+    private = second_store.create_skill(
+        {
+            "name": "private",
+            "instructions": "workspace-b secret",
+        }
+    )
+    os.makedirs(first_store.root, exist_ok=True)
+    link = os.path.join(first_store.root, "linked-private")
+    try:
+        os.symlink(private["package_root"], link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlinks are unavailable on this platform")
+
+    assert first_store.list_skills() == []
 
 
 def test_skill_store_supports_source_subdir_before_selecting_candidates(tmp_path):
@@ -274,6 +341,7 @@ def test_list_skills_returns_managed_skills_sorted_by_updated_at(tmp_path):
         "instructions",
         "package_root",
         "entry_file",
+        "python_project",
         "created_at",
         "updated_at",
     }
@@ -295,6 +363,20 @@ def test_list_skills_skips_corrupt_entries(tmp_path):
     assert "bad" not in names
 
 
+def test_skill_discovery_fails_fast_at_entry_limit(tmp_path):
+    store = _make_store(tmp_path)
+    root = tmp_path / "skills"
+    for index in range(3):
+        (root / f"directory-{index}").mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="entry limit"):
+        store._discover_skill_directories(
+            store.root,
+            max_depth=6,
+            max_scan_entries=2,
+        )
+
+
 def test_get_skill_returns_match_and_none_for_missing(tmp_path):
     store = _make_store(tmp_path)
     _write_skill_dir(tmp_path / "skills", "alpha")
@@ -302,6 +384,17 @@ def test_get_skill_returns_match_and_none_for_missing(tmp_path):
     assert found is not None
     assert found["name"] == "alpha"
     assert store.get_skill("does-not-exist") is None
+
+
+def test_skill_python_project_metadata_is_computed_by_box_runtime_store(tmp_path):
+    store = _make_store(tmp_path)
+    store.create_skill({"name": "python-demo", "instructions": "run it"})
+
+    assert store.get_skill("python-demo")["python_project"] is False
+
+    store.write_skill_file("python-demo", "requirements.txt", "requests==2.32.0\n")
+
+    assert store.get_skill("python-demo")["python_project"] is True
 
 
 def test_load_skill_package_falls_back_to_dir_name_without_frontmatter(tmp_path):
@@ -687,6 +780,27 @@ def test_read_skill_file_non_utf8_raises(tmp_path):
         store.read_skill_file("binskill", "blob.bin")
 
 
+def test_read_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    created = store.create_skill({"name": "large-read", "instructions": "x"})
+    monkeypatch.setattr(skill_store_module, "_MAX_SKILL_TEXT_BYTES", 128)
+    target = os.path.join(created["package_root"], "large.txt")
+    with open(target, "wb") as file:
+        file.write(b"x" * 129)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        store.read_skill_file("large-read", "large.txt")
+
+
+def test_write_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    store.create_skill({"name": "large-write", "instructions": "x"})
+    monkeypatch.setattr(skill_store_module, "_MAX_SKILL_TEXT_BYTES", 128)
+
+    with pytest.raises(ValueError, match="exceeds"):
+        store.write_skill_file("large-write", "large.txt", "x" * 129)
+
+
 def test_read_skill_file_missing_raises(tmp_path):
     store = _make_store(tmp_path)
     store.create_skill({"name": "s", "instructions": "x"})
@@ -740,6 +854,98 @@ def test_safe_extract_zip_extracts_clean_archive(tmp_path):
     with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as zf:
         BoxSkillStore._safe_extract_zip(zf, str(target))
     assert (target / "a" / "b.txt").read_text() == "data"
+
+
+def test_safe_extract_zip_streams_without_extractall(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    monkeypatch.setattr(
+        zipfile.ZipFile,
+        "extractall",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("extractall used")
+        ),
+    )
+
+    preview = store.preview_zip_upload(file_bytes=_skill_zip(), filename="demo.zip")
+
+    assert [item["name"] for item in preview] == ["demo"]
+
+
+def test_zip_upload_rejects_compressed_byte_cap_for_preview_and_install(
+    tmp_path, monkeypatch
+):
+    store = _make_store(tmp_path)
+    payload = _skill_zip()
+    monkeypatch.setattr(
+        skill_store_module, "_MAX_ZIP_COMPRESSED_BYTES", len(payload) - 1
+    )
+
+    with pytest.raises(ValueError, match="compressed size limit"):
+        store.preview_zip_upload(file_bytes=payload, filename="demo.zip")
+    with pytest.raises(ValueError, match="compressed size limit"):
+        store.install_zip_upload(file_bytes=payload, filename="demo.zip")
+
+
+def test_zip_upload_rejects_entry_count_cap(tmp_path, monkeypatch):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pkg/SKILL.md", "name: pkg")
+        archive.writestr("pkg/a", "a")
+        archive.writestr("pkg/b", "b")
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_ENTRIES", 2)
+
+    with pytest.raises(ValueError, match="too many entries"):
+        _make_store(tmp_path).preview_zip_upload(
+            file_bytes=buffer.getvalue(), filename="pkg.zip"
+        )
+
+
+def test_zip_upload_rejects_per_entry_and_total_uncompressed_caps(
+    tmp_path, monkeypatch
+):
+    per_entry = io.BytesIO()
+    with zipfile.ZipFile(per_entry, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("pkg/SKILL.md", b"x" * 33)
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES", 32)
+    with pytest.raises(ValueError, match="entry exceeds the uncompressed size"):
+        _make_store(tmp_path).preview_zip_upload(
+            file_bytes=per_entry.getvalue(), filename="pkg.zip"
+        )
+
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES", 64)
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES", 10)
+    total = io.BytesIO()
+    with zipfile.ZipFile(total, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("pkg/a", b"a" * 6)
+        archive.writestr("pkg/b", b"b" * 6)
+    with pytest.raises(ValueError, match="total uncompressed size"):
+        _make_store(tmp_path).preview_zip_upload(
+            file_bytes=total.getvalue(), filename="pkg.zip"
+        )
+
+
+def test_zip_upload_rejects_compression_ratio_and_symlink(tmp_path, monkeypatch):
+    ratio = io.BytesIO()
+    with zipfile.ZipFile(ratio, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pkg/SKILL.md", b"a" * 4096)
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_COMPRESSION_RATIO", 2.0)
+    with pytest.raises(ValueError, match="compression ratio"):
+        _make_store(tmp_path).preview_zip_upload(
+            file_bytes=ratio.getvalue(), filename="pkg.zip"
+        )
+
+    monkeypatch.setattr(skill_store_module, "_MAX_ZIP_COMPRESSION_RATIO", 100.0)
+    link_archive = io.BytesIO()
+    with zipfile.ZipFile(link_archive, "w") as archive:
+        archive.writestr("pkg/SKILL.md", "name: pkg")
+        link = zipfile.ZipInfo("pkg/link")
+        link.create_system = 3
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        archive.writestr(link, "../../secret")
+    with pytest.raises(ValueError, match="symbolic link"):
+        _make_store(tmp_path).preview_zip_upload(
+            file_bytes=link_archive.getvalue(), filename="pkg.zip"
+        )
 
 
 def test_safe_extract_zip_rejects_parent_traversal(tmp_path):

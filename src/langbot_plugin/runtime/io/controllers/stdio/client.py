@@ -8,6 +8,48 @@ from langbot_plugin.runtime.io.connections import stdio as stdio_connection
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controller import Controller
 
+_PROCESS_GRACEFUL_EXIT_TIMEOUT_SEC = 2.0
+_PROCESS_TERMINATE_EXIT_TIMEOUT_SEC = 2.0
+_PROCESS_KILL_EXIT_TIMEOUT_SEC = 2.0
+
+
+async def _wait_for_process_exit(
+    process: asyncio.subprocess.Process,
+    timeout: float,
+) -> bool:
+    if process.returncode is not None:
+        return True
+    try:
+        await asyncio.wait_for(process.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return process.returncode is not None
+    return True
+
+
+async def stop_process(process: asyncio.subprocess.Process) -> bool:
+    """Reap a subprocess while preserving its opportunity for graceful cleanup."""
+
+    if await _wait_for_process_exit(
+        process,
+        _PROCESS_GRACEFUL_EXIT_TIMEOUT_SEC,
+    ):
+        return True
+
+    with contextlib.suppress(ProcessLookupError):
+        process.terminate()
+    if await _wait_for_process_exit(
+        process,
+        _PROCESS_TERMINATE_EXIT_TIMEOUT_SEC,
+    ):
+        return True
+
+    with contextlib.suppress(ProcessLookupError):
+        process.kill()
+    return await _wait_for_process_exit(
+        process,
+        _PROCESS_KILL_EXIT_TIMEOUT_SEC,
+    )
+
 
 class StdioClientController(Controller):
     """The controller for stdio client."""
@@ -69,11 +111,5 @@ class StdioClientController(Controller):
         if process.returncode is not None:
             return
 
-        with contextlib.suppress(ProcessLookupError):
-            process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=2)
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
-            await process.wait()
+        if not await stop_process(process):
+            raise RuntimeError("Stdio subprocess did not exit after SIGKILL")

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import stat
 
 import pytest
 
@@ -14,8 +15,14 @@ from langbot_plugin.entities.io.errors import (
     ConnectionClosedError,
 )
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.io.connection import Connection
-from langbot_plugin.runtime.io.handler import Handler
+from langbot_plugin.runtime.io import handler as handler_module
+from langbot_plugin.runtime.io.handler import FILE_CHUNK_LENGTH, Handler
+from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
+from langbot_plugin.runtime.bounded_executor import (
+    current_blocking_work_scope,
+)
 
 from tests.helpers.protocol import ProtocolConnection
 
@@ -79,6 +86,138 @@ async def test_call_action_sends_request_and_returns_response_data():
 
     assert await task == {"ok": True}
     assert request["seq_id"] not in handler.resp_waiters
+
+
+def _action_context(workspace_uuid="workspace-a", installation_uuid=None):
+    return ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid=workspace_uuid,
+        placement_generation=5,
+        installation_uuid=installation_uuid,
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_action_carries_bound_context_outside_data_payload():
+    conn = QueueConnection()
+    handler = Handler(conn)
+    context = _action_context(installation_uuid="installation-1")
+    handler.bind_action_context(context)
+
+    task = asyncio.create_task(handler.call_action(SampleAction.ECHO, {}, timeout=1))
+    [request] = await _wait_for_sent(conn)
+
+    assert request["data"] == {}
+    assert request["context"] == context.model_dump()
+
+    handler.resp_waiters[request["seq_id"]].set_result(
+        ActionResponse(seq_id=request["seq_id"], code=0, message="ok", data={})
+    )
+    await task
+
+
+def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installation():
+    handler = Handler(QueueConnection())
+    workspace_binding = _action_context()
+
+    assert handler.bind_action_context(workspace_binding) == workspace_binding
+    assert handler.bind_action_context(workspace_binding) == workspace_binding
+
+    installation_binding = workspace_binding.for_installation("installation-1")
+    assert handler.bind_action_context(installation_binding) == installation_binding
+
+    with pytest.raises(ValueError, match="another Workspace"):
+        handler.bind_action_context(_action_context(workspace_uuid="workspace-b"))
+    with pytest.raises(ValueError, match="another plugin installation"):
+        handler.bind_action_context(
+            workspace_binding.for_installation("installation-2")
+        )
+    with pytest.raises(ValueError, match="cannot be removed"):
+        handler.bind_action_context(workspace_binding)
+
+
+@pytest.mark.asyncio
+async def test_handler_json_codec_uses_workspace_bounded_thread(monkeypatch):
+    handler = Handler(QueueConnection())
+    handler.bind_action_context(_action_context(workspace_uuid="workspace-a"))
+    calls = []
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        calls.append((fn, current_blocking_work_scope()))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", fake_to_thread)
+
+    assert await handler._decode_message('{"ok": true}') == {"ok": True}
+    assert json.loads(await handler._encode_message({"ok": True})) == {"ok": True}
+    assert calls[0] == (json.loads, "workspace-a")
+    assert calls[1][1] == "workspace-a"
+    assert len(calls) == 2
+
+
+def test_handler_preserves_complete_installation_binding_and_rejects_downgrade():
+    handler = Handler(QueueConnection())
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=5,
+        installation_uuid="installation-1",
+        runtime_revision=2,
+        artifact_digest="a" * 64,
+    )
+
+    assert handler.bind_action_context(binding.model_dump()) == binding
+    assert isinstance(handler.bound_action_context, InstallationBinding)
+    with pytest.raises(ValueError, match="revision or artifact"):
+        handler.bind_action_context(
+            ActionContext(
+                instance_uuid=binding.instance_uuid,
+                workspace_uuid=binding.workspace_uuid,
+                placement_generation=binding.placement_generation,
+                installation_uuid=binding.installation_uuid,
+            )
+        )
+    with pytest.raises(ValueError, match="revision or artifact"):
+        handler.bind_action_context(binding.model_copy(update={"runtime_revision": 3}))
+
+
+@pytest.mark.asyncio
+async def test_run_exposes_validated_context_to_action_and_rejects_mismatch():
+    conn = ProtocolConnection()
+    handler = Handler(conn)
+    binding = _action_context()
+    handler.bind_action_context(binding)
+    seen = []
+
+    @handler.action(SampleAction.ECHO)
+    async def echo(_data):
+        seen.append(
+            (
+                handler.current_action_context,
+                current_blocking_work_scope(),
+            )
+        )
+        return ActionResponse.success({})
+
+    run_task = asyncio.create_task(handler.run())
+    await conn.send_peer_request("echo", {}, seq_id=1)
+    [success] = await conn.sent_messages(1)
+    assert success["code"] == 0
+    assert seen == [(binding, binding.workspace_uuid)]
+
+    await conn.send_peer_request(
+        "echo",
+        {},
+        seq_id=2,
+        action_context=_action_context(workspace_uuid="workspace-b"),
+    )
+    responses = await conn.sent_messages(2)
+    assert responses[1]["code"] == 1
+    assert "does not match connection Workspace" in responses[1]["message"]
+    assert seen == [(binding, binding.workspace_uuid)]
+
+    await conn.close_peer()
+    await run_task
 
 
 @pytest.mark.asyncio
@@ -236,6 +375,8 @@ async def test_call_action_error_response_should_preserve_peer_message():
 async def test_call_action_generator_yields_chunks_until_end():
     conn = QueueConnection()
     handler = Handler(conn)
+    context = _action_context(installation_uuid="installation-1")
+    handler.bind_action_context(context)
     chunks: list[dict] = []
 
     async def consume():
@@ -246,6 +387,7 @@ async def test_call_action_generator_yields_chunks_until_end():
 
     task = asyncio.create_task(consume())
     [request] = await _wait_for_sent(conn)
+    assert request["context"] == context.model_dump()
     queue = handler.resp_queues[request["seq_id"]]
     await queue.put(
         ActionResponse(
@@ -313,9 +455,13 @@ async def test_run_sends_error_response_for_unknown_action():
 async def test_run_handles_streaming_action_response():
     conn = QueueConnection()
     handler = Handler(conn)
+    context = _action_context()
+    handler.bind_action_context(context)
+    seen_contexts = []
 
     @handler.action(SampleAction.STREAM)
     async def stream(_data):
+        seen_contexts.append(handler.current_action_context)
         yield ActionResponse.success({"part": 1})
         yield ActionResponse.success({"part": 2})
 
@@ -335,6 +481,7 @@ async def test_run_handles_streaming_action_response():
         {"part": 2},
         {},
     ]
+    assert seen_contexts == [context]
 
 
 @pytest.mark.asyncio
@@ -362,6 +509,39 @@ def test_handler_file_storage_dir_is_created_for_instances(tmp_path, monkeypatch
     Handler(QueueConnection())
 
     assert (tmp_path / "data" / "temp" / "lbp").is_dir()
+
+
+def test_shared_worker_file_storage_uses_private_writable_tmp(tmp_path, monkeypatch):
+    worker_tmp = tmp_path / "lbp-rpc"
+    monkeypatch.setenv(PLUGIN_RUNTIME_PROFILE_ENV, "shared")
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.io.handler.SHARED_WORKER_FILE_STORAGE_DIR",
+        str(worker_tmp),
+    )
+
+    handler = Handler(QueueConnection())
+
+    assert handler.file_storage_dir == str(worker_tmp)
+    assert worker_tmp.is_dir()
+
+
+def test_handler_file_storage_can_be_isolated_per_installation(tmp_path):
+    first = Handler(
+        QueueConnection(),
+        file_storage_dir=tmp_path / "installation-a" / "rpc-transfer",
+    )
+    second = Handler(
+        QueueConnection(),
+        file_storage_dir=tmp_path / "installation-b" / "rpc-transfer",
+    )
+
+    assert first.file_storage_dir != second.file_storage_dir
+    assert (tmp_path / "installation-a" / "rpc-transfer").is_dir()
+    assert (tmp_path / "installation-b" / "rpc-transfer").is_dir()
+    assert (
+        stat.S_IMODE((tmp_path / "installation-a" / "rpc-transfer").stat().st_mode)
+        == 0o700
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +804,178 @@ async def test_file_chunk_action_reassembles_file_and_read_delete_roundtrip(
     # Delete once, then again: the second call must swallow FileNotFoundError.
     await handler.delete_local_file(file_key)
     await handler.delete_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_file_chunk_action_enforces_aggregate_handler_limit(tmp_path):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path / "rpc-transfer",
+        max_file_bytes=5,
+    )
+    chunk_handler = handler.actions[CommonAction.FILE_CHUNK.value]
+    base = {
+        "file_key": "limited.bin",
+        "chunk_amount": 2,
+    }
+
+    await chunk_handler(
+        {
+            **base,
+            "chunk_base64": base64.b64encode(b"1234").decode("ascii"),
+            "chunk_index": 0,
+        }
+    )
+    with pytest.raises(ValueError, match="configured size limit"):
+        await chunk_handler(
+            {
+                **base,
+                "chunk_base64": base64.b64encode(b"56").decode("ascii"),
+                "chunk_index": 1,
+            }
+        )
+
+    assert await handler.read_local_file("limited.bin") == b"1234"
+
+
+@pytest.mark.asyncio
+async def test_send_file_rejects_oversized_payload_before_hashing(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path,
+        max_file_bytes=5,
+    )
+    hash_called = False
+
+    def fail_if_hashed(*args, **kwargs):
+        nonlocal hash_called
+        hash_called = True
+        raise AssertionError("oversized payload must be rejected before hashing")
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.io.handler.hashlib.sha256",
+        fail_if_hashed,
+    )
+
+    with pytest.raises(ValueError, match="configured size limit"):
+        await handler.send_file(b"123456", "bin")
+
+    assert hash_called is False
+
+
+@pytest.mark.asyncio
+async def test_file_chunk_action_rejects_oversized_chunk_before_decode(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path,
+        max_file_bytes=FILE_CHUNK_LENGTH * 2,
+    )
+    decode_called = False
+
+    def fail_if_decoded(*args, **kwargs):
+        nonlocal decode_called
+        decode_called = True
+        raise AssertionError("oversized payload must be rejected before decoding")
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.io.handler.base64.b64decode",
+        fail_if_decoded,
+    )
+
+    with pytest.raises(ValueError, match="protocol limit"):
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "oversized.bin",
+                "chunk_base64": "A" * ((((FILE_CHUNK_LENGTH + 2) // 3) * 4) + 1),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    assert not decode_called
+
+
+@pytest.mark.asyncio
+async def test_file_chunk_action_bounds_active_transfers_and_close_cleans_files(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(handler_module, "MAX_ACTIVE_FILE_TRANSFERS", 2)
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path,
+        max_file_bytes=1024,
+    )
+    chunk_handler = handler.actions[CommonAction.FILE_CHUNK.value]
+
+    async def write(file_key: str) -> None:
+        await chunk_handler(
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"x").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+
+    await write("first.bin")
+    await write("second.bin")
+    with pytest.raises(ValueError, match="transfer capacity"):
+        await write("third.bin")
+
+    await handler.delete_local_file("first.bin")
+    await write("third.bin")
+    await handler.close()
+
+    assert not (tmp_path / "second.bin").exists()
+    assert not (tmp_path / "third.bin").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_key",
+    [
+        "../secret.txt",
+        "/tmp/secret.txt",
+        "nested/secret.txt",
+        r"nested\secret.txt",
+        "opaque..txt",
+        r"C:\secret.txt",
+        " surrounded.txt ",
+        123,
+    ],
+)
+async def test_file_transfer_rejects_path_syntax(file_key, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    handler = Handler(ProtocolConnection())
+    chunk_handler = handler.actions[CommonAction.FILE_CHUNK.value]
+
+    with pytest.raises(ValueError, match="Invalid file transfer key"):
+        await chunk_handler(
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"secret").decode("utf-8"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    with pytest.raises(ValueError, match="Invalid file transfer key"):
+        await handler.read_local_file(file_key)
+    with pytest.raises(ValueError, match="Invalid file transfer key"):
+        await handler.delete_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_send_file_rejects_extension_with_path_syntax(monkeypatch):
+    handler = Handler(ProtocolConnection())
+
+    with pytest.raises(ValueError, match="Invalid file transfer extension"):
+        await handler.send_file(b"payload", "../txt")
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,11 @@ import pathlib
 import shlex
 import shutil
 import signal
+import tempfile
 import uuid
+from typing import Any
+
+from langbot_plugin.runtime import bounded_executor
 
 from .backend import BaseSandboxBackend, _CommandResult, _MAX_RAW_OUTPUT_BYTES
 from .models import (
@@ -92,6 +96,7 @@ class NsjailBackend(BaseSandboxBackend):
             return False
 
         # Quick sanity check – nsjail --help exits 0.
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 self._nsjail_bin,
@@ -103,11 +108,17 @@ class NsjailBackend(BaseSandboxBackend):
             if proc.returncode != 0:
                 self.logger.info("nsjail --help returned non-zero")
                 return False
+        except asyncio.CancelledError:
+            if proc is not None:
+                await self._terminate_process(proc)
+            raise
         except Exception as exc:
+            if proc is not None:
+                await self._terminate_process(proc)
             self.logger.info(f"nsjail probe failed: {exc}")
             return False
 
-        self._cgroup_v2_available = self._detect_cgroup_v2()
+        self._cgroup_v2_available = await asyncio.to_thread(self._detect_cgroup_v2)
         if not self._cgroup_v2_available:
             self.logger.warning(
                 "nsjail cgroup v2 limits unavailable (private cgroup namespace "
@@ -119,8 +130,156 @@ class NsjailBackend(BaseSandboxBackend):
                 "container-level memory limit."
             )
 
-        self._base_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            self._base_dir.mkdir,
+            parents=True,
+            exist_ok=True,
+        )
         return True
+
+    async def get_readiness(
+        self,
+        *,
+        workspace_path: str | None = None,
+        strict: bool = False,
+    ) -> dict:
+        """Probe the isolation guarantees required by managed nsjail mode."""
+
+        available = await self.is_available()
+        readiness: dict[str, Any] = {
+            "available": available,
+            "cgroup_v2": self._cgroup_v2_available if available else False,
+            "namespace_isolation": None,
+            "mount_isolation": None,
+            "network_isolation": None,
+            # nsjail itself does not provide byte/inode accounting for bind
+            # mounts, the shared tenant skill store, or its private
+            # root/tmp/home. A future operator-owned project/subvolume quota
+            # provider may override these only after it can attest both the
+            # workspace and skills/tenants/<scope> backing filesystems.
+            # Runtime/Core payloads are intentionally not consulted.
+            "hard_workspace_quota": False,
+            "hard_skill_storage_quota": False,
+            "bounded_ephemeral_storage": False,
+            "inode_quota": False,
+        }
+        if not strict:
+            return readiness
+
+        if not available:
+            readiness.update(
+                {
+                    "namespace_isolation": False,
+                    "mount_isolation": False,
+                    "network_isolation": False,
+                    "hard_workspace_quota": False,
+                    "hard_skill_storage_quota": False,
+                    "bounded_ephemeral_storage": False,
+                    "inode_quota": False,
+                }
+            )
+            return readiness
+
+        if not workspace_path:
+            readiness.update(
+                {
+                    "namespace_isolation": False,
+                    "mount_isolation": False,
+                    "network_isolation": False,
+                    "hard_workspace_quota": False,
+                    "hard_skill_storage_quota": False,
+                    "bounded_ephemeral_storage": False,
+                    "inode_quota": False,
+                    "error": "managed nsjail readiness requires a durable workspace path",
+                }
+            )
+            return readiness
+
+        try:
+            probe = await self._probe_isolation_readiness(workspace_path)
+        except Exception as exc:
+            self.logger.warning(f"nsjail strict readiness probe failed: {exc}")
+            probe = {
+                "namespace_isolation": False,
+                "mount_isolation": False,
+                "network_isolation": False,
+                "hard_workspace_quota": False,
+                "hard_skill_storage_quota": False,
+                "bounded_ephemeral_storage": False,
+                "inode_quota": False,
+                "error": str(exc),
+            }
+        readiness.update(probe)
+        return readiness
+
+    async def _probe_isolation_readiness(self, workspace_path: str) -> dict:
+        """Run a disposable offline jail and verify its namespace and bind mount."""
+
+        def prepare_probe_path() -> pathlib.Path:
+            workspace_root = pathlib.Path(workspace_path).resolve()
+            if not workspace_root.is_dir():
+                raise RuntimeError("managed sandbox workspace path is not a directory")
+            if not os.access(workspace_root, os.R_OK | os.W_OK | os.X_OK):
+                raise RuntimeError("managed sandbox workspace path is not writable")
+            return pathlib.Path(
+                tempfile.mkdtemp(
+                    prefix=".box-readiness-",
+                    dir=str(workspace_root),
+                )
+            )
+
+        probe_path = await bounded_executor.run_blocking_atomic(prepare_probe_path)
+        marker_name = ".mounted"
+        marker_path = probe_path / marker_name
+        session_info: BoxSessionInfo | None = None
+        try:
+            spec = BoxSpec(
+                session_id=f"readiness-{uuid.uuid4().hex}",
+                cmd=(
+                    f"printf readiness > /workspace/{marker_name} && "
+                    "readlink /proc/self/ns/net"
+                ),
+                network=BoxNetworkMode.OFF,
+                host_path=str(probe_path),
+                host_path_mode=BoxHostMountMode.READ_WRITE,
+                mount_path="/workspace",
+                workdir="/workspace",
+                persistent=False,
+                read_only_rootfs=True,
+            )
+            session_info = await self.start_session(spec)
+            result = await self.exec(session_info, spec)
+            sandbox_net_namespace_lines = (result.stdout or "").strip().splitlines()
+            sandbox_net_namespace = (
+                sandbox_net_namespace_lines[-1] if sandbox_net_namespace_lines else ""
+            )
+            try:
+                host_net_namespace = os.readlink("/proc/self/ns/net")
+            except OSError:
+                host_net_namespace = ""
+
+            mount_isolation = result.ok and await asyncio.to_thread(
+                lambda: marker_path.is_file() and marker_path.read_text() == "readiness"
+            )
+            network_isolation = bool(
+                result.ok
+                and host_net_namespace
+                and sandbox_net_namespace
+                and sandbox_net_namespace != host_net_namespace
+            )
+            return {
+                "namespace_isolation": result.ok,
+                "mount_isolation": mount_isolation,
+                "network_isolation": network_isolation,
+            }
+        finally:
+            if session_info is not None:
+                await self.stop_session(session_info)
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                probe_path,
+                True,
+            )
 
     async def start_session(self, spec: BoxSpec) -> BoxSessionInfo:
         validate_sandbox_security(spec)
@@ -137,24 +296,6 @@ class NsjailBackend(BaseSandboxBackend):
         tmp_dir = session_dir / "tmp"
         home_dir = session_dir / "home"
 
-        for d in (root_dir, workspace_dir, tmp_dir, home_dir):
-            d.mkdir(parents=True, exist_ok=True)
-
-        # When a host_path is mounted into the sandbox it becomes the nsjail
-        # bind-mount source (see _build_mounts). nsjail requires the source to
-        # already exist on the host, otherwise the bind-mount fails and the
-        # command exits 255 with no stdout/stderr. The per-session loop above
-        # never creates host_path (it lives outside session_dir), so ensure it
-        # exists here. Read-only mounts intentionally are NOT auto-created: a
-        # missing read-only source is a caller error that should surface.
-        if (
-            spec.host_path is not None
-            and spec.host_path_mode == BoxHostMountMode.READ_WRITE
-        ):
-            os.makedirs(spec.host_path, exist_ok=True)
-
-        # If host_path is specified, we will use it directly instead of the
-        # per-session workspace when building nsjail args (see _build_mounts).
         meta = {
             "session_id": spec.session_id,
             "instance_id": self.instance_id,
@@ -167,7 +308,29 @@ class NsjailBackend(BaseSandboxBackend):
             "pids_limit": spec.pids_limit,
             "created_at": now.isoformat(),
         }
-        (session_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+
+        def prepare_session_directory() -> None:
+            for directory in (root_dir, workspace_dir, tmp_dir, home_dir):
+                directory.mkdir(parents=True, exist_ok=True)
+
+            # nsjail requires writable bind-mount sources to exist before
+            # launch. Missing read-only sources remain caller errors.
+            if (
+                spec.host_path is not None
+                and spec.host_path_mode == BoxHostMountMode.READ_WRITE
+            ):
+                os.makedirs(spec.host_path, exist_ok=True)
+            (session_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+
+        try:
+            await bounded_executor.run_blocking_atomic(prepare_session_directory)
+        except BaseException:
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                session_dir,
+                True,
+            )
+            raise
 
         self.logger.info(
             f"LangBot Box backend start_session: backend=nsjail "
@@ -204,7 +367,12 @@ class NsjailBackend(BaseSandboxBackend):
         start = dt.datetime.now(dt.timezone.utc)
         session_dir = pathlib.Path(session.backend_session_id)
 
-        args = self._build_nsjail_args(session, spec, session_dir)
+        args = await bounded_executor.run_blocking_atomic(
+            self._build_nsjail_args,
+            session,
+            spec,
+            session_dir,
+        )
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
@@ -254,8 +422,9 @@ class NsjailBackend(BaseSandboxBackend):
         await self._kill_session_processes(session_dir)
 
         try:
-            if session_dir.exists():
-                shutil.rmtree(session_dir)
+            await bounded_executor.run_blocking_cleanup(
+                lambda: shutil.rmtree(session_dir) if session_dir.exists() else None
+            )
         except Exception as exc:
             self.logger.warning(
                 f"Failed to remove nsjail session dir {session_dir}: {exc}"
@@ -291,7 +460,12 @@ class NsjailBackend(BaseSandboxBackend):
             read_only_rootfs=session.read_only_rootfs,
         )
 
-        args = self._build_nsjail_args(session, pseudo_spec, session_dir)
+        args = await bounded_executor.run_blocking_atomic(
+            self._build_nsjail_args,
+            session,
+            pseudo_spec,
+            session_dir,
+        )
 
         self.logger.info(
             f"LangBot Box backend start_managed_process: backend=nsjail "
@@ -308,21 +482,40 @@ class NsjailBackend(BaseSandboxBackend):
         )
 
     async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
+        await bounded_executor.run_blocking_cleanup(
+            self._cleanup_orphaned_sessions_sync,
+            current_instance_id,
+        )
+
+    def _cleanup_orphaned_sessions_sync(
+        self,
+        current_instance_id: str,
+    ) -> None:
+        """Scan processes once and stream stale directory removal.
+
+        A crashed Runtime can leave many session directories. Scanning all of
+        /proc once per directory turns startup into O(sessions * processes)
+        work and materializes every directory in memory. Keep both dimensions
+        linear instead.
+        """
+
         if not self._base_dir.exists():
             return
-
+        self._kill_orphaned_session_processes_sync(current_instance_id)
+        current_prefix = f"{current_instance_id}_" if current_instance_id else None
         for entry in self._base_dir.iterdir():
-            if not entry.is_dir():
+            try:
+                if not entry.is_dir():
+                    continue
+                if current_prefix is not None and entry.name.startswith(current_prefix):
+                    continue
+            except OSError as exc:
+                self.logger.warning(
+                    f"Failed to inspect nsjail session dir {entry}: {exc}"
+                )
                 continue
-
-            # Session dirs are named: <instance_id>_<session_id>_<suffix>
-            # If it doesn't start with the current instance_id, it's orphaned.
-            if entry.name.startswith(f"{current_instance_id}_"):
-                continue
-
             self.logger.info(f"Cleaning up orphaned nsjail session dir: {entry}")
             try:
-                await self._kill_session_processes(entry)
                 shutil.rmtree(entry)
             except Exception as exc:
                 self.logger.warning(
@@ -408,14 +601,14 @@ class NsjailBackend(BaseSandboxBackend):
         args: list[str] = []
 
         for path in _READONLY_SYSTEM_MOUNTS:
-            if os.path.exists(path):
+            if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
 
         for path in _READONLY_ETC_ENTRIES:
             # /etc/resolv.conf is only needed when network is ON.
             if path == "/etc/resolv.conf" and network == BoxNetworkMode.OFF:
                 continue
-            if os.path.exists(path):
+            if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
 
         return args
@@ -468,6 +661,8 @@ class NsjailBackend(BaseSandboxBackend):
         }
         mount_paths.update(_READONLY_SYSTEM_MOUNTS)
         mount_paths.update(_READONLY_ETC_ENTRIES)
+        readonly_host_entries = set(_READONLY_SYSTEM_MOUNTS)
+        readonly_host_entries.update(_READONLY_ETC_ENTRIES)
         for mount in spec.extra_mounts:
             mount_paths.add(mount.mount_path)
 
@@ -476,7 +671,18 @@ class NsjailBackend(BaseSandboxBackend):
                 continue
             target = root_dir / mount_path.lstrip("/")
             try:
-                if os.path.isfile(mount_path):
+                if mount_path in readonly_host_entries and os.path.islink(mount_path):
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    link_value = os.readlink(mount_path)
+                    if os.path.lexists(target):
+                        if target.is_symlink() and os.readlink(target) == link_value:
+                            continue
+                        if target.is_dir():
+                            target.rmdir()
+                        else:
+                            target.unlink()
+                    target.symlink_to(link_value)
+                elif os.path.isfile(mount_path):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.touch(exist_ok=True)
                 else:
@@ -498,6 +704,10 @@ class NsjailBackend(BaseSandboxBackend):
             args.append("--use_cgroupv2")
             memory_bytes = spec.memory_mb * 1024 * 1024
             args.extend(["--cgroup_mem_max", str(memory_bytes)])
+            # memory.max alone still permits the sandbox to push anonymous
+            # pages into host swap. A tenant can otherwise exceed its
+            # contracted memory budget and create system-wide swap thrashing.
+            args.extend(["--cgroup_mem_swap_max", "0"])
             args.extend(["--cgroup_pids_max", str(spec.pids_limit)])
             cpu_ms = int(spec.cpus * 1000)
             args.extend(["--cgroup_cpu_ms_per_sec", str(cpu_ms)])
@@ -570,6 +780,14 @@ class NsjailBackend(BaseSandboxBackend):
             process.kill()
             timed_out = True
             await process.wait()
+        except asyncio.CancelledError:
+            await self._terminate_process(process)
+            await asyncio.gather(
+                stdout_task,
+                stderr_task,
+                return_exceptions=True,
+            )
+            raise
 
         stdout_bytes, stdout_total = await stdout_task
         stderr_bytes, stderr_total = await stderr_task
@@ -616,15 +834,16 @@ class NsjailBackend(BaseSandboxBackend):
         subtree_control = cgroup_mount / "cgroup.subtree_control"
         if not controllers.exists() or not subtree_control.exists():
             return False
-        # nsjail enables the controllers it needs (memory, pids, cpu) on the
-        # child cgroup, which requires them to be delegated via the root's
-        # subtree_control. Only probe controllers actually present here.
+        # nsjail always requests memory, pids, and cpu limits. Readiness must
+        # therefore prove every controller is both available and writable;
+        # accepting a partial delegation would fail after admission or silently
+        # weaken the resource contract.
         try:
             available = set(controllers.read_text().split())
         except Exception:
             return False
-        wanted = [c for c in ("memory", "pids", "cpu") if c in available]
-        if not wanted:
+        wanted = ("memory", "pids", "cpu")
+        if not set(wanted).issubset(available):
             return False
         # Authoritative writability probe: re-arm a controller that is already
         # enabled (idempotent no-op), or briefly toggle one that is not. A
@@ -635,22 +854,20 @@ class NsjailBackend(BaseSandboxBackend):
             enabled = set(subtree_control.read_text().split())
         except Exception:
             return False
-        probe_controller = wanted[0]
-        try:
-            if probe_controller in enabled:
+        for controller in wanted:
+            try:
                 # Already delegated: re-writing the same enable is a harmless
                 # no-op that still exercises the write permission + EBUSY rule.
-                subtree_control.write_text(f"+{probe_controller}")
-            else:
-                # Not yet delegated: enable then immediately disable to leave
-                # the host configuration untouched.
-                subtree_control.write_text(f"+{probe_controller}")
+                subtree_control.write_text(f"+{controller}")
+            except Exception:
+                return False
+            if controller not in enabled:
+                # Not yet delegated: immediately disable it again so the probe
+                # leaves the host configuration unchanged.
                 try:
-                    subtree_control.write_text(f"-{probe_controller}")
+                    subtree_control.write_text(f"-{controller}")
                 except Exception:
-                    pass
-        except Exception:
-            return False
+                    return False
         return True
 
     async def _kill_session_processes(self, session_dir: pathlib.Path) -> None:
@@ -659,6 +876,12 @@ class NsjailBackend(BaseSandboxBackend):
         We scan /proc for nsjail processes whose command line contains the
         session directory path.
         """
+        await bounded_executor.run_blocking_cleanup(
+            self._kill_session_processes_sync,
+            session_dir,
+        )
+
+    def _kill_session_processes_sync(self, session_dir: pathlib.Path) -> None:
         session_path_str = str(session_dir)
         proc_dir = pathlib.Path("/proc")
         if not proc_dir.exists():
@@ -675,6 +898,44 @@ class NsjailBackend(BaseSandboxBackend):
                     pid = int(pid_dir.name)
                     os.kill(pid, signal.SIGKILL)
                     self.logger.info(f"Killed orphaned nsjail process {pid}")
+            except (OSError, ValueError):
+                continue
+
+    def _kill_orphaned_session_processes_sync(
+        self,
+        current_instance_id: str,
+        *,
+        proc_dir: pathlib.Path | None = None,
+    ) -> None:
+        """Kill nsjail processes under stale session directories in one pass."""
+
+        proc_dir = proc_dir or pathlib.Path("/proc")
+        if not proc_dir.exists():
+            return
+        base_prefix = f"{self._base_dir}{os.sep}"
+        current_prefix = f"{current_instance_id}_" if current_instance_id else None
+        for pid_dir in proc_dir.iterdir():
+            if not pid_dir.name.isdigit():
+                continue
+            try:
+                cmdline = (
+                    (pid_dir / "cmdline").read_bytes().decode("utf-8", errors="replace")
+                )
+                if self._nsjail_bin not in cmdline:
+                    continue
+                tail = cmdline.partition(base_prefix)[2]
+                if not tail:
+                    continue
+                session_name = tail.split("/", 1)[0].split("\0", 1)[0]
+                if not session_name:
+                    continue
+                if current_prefix is not None and session_name.startswith(
+                    current_prefix
+                ):
+                    continue
+                pid = int(pid_dir.name)
+                os.kill(pid, signal.SIGKILL)
+                self.logger.info(f"Killed orphaned nsjail process {pid}")
             except (OSError, ValueError):
                 continue
 

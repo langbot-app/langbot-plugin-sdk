@@ -8,6 +8,7 @@ error-prefix translation logic, and timeout/failure handling.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from unittest import mock
 
@@ -19,11 +20,13 @@ from langbot_plugin.box.client import (
     _translate_action_error,
 )
 from langbot_plugin.box.errors import (
+    BoxAdmissionError,
     BoxBackendUnavailableError,
     BoxError,
     BoxManagedProcessConflictError,
     BoxManagedProcessNotFoundError,
     BoxRuntimeUnavailableError,
+    BoxReadinessError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
     BoxValidationError,
@@ -36,7 +39,11 @@ from langbot_plugin.box.models import (
     BoxManagedProcessStatus,
     BoxNetworkMode,
     BoxSpec,
+    SandboxAdmissionGrant,
+    SandboxAdmissionRevocation,
 )
+from langbot_plugin.box.tenancy import namespace_session_id
+from langbot_plugin.entities.io.context import ActionContext
 
 
 @pytest.fixture
@@ -103,6 +110,8 @@ def test_set_handler_makes_property_accessible(logger, handler):
         ("BoxManagedProcessNotFoundError:", BoxManagedProcessNotFoundError),
         ("BoxManagedProcessConflictError:", BoxManagedProcessConflictError),
         ("BoxBackendUnavailableError:", BoxBackendUnavailableError),
+        ("BoxAdmissionError:", BoxAdmissionError),
+        ("BoxReadinessError:", BoxReadinessError),
     ],
 )
 def test_translate_action_error_maps_known_prefixes(prefix, expected):
@@ -181,6 +190,67 @@ async def test_initialize_wraps_failure_in_unavailable(client, handler):
     with pytest.raises(BoxRuntimeUnavailableError) as exc_info:
         await client.initialize()
     assert "box runtime unavailable" in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_verify_shared_workspace_uses_host_control_action(client, handler):
+    marker_name = ".langbot-box-volume-probe-" + "a" * 32
+    handler.call_action.return_value = {
+        "marker_name": marker_name,
+        "sha256": "b" * 64,
+        "size": 64,
+    }
+
+    result = await client.verify_shared_workspace(marker_name)
+
+    assert result["sha256"] == "b" * 64
+    args, kwargs = handler.call_action.call_args
+    assert args == (
+        LangBotToBoxAction.VERIFY_SHARED_WORKSPACE,
+        {"marker_name": marker_name},
+    )
+    assert kwargs["action_context"] is None
+
+
+@pytest.mark.anyio
+async def test_upsert_sandbox_admission_grant_uses_host_control_action(client, handler):
+    handler.call_action.return_value = {"installed": True}
+    grant = SandboxAdmissionGrant(
+        instance_uuid="instance-a",
+        workspace_uuid="workspace-a",
+        execution_generation=2,
+        entitlement_revision=7,
+        expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60),
+        max_sessions=1,
+        max_managed_processes=0,
+    )
+
+    result = await client.upsert_sandbox_admission_grant(grant)
+
+    assert result == {"installed": True}
+    args, kwargs = handler.call_action.call_args
+    assert args[0] is LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT
+    assert args[1] == grant.model_dump(mode="json")
+    assert kwargs["action_context"] is None
+
+
+@pytest.mark.anyio
+async def test_revoke_sandbox_admission_grant_uses_monotonic_tombstone(client, handler):
+    handler.call_action.return_value = {"revoked": True}
+    revocation = SandboxAdmissionRevocation(
+        instance_uuid="instance-a",
+        workspace_uuid="workspace-a",
+        entitlement_revision=8,
+    )
+
+    result = await client.revoke_sandbox_admission_grant(revocation)
+
+    assert result == {"revoked": True}
+    args, kwargs = handler.call_action.call_args
+    assert args[0] is LangBotToBoxAction.REVOKE_SANDBOX_ADMISSION_GRANT
+    assert args[1] == revocation.model_dump(mode="json")
+    assert kwargs["timeout"] == 30.0
+    assert kwargs["action_context"] is None
 
 
 # ── execute ───────────────────────────────────────────────────────────
@@ -462,6 +532,25 @@ def test_ws_url_from_http(client):
 def test_ws_url_from_bare_host(client):
     url = client.get_managed_process_websocket_url("sess-1", "relay:8080")
     assert url == ("ws://relay:8080/v1/sessions/sess-1/managed-process/default/ws")
+
+
+def test_ws_url_uses_generation_scoped_physical_session(client):
+    context = ActionContext(
+        instance_uuid="instance-a",
+        workspace_uuid="workspace-a",
+        placement_generation=3,
+    )
+
+    url = client.get_managed_process_websocket_url(
+        "sess-1",
+        "https://relay.example.com",
+        process_id="worker",
+        action_context=context,
+    )
+
+    assert namespace_session_id(context, "sess-1") in url
+    assert "instance-a" not in url
+    assert "workspace-a" not in url
 
 
 # ── init ──────────────────────────────────────────────────────────────

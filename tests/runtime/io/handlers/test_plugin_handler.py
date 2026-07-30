@@ -11,6 +11,7 @@ from langbot_plugin.entities.io.actions.enums import (
 import langbot_plugin.runtime.plugin.container  # noqa: F401
 from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_module
 from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
 
@@ -39,8 +40,17 @@ class FakeControlHandler:
         self.calls = []
         self.results = {}
 
-    async def call_action(self, action, data, timeout=15.0):
-        self.calls.append((action, data, timeout))
+    async def call_action(
+        self,
+        action,
+        data,
+        timeout=15.0,
+        action_context=None,
+    ):
+        if action_context is None:
+            self.calls.append((action, data, timeout))
+        else:
+            self.calls.append((action, data, timeout, action_context))
         return self.results.get(action, {"ok": True})
 
 
@@ -51,8 +61,22 @@ class FakePluginManager:
         self.tools = []
         self.commands = []
 
-    async def register_plugin(self, handler, plugin_container, debug_plugin):
-        self.calls.append(("register_plugin", handler, plugin_container, debug_plugin))
+    async def register_plugin(
+        self,
+        handler,
+        plugin_container,
+        debug_plugin,
+        registration_capability=None,
+    ):
+        self.calls.append(
+            (
+                "register_plugin",
+                handler,
+                plugin_container,
+                debug_plugin,
+                registration_capability,
+            )
+        )
 
     async def remove_plugin_container(self, plugin_container):
         self.calls.append(("remove_plugin_container", plugin_container))
@@ -86,10 +110,34 @@ class Dumpable:
         return self.payload
 
 
-def _handler(debug_plugin=False):
+def _action_context(workspace_uuid="workspace-a", installation_uuid=None):
+    return ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid=workspace_uuid,
+        placement_generation=3,
+        installation_uuid=installation_uuid,
+    )
+
+
+def _installation_binding(runtime_revision=1):
+    return InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=3,
+        installation_uuid="installation-1",
+        runtime_revision=runtime_revision,
+        artifact_digest="a" * 64,
+    )
+
+
+def _handler(debug_plugin=False, action_context=None):
     control_handler = FakeControlHandler()
     manager = FakePluginManager()
-    context = SimpleNamespace(control_handler=control_handler, plugin_mgr=manager)
+    context = SimpleNamespace(
+        control_handler=control_handler,
+        plugin_mgr=manager,
+        workspace_binding=action_context,
+    )
     handler = PluginConnectionHandler(
         ProtocolConnection(),
         context,
@@ -111,7 +159,35 @@ async def test_plugin_handler_registers_plugin_when_debug_key_matches(monkeypatc
         )
 
     assert response["code"] == 0
-    assert manager.calls == [("register_plugin", handler, {"id": "plugin"}, True)]
+    assert manager.calls == [("register_plugin", handler, {"id": "plugin"}, True, None)]
+
+
+def test_shared_plugin_handler_rejects_unregistered_and_revoked_worker_actions():
+    manager = FakePluginManager()
+    binding = _installation_binding()
+    current_binding = binding
+    context = SimpleNamespace(
+        control_handler=FakeControlHandler(),
+        plugin_mgr=manager,
+        workspace_binding=None,
+        runtime_profile="shared",
+        is_current_installation_binding=lambda candidate: candidate == current_binding,
+    )
+    handler = PluginConnectionHandler(ProtocolConnection(), context)
+
+    with pytest.raises(ValueError, match="must register"):
+        handler.validate_inbound_action_context(
+            PluginToRuntimeAction.GET_BOTS.value,
+            None,
+        )
+
+    handler.bind_action_context(binding)
+    current_binding = binding.model_copy(update={"runtime_revision": 2})
+    with pytest.raises(ValueError, match="revoked"):
+        handler.validate_inbound_action_context(
+            PluginToRuntimeAction.GET_BOTS.value,
+            None,
+        )
 
 
 async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch):
@@ -138,12 +214,49 @@ async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch)
     async with ProtocolSession(handler) as session:
         response = await session.request(
             PluginToRuntimeAction.REGISTER_PLUGIN.value,
-            {"plugin_container": {"id": "plugin"}, "prod_mode": True},
+            {
+                "plugin_container": {"id": "plugin"},
+                "prod_mode": True,
+                "registration_capability": "registration-capability",
+            },
         )
 
     assert response["code"] == 0
     assert handler.debug_plugin is False
-    assert manager.calls == [("register_plugin", handler, {"id": "plugin"}, False)]
+    assert manager.calls == [
+        (
+            "register_plugin",
+            handler,
+            {"id": "plugin"},
+            False,
+            "registration-capability",
+        )
+    ]
+
+
+async def test_plugin_handler_rejects_prod_registration_without_capability(
+    monkeypatch,
+):
+    handler, manager, _control = _handler(debug_plugin=True)
+    monkeypatch.setattr(
+        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
+    )
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.REGISTER_PLUGIN.value,
+            {
+                "plugin_container": {"id": "plugin"},
+                "prod_mode": True,
+                "plugin_debug_key": "key",
+            },
+        )
+
+    assert response["code"] == 1
+    assert response["message"] == (
+        "Production plugin registration capability is required"
+    )
+    assert manager.calls == []
 
 
 async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
@@ -410,7 +523,7 @@ async def test_plugin_handler_plugin_storage_actions_add_owner(action, expected_
     ]
 
 
-async def test_plugin_handler_workspace_storage_uses_default_workspace_owner():
+async def test_plugin_handler_workspace_storage_fails_without_runtime_binding():
     handler, _manager, control = _handler()
 
     async with ProtocolSession(handler) as session:
@@ -419,14 +532,9 @@ async def test_plugin_handler_workspace_storage_uses_default_workspace_owner():
             {"key": "shared"},
         )
 
-    assert response["code"] == 0
-    assert control.calls == [
-        (
-            RuntimeToLangBotAction.GET_BINARY_STORAGE,
-            {"key": "shared", "owner_type": "workspace", "owner": "default"},
-            15.0,
-        )
-    ]
+    assert response["code"] == 1
+    assert "Plugin Runtime is not bound to a Workspace" in response["message"]
+    assert control.calls == []
 
 
 @pytest.mark.parametrize(
@@ -435,6 +543,10 @@ async def test_plugin_handler_workspace_storage_uses_default_workspace_owner():
         (
             PluginToRuntimeAction.SET_WORKSPACE_STORAGE,
             RuntimeToLangBotAction.SET_BINARY_STORAGE,
+        ),
+        (
+            PluginToRuntimeAction.GET_WORKSPACE_STORAGE,
+            RuntimeToLangBotAction.GET_BINARY_STORAGE,
         ),
         (
             PluginToRuntimeAction.GET_WORKSPACE_STORAGE_KEYS,
@@ -446,11 +558,12 @@ async def test_plugin_handler_workspace_storage_uses_default_workspace_owner():
         ),
     ],
 )
-async def test_plugin_handler_workspace_storage_actions_use_default_owner(
+async def test_plugin_handler_workspace_storage_actions_use_bound_owner(
     action,
     expected_action,
 ):
-    handler, _manager, control = _handler()
+    action_context = _action_context()
+    handler, _manager, control = _handler(action_context=action_context)
 
     async with ProtocolSession(handler) as session:
         response = await session.request(action.value, {"key": "shared"})
@@ -459,10 +572,57 @@ async def test_plugin_handler_workspace_storage_actions_use_default_owner(
     assert control.calls == [
         (
             expected_action,
-            {"key": "shared", "owner_type": "workspace", "owner": "default"},
+            {
+                "key": "shared",
+                "owner_type": "workspace",
+                "owner": "workspace-a",
+            },
             15.0,
+            action_context,
         )
     ]
+
+
+async def test_plugin_handler_strips_forged_scope_from_host_api_payload():
+    action_context = _action_context(installation_uuid="installation-1")
+    handler, _manager, control = _handler(action_context=action_context)
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.GET_BOTS.value,
+            {
+                "workspace_uuid": "workspace-b",
+                "instance_uuid": "instance-forged",
+                "placement_generation": 99,
+                "installation_uuid": "installation-forged",
+                "context": {"workspace_uuid": "workspace-b"},
+            },
+        )
+
+    assert response["code"] == 0
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.GET_BOTS,
+            {},
+            15.0,
+            action_context,
+        )
+    ]
+
+
+async def test_plugin_handler_rejects_forged_action_envelope():
+    handler, _manager, control = _handler(action_context=_action_context())
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.GET_BOTS.value,
+            {},
+            action_context=_action_context(workspace_uuid="workspace-b"),
+        )
+
+    assert response["code"] == 1
+    assert "does not match connection Workspace" in response["message"]
+    assert control.calls == []
 
 
 async def test_plugin_handler_forwards_config_file_requests_to_langbot():

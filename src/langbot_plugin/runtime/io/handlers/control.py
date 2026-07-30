@@ -5,6 +5,14 @@ import logging
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import connection, handler
+from langbot_plugin.entities.io.context import (
+    ActionEnvelopeContext,
+    ApplyPluginInstallationRequest,
+    InstallationBinding,
+    ReconcilePluginInstallationsRequest,
+    RemovePluginInstallationRequest,
+    RuntimeConfig,
+)
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
     LangBotToRuntimeAction,
@@ -15,6 +23,63 @@ from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
 
 logger = logging.getLogger(__name__)
+
+
+INSTANCE_SCOPED_CONTROL_ACTIONS = frozenset(
+    {
+        LangBotToRuntimeAction.GET_DEBUG_INFO.value,
+        LangBotToRuntimeAction.RECONCILE_PLUGIN_INSTALLATIONS.value,
+        LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+    }
+)
+
+# Keep this list explicit. The action-consistency test requires every newly
+# added LangBot-to-Runtime action to choose a scope before it can ship.
+TENANT_SCOPED_CONTROL_ACTIONS = frozenset(
+    {
+        LangBotToRuntimeAction.LIST_PLUGINS.value,
+        LangBotToRuntimeAction.GET_PLUGIN_INFO.value,
+        LangBotToRuntimeAction.GET_PLUGIN_ICON.value,
+        LangBotToRuntimeAction.GET_PLUGIN_README.value,
+        LangBotToRuntimeAction.GET_PLUGIN_LOGS.value,
+        LangBotToRuntimeAction.GET_PLUGIN_ASSETS_FILE.value,
+        LangBotToRuntimeAction.INSTALL_PLUGIN.value,
+        LangBotToRuntimeAction.RESTART_PLUGIN.value,
+        LangBotToRuntimeAction.DELETE_PLUGIN.value,
+        LangBotToRuntimeAction.UPGRADE_PLUGIN.value,
+        LangBotToRuntimeAction.EMIT_EVENT.value,
+        LangBotToRuntimeAction.PLUGIN_DIAGNOSTIC.value,
+        LangBotToRuntimeAction.LIST_TOOLS.value,
+        LangBotToRuntimeAction.CALL_TOOL.value,
+        LangBotToRuntimeAction.LIST_COMMANDS.value,
+        LangBotToRuntimeAction.EXECUTE_COMMAND.value,
+        LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE.value,
+        LangBotToRuntimeAction.LIST_KNOWLEDGE_ENGINES.value,
+        LangBotToRuntimeAction.RAG_INGEST_DOCUMENT.value,
+        LangBotToRuntimeAction.RAG_DELETE_DOCUMENT.value,
+        LangBotToRuntimeAction.RAG_ON_KB_CREATE.value,
+        LangBotToRuntimeAction.RAG_ON_KB_DELETE.value,
+        LangBotToRuntimeAction.GET_RAG_CREATION_SETTINGS_SCHEMA.value,
+        LangBotToRuntimeAction.GET_RAG_RETRIEVAL_SETTINGS_SCHEMA.value,
+        LangBotToRuntimeAction.LIST_PARSERS.value,
+        LangBotToRuntimeAction.PARSE_DOCUMENT.value,
+        LangBotToRuntimeAction.PAGE_API.value,
+        LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
+        LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION.value,
+    }
+)
+
+# These actions operate on the historical global ``data/plugins`` tree and
+# may install dependencies into the Runtime interpreter. They remain an OSS
+# compatibility surface only; shared installations must use desired state.
+LEGACY_OSS_PLUGIN_LIFECYCLE_ACTIONS = frozenset(
+    {
+        LangBotToRuntimeAction.INSTALL_PLUGIN.value,
+        LangBotToRuntimeAction.RESTART_PLUGIN.value,
+        LangBotToRuntimeAction.DELETE_PLUGIN.value,
+        LangBotToRuntimeAction.UPGRADE_PLUGIN.value,
+    }
+)
 
 
 class ControlConnectionHandler(handler.Handler):
@@ -28,6 +93,8 @@ class ControlConnectionHandler(handler.Handler):
         super().__init__(connection)
         self.name = "FromLangBot"
         self.context = context
+        self._runtime_configured = False
+        self._invalidated = False
 
         @self.action(CommonAction.PING)
         async def ping(data: dict[str, Any]) -> handler.ActionResponse:
@@ -35,26 +102,57 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.SET_RUNTIME_CONFIG)
         async def set_runtime_config(data: dict[str, Any]) -> handler.ActionResponse:
-            # LangBot pushes its configured marketplace (Space) URL so the
-            # runtime downloads plugins from the same place LangBot is bound to,
-            # instead of relying on the runtime's own env/default.
-            from langbot_plugin.runtime.settings import settings as runtime_settings
-
-            cloud_service_url = data.get("cloud_service_url")
-            if cloud_service_url:
-                runtime_settings.cloud_service_url = cloud_service_url.rstrip("/")
-                logger.info(
-                    f"Runtime cloud_service_url set by LangBot: {runtime_settings.cloud_service_url}"
-                )
+            self.configure_runtime(RuntimeConfig.model_validate(data))
             return handler.ActionResponse.success({})
+
+        @self.action(LangBotToRuntimeAction.RECONCILE_PLUGIN_INSTALLATIONS)
+        async def reconcile_plugin_installations(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            request = ReconcilePluginInstallationsRequest.model_validate(data)
+            result = await self.context.plugin_mgr.reconcile_plugin_installations(
+                request.installations
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION)
+        async def apply_plugin_installation(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            request = ApplyPluginInstallationRequest.model_validate(data)
+            binding = self.current_action_context
+            if not isinstance(binding, InstallationBinding):  # pragma: no cover
+                raise ValueError("APPLY_PLUGIN_INSTALLATION requires binding")
+            artifact_package = None
+            if request.artifact_file_key is not None:
+                artifact_package = await self.read_local_file(request.artifact_file_key)
+                await self.delete_local_file(request.artifact_file_key)
+            result = await self.context.plugin_mgr.apply_plugin_installation(
+                binding,
+                artifact_package=artifact_package,
+                enabled=request.enabled,
+            )
+            return handler.ActionResponse.success(result)
+
+        @self.action(LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION)
+        async def remove_plugin_installation(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            RemovePluginInstallationRequest.model_validate(data)
+            binding = self.current_action_context
+            if not isinstance(binding, InstallationBinding):  # pragma: no cover
+                raise ValueError("REMOVE_PLUGIN_INSTALLATION requires binding")
+            result = await self.context.plugin_mgr.remove_plugin_installation(binding)
+            return handler.ActionResponse.success(result)
 
         @self.action(LangBotToRuntimeAction.LIST_PLUGINS)
         async def list_plugins(data: dict[str, Any]) -> handler.ActionResponse:
-            result = {
-                "plugins": [
-                    plugin.model_dump() for plugin in self.context.plugin_mgr.plugins
-                ]
-            }
+            plugins = (
+                self.context.plugin_mgr.plugins_for_current_scope()
+                if hasattr(self.context.plugin_mgr, "plugins_for_current_scope")
+                else self.context.plugin_mgr.plugins
+            )
+            result = {"plugins": [plugin.model_dump() for plugin in plugins]}
 
             return handler.ActionResponse.success(result)
 
@@ -62,7 +160,12 @@ class ControlConnectionHandler(handler.Handler):
         async def get_plugin_info(data: dict[str, Any]) -> handler.ActionResponse:
             author = data["author"]
             plugin_name = data["plugin_name"]
-            for plugin in self.context.plugin_mgr.plugins:
+            plugins = (
+                self.context.plugin_mgr.plugins_for_current_scope()
+                if hasattr(self.context.plugin_mgr, "plugins_for_current_scope")
+                else self.context.plugin_mgr.plugins
+            )
+            for plugin in plugins:
                 if (
                     plugin.manifest.metadata.author == author
                     and plugin.manifest.metadata.name == plugin_name
@@ -172,7 +275,19 @@ class ControlConnectionHandler(handler.Handler):
             install_source = plugin_mgr_module.PluginInstallSource(
                 data["install_source"]
             )
-            install_info = data["install_info"]
+            install_info = {
+                key: value
+                for key, value in data["install_info"].items()
+                if key
+                not in {
+                    "context",
+                    "action_context",
+                    "instance_uuid",
+                    "workspace_uuid",
+                    "placement_generation",
+                    "installation_uuid",
+                }
+            }
 
             if (
                 install_source == plugin_mgr_module.PluginInstallSource.LOCAL
@@ -223,6 +338,10 @@ class ControlConnectionHandler(handler.Handler):
         async def emit_event(data: dict[str, Any]) -> handler.ActionResponse:
             event_context_data = data["event_context"]
             event_context = EventContext.model_validate(event_context_data)
+            action_context = self.current_action_context
+            if action_context is not None:
+                event_context.inherit_execution_scope(action_context)
+                event_context.event.inherit_execution_scope(action_context)
             include_plugins = data.get("include_plugins")
 
             (
@@ -262,11 +381,42 @@ class ControlConnectionHandler(handler.Handler):
             tool_parameters = data["tool_parameters"]
             session = data["session"]
             query_id = data["query_id"]
+            query_uuid = data.get("query_uuid")
             include_plugins = data.get("include_plugins")
 
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id, include_plugins
-            )
+            session_payload = dict(session)
+            action_context = self.current_action_context
+            if action_context is not None:
+                for field_name in (
+                    "instance_uuid",
+                    "workspace_uuid",
+                    "placement_generation",
+                ):
+                    trusted_value = getattr(action_context, field_name)
+                    supplied_value = session_payload.get(field_name)
+                    if supplied_value is not None and supplied_value != trusted_value:
+                        raise ValueError(
+                            f"Session {field_name} does not match action context"
+                        )
+                    session_payload[field_name] = trusted_value
+
+            if query_uuid is None:
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session_payload,
+                    query_id,
+                    include_plugins,
+                )
+            else:
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session_payload,
+                    query_id,
+                    include_plugins,
+                    query_uuid=query_uuid,
+                )
 
             return handler.ActionResponse.success(
                 {
@@ -287,6 +437,10 @@ class ControlConnectionHandler(handler.Handler):
             data: dict[str, Any],
         ) -> AsyncGenerator[handler.ActionResponse, None]:
             command_context = ExecuteContext.model_validate(data["command_context"])
+            action_context = self.current_action_context
+            if action_context is not None:
+                command_context.inherit_execution_scope(action_context)
+                command_context.session.inherit_execution_scope(action_context)
             include_plugins = data.get("include_plugins")
             async for resp in self.context.plugin_mgr.execute_command(
                 command_context, include_plugins
@@ -314,6 +468,7 @@ class ControlConnectionHandler(handler.Handler):
                 {
                     "plugin_debug_key": runtime_settings.plugin_debug_key,
                     "ws_debug_port": self.context.ws_debug_port,
+                    "resources": self.context.get_runtime_resource_stats(),
                 }
             )
 
@@ -430,6 +585,123 @@ class ControlConnectionHandler(handler.Handler):
                 plugin_author, plugin_name, context_data, file_bytes
             )
             return handler.ActionResponse.success(resp)
+
+    @property
+    def runtime_configured(self) -> bool:
+        return self._runtime_configured
+
+    def invalidate(self) -> None:
+        """Fence this handler synchronously before its transport is closed."""
+
+        self._invalidated = True
+        self.cancel_inflight_messages()
+
+    def _require_active_handler(self) -> None:
+        if self._invalidated or not self.context.is_active_control_handler(self):
+            raise ValueError("Control connection has been superseded")
+
+    def configure_runtime(self, runtime_config: RuntimeConfig | dict) -> RuntimeConfig:
+        """Apply the immutable, instance-scoped control handshake."""
+
+        self._require_active_handler()
+        config = RuntimeConfig.model_validate(runtime_config)
+        self.context.plugin_mgr.configure_worker_runtime(
+            config.worker_policy,
+            config.runtime_profile,
+        )
+        self.context.bind_runtime(
+            config.runtime_identity,
+            config.worker_policy,
+            config.runtime_profile,
+        )
+        self._runtime_configured = True
+
+        # LangBot pushes its configured marketplace URL so this Runtime uses
+        # the same trusted source without maintaining another config source.
+        if config.cloud_service_url:
+            from langbot_plugin.runtime.settings import settings as runtime_settings
+
+            runtime_settings.cloud_service_url = config.cloud_service_url
+            logger.info(
+                "Runtime cloud_service_url set by LangBot: %s",
+                runtime_settings.cloud_service_url,
+            )
+        return config
+
+    def validate_inbound_action_context(
+        self,
+        action: str,
+        action_context: ActionEnvelopeContext | None,
+    ) -> ActionEnvelopeContext | None:
+        """Require explicit installation authority for every tenant action."""
+
+        self._require_active_handler()
+
+        if action == CommonAction.PING.value:
+            if action_context is not None:
+                raise ValueError("PING does not accept tenant context")
+            return None
+
+        if action == LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value:
+            if action_context is not None:
+                raise ValueError("SET_RUNTIME_CONFIG is instance-scoped")
+            return None
+
+        if not self._runtime_configured:
+            raise ValueError("SET_RUNTIME_CONFIG must complete before control actions")
+
+        if action in INSTANCE_SCOPED_CONTROL_ACTIONS:
+            if action_context is not None:
+                raise ValueError(f"{action} does not accept tenant context")
+            return None
+
+        if (
+            self.context.runtime_profile == "shared"
+            and action in LEGACY_OSS_PLUGIN_LIFECYCLE_ACTIONS
+        ):
+            raise ValueError(
+                f"{action} is unavailable in the shared Runtime profile; "
+                "use installation desired state"
+            )
+
+        if action in {
+            LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
+            LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION.value,
+            CommonAction.FILE_CHUNK.value,
+        }:
+            if not isinstance(action_context, InstallationBinding):
+                raise ValueError(
+                    f"{action} requires a complete InstallationBinding context"
+                )
+            return self.context.validate_installation_candidate(action_context)
+
+        if action in TENANT_SCOPED_CONTROL_ACTIONS:
+            if not isinstance(action_context, InstallationBinding):
+                raise ValueError(
+                    f"{action} requires a complete InstallationBinding context"
+                )
+            return self.context.authorize_installation_binding(action_context)
+
+        return super().validate_inbound_action_context(action, action_context)
+
+    def resolve_outbound_action_context(
+        self,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None,
+    ) -> ActionEnvelopeContext | None:
+        """Propagate the current tenant tuple across nested control calls."""
+
+        self._require_active_handler()
+        if action_context is None:
+            current = self.current_action_context
+            if current is not None:
+                return current
+
+            # Compatibility only: manager-originated calls outside an inbound
+            # action still use its fail-closed, single-Workspace fence.
+            legacy_binding = self.context.workspace_binding
+            if legacy_binding is not None:
+                return legacy_binding
+        return super().resolve_outbound_action_context(action_context)
 
 
 # {"action": "ping", "data": {}, "seq_id": 1}

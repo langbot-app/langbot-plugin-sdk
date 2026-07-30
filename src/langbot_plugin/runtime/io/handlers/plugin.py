@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator
+import hmac
 import logging
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
+    CommonAction,
     PluginToRuntimeAction,
     RuntimeToPluginAction,
     RuntimeToLangBotAction,
@@ -14,11 +16,30 @@ from langbot_plugin.runtime import context as context_module
 import asyncio
 from langbot_plugin.runtime.settings import settings as runtime_settings
 from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
+from langbot_plugin.entities.io.context import (
+    ActionContext,
+    ActionEnvelopeContext,
+    InstallationBinding,
+)
 
 logger = logging.getLogger(__name__)
 
 # Timeout for long-running operations like command execution and tool calls (3 minutes)
 LONG_RUNNING_OPERATION_TIMEOUT = 180.0
+
+_UNTRUSTED_SCOPE_FIELDS = frozenset(
+    {
+        "context",
+        "action_context",
+        "instance_uuid",
+        "workspace_uuid",
+        "placement_generation",
+        "execution_generation",
+        "installation_uuid",
+        "runtime_revision",
+        "artifact_digest",
+    }
+)
 
 
 class PluginConnectionHandler(handler.Handler):
@@ -44,24 +65,37 @@ class PluginConnectionHandler(handler.Handler):
         context: context_module.RuntimeContext,
         stdio_process: asyncio.subprocess.Process | None = None,
         debug_plugin: bool = False,
+        *,
+        file_storage_dir: str | None = None,
+        max_file_bytes: int | None = None,
     ):
         async def disconnect_callback(hdl: handler.Handler):
             logger.debug("disconnect_callback")
+            if hasattr(self.context.plugin_mgr, "remove_plugin_handler"):
+                await self.context.plugin_mgr.remove_plugin_handler(self)
+                return
             for plugin_container in self.context.plugin_mgr.plugins:
                 if plugin_container._runtime_plugin_handler == self:
-                    logger.info(
-                        f"Removing plugin {plugin_container.manifest.metadata.name} due to disconnect"
-                    )
                     await self.context.plugin_mgr.remove_plugin_container(
                         plugin_container
                     )
-                    break
+                    return
 
-        super().__init__(connection, disconnect_callback)
+        super().__init__(
+            connection,
+            disconnect_callback,
+            file_storage_dir=file_storage_dir,
+            max_file_bytes=max_file_bytes,
+        )
         self.context = context
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
         self.stdio_process = stdio_process
+        runtime_binding = getattr(self.context, "workspace_binding", None)
+        if runtime_binding is not None and (
+            debug_plugin or not hasattr(self.context, "runtime_profile")
+        ):
+            self.bind_action_context(runtime_binding)
 
         # Capture the plugin subprocess's stderr (Python `logging` output) into
         # a per-plugin ring buffer so LangBot can show logs on the detail page.
@@ -69,17 +103,72 @@ class PluginConnectionHandler(handler.Handler):
         if self.stdio_process is not None and self.stdio_process.stderr is not None:
             self.log_buffer.start_reader(self.stdio_process.stderr)
 
+        async def call_host_action(
+            action,
+            data: dict[str, Any],
+            timeout: float = 15.0,
+            *,
+            require_workspace: bool = False,
+        ) -> dict[str, Any]:
+            """Forward to LangBot using only the trusted connection binding."""
+
+            payload = {
+                key: value
+                for key, value in data.items()
+                if key not in _UNTRUSTED_SCOPE_FIELDS
+            }
+            binding: ActionContext | None = self.bound_action_context
+            if require_workspace:
+                binding = self.require_bound_action_context()
+
+            if binding is None:
+                # Compatibility for non-Workspace APIs used with an older
+                # single-tenant host. Workspace storage never takes this path.
+                return await self.context.control_handler.call_action(
+                    action,
+                    payload,
+                    timeout=timeout,
+                )
+            return await self.context.control_handler.call_action(
+                action,
+                payload,
+                timeout=timeout,
+                action_context=binding,
+            )
+
+        def scoped_plugins():
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding) and hasattr(
+                self.context.plugin_mgr,
+                "plugins_for_binding",
+            ):
+                return self.context.plugin_mgr.plugins_for_binding(binding)
+            return self.context.plugin_mgr.plugins
+
         @self.action(PluginToRuntimeAction.REGISTER_PLUGIN)
         async def register_plugin(data: dict[str, Any]) -> handler.ActionResponse:
-            if "prod_mode" in data and data["prod_mode"]:
+            prod_mode = data.get("prod_mode") is True
+            registration_capability = str(
+                data.get("registration_capability") or ""
+            ).strip()
+            if prod_mode:
+                if not registration_capability:
+                    return handler.ActionResponse.error(
+                        "Production plugin registration capability is required"
+                    )
                 self.debug_plugin = False
-
-            # Verify PLUGIN_DEBUG_KEY if it's set in runtime settings
-            if runtime_settings.plugin_debug_key:
+            else:
+                if not self.debug_plugin:
+                    return handler.ActionResponse.error(
+                        "Debug plugin registration is not allowed on this connection"
+                    )
                 # Get the debug key from plugin data
                 plugin_debug_key = data.get("plugin_debug_key", "")
 
-                if plugin_debug_key != runtime_settings.plugin_debug_key:
+                if not plugin_debug_key or not hmac.compare_digest(
+                    str(plugin_debug_key),
+                    str(runtime_settings.plugin_debug_key),
+                ):
                     logger.warning(
                         "Plugin debug key verification failed. Expected key does not match."
                     )
@@ -88,13 +177,18 @@ class PluginConnectionHandler(handler.Handler):
                     )
 
             await self.context.plugin_mgr.register_plugin(
-                self, data["plugin_container"], self.debug_plugin
+                self,
+                data["plugin_container"],
+                self.debug_plugin,
+                registration_capability=(
+                    registration_capability if prod_mode else None
+                ),
             )
             return handler.ActionResponse.success({})
 
         @self.action(PluginToRuntimeAction.REPLY_MESSAGE)
         async def reply_message(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.REPLY_MESSAGE,
                 {
                     **data,
@@ -105,7 +199,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_BOT_UUID)
         async def get_bot_uuid(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_BOT_UUID,
                 {
                     **data,
@@ -115,7 +209,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SET_QUERY_VAR)
         async def set_query_var(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.SET_QUERY_VAR,
                 {
                     **data,
@@ -125,7 +219,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_QUERY_VAR)
         async def get_query_var(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_QUERY_VAR,
                 {
                     **data,
@@ -135,7 +229,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_QUERY_VARS)
         async def get_query_vars(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_QUERY_VARS,
                 {
                     **data,
@@ -147,17 +241,22 @@ class PluginConnectionHandler(handler.Handler):
         async def create_new_conversation(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.CREATE_NEW_CONVERSATION,
                 {
                     "query_id": data["query_id"],
+                    **(
+                        {"query_uuid": data["query_uuid"]}
+                        if data.get("query_uuid") is not None
+                        else {}
+                    ),
                 },
             )
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.GET_LANGBOT_VERSION)
         async def get_langbot_version(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_LANGBOT_VERSION,
                 {
                     **data,
@@ -167,7 +266,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_BOTS)
         async def get_bots(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_BOTS,
                 {
                     **data,
@@ -177,7 +276,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_BOT_INFO)
         async def get_bot_info(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_BOT_INFO,
                 {
                     **data,
@@ -187,7 +286,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SEND_MESSAGE)
         async def send_message(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.SEND_MESSAGE,
                 {
                     **data,
@@ -197,7 +296,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_LLM_MODELS)
         async def get_llm_models(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.GET_LLM_MODELS,
                 {
                     **data,
@@ -221,7 +320,7 @@ class PluginConnectionHandler(handler.Handler):
             if not isinstance(timeout, (int, float)) or timeout <= 0:
                 timeout = 120.0
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.INVOKE_LLM,
                 {
                     **data,
@@ -232,7 +331,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.INVOKE_EMBEDDING)
         async def invoke_embedding(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.INVOKE_EMBEDDING,
                 {
                     **data,
@@ -243,7 +342,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.INVOKE_RERANK)
         async def invoke_rerank(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.INVOKE_RERANK,
                 {
                     **data,
@@ -265,7 +364,7 @@ class PluginConnectionHandler(handler.Handler):
                 Exception: Re-raises with context if the upstream call fails.
             """
             try:
-                return await self.context.control_handler.call_action(
+                return await call_host_action(
                     action,
                     data,
                     timeout=timeout,
@@ -334,7 +433,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_KNOWLEDGE_BASES)
         async def list_knowledge_bases(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.LIST_KNOWLEDGE_BASES,
                 data,
             )
@@ -342,7 +441,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
                 data,
                 timeout=30,
@@ -353,7 +452,7 @@ class PluginConnectionHandler(handler.Handler):
         async def list_pipeline_knowledge_bases(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES,
                 data,
             )
@@ -363,7 +462,7 @@ class PluginConnectionHandler(handler.Handler):
         async def retrieve_knowledge_base(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
                 data,
                 timeout=30,
@@ -375,7 +474,7 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.LIST_PARSERS)
         async def list_parsers(data: dict[str, Any]) -> handler.ActionResponse:
             """Plugin requests host to list available parser plugins."""
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.LIST_PARSERS,
                 data,
                 timeout=30,
@@ -385,7 +484,7 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.INVOKE_PARSER)
         async def invoke_parser(data: dict[str, Any]) -> handler.ActionResponse:
             """Plugin requests host to invoke a parser plugin."""
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 PluginToRuntimeAction.INVOKE_PARSER,
                 data,
                 timeout=300,
@@ -396,14 +495,14 @@ class PluginConnectionHandler(handler.Handler):
         async def set_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.SET_BINARY_STORAGE,
                 {
                     **data,
@@ -415,14 +514,14 @@ class PluginConnectionHandler(handler.Handler):
         async def get_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE,
                 {
                     **data,
@@ -436,14 +535,14 @@ class PluginConnectionHandler(handler.Handler):
         ) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
                 {
                     **data,
@@ -455,14 +554,14 @@ class PluginConnectionHandler(handler.Handler):
         async def delete_plugin_storage(data: dict[str, Any]) -> handler.ActionResponse:
             data["owner_type"] = "plugin"
 
-            for plugin_container in self.context.plugin_mgr.plugins:
+            for plugin_container in scoped_plugins():
                 if plugin_container._runtime_plugin_handler == self:
                     data["owner"] = (
                         f"{plugin_container.manifest.metadata.author}/{plugin_container.manifest.metadata.name}"
                     )
                     break
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
                 {
                     **data,
@@ -472,27 +571,33 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SET_WORKSPACE_STORAGE)
         async def set_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            data["owner_type"] = "workspace"
-            data["owner"] = "default"
+            binding = self.require_bound_action_context()
+            payload = {
+                **data,
+                "owner_type": "workspace",
+                "owner": binding.workspace_uuid,
+            }
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.SET_BINARY_STORAGE,
-                {
-                    **data,
-                },
+                payload,
+                require_workspace=True,
             )
             return handler.ActionResponse.success(result)
 
         @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE)
         async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            data["owner_type"] = "workspace"
-            data["owner"] = "default"
+            binding = self.require_bound_action_context()
+            payload = {
+                **data,
+                "owner_type": "workspace",
+                "owner": binding.workspace_uuid,
+            }
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE,
-                {
-                    **data,
-                },
+                payload,
+                require_workspace=True,
             )
             return handler.ActionResponse.success(result)
 
@@ -500,14 +605,17 @@ class PluginConnectionHandler(handler.Handler):
         async def get_workspace_storage_keys(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            data["owner_type"] = "workspace"
-            data["owner"] = "default"
+            binding = self.require_bound_action_context()
+            payload = {
+                **data,
+                "owner_type": "workspace",
+                "owner": binding.workspace_uuid,
+            }
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.GET_BINARY_STORAGE_KEYS,
-                {
-                    **data,
-                },
+                payload,
+                require_workspace=True,
             )
             return handler.ActionResponse.success(result)
 
@@ -515,14 +623,17 @@ class PluginConnectionHandler(handler.Handler):
         async def delete_workspace_storage(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            data["owner_type"] = "workspace"
-            data["owner"] = "default"
+            binding = self.require_bound_action_context()
+            payload = {
+                **data,
+                "owner_type": "workspace",
+                "owner": binding.workspace_uuid,
+            }
 
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.DELETE_BINARY_STORAGE,
-                {
-                    **data,
-                },
+                payload,
+                require_workspace=True,
             )
             return handler.ActionResponse.success(result)
 
@@ -530,7 +641,7 @@ class PluginConnectionHandler(handler.Handler):
         async def get_config_file(data: dict[str, Any]) -> handler.ActionResponse:
             """Get a config file by file key"""
             # Forward the request to LangBot
-            result = await self.context.control_handler.call_action(
+            result = await call_host_action(
                 RuntimeToLangBotAction.GET_CONFIG_FILE,
                 {
                     "file_key": data["file_key"],
@@ -540,14 +651,22 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
-            commands = await self.context.plugin_mgr.list_commands()
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                commands = await self.context.plugin_mgr.list_commands(binding=binding)
+            else:
+                commands = await self.context.plugin_mgr.list_commands()
             return handler.ActionResponse.success(
                 {"commands": [command.model_dump() for command in commands]}
             )
 
         @self.action(PluginToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
-            tools = await self.context.plugin_mgr.list_tools()
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                tools = await self.context.plugin_mgr.list_tools(binding=binding)
+            else:
+                tools = await self.context.plugin_mgr.list_tools()
             return handler.ActionResponse.success(
                 {"tools": [tool.to_plain_dict() for tool in tools]}
             )
@@ -555,7 +674,11 @@ class PluginConnectionHandler(handler.Handler):
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
         async def get_tool_detail(data: dict[str, Any]) -> handler.ActionResponse:
             tool_name = data["tool_name"]
-            tools = await self.context.plugin_mgr.list_tools()
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                tools = await self.context.plugin_mgr.list_tools(binding=binding)
+            else:
+                tools = await self.context.plugin_mgr.list_tools()
             for tool in tools:
                 if tool.metadata.name == tool_name:
                     return handler.ActionResponse.success(
@@ -569,9 +692,22 @@ class PluginConnectionHandler(handler.Handler):
             tool_parameters = data["tool_parameters"]
             session = data["session"]
             query_id = data["query_id"]
-            resp = await self.context.plugin_mgr.call_tool(
-                tool_name, tool_parameters, session, query_id
-            )
+            binding = self.bound_action_context
+            if isinstance(binding, InstallationBinding):
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session,
+                    query_id,
+                    binding=binding,
+                )
+            else:
+                resp = await self.context.plugin_mgr.call_tool(
+                    tool_name,
+                    tool_parameters,
+                    session,
+                    query_id,
+                )
             return handler.ActionResponse.success({"tool_response": resp})
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
@@ -579,11 +715,50 @@ class PluginConnectionHandler(handler.Handler):
             return handler.ActionResponse.success(
                 {
                     "plugins": [
-                        plugin.model_dump()["manifest"]
-                        for plugin in self.context.plugin_mgr.plugins
+                        plugin.model_dump()["manifest"] for plugin in scoped_plugins()
                     ]
                 }
             )
+
+    def validate_inbound_action_context(
+        self,
+        action: str,
+        action_context: ActionEnvelopeContext | None,
+    ) -> ActionEnvelopeContext | None:
+        """Fence production worker actions to the consumed launch capability."""
+
+        if self.debug_plugin:
+            return super().validate_inbound_action_context(action, action_context)
+
+        if action == PluginToRuntimeAction.REGISTER_PLUGIN.value:
+            if self.bound_action_context is not None:
+                raise ValueError("Plugin worker is already registered")
+            if action_context is not None:
+                raise ValueError("Plugin registration does not accept action context")
+            return None
+
+        if action == CommonAction.PING.value and self.bound_action_context is None:
+            if action_context is not None:
+                raise ValueError("PING does not accept action context")
+            return None
+
+        binding = self.bound_action_context
+        if binding is None:
+            if getattr(self.context, "runtime_profile", "oss_dev") != "shared":
+                return super().validate_inbound_action_context(
+                    action,
+                    action_context,
+                )
+            raise ValueError("Plugin worker must register before calling actions")
+        if isinstance(binding, InstallationBinding) and not (
+            self.context.is_current_installation_binding(binding)
+        ):
+            raise ValueError("Plugin worker installation binding has been revoked")
+        if getattr(
+            self.context, "runtime_profile", "oss_dev"
+        ) == "shared" and not isinstance(binding, InstallationBinding):
+            raise ValueError("Shared plugin worker requires InstallationBinding")
+        return super().validate_inbound_action_context(action, action_context)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
@@ -650,14 +825,18 @@ class PluginConnectionHandler(handler.Handler):
         tool_parameters: dict[str, Any],
         session: dict[str, Any],
         query_id: int,
+        query_uuid: str | None = None,
     ) -> dict[str, Any]:
+        query_ref: dict[str, Any] = {"query_id": query_id}
+        if query_uuid is not None:
+            query_ref["query_uuid"] = query_uuid
         resp = await self.call_action(
             RuntimeToPluginAction.CALL_TOOL,
             {
                 "tool_name": tool_name,
                 "tool_parameters": tool_parameters,
                 "session": session,
-                "query_id": query_id,
+                **query_ref,
             },
             timeout=LONG_RUNNING_OPERATION_TIMEOUT,
         )

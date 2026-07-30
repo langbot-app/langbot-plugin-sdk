@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import importlib.metadata
 import importlib.util
 import json
@@ -18,6 +19,8 @@ PYPI_TRUSTED_HOST_ENV = "LANGBOT_PLUGIN_PYPI_TRUSTED_HOST"
 DEFAULT_PYPI_INDEX_URL = "https://pypi.org/simple"
 PLUGIN_VENV_DIR = ".venv"
 DEFAULT_INSTALL_TIMEOUT_SEC = 300.0
+MAX_INSTALL_OUTPUT_BYTES = 1024 * 1024
+_SUBPROCESS_READ_CHUNK_BYTES = 64 * 1024
 
 
 async def _terminate_subprocess(proc: asyncio.subprocess.Process) -> None:
@@ -29,13 +32,76 @@ async def _terminate_subprocess(proc: asyncio.subprocess.Process) -> None:
     except ProcessLookupError:
         pass
     try:
-        await asyncio.wait_for(proc.communicate(), timeout=2)
+        await asyncio.wait_for(proc.wait(), timeout=2)
     except asyncio.TimeoutError:
         try:
             proc.kill()
         except ProcessLookupError:
             pass
-        await proc.communicate()
+        await proc.wait()
+
+
+async def _read_bounded_stream(
+    stream: asyncio.StreamReader | None,
+    *,
+    max_bytes: int = MAX_INSTALL_OUTPUT_BYTES,
+) -> tuple[bytes, int]:
+    """Drain a subprocess pipe while retaining at most ``max_bytes``."""
+
+    if stream is None:
+        return b"", 0
+    retained = bytearray()
+    total = 0
+    while True:
+        chunk = await stream.read(_SUBPROCESS_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        remaining = max_bytes - len(retained)
+        if remaining > 0:
+            retained.extend(chunk[:remaining])
+    return bytes(retained), total
+
+
+def _render_captured_output(data: bytes, total: int) -> str:
+    text = data.decode("utf-8", errors="replace")
+    discarded = total - len(data)
+    if discarded > 0:
+        text += (
+            f"\n... [dependency installer output clipped at "
+            f"{MAX_INSTALL_OUTPUT_BYTES} bytes, {discarded} bytes discarded]"
+        )
+    return text
+
+
+async def _wait_with_bounded_output(
+    proc: asyncio.subprocess.Process,
+    *,
+    timeout_sec: float,
+) -> tuple[bytes, int, bytes, int, bool]:
+    """Wait for a subprocess and drain both pipes without unbounded buffering."""
+
+    stdout_task = asyncio.create_task(_read_bounded_stream(proc.stdout))
+    stderr_task = asyncio.create_task(_read_bounded_stream(proc.stderr))
+    timed_out = False
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        timed_out = True
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+    except asyncio.CancelledError:
+        await _terminate_subprocess(proc)
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        raise
+
+    stdout, stdout_total = await stdout_task
+    stderr, stderr_total = await stderr_task
+    return stdout, stdout_total, stderr, stderr_total, timed_out
 
 
 def get_pip_index_args() -> list[str]:
@@ -111,10 +177,65 @@ def install_single(
         *get_pip_index_args(),
     ] + extra_params
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    output = result.stdout + "\n" + result.stderr
+    returncode, output = _run_subprocess_bounded_sync(
+        cmd,
+        timeout_sec=DEFAULT_INSTALL_TIMEOUT_SEC,
+    )
     downloaded_bytes = _parse_downloaded_bytes(output)
-    return result.returncode, downloaded_bytes, output
+    return returncode, downloaded_bytes, output
+
+
+def _read_bounded_sync(
+    stream,
+    *,
+    max_bytes: int = MAX_INSTALL_OUTPUT_BYTES,
+) -> tuple[bytes, int]:
+    retained = bytearray()
+    total = 0
+    while True:
+        chunk = stream.read(_SUBPROCESS_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        remaining = max_bytes - len(retained)
+        if remaining > 0:
+            retained.extend(chunk[:remaining])
+    return bytes(retained), total
+
+
+def _run_subprocess_bounded_sync(
+    cmd: list[str],
+    *,
+    timeout_sec: float,
+) -> tuple[int, str]:
+    """Synchronous compatibility path with bounded stdout/stderr retention."""
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    timed_out = False
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        stdout_future = executor.submit(_read_bounded_sync, proc.stdout)
+        stderr_future = executor.submit(_read_bounded_sync, proc.stderr)
+        try:
+            proc.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            proc.kill()
+            proc.wait()
+        stdout, stdout_total = stdout_future.result()
+        stderr, stderr_total = stderr_future.result()
+
+    output = _render_captured_output(stdout, stdout_total)
+    output += "\n" + _render_captured_output(stderr, stderr_total)
+    if timed_out:
+        output += f"\nDependency installation timed out after {timeout_sec:.0f}s"
+        return 124, output
+    return proc.returncode, output
 
 
 async def install_single_async(
@@ -142,33 +263,23 @@ async def install_single_async(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout_sec
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        stdout_bytes, stderr_bytes = await proc.communicate()
-        stderr_bytes += (
-            f"\nDependency installation timed out after {timeout_sec:.0f}s".encode()
-        )
+    (
+        stdout_bytes,
+        stdout_total,
+        stderr_bytes,
+        stderr_total,
+        timed_out,
+    ) = await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
+    stdout_text = _render_captured_output(stdout_bytes, stdout_total)
+    stderr_text = _render_captured_output(stderr_bytes, stderr_total)
+    if timed_out:
+        stderr_text += f"\nDependency installation timed out after {timeout_sec:.0f}s"
         return (
             124,
             0,
-            (
-                stdout_bytes.decode("utf-8", errors="ignore")
-                + "\n"
-                + stderr_bytes.decode("utf-8", errors="ignore")
-            ),
+            stdout_text + "\n" + stderr_text,
         )
-    except asyncio.CancelledError:
-        await _terminate_subprocess(proc)
-        raise
-    output = (
-        stdout_bytes.decode("utf-8", errors="ignore")
-        + "\n"
-        + stderr_bytes.decode("utf-8", errors="ignore")
-    )
+    output = stdout_text + "\n" + stderr_text
     downloaded_bytes = _parse_downloaded_bytes(output)
     return proc.returncode, downloaded_bytes, output
 
@@ -452,18 +563,18 @@ async def install_requirements_isolated(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout_sec)
-    except asyncio.TimeoutError:
-        proc.kill()
-        stdout, stderr = await proc.communicate()
-        return 124, (
-            stdout + stderr + f"\nTimed out after {timeout_sec:.0f}s".encode()
-        ).decode("utf-8", errors="replace")
-    except asyncio.CancelledError:
-        await _terminate_subprocess(proc)
-        raise
-    return proc.returncode or 0, (stdout + stderr).decode("utf-8", errors="replace")
+    (
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+        timed_out,
+    ) = await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
+    output = _render_captured_output(stdout, stdout_total)
+    output += _render_captured_output(stderr, stderr_total)
+    if timed_out:
+        return 124, output + f"\nTimed out after {timeout_sec:.0f}s"
+    return proc.returncode or 0, output
 
 
 async def classify_requirements_in_environment(
@@ -506,20 +617,22 @@ print(json.dumps([missing, version_mismatch]))
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout_sec)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.communicate()
+    (
+        stdout,
+        stdout_total,
+        stderr,
+        stderr_total,
+        timed_out,
+    ) = await _wait_with_bounded_output(proc, timeout_sec=timeout_sec)
+    if timed_out:
         return list(deps), []
-    except asyncio.CancelledError:
-        await _terminate_subprocess(proc)
-        raise
     if proc.returncode != 0:
         raise RuntimeError(
             "Dependency verification subprocess failed: "
-            + stderr.decode("utf-8", errors="replace").strip()
+            + _render_captured_output(stderr, stderr_total).strip()
         )
+    if stdout_total > MAX_INSTALL_OUTPUT_BYTES:
+        raise RuntimeError("Dependency verification output exceeded the runtime limit")
     result = json.loads(stdout.decode("utf-8"))
     return list(result[0]), list(result[1])
 

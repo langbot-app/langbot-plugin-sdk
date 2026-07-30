@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import httpx
 import typing
@@ -8,6 +9,30 @@ from datetime import datetime
 from pathlib import Path
 
 import pydantic
+
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+async def _read_httpx_body_limited(
+    response: httpx.Response,
+    max_bytes: int = MAX_IMAGE_BYTES,
+) -> bytes:
+    declared_size = response.headers.get("Content-Length")
+    if declared_size is not None:
+        try:
+            if int(declared_size) > max_bytes:
+                raise ValueError(f"Image exceeds the {max_bytes}-byte limit")
+        except ValueError as exc:
+            if "exceeds" in str(exc):
+                raise
+
+    body = bytearray()
+    async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise ValueError(f"Image exceeds the {max_bytes}-byte limit")
+    return bytes(body)
 
 
 class MessageComponent(pydantic.BaseModel):
@@ -328,10 +353,15 @@ class Image(MessageComponent):
     async def get_bytes(self) -> typing.Tuple[bytes, str]:
         """Get image bytes and mimetype"""
         if self.url:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(self.url)
-                response.raise_for_status()
-                return response.content, response.headers.get("Content-Type")
+            async with httpx.AsyncClient(timeout=30) as client:
+                async with client.stream("GET", self.url) as response:
+                    response.raise_for_status()
+                    return (
+                        await _read_httpx_body_limited(response),
+                        response.headers.get(
+                            "Content-Type", "application/octet-stream"
+                        ),
+                    )
         elif self.base64:
             mime_type = "image/jpeg"
 
@@ -341,11 +371,23 @@ class Image(MessageComponent):
 
             mime_type = self.base64[5:split_index]
             base64_data = self.base64[split_index + 8 :]
+            max_encoded_bytes = 4 * ((MAX_IMAGE_BYTES + 2) // 3)
+            if len(base64_data) > max_encoded_bytes:
+                raise ValueError(f"Image exceeds the {MAX_IMAGE_BYTES}-byte limit")
 
-            return base64.b64decode(base64_data), mime_type
+            decoded = await asyncio.to_thread(base64.b64decode, base64_data)
+            if len(decoded) > MAX_IMAGE_BYTES:
+                raise ValueError(f"Image exceeds the {MAX_IMAGE_BYTES}-byte limit")
+            return decoded, mime_type
         elif self.path:
+            size = await asyncio.to_thread(Path(self.path).stat)
+            if size.st_size > MAX_IMAGE_BYTES:
+                raise ValueError(f"Image exceeds the {MAX_IMAGE_BYTES}-byte limit")
             async with aiofiles.open(self.path, "rb") as f:
-                return await f.read(), "image/jpeg"
+                data = await f.read(MAX_IMAGE_BYTES + 1)
+            if len(data) > MAX_IMAGE_BYTES:
+                raise ValueError(f"Image exceeds the {MAX_IMAGE_BYTES}-byte limit")
+            return data, "image/jpeg"
         else:
             raise ValueError("Can not get bytes from image")
 

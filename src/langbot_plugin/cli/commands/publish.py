@@ -37,33 +37,33 @@ def publish_plugin(plugin_path: str, changelog: str, access_token: str) -> None:
         - changelog: changelog
     """
     url = f"{SERVER_URL}/api/v1/marketplace/plugins/publish"
-    files = {"file": open(plugin_path, "rb")}
     data = {"changelog": changelog}
 
     try:
-        with httpx.Client() as client:
-            response = client.post(
-                url,
-                files=files,
-                data=data,
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=300,
-            )
+        with open(plugin_path, "rb") as package_file:
+            with httpx.Client() as client:
+                response = client.post(
+                    url,
+                    files={"file": package_file},
+                    data=data,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=300,
+                )
 
-            if response.is_error:
-                cli_print("publish_failed", _get_http_error_message(response))
+                if response.is_error:
+                    cli_print("publish_failed", _get_http_error_message(response))
+                    return
+
+                result = response.json()
+                if result["code"] != 0:
+                    cli_print("publish_failed", result["msg"])
+                    return
+
+                if result["data"]["submission"]["status"] == "draft":
+                    cli_print("publish_successful_new_plugin", SERVER_URL)
+                else:
+                    cli_print("publish_successful", SERVER_URL)
                 return
-
-            result = response.json()
-            if result["code"] != 0:
-                cli_print("publish_failed", result["msg"])
-                return
-
-            if result["data"]["submission"]["status"] == "draft":
-                cli_print("publish_successful_new_plugin", SERVER_URL)
-            else:
-                cli_print("publish_successful", SERVER_URL)
-            return
     except Exception as e:
         cli_print("publish_failed", e)
         return

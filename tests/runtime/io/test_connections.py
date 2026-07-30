@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
 from langbot_plugin.runtime.io.connection import split_utf8_chunks
+from langbot_plugin.runtime.io.connections import stdio as stdio_module
+from langbot_plugin.runtime.io.connections import ws as ws_module
 from langbot_plugin.runtime.io.connections.stdio import StdioConnection
 from langbot_plugin.runtime.io.connections.ws import WebSocketConnection
+from langbot_plugin.entities.io.errors import ConnectionClosedError
 
 
 class FakeStreamReader:
@@ -30,6 +34,29 @@ class FakeStreamWriter:
 
     def close(self):
         self.closed = True
+
+
+class BlockingStreamReader:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def readline(self):
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+
+
+class ExitedProcess:
+    def __init__(self, reader: BlockingStreamReader):
+        self.reader = reader
+
+    async def wait(self):
+        await self.reader.started.wait()
+        return 0
 
 
 class AsyncChunkIterator:
@@ -86,6 +113,20 @@ async def test_stdio_connection_sends_large_message_as_json_chunks():
     assert payloads[4] == {"type": "chunk_end"}
 
 
+async def test_stdio_connection_rejects_excessive_outbound_fragment_count(
+    monkeypatch,
+):
+    monkeypatch.setattr(stdio_module, "MAX_MESSAGE_FRAGMENTS", 2)
+    connection = StdioConnection(
+        FakeStreamReader([]),
+        FakeStreamWriter(),
+        chunk_size=4,
+    )
+
+    with pytest.raises(ValueError, match="too many stdio fragments"):
+        await connection.send("abcdefghi")
+
+
 async def test_stdio_connection_receives_json_message_after_blank_line():
     reader = FakeStreamReader([b"\n", b'{"type": "event", "id": 1}\n'])
     connection = StdioConnection(reader, FakeStreamWriter())
@@ -108,6 +149,25 @@ async def test_stdio_connection_reassembles_chunked_message():
     assert await connection.receive() == "hello world"
 
 
+async def test_stdio_connection_rejects_fragment_count_amplification(
+    monkeypatch,
+):
+    monkeypatch.setattr(stdio_module, "MAX_MESSAGE_FRAGMENTS", 2)
+    chunk_lines = [
+        {"type": "chunk_start", "total_size": 0},
+        {"type": "chunk_data", "data": "", "offset": 0},
+        {"type": "chunk_data", "data": "", "offset": 0},
+        {"type": "chunk_data", "data": "", "offset": 0},
+    ]
+    reader = FakeStreamReader(
+        [json.dumps(chunk).encode() + b"\n" for chunk in chunk_lines]
+    )
+    connection = StdioConnection(reader, FakeStreamWriter())
+
+    with pytest.raises(ConnectionClosedError):
+        await connection.receive()
+
+
 async def test_stdio_connection_close_closes_writer():
     writer = FakeStreamWriter()
     connection = StdioConnection(FakeStreamReader([]), writer)
@@ -115,6 +175,33 @@ async def test_stdio_connection_close_closes_writer():
     await connection.close()
 
     assert writer.closed is True
+
+
+async def test_stdio_process_exit_cancels_pending_readline():
+    reader = BlockingStreamReader()
+    connection = StdioConnection(
+        reader,
+        FakeStreamWriter(),
+        process=ExitedProcess(reader),
+    )
+
+    with pytest.raises(ConnectionClosedError):
+        await connection.receive()
+
+    assert reader.cancelled.is_set()
+
+
+async def test_stdio_receive_cancellation_does_not_orphan_readline():
+    reader = BlockingStreamReader()
+    connection = StdioConnection(reader, FakeStreamWriter())
+    receive_task = asyncio.create_task(connection.receive())
+    await reader.started.wait()
+
+    receive_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await receive_task
+
+    assert reader.cancelled.is_set()
 
 
 async def test_websocket_connection_sends_small_message_directly():
@@ -135,11 +222,34 @@ async def test_websocket_connection_sends_large_message_in_chunks():
     assert websocket.sent == [(["abcd", "efgh", "i"], False)]
 
 
+async def test_websocket_connection_rejects_excessive_outbound_fragment_count(
+    monkeypatch,
+):
+    monkeypatch.setattr(ws_module, "MAX_MESSAGE_FRAGMENTS", 2)
+    connection = WebSocketConnection(FakeWebSocket(), chunk_size=4)
+
+    with pytest.raises(ValueError, match="too many WebSocket fragments"):
+        await connection.send("abcdefghi")
+
+
 async def test_websocket_connection_receives_streamed_json_message():
     websocket = FakeWebSocket(receive_batches=[['{"ok": ', "true}"]])
     connection = WebSocketConnection(websocket)
 
     assert await connection.receive() == '{"ok": true}'
+
+
+async def test_websocket_connection_rejects_fragment_count_amplification(
+    monkeypatch,
+):
+    monkeypatch.setattr(ws_module, "MAX_MESSAGE_FRAGMENTS", 2)
+    websocket = FakeWebSocket(receive_batches=[["", "", ""]])
+    connection = WebSocketConnection(websocket)
+
+    with pytest.raises(ConnectionClosedError):
+        await connection.receive()
+
+    assert websocket.closed is True
 
 
 async def test_websocket_connection_returns_one_malformed_message_at_a_time():
