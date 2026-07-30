@@ -120,7 +120,13 @@ def test_shared_launcher_maps_only_trusted_policy_to_nsjail(tmp_path):
     assert args[args.index("--") + 1] == str(python_executable)
     assert f"{PLUGIN_RUNTIME_PROFILE_ENV}=shared" in args
     assert f"{PLUGIN_REGISTRATION_CAPABILITY_ENV}=capability-value" in args
-    assert "PYTHONPATH=/plugin-dependencies" in args
+    runtime_site_packages = (
+        python_prefix
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    assert f"PYTHONPATH={runtime_site_packages}:/plugin-dependencies" in args
     assert "PYTHONDONTWRITEBYTECODE=1" in args
 
 

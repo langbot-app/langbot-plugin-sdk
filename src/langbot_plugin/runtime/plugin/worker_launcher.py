@@ -392,7 +392,12 @@ class PluginWorkerLauncher:
                 "--env",
                 "PYTHONDONTWRITEBYTECODE=1",
                 "--env",
-                "PYTHONPATH=/plugin-dependencies",
+                (
+                    "PYTHONPATH="
+                    f"{self.python_prefix}/lib/"
+                    f"python{sys.version_info.major}.{sys.version_info.minor}/site-packages:"
+                    "/plugin-dependencies"
+                ),
                 "--env",
                 f"{PLUGIN_RUNTIME_PROFILE_ENV}=shared",
                 "--env",
