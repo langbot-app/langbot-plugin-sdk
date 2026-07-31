@@ -1,0 +1,632 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import pathlib
+import sys
+import zipfile
+
+import pytest
+
+from langbot_plugin.cli.commands.runplugin import should_load_artifact_dotenv
+from langbot_plugin.entities.io.context import InstallationBinding, PluginWorkerPolicy
+from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
+from langbot_plugin.runtime.plugin.dependency_environment import (
+    DependencyEnvironmentStaging,
+    PluginDependencyEnvironment,
+)
+from langbot_plugin.runtime.plugin import worker_launcher as worker_launcher_module
+from langbot_plugin.runtime.plugin.worker_launcher import (
+    PluginWorkerLaunchSpec,
+    PluginWorkerLauncher,
+)
+from langbot_plugin.runtime.security import (
+    PLUGIN_REGISTRATION_CAPABILITY_ENV,
+    PLUGIN_RUNTIME_PROFILE_ENV,
+)
+
+
+def _policy(*, require_hard_limits=True) -> PluginWorkerPolicy:
+    return PluginWorkerPolicy(
+        max_cpus=1.5,
+        max_memory_mb=384,
+        max_pids=73,
+        max_open_files=211,
+        max_file_size_mb=97,
+        require_hard_limits=require_hard_limits,
+    )
+
+
+def _launch_spec(tmp_path) -> PluginWorkerLaunchSpec:
+    package_io = io.BytesIO()
+    with zipfile.ZipFile(package_io, "w") as archive:
+        archive.writestr(
+            "manifest.yaml",
+            """
+kind: Plugin
+metadata:
+  author: tester
+  name: demo
+  version: 1.0.0
+spec:
+  worker:
+    max_cpus: 999
+    max_memory_mb: 999999
+""",
+        )
+    package = package_io.getvalue()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest=digest,
+    )
+    store = PluginArtifactStore(tmp_path / "plugin-runtime")
+    artifact = store.install_package(package, digest)
+    dependency_root = tmp_path / "plugin-runtime" / "environment"
+    dependency_path = dependency_root / "site-packages"
+    dependency_path.mkdir(parents=True)
+    return PluginWorkerLaunchSpec(
+        binding=binding,
+        artifact=artifact,
+        paths=store.ensure_installation_paths(binding),
+        registration_capability="capability-value",
+        dependency_environment=PluginDependencyEnvironment(
+            digest="b" * 64,
+            artifact_digest=digest,
+            requirements_digest="c" * 64,
+            runtime_fingerprint="d" * 64,
+            root_path=dependency_root,
+            site_packages_path=dependency_path,
+        ),
+    )
+
+
+def test_shared_launcher_maps_only_trusted_policy_to_nsjail(tmp_path):
+    python_prefix = tmp_path / "runtime" / ".venv"
+    python_executable = python_prefix / "bin" / "python"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+        python_executable=str(python_executable),
+        python_prefix=str(python_prefix),
+    )
+    launcher.configure(_policy(), "shared")
+
+    args = launcher.build_nsjail_args(_launch_spec(tmp_path))
+
+    assert args[args.index("--cgroup_mem_max") + 1] == str(384 * 1024 * 1024)
+    assert args[args.index("--cgroup_mem_swap_max") + 1] == "0"
+    assert args[args.index("--cgroup_pids_max") + 1] == "73"
+    assert args[args.index("--cgroup_cpu_ms_per_sec") + 1] == "1500"
+    assert args[args.index("--time_limit") + 1] == "0"
+    assert args[args.index("--rlimit_nofile") + 1] == "211"
+    assert args[args.index("--rlimit_fsize") + 1] == "97"
+    assert "999" not in args
+    assert "999999" not in args
+    assert any(value.endswith(":/plugin") for value in args)
+    assert any(value.endswith(":/plugin-dependencies") for value in args)
+    assert any(value.endswith(":/home") for value in args)
+    assert any(value.endswith(":/tmp") for value in args)
+    assert any(value.endswith(":/data") for value in args)
+    assert f"{python_prefix}:{python_prefix}" in args
+    assert args[args.index("--") + 1] == str(python_executable)
+    assert f"{PLUGIN_RUNTIME_PROFILE_ENV}=shared" in args
+    assert f"{PLUGIN_REGISTRATION_CAPABILITY_ENV}=capability-value" in args
+    runtime_site_packages = (
+        python_prefix
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    assert f"PYTHONPATH={runtime_site_packages}:/plugin-dependencies" in args
+    assert "PYTHONDONTWRITEBYTECODE=1" in args
+
+
+def test_dependency_preparation_uses_isolated_writable_staging_only(tmp_path):
+    python_prefix = tmp_path / "runtime" / ".venv"
+    python_executable = python_prefix / "bin" / "python"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    staging_root = tmp_path / "staging"
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+        python_executable=str(python_executable),
+        python_prefix=str(python_prefix),
+    )
+    launcher.configure(_policy(), "shared")
+
+    args = launcher.build_dependency_prepare_nsjail_args(
+        staging,
+        ["third-party-demo==1.0.0"],
+    )
+
+    assert f"{staging.site_packages_path}:/dependency-env" in args
+    assert f"{staging.tmp_path}:/tmp" in args
+    assert "--ignore-installed" in args
+    assert "--target" in args
+    assert args[args.index("--target") + 1] == "/dependency-env"
+    assert "-r" in args
+    assert args[args.index("-r") + 1] == "/tmp/requirements.txt"
+    assert (staging.tmp_path / "requirements.txt").read_text(encoding="utf-8") == (
+        "third-party-demo==1.0.0\n"
+    )
+    assert "third-party-demo==1.0.0" not in args
+    assert not any(value.endswith(":/plugin") for value in args)
+
+
+def test_shared_launcher_absolutizes_runtime_paths_before_fixed_root_cwd(
+    tmp_path,
+    monkeypatch,
+):
+    runtime_cwd = tmp_path / "runtime-cwd"
+    runtime_cwd.mkdir()
+    monkeypatch.chdir(runtime_cwd)
+    launch_spec = _launch_spec(pathlib.Path("state"))
+    staging_root = pathlib.Path("dependency-staging")
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    controller = launcher.create_controller(launch_spec)
+    dependency_args = launcher.build_dependency_prepare_nsjail_args(
+        staging,
+        ["third-party-demo==1.0.0"],
+    )
+
+    assert controller.working_dir == "/"
+    assert not launch_spec.paths.jail_root_path.is_absolute()
+    assert controller.args[controller.args.index("--chroot") + 1] == str(
+        launch_spec.paths.jail_root_path.absolute()
+    )
+    assert f"{launch_spec.artifact.code_path.absolute()}:/plugin" in controller.args
+    assert (
+        f"{launch_spec.dependency_environment.site_packages_path.absolute()}"
+        ":/plugin-dependencies"
+    ) in controller.args
+    for source, target in (
+        (launch_spec.paths.home_path, "/home"),
+        (launch_spec.paths.tmp_path, "/tmp"),
+        (launch_spec.paths.data_path, "/data"),
+    ):
+        assert f"{source.absolute()}:{target}" in controller.args
+
+    assert dependency_args[dependency_args.index("--chroot") + 1] == str(
+        staging.jail_root_path.absolute()
+    )
+    assert f"{staging.site_packages_path.absolute()}:/dependency-env" in dependency_args
+    assert f"{staging.tmp_path.absolute()}:/tmp" in dependency_args
+
+
+def test_shared_launcher_fails_without_nsjail_or_required_cgroup():
+    no_nsjail = PluginWorkerLauncher(
+        nsjail_path="",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    with pytest.raises(RuntimeError, match="require nsjail"):
+        no_nsjail.configure(_policy(), "shared")
+
+    no_cgroup = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=False,
+        platform="linux",
+    )
+    with pytest.raises(RuntimeError, match="delegated cgroup v2"):
+        no_cgroup.configure(_policy(require_hard_limits=True), "shared")
+
+
+def test_shared_launcher_rejects_unmounted_python_executable(tmp_path):
+    python_prefix = tmp_path / "runtime" / ".venv"
+    python_prefix.mkdir(parents=True)
+    python_executable = tmp_path / "other" / "python"
+    python_executable.parent.mkdir()
+    python_executable.touch()
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+        python_executable=str(python_executable),
+        python_prefix=str(python_prefix),
+    )
+
+    with pytest.raises(RuntimeError, match="inside its mounted prefix"):
+        launcher.configure(_policy(), "shared")
+
+
+def test_shared_launcher_recreates_system_symlinks_instead_of_binding_them(
+    tmp_path, monkeypatch
+):
+    host_root = tmp_path / "host"
+    (host_root / "usr" / "bin").mkdir(parents=True)
+    host_link = host_root / "bin"
+    host_link.symlink_to("usr/bin")
+    monkeypatch.setattr(
+        worker_launcher_module, "_READONLY_SYSTEM_MOUNTS", (str(host_link),)
+    )
+    monkeypatch.setattr(worker_launcher_module, "_READONLY_ETC_FILES", ())
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+    launch_spec = _launch_spec(tmp_path / "state")
+    args = launcher.build_nsjail_args(launch_spec)
+
+    jail_link = launch_spec.paths.jail_root_path / str(host_link).lstrip("/")
+    assert jail_link.is_symlink()
+    assert jail_link.readlink() == host_link.readlink()
+    assert f"{host_link}:{host_link}" not in args
+
+
+def test_artifact_dotenv_is_disabled_only_for_shared_profile():
+    assert should_load_artifact_dotenv("oss_dev") is True
+    assert should_load_artifact_dotenv("") is True
+    assert should_load_artifact_dotenv("shared") is False
+
+
+def test_launcher_builds_profile_specific_controllers(tmp_path):
+    shared = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    shared.configure(_policy(), "shared")
+    launch_spec = _launch_spec(tmp_path)
+
+    shared_controller = shared.create_controller(launch_spec)
+
+    assert shared_controller.command == "/usr/bin/nsjail"
+    assert shared_controller.env == {}
+    assert shared_controller.working_dir == "/"
+    assert "--chroot" in shared_controller.args
+
+    oss = PluginWorkerLauncher(
+        nsjail_path="",
+        cgroup_v2_available=False,
+        platform="darwin",
+    )
+    oss.configure(_policy(require_hard_limits=False), "oss_dev")
+
+    oss_controller = oss.create_controller(launch_spec)
+
+    assert oss_controller.command == sys.executable
+    assert oss_controller.working_dir == str(launch_spec.artifact.code_path)
+    assert oss_controller.env == {
+        PLUGIN_REGISTRATION_CAPABILITY_ENV: "capability-value",
+        PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
+    }
+
+
+async def test_prepare_dependency_environment_delegates_only_in_shared_profile(
+    tmp_path,
+):
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+    launch_spec = _launch_spec(tmp_path)
+    captured = {}
+
+    class FakeStore:
+        async def prepare(
+            self,
+            artifact,
+            *,
+            runtime_fingerprint,
+            installer,
+        ):
+            captured.update(
+                artifact=artifact,
+                runtime_fingerprint=runtime_fingerprint,
+                installer=installer,
+            )
+            return launch_spec.dependency_environment
+
+    result = await launcher.prepare_dependency_environment(
+        FakeStore(),
+        launch_spec.artifact,
+    )
+
+    assert result is launch_spec.dependency_environment
+    assert captured["artifact"] is launch_spec.artifact
+    assert len(captured["runtime_fingerprint"]) == 64
+    assert captured["installer"] == launcher._install_dependency_environment
+
+    oss = PluginWorkerLauncher(
+        cgroup_v2_available=False,
+        platform="darwin",
+    )
+    oss.configure(_policy(require_hard_limits=False), "oss_dev")
+    with pytest.raises(RuntimeError, match="shared Runtime profile"):
+        await oss.prepare_dependency_environment(FakeStore(), launch_spec.artifact)
+
+
+@pytest.mark.parametrize("returncode", [0, 7])
+async def test_dependency_installer_reaps_nsjail_and_redacts_failures(
+    tmp_path,
+    monkeypatch,
+    returncode,
+):
+    staging_root = tmp_path / "staging"
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = returncode
+            self.waited = False
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = FakeProcess()
+    captured = {}
+
+    async def create_subprocess_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+
+    if returncode:
+        with pytest.raises(
+            worker_launcher_module.DependencyEnvironmentPreparationError,
+            match="exited with code 7",
+        ) as exc_info:
+            await launcher._install_dependency_environment(
+                staging,
+                ["private-package==1.0.0"],
+            )
+        assert "private-package==1.0.0" not in str(exc_info.value)
+    else:
+        await launcher._install_dependency_environment(
+            staging,
+            ["private-package==1.0.0"],
+        )
+
+    assert process.waited is True
+    assert captured["args"][0] == "/usr/bin/nsjail"
+    assert captured["kwargs"]["env"] == {}
+
+
+async def test_dependency_installer_kills_timed_out_nsjail(
+    tmp_path,
+    monkeypatch,
+):
+    staging_root = tmp_path / "staging"
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    class TimeoutProcess:
+        def __init__(self):
+            self.returncode = None
+            self.wait_calls = 0
+            self.killed = False
+
+        async def wait(self):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                await asyncio.Event().wait()
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+
+    process = TimeoutProcess()
+
+    async def create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    monkeypatch.setattr(
+        worker_launcher_module,
+        "_DEPENDENCY_INSTALL_TIMEOUT_SECONDS",
+        0.001,
+    )
+
+    with pytest.raises(
+        worker_launcher_module.DependencyEnvironmentPreparationError,
+        match="timed out",
+    ):
+        await launcher._install_dependency_environment(
+            staging,
+            ["private-package==1.0.0"],
+        )
+
+    assert process.killed is True
+    assert process.wait_calls == 2
+
+
+async def test_dependency_installer_cancellation_kills_and_reaps_nsjail(
+    tmp_path,
+    monkeypatch,
+):
+    staging_root = tmp_path / "staging"
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.jail_root_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    class HangingProcess:
+        def __init__(self):
+            self.returncode = None
+            self.wait_started = asyncio.Event()
+            self.exit_requested = asyncio.Event()
+            self.killed = False
+
+        async def wait(self):
+            self.wait_started.set()
+            await self.exit_requested.wait()
+            self.returncode = -9
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+            self.exit_requested.set()
+
+    process = HangingProcess()
+
+    async def create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    task = asyncio.create_task(
+        launcher._install_dependency_environment(
+            staging,
+            ["private-package==1.0.0"],
+        )
+    )
+    await process.wait_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert process.killed is True
+    assert process.returncode == -9
+
+
+async def test_dependency_installer_skips_empty_requirements(tmp_path, monkeypatch):
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+    create_process = pytest.fail
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_process,
+    )
+
+    await launcher._install_dependency_environment(
+        DependencyEnvironmentStaging(
+            root_path=tmp_path,
+            site_packages_path=tmp_path / "site-packages",
+            scratch_path=tmp_path / ".scratch",
+            jail_root_path=tmp_path / ".scratch" / "root",
+            tmp_path=tmp_path / ".scratch" / "tmp",
+        ),
+        [],
+    )
+
+
+def test_launcher_configuration_is_required_immutable_and_platform_fenced(tmp_path):
+    launch_spec = _launch_spec(tmp_path)
+    unconfigured = PluginWorkerLauncher(
+        cgroup_v2_available=False,
+        platform="darwin",
+    )
+    with pytest.raises(RuntimeError, match="not configured"):
+        unconfigured.create_controller(launch_spec)
+
+    policy = _policy(require_hard_limits=False)
+    unconfigured.configure(policy, "oss_dev")
+    assert unconfigured.cgroup_v2_available is False
+    with pytest.raises(ValueError, match="policy cannot be changed"):
+        unconfigured.configure(
+            policy.model_copy(update={"max_memory_mb": 1024}),
+            "oss_dev",
+        )
+    with pytest.raises(ValueError, match="profile cannot be changed"):
+        unconfigured.configure(policy, "shared")
+
+    non_linux = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="darwin",
+    )
+    with pytest.raises(RuntimeError, match="require Linux"):
+        non_linux.configure(_policy(), "shared")

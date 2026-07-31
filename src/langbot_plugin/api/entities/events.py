@@ -10,10 +10,13 @@ from langbot_plugin.api.entities.builtin.platform import entities as platform_en
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
 from langbot_plugin.api.entities.builtin.pipeline import query as pipeline_query
+from langbot_plugin.api.entities.execution import WorkspaceExecutionScope
 
 
-class BaseEventModel(pydantic.BaseModel):
+class BaseEventModel(WorkspaceExecutionScope):
     """事件模型基类"""
+
+    query_uuid: str | None = None
 
     query: pipeline_query.Query = pydantic.Field(
         exclude=True,
@@ -23,6 +26,21 @@ class BaseEventModel(pydantic.BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+    @pydantic.model_validator(mode="after")
+    def inherit_query_execution_scope(self) -> BaseEventModel:
+        """Copy the trusted Query scope into the serialized event payload."""
+
+        if self.query is not None:
+            self.inherit_execution_scope(self.query)
+            if self.query_uuid is None:
+                self.query_uuid = self.query.query_uuid
+            elif (
+                self.query.query_uuid is not None
+                and self.query_uuid != self.query.query_uuid
+            ):
+                raise ValueError("Event query_uuid does not match Query query_uuid")
+        return self
 
 
 class MessageReceived(BaseEventModel):

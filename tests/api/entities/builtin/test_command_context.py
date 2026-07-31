@@ -60,6 +60,27 @@ def test_execute_context_shift_advances_current_command_and_params():
     assert context.crt_params == []
 
 
+def test_execute_context_propagates_workspace_scope_to_session():
+    context = ExecuteContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=2,
+        query_id=1,
+        session=_session(),
+        command_text="plugin on demo",
+        full_command_text="/plugin on demo",
+        command="plugin",
+        crt_command="plugin",
+        params=["on", "demo"],
+        crt_params=["on", "demo"],
+        privilege=0,
+    )
+
+    assert context.session.instance_uuid == "instance-1"
+    assert context.session.workspace_uuid == "workspace-a"
+    assert context.session.placement_generation == 2
+
+
 def test_command_not_found_error_default_message_should_be_constructible():
     assert str(CommandNotFoundError()) == "未知命令: "
 

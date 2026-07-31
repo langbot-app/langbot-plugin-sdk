@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import logging
+import os
 from unittest import mock
 
 import pytest
@@ -19,9 +21,11 @@ import pytest
 from langbot_plugin.box.backend import BaseSandboxBackend, DockerBackend
 from langbot_plugin.box.errors import (
     BoxBackendUnavailableError,
+    BoxCapacityExceededError,
     BoxManagedProcessNotFoundError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
+    BoxReadinessError,
     BoxValidationError,
 )
 from langbot_plugin.box.models import (
@@ -33,6 +37,7 @@ from langbot_plugin.box.models import (
     BoxSpec,
 )
 from langbot_plugin.box.runtime import BoxRuntime
+from langbot_plugin.entities.io.context import ActionContext
 
 _UTC = dt.timezone.utc
 
@@ -169,10 +174,59 @@ class FakeProcess:
         return self.returncode if self.returncode is not None else 0
 
 
+class _ChunkStream:
+    def __init__(self, chunks: list[bytes]):
+        self._chunks = list(chunks)
+
+    async def read(self, _size: int = -1) -> bytes:
+        if not self._chunks:
+            return b""
+        return self._chunks.pop(0)
+
+
 def _make_spec(session_id: str = "s1", **kwargs) -> BoxSpec:
     base = {"session_id": session_id, "cmd": "echo hi", "read_only_rootfs": False}
     base.update(kwargs)
     return BoxSpec(**base)
+
+
+@pytest.mark.anyio
+async def test_managed_process_stderr_capture_and_logging_are_bounded():
+    logger = mock.Mock(spec=logging.Logger)
+    backend = FakeBackend(logger)
+    process = FakeProcess()
+    process.stderr = _ChunkStream([b"x" * 1000 for _ in range(8)])
+
+    async def start_managed_process(_session, _spec):
+        backend.last_process = process
+        return process
+
+    backend.start_managed_process = start_managed_process
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    await runtime.create_session(_make_spec("stderr"))
+    await runtime.start_managed_process(
+        "stderr", BoxManagedProcessSpec(command="daemon")
+    )
+    await _wait_until(
+        lambda: any(
+            "suppressed managed-process stderr chunks" in str(call)
+            for call in logger.warning.call_args_list
+        )
+    )
+
+    managed = runtime._sessions["stderr"].managed_processes["default"]
+    assert managed.stderr_total_len <= 4000
+    detailed_logs = [
+        call
+        for call in logger.info.call_args_list
+        if "managed process stderr:" in str(call)
+    ]
+    assert len(detailed_logs) == 4
+    assert any("suppressed=4" in str(call) for call in logger.warning.call_args_list)
+
+    await runtime.stop_managed_process("stderr", "default")
 
 
 async def _wait_until(predicate, *, timeout: float = 1.0) -> None:
@@ -224,6 +278,103 @@ def test_init_method_applies_config_and_resets_backend(logger):
     backend.configure.assert_called_once_with({"cpus": 2})
     # No active sessions → backend reset so it re-selects with new config.
     assert runtime._backend is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("max_sessions", 5_001),
+        ("max_sessions", True),
+        ("max_managed_processes", 1_025),
+        ("max_completed_processes", 10_001),
+        ("max_admission_records", 250_001),
+        ("max_rpc_file_bytes", 100 * 1024 * 1024 + 1),
+        ("completed_process_retention_sec", 86_401),
+    ],
+)
+def test_runtime_rejects_limits_above_hard_capacity(logger, name, value):
+    payload = {"limits": {name: value}}
+    with mock.patch(
+        "os.getenv",
+        side_effect=lambda key, default="": json.dumps(payload)
+        if key == "LANGBOT_BOX_CONFIG"
+        else default,
+    ):
+        with pytest.raises(ValueError, match=rf"box\.limits\.{name}"):
+            BoxRuntime(logger, backends=[FakeBackend(logger)])
+
+
+def test_runtime_config_update_is_atomic_when_limit_is_invalid(logger):
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+    original_config = dict(runtime._box_config)
+    original_max_sessions = runtime.max_sessions
+
+    with pytest.raises(ValueError, match=r"box\.limits\.max_sessions"):
+        runtime.init(
+            {
+                "backend": "fake",
+                "limits": {"max_sessions": 5_001},
+            }
+        )
+
+    assert runtime._box_config == original_config
+    assert runtime.max_sessions == original_max_sessions
+
+
+def test_verify_shared_workspace_reads_only_valid_nofollow_marker(logger, tmp_path):
+    runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+    root = tmp_path / "box"
+    runtime.init(
+        {
+            "local": {
+                "host_root": str(root),
+                "default_workspace": "shared",
+                "allowed_mount_roots": [str(root)],
+            }
+        }
+    )
+    marker_name = ".langbot-box-volume-probe-" + "a" * 32
+    marker = root / "shared" / marker_name
+    payload = os.urandom(64)
+    marker.write_bytes(payload)
+
+    result = runtime.verify_shared_workspace(marker_name)
+
+    assert result == {
+        "marker_name": marker_name,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size": len(payload),
+    }
+    with pytest.raises(ValueError, match="probe basename"):
+        runtime.verify_shared_workspace("../shared/secret")
+
+
+def test_verify_shared_workspace_rejects_missing_and_symlink_markers(logger, tmp_path):
+    runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+    root = tmp_path / "box"
+    runtime.init(
+        {
+            "local": {
+                "host_root": str(root),
+                "default_workspace": "shared",
+                "allowed_mount_roots": [str(root)],
+            }
+        }
+    )
+    marker_name = ".langbot-box-volume-probe-" + "b" * 32
+    with pytest.raises(BoxReadinessError, match="cannot read"):
+        runtime.verify_shared_workspace(marker_name)
+
+    secret = tmp_path / "secret"
+    secret.write_bytes(b"not the shared marker")
+    marker = root / "shared" / marker_name
+    try:
+        marker.symlink_to(secret)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this platform")
+    with pytest.raises(BoxReadinessError, match="cannot read"):
+        runtime.verify_shared_workspace(marker_name)
 
 
 def test_init_method_applies_docker_cpu_limit_config(logger):
@@ -509,6 +660,44 @@ async def test_reap_skips_persistent_sessions(logger):
 
 
 @pytest.mark.anyio
+async def test_persistent_cloud_sessions_do_not_trigger_global_reaper_scan(
+    logger,
+):
+    """Creating another persistent session must not scan all tenants."""
+
+    class NoGlobalIterationDict(dict):
+        def __iter__(self):
+            raise AssertionError("Persistent Box sessions were globally scanned")
+
+        def items(self):
+            raise AssertionError("Persistent Box sessions were globally scanned")
+
+        def values(self):
+            raise AssertionError("Persistent Box sessions were globally scanned")
+
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(
+            logger,
+            backends=[backend],
+            session_ttl_sec=60,
+        )
+        await runtime.create_session(_make_spec("first", persistent=True))
+        runtime._sessions = NoGlobalIterationDict(runtime._sessions)
+
+        second = await runtime.create_session(_make_spec("second", persistent=True))
+        async with runtime._lock:
+            cleanup_tasks = await runtime._reap_expired_sessions_locked()
+        status = await runtime.get_status()
+
+    assert second["session_id"] == "second"
+    assert cleanup_tasks == []
+    assert status["active_sessions"] == 2
+    assert status["managed_processes"] == 0
+    assert runtime._expirable_session_ids == set()
+
+
+@pytest.mark.anyio
 async def test_reap_disabled_when_ttl_non_positive(logger):
     """ttl <= 0 disables reaping entirely."""
     backend = FakeBackend(logger)
@@ -771,7 +960,7 @@ async def test_delete_session_stops_backend(logger):
 
 
 @pytest.mark.anyio
-async def test_shutdown_drops_non_persistent_keeps_persistent(logger):
+async def test_shutdown_drops_all_sessions_including_persistent(logger):
     backend = FakeBackend(logger)
     with mock.patch("os.getenv", return_value=""):
         runtime = BoxRuntime(logger, backends=[backend])
@@ -780,8 +969,8 @@ async def test_shutdown_drops_non_persistent_keeps_persistent(logger):
         await runtime.shutdown()
 
     assert "ephemeral" not in runtime._sessions
-    assert "persist" in runtime._sessions
-    assert backend.stopped_sessions == 1
+    assert "persist" not in runtime._sessions
+    assert backend.stopped_sessions == 2
 
 
 @pytest.mark.anyio
@@ -869,6 +1058,45 @@ async def test_get_sessions_and_get_session(logger):
     assert len(sessions) == 1
     assert single["session_id"] == "one"
     assert "managed_processes" not in single  # none started
+
+
+@pytest.mark.anyio
+async def test_workspace_session_index_avoids_global_scan_and_cleans_up(logger):
+    class NoGlobalIterationDict(dict):
+        def __iter__(self):
+            raise AssertionError("Workspace lookup scanned every Box session")
+
+        def values(self):
+            raise AssertionError("Workspace lookup scanned every Box session")
+
+    backend = FakeBackend(logger)
+    workspace_a = ActionContext(
+        instance_uuid="instance",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+    )
+    workspace_b = workspace_a.model_copy(update={"workspace_uuid": "workspace-b"})
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        await runtime.create_session(
+            _make_spec("session-a"),
+            action_context=workspace_a,
+        )
+        await runtime.create_session(
+            _make_spec("session-b"),
+            action_context=workspace_b,
+        )
+        runtime._sessions = NoGlobalIterationDict(runtime._sessions)
+
+        sessions_a = runtime.get_sessions_for_workspace(workspace_a)
+        assert [session["session_id"] for session in sessions_a] == ["session-a"]
+
+        await runtime.delete_session("session-a")
+        assert runtime.get_sessions_for_workspace(workspace_a) == []
+        assert ("instance", "workspace-a") not in runtime._session_ids_by_workspace
+
+        await runtime.delete_session("session-b")
+        assert runtime._session_ids_by_workspace == {}
 
 
 def test_get_session_unknown_raises(logger):
@@ -1127,3 +1355,221 @@ async def test_reap_skips_session_with_running_managed_process(logger):
 
         assert "mp7" in runtime._sessions  # protected by running process
         await runtime.stop_managed_process("mp7", "default")
+
+
+@pytest.mark.anyio
+async def test_session_memory_change_is_a_conflict(logger):
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        await runtime.create_session(_make_spec("memory", memory_mb=256))
+        with pytest.raises(BoxSessionConflictError, match="memory_mb=256"):
+            await runtime.create_session(_make_spec("memory", memory_mb=512))
+        await runtime.shutdown()
+
+
+def test_relative_allowed_mount_root_is_resolved_from_working_directory(
+    logger, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    config = {
+        "local": {
+            "host_root": "./data/box",
+            "default_workspace": "",
+            "allowed_mount_roots": ["./data/box", "/tmp"],
+        }
+    }
+    with mock.patch("os.getenv", return_value=json.dumps(config)):
+        runtime = BoxRuntime(logger, backends=[FakeBackend(logger)])
+        runtime._ensure_default_workspace()
+
+    assert (tmp_path / "data/box/default").is_dir()
+    assert runtime._allowed_mount_roots()[0] == str((tmp_path / "data/box").resolve())
+
+
+@pytest.mark.anyio
+async def test_session_capacity_is_enforced(logger):
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], max_sessions=1)
+        await runtime.create_session(_make_spec("one"))
+        with pytest.raises(BoxCapacityExceededError, match="capacity"):
+            await runtime.create_session(_make_spec("two"))
+        await runtime.shutdown()
+
+
+@pytest.mark.anyio
+async def test_closing_session_still_counts_toward_capacity(logger):
+    backend = FakeBackend(logger)
+    stop_started = asyncio.Event()
+    release_stop = asyncio.Event()
+
+    async def slow_stop_session(session: BoxSessionInfo):
+        stop_started.set()
+        await release_stop.wait()
+
+    backend.stop_session = mock.AsyncMock(side_effect=slow_stop_session)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], max_sessions=1)
+        await runtime.create_session(_make_spec("one"))
+        delete_task = asyncio.create_task(runtime.delete_session("one"))
+        await stop_started.wait()
+
+        with pytest.raises(BoxCapacityExceededError, match="capacity"):
+            await runtime.create_session(_make_spec("two"))
+
+        release_stop.set()
+        await delete_task
+        created = await runtime.create_session(_make_spec("two"))
+        assert created["session_id"] == "two"
+        await runtime.shutdown()
+
+
+@pytest.mark.anyio
+async def test_different_sessions_start_without_global_io_lock(logger):
+    backend = FakeBackend(logger)
+    original_start = backend.start_session
+    both_entered = asyncio.Event()
+    release = asyncio.Event()
+    entered = 0
+
+    async def blocked_start(spec):
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            both_entered.set()
+        await release.wait()
+        return await original_start(spec)
+
+    backend.start_session = mock.AsyncMock(side_effect=blocked_start)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        first = asyncio.create_task(runtime.create_session(_make_spec("first")))
+        second = asyncio.create_task(runtime.create_session(_make_spec("second")))
+        await asyncio.wait_for(both_entered.wait(), timeout=1)
+        release.set()
+        await asyncio.gather(first, second)
+        await runtime.shutdown()
+
+
+@pytest.mark.anyio
+async def test_delete_during_managed_process_start_leaves_no_orphan(logger):
+    backend = FakeBackend(logger)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    process = FakeProcess()
+
+    async def blocked_start(session, spec):
+        entered.set()
+        await release.wait()
+        return process
+
+    backend.start_managed_process = mock.AsyncMock(side_effect=blocked_start)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        await runtime.create_session(_make_spec("race"))
+        starting = asyncio.create_task(
+            runtime.start_managed_process(
+                "race", BoxManagedProcessSpec(command="daemon")
+            )
+        )
+        await entered.wait()
+        deleting = asyncio.create_task(runtime.delete_session("race"))
+        await asyncio.sleep(0)
+        release.set()
+        await starting
+        await deleting
+
+    assert "race" not in runtime._sessions
+    process.terminate.assert_called_once()
+    backend.stop_session.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_delete_waits_for_inflight_session_creation(logger):
+    backend = FakeBackend(logger)
+    original_start = backend.start_session
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_start(spec):
+        entered.set()
+        await release.wait()
+        return await original_start(spec)
+
+    backend.start_session = mock.AsyncMock(side_effect=blocked_start)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        creating = asyncio.create_task(
+            runtime.create_session(_make_spec("create-race"))
+        )
+        await entered.wait()
+        deleting = asyncio.create_task(runtime.delete_session("create-race"))
+        await asyncio.sleep(0)
+        release.set()
+        await creating
+        await deleting
+
+    assert "create-race" not in runtime._sessions
+    backend.stop_session.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_managed_process_capacity_and_completed_retention(logger):
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(
+            logger,
+            backends=[backend],
+            max_managed_processes=1,
+            completed_process_retention_sec=0,
+        )
+        await runtime.create_session(_make_spec("p1"))
+        await runtime.create_session(_make_spec("p2"))
+        await runtime.start_managed_process(
+            "p1", BoxManagedProcessSpec(command="daemon")
+        )
+        with pytest.raises(BoxCapacityExceededError, match="capacity"):
+            await runtime.start_managed_process(
+                "p2", BoxManagedProcessSpec(command="daemon")
+            )
+
+        backend.last_process.finish(0)
+        await _wait_until(lambda: not runtime._sessions["p1"].managed_processes)
+        await runtime.start_managed_process(
+            "p2", BoxManagedProcessSpec(command="daemon")
+        )
+        await runtime.shutdown()
+
+
+@pytest.mark.anyio
+async def test_completed_process_diagnostics_are_globally_bounded(logger):
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(
+            logger,
+            backends=[backend],
+            max_completed_processes=1,
+            completed_process_retention_sec=300,
+        )
+        await runtime.create_session(_make_spec("bounded"))
+        await runtime.start_managed_process(
+            "bounded", BoxManagedProcessSpec(process_id="one", command="true")
+        )
+        first = backend.last_process
+        first.finish(0)
+        await _wait_until(
+            lambda: runtime._sessions["bounded"].managed_processes["one"].exit_code == 0
+        )
+
+        await runtime.start_managed_process(
+            "bounded", BoxManagedProcessSpec(process_id="two", command="true")
+        )
+        second = backend.last_process
+        second.finish(0)
+        await _wait_until(
+            lambda: "one" not in runtime._sessions["bounded"].managed_processes
+        )
+
+        assert set(runtime._sessions["bounded"].managed_processes) == {"two"}
+        await runtime.shutdown()

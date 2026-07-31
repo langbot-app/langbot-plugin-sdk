@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import gc
+import weakref
+
+import pytest
+
 from langbot_plugin.api.entities import context as context_module
 from langbot_plugin.api.definition.abstract.platform.adapter import (
     AbstractMessagePlatformAdapter,
@@ -12,6 +17,7 @@ from langbot_plugin.api.entities.builtin.platform.message import MessageChain, P
 from langbot_plugin.api.entities.builtin.platform.events import FriendMessage
 from langbot_plugin.api.entities.builtin.platform.entities import Friend
 from langbot_plugin.api.entities.builtin.provider.session import LauncherTypes
+from langbot_plugin.api.entities.builtin.provider.session import Session
 from langbot_plugin.api.entities.events import PersonMessageReceived
 from langbot_plugin.api.entities.context import EventContext
 
@@ -102,6 +108,19 @@ def test_event_context_from_event_assigns_monotonic_id_and_caches_context():
     assert first.event_name == "PersonMessageReceived"
 
 
+def test_event_context_cache_does_not_keep_completed_events_alive():
+    context_module.cached_event_contexts.clear()
+    context_module.global_eid_index = 0
+
+    context = EventContext.from_event(_event())
+    context_ref = weakref.ref(context)
+    del context
+    gc.collect()
+
+    assert context_ref() is None
+    assert not context_module.cached_event_contexts
+
+
 def test_event_context_prevent_flags_are_mutable_runtime_state():
     ctx = EventContext.from_event(_event())
 
@@ -163,3 +182,83 @@ def test_query_model_dump_serializes_public_request_payload():
     assert payload["messages"] == []
     assert payload["prompt"] is None
     assert payload["message_chain"][0]["text"] == "hello"
+
+
+def test_legacy_query_event_and_session_payloads_remain_valid_without_scope():
+    query = _make_query(MessageChain([Plain(text="hello")]))
+    session = Session.model_validate(
+        {
+            "launcher_type": "person",
+            "launcher_id": "launcher",
+        }
+    )
+    event_context = EventContext.from_event(_event())
+
+    assert query.workspace_uuid is None
+    assert session.workspace_uuid is None
+    assert event_context.workspace_uuid is None
+    assert "workspace_uuid" not in query.model_dump()
+
+
+def test_query_scope_propagates_to_event_session_and_event_context():
+    chain = MessageChain([Plain(text="hello")])
+    message_event = _make_friend_message(chain)
+    session = Session(
+        launcher_type=LauncherTypes.PERSON,
+        launcher_id="launcher",
+    )
+    query = Query(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=8,
+        query_id=1,
+        query_uuid="query-opaque-1",
+        launcher_type=LauncherTypes.PERSON,
+        launcher_id="launcher",
+        sender_id="sender",
+        message_event=message_event,
+        message_chain=chain,
+        bot_uuid="bot-1",
+        session=session,
+    )
+    event = PersonMessageReceived(
+        query=query,
+        launcher_type="person",
+        launcher_id="launcher",
+        sender_id="sender",
+        message_chain=chain,
+        message_event=message_event,
+    )
+    event_context = EventContext.from_event(event)
+
+    for scoped in (query.message_event, query.session, event, event_context):
+        assert scoped.instance_uuid == "instance-1"
+        assert scoped.workspace_uuid == "workspace-a"
+        assert scoped.placement_generation == 8
+    assert query.session.bot_uuid == "bot-1"
+    assert event.query_uuid == "query-opaque-1"
+    assert event_context.query_uuid == "query-opaque-1"
+    assert query.model_dump()["workspace_uuid"] == "workspace-a"
+    assert query.message_event.model_dump()["workspace_uuid"] == "workspace-a"
+
+
+def test_query_rejects_nested_event_from_another_workspace():
+    chain = MessageChain([Plain(text="hello")])
+    message_event = _make_friend_message(chain)
+    message_event.workspace_uuid = "workspace-b"
+
+    with pytest.raises(
+        ValueError,
+        match="Execution scope mismatch for workspace_uuid",
+    ):
+        Query(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=1,
+            query_id=1,
+            launcher_type=LauncherTypes.PERSON,
+            launcher_id="launcher",
+            sender_id="sender",
+            message_event=message_event,
+            message_chain=chain,
+        )

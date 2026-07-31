@@ -93,12 +93,19 @@ class _FakeProcess:
         self.stdin = mock.MagicMock()
         self._hang = hang
         self.killed = False
+        self.terminated = False
+        self.wait_started = asyncio.Event()
 
     async def wait(self):
+        self.wait_started.set()
         if self._hang:
             # Never completes on its own; ``asyncio.wait_for`` will time it out.
             await asyncio.sleep(3600)
         return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self._hang = False
 
     def kill(self):
         self.killed = True
@@ -671,6 +678,26 @@ async def test_exec_timeout(backend, session):
     assert result.exit_code is None
     assert "timed out" in result.stderr.lower()
     assert proc.killed is True
+
+
+@pytest.mark.anyio
+async def test_exec_cancellation_terminates_and_reaps_backend_process(
+    backend,
+    session,
+):
+    proc = _FakeProcess(returncode=None, hang=True)
+    patcher, _ = _patch_exec(proc)
+    spec = BoxSpec(session_id="sess1", cmd="sleep 100", timeout_sec=60)
+
+    with patcher:
+        task = asyncio.create_task(backend.exec(session, spec))
+        await proc.wait_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert proc.terminated is True
+    assert proc._hang is False
 
 
 # ── command builders ──────────────────────────────────────────────────

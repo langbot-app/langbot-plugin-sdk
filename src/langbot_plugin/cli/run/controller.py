@@ -33,6 +33,13 @@ from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
+from langbot_plugin.runtime.security import (
+    PLUGIN_DEBUG_KEY_ENV,
+    PLUGIN_DEBUG_KEY_HEADER,
+    PLUGIN_REGISTRATION_CAPABILITY_ENV,
+    PLUGIN_REGISTRATION_CAPABILITY_HEADER,
+    validate_runtime_secret,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +75,7 @@ class PluginRuntimeController:
     _connection_waiter: asyncio.Future[Connection]
 
     prod_mode: bool
-    """Mark this process as production plugin process, only used on Windows"""
+    """Mark a Runtime-managed child that must use one-use registration auth."""
 
     hot_reloader: HotReloader | None = None
     """Hot reloader for watching file changes in debug mode"""
@@ -87,6 +94,11 @@ class PluginRuntimeController:
         self._stdio = stdio
         self.ws_debug_url = ws_debug_url
         self.prod_mode = prod_mode
+        self._registration_capability = (
+            os.environ.pop(PLUGIN_REGISTRATION_CAPABILITY_ENV, "").strip()
+            if prod_mode
+            else ""
+        )
         self._reload_event = None
         # discover components
         components_containers = [
@@ -206,8 +218,26 @@ class PluginRuntimeController:
                 if self._stdio:
                     controller = stdio_controller_server.StdioServerController()
                 else:
+                    if self.prod_mode:
+                        registration_capability = validate_runtime_secret(
+                            self._registration_capability,
+                            name=PLUGIN_REGISTRATION_CAPABILITY_ENV,
+                        )
+                        authentication_headers = {
+                            PLUGIN_REGISTRATION_CAPABILITY_HEADER: (
+                                registration_capability
+                            )
+                        }
+                    else:
+                        debug_key = validate_runtime_secret(
+                            os.environ.get(PLUGIN_DEBUG_KEY_ENV, ""),
+                            name=PLUGIN_DEBUG_KEY_ENV,
+                        )
+                        authentication_headers = {PLUGIN_DEBUG_KEY_HEADER: debug_key}
                     controller = ws_controller_client.WebSocketClientController(
-                        self.ws_debug_url, make_connection_failed_callback
+                        self.ws_debug_url,
+                        make_connection_failed_callback,
+                        additional_headers=authentication_headers,
                     )
 
                 self._controller_task = asyncio.create_task(
@@ -235,7 +265,15 @@ class PluginRuntimeController:
                 )
 
                 # register plugin
-                await self.handler.register_plugin(prod_mode=self.prod_mode)
+                registration_capability = self._registration_capability
+                try:
+                    await self.handler.register_plugin(
+                        prod_mode=self.prod_mode,
+                        registration_capability=registration_capability,
+                    )
+                finally:
+                    if self.prod_mode:
+                        self._registration_capability = ""
 
                 # If in production mode, break the loop after first connection
                 if self.prod_mode:

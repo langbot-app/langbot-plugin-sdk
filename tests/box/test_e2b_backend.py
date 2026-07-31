@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -184,6 +185,20 @@ async def test_start_session_basic(backend, mock_e2b_module):
     mock_e2b_module.create.assert_called_once()
     call_kwargs = mock_e2b_module.create.call_args.kwargs
     assert call_kwargs.get("api_key") == "test-api-key"
+
+
+@pytest.mark.anyio
+async def test_is_session_alive_probes_remote_sandbox(backend, mock_e2b_module):
+    backend._api_key = "test-api-key"
+    info = await backend.start_session(BoxSpec(session_id="alive", cmd="true"))
+
+    assert await backend.is_session_alive(info) is True
+    mock_e2b_module.connect.assert_awaited_once_with(
+        sandbox_id="sandbox-test-123", api_key="test-api-key"
+    )
+
+    mock_e2b_module.connect.side_effect = RuntimeError("sandbox gone")
+    assert await backend.is_session_alive(info) is False
 
 
 @pytest.mark.anyio
@@ -476,6 +491,43 @@ async def test_stop_session_handles_error(backend, mock_e2b_module):
 
     # Should not raise
     await backend.stop_session(session)
+
+
+@pytest.mark.anyio
+async def test_remote_sync_stream_is_bounded(backend, tmp_path, monkeypatch):
+    import langbot_plugin.box.e2b_backend as e2b_backend
+
+    monkeypatch.setattr(e2b_backend, "_MAX_E2B_SYNC_FILE_BYTES", 4)
+
+    class Files:
+        async def list(self, _root, depth):
+            assert depth == 16
+            return [
+                SimpleNamespace(
+                    path="/remote/large.bin",
+                    size=0,
+                    type=SimpleNamespace(value="file"),
+                )
+            ]
+
+        async def read(self, _path, *, format, request_timeout):
+            assert format == "stream"
+            assert request_timeout == 30
+
+            async def chunks():
+                yield b"123"
+                yield b"45"
+
+            return chunks()
+
+    sandbox = SimpleNamespace(files=Files())
+    await backend._sync_e2b_tree_to_host(
+        sandbox,
+        remote_root="/remote",
+        host_root=str(tmp_path),
+    )
+
+    assert not (tmp_path / "large.bin").exists()
 
 
 # ── _check_e2b_available ──────────────────────────────────────────────

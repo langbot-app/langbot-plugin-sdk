@@ -7,6 +7,7 @@ import websockets
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.connections import ws as ws_connection
 from langbot_plugin.runtime.io.controller import Controller
+from langbot_plugin.runtime.io.connection import MAX_MESSAGE_BYTES
 
 
 class WebSocketClientController(Controller):
@@ -18,9 +19,11 @@ class WebSocketClientController(Controller):
         make_connection_failed_callback: Callable[
             [Controller, Exception | None], Coroutine[Any, Any, None]
         ],
+        additional_headers: dict[str, str] | None = None,
     ):
         self.ws_url = ws_url
         self.make_connection_failed_callback = make_connection_failed_callback
+        self.additional_headers = dict(additional_headers or {})
 
     async def run(
         self,
@@ -37,7 +40,11 @@ class WebSocketClientController(Controller):
             # Docker deployments on hosts that inject a proxy into containers
             # (e.g. Docker Desktop with a configured proxy).
             async with websockets.connect(
-                self.ws_url, open_timeout=10, proxy=None
+                self.ws_url,
+                open_timeout=10,
+                proxy=None,
+                max_size=MAX_MESSAGE_BYTES,
+                additional_headers=self.additional_headers or None,
             ) as websocket:
                 connection = ws_connection.WebSocketConnection(websocket)
                 await new_connection_callback(connection)

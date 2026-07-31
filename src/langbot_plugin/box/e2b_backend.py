@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import logging
@@ -17,6 +18,28 @@ from .models import (
     BoxSpec,
 )
 from .security import validate_sandbox_security
+
+_MAX_E2B_SYNC_FILES = 1024
+_MAX_E2B_SYNC_ENTRIES = 2048
+_MAX_E2B_SYNC_FILE_BYTES = 10 * 1024 * 1024
+_MAX_E2B_SYNC_TOTAL_BYTES = 50 * 1024 * 1024
+
+
+def _read_e2b_host_file_limited(path: str) -> bytes:
+    if os.path.getsize(path) > _MAX_RAW_OUTPUT_BYTES:
+        raise ValueError("E2B host sync file exceeds the size limit")
+    with open(path, "rb") as file:
+        body = file.read(_MAX_RAW_OUTPUT_BYTES + 1)
+    if len(body) > _MAX_RAW_OUTPUT_BYTES:
+        raise ValueError("E2B host sync file exceeds the size limit")
+    return body
+
+
+def _write_e2b_host_file(path: str, data: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as file:
+        file.write(data)
+
 
 # E2B sandbox uses /home/user as the default writable directory
 # We map /workspace to /home/user/workspace for compatibility
@@ -361,6 +384,8 @@ class E2BSandboxBackend(BaseSandboxBackend):
         if not os.path.isdir(host_root):
             return
 
+        synced_files = 0
+        synced_bytes = 0
         for root, dirs, files in os.walk(host_root):
             dirs[:] = [
                 d
@@ -382,14 +407,20 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 continue
 
             for filename in files:
+                if synced_files >= _MAX_E2B_SYNC_FILES:
+                    return
                 host_file = os.path.join(root, filename)
                 try:
-                    if os.path.getsize(host_file) > _MAX_RAW_OUTPUT_BYTES:
-                        continue
-                    with open(host_file, "rb") as f:
-                        data = f.read()
+                    data = await asyncio.to_thread(
+                        _read_e2b_host_file_limited,
+                        host_file,
+                    )
+                    if synced_bytes + len(data) > _MAX_E2B_SYNC_TOTAL_BYTES:
+                        return
                     remote_file = posixpath.join(remote_dir, filename)
                     await sandbox.files.write(remote_file, data)
+                    synced_files += 1
+                    synced_bytes += len(data)
                 except Exception as exc:
                     self.logger.debug(
                         f"Failed to sync host file to E2B {host_file}: {exc}"
@@ -399,14 +430,16 @@ class E2BSandboxBackend(BaseSandboxBackend):
         self, sandbox, *, remote_root: str, host_root: str
     ) -> None:
         """Best-effort download of an E2B mount into the matching host path."""
-        os.makedirs(host_root, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, host_root, exist_ok=True)
         try:
             entries = await sandbox.files.list(remote_root, depth=16)
         except Exception as exc:
             self.logger.debug(f"Failed to list E2B mount for sync {remote_root}: {exc}")
             return
 
-        for entry in entries:
+        synced_files = 0
+        synced_bytes = 0
+        for entry in entries[:_MAX_E2B_SYNC_ENTRIES]:
             remote_path = str(getattr(entry, "path", "") or "")
             if (
                 not remote_path
@@ -428,12 +461,36 @@ class E2BSandboxBackend(BaseSandboxBackend):
             entry_type = getattr(getattr(entry, "type", None), "value", "")
             try:
                 if entry_type == "dir":
-                    os.makedirs(host_path, exist_ok=True)
+                    await asyncio.to_thread(os.makedirs, host_path, exist_ok=True)
                 elif entry_type == "file":
-                    os.makedirs(os.path.dirname(host_path), exist_ok=True)
-                    data = await sandbox.files.read(remote_path, format="bytes")
-                    with open(host_path, "wb") as f:
-                        f.write(bytes(data))
+                    if synced_files >= _MAX_E2B_SYNC_FILES:
+                        return
+                    declared_size = int(getattr(entry, "size", 0) or 0)
+                    if declared_size > _MAX_E2B_SYNC_FILE_BYTES:
+                        continue
+                    stream = await sandbox.files.read(
+                        remote_path,
+                        format="stream",
+                        request_timeout=30,
+                    )
+                    data = bytearray()
+                    async for chunk in stream:
+                        data.extend(chunk)
+                        if len(data) > _MAX_E2B_SYNC_FILE_BYTES:
+                            raise ValueError(
+                                "E2B remote sync file exceeds the size limit"
+                            )
+                        if synced_bytes + len(data) > _MAX_E2B_SYNC_TOTAL_BYTES:
+                            raise ValueError(
+                                "E2B remote sync exceeds the total size limit"
+                            )
+                    await asyncio.to_thread(
+                        _write_e2b_host_file,
+                        host_path,
+                        bytes(data),
+                    )
+                    synced_files += 1
+                    synced_bytes += len(data)
             except Exception as exc:
                 self.logger.debug(
                     f"Failed to sync E2B file to host {remote_path}: {exc}"
@@ -457,6 +514,26 @@ class E2BSandboxBackend(BaseSandboxBackend):
             )
         except Exception as exc:
             self.logger.warning(f"Failed to kill E2B sandbox: {exc}")
+
+    async def is_session_alive(self, session: BoxSessionInfo) -> bool:
+        """Probe the remote sandbox rather than trusting stale local metadata."""
+        if not _check_e2b_available():
+            return False
+        kwargs = {}
+        if self._api_key:
+            kwargs["api_key"] = self._api_key
+        if self._api_url:
+            kwargs["domain"] = self._api_url
+        try:
+            await _AsyncSandbox.connect(sandbox_id=session.backend_session_id, **kwargs)
+            return True
+        except Exception as exc:
+            self.logger.info(
+                "E2B sandbox liveness probe failed for %s: %s",
+                session.backend_session_id,
+                exc,
+            )
+            return False
 
     def _truncate_output(self, output: str, limit: int = _MAX_RAW_OUTPUT_BYTES) -> str:
         """Truncate output if exceeds the limit."""

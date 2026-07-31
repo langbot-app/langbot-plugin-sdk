@@ -11,8 +11,56 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime.io.handlers.control import ControlConnectionHandler
 from langbot_plugin.runtime.settings import settings as runtime_settings
+from langbot_plugin.entities.io.context import (
+    ActionContext,
+    InstallationBinding,
+    PluginWorkerPolicy,
+    RuntimeConfig,
+    RuntimeIdentity,
+)
+from langbot_plugin.runtime.context import RuntimeContext
 
-from tests.helpers.protocol import ProtocolConnection, ProtocolSession
+from tests.helpers.protocol import (
+    ProtocolConnection,
+    ProtocolSession as BaseProtocolSession,
+)
+
+
+TEST_RUNTIME_IDENTITY = RuntimeIdentity(
+    instance_uuid="instance-1",
+    runtime_id="runtime-boot-1",
+)
+TEST_WORKER_POLICY = PluginWorkerPolicy(
+    max_cpus=1.0,
+    max_memory_mb=512,
+    max_pids=128,
+    max_open_files=256,
+    max_file_size_mb=512,
+)
+TEST_RUNTIME_CONFIG = RuntimeConfig(
+    runtime_identity=TEST_RUNTIME_IDENTITY,
+    worker_policy=TEST_WORKER_POLICY,
+)
+TEST_SHARED_RUNTIME_CONFIG = TEST_RUNTIME_CONFIG.model_copy(
+    update={"runtime_profile": "shared"}
+)
+TEST_INSTALLATION_BINDING = InstallationBinding(
+    instance_uuid="instance-1",
+    workspace_uuid="workspace-a",
+    placement_generation=4,
+    installation_uuid="installation-1",
+    runtime_revision=2,
+    artifact_digest="a" * 64,
+)
+
+
+def ProtocolSession(handler):
+    """Use an explicit tenant envelope by default in control action tests."""
+
+    return BaseProtocolSession(
+        handler,
+        default_action_context=TEST_INSTALLATION_BINDING,
+    )
 
 
 class Dumpable:
@@ -42,6 +90,37 @@ class FakePluginManager:
     def __init__(self):
         self.plugins = [FakePlugin()]
         self.calls = []
+        self.worker_policy = None
+        self.runtime_profile = None
+
+    def configure_worker_runtime(self, policy, runtime_profile):
+        self.worker_policy = policy
+        self.runtime_profile = runtime_profile
+
+    async def reconcile_plugin_installations(self, installations):
+        self.calls.append(("reconcile_plugin_installations", installations))
+        return {"applied": [], "removed": [], "missing_artifacts": []}
+
+    async def apply_plugin_installation(
+        self,
+        binding,
+        *,
+        artifact_package=None,
+        enabled=True,
+    ):
+        self.calls.append(
+            (
+                "apply_plugin_installation",
+                binding,
+                artifact_package,
+                enabled,
+            )
+        )
+        return {"installation_uuid": binding.installation_uuid, "state": "starting"}
+
+    async def remove_plugin_installation(self, binding):
+        self.calls.append(("remove_plugin_installation", binding))
+        return {"installation_uuid": binding.installation_uuid, "state": "removed"}
 
     async def get_plugin_icon(self, author, plugin_name):
         self.calls.append(("get_plugin_icon", author, plugin_name))
@@ -128,17 +207,22 @@ class FakePluginManager:
         session,
         query_id,
         include_plugins=None,
+        query_uuid=None,
     ):
-        self.calls.append(
-            (
-                "call_tool",
-                tool_name,
-                tool_parameters,
-                session,
-                query_id,
-                include_plugins,
-            )
+        call = (
+            "call_tool",
+            tool_name,
+            tool_parameters,
+            session,
+            query_id,
+            include_plugins,
         )
+        if query_uuid is not None:
+            call = (
+                *call,
+                query_uuid,
+            )
+        self.calls.append(call)
         return {"text": "sunny"}
 
     async def list_commands(self, include_plugins=None):
@@ -210,10 +294,15 @@ class FakePluginManager:
         return {"text": "parsed"}
 
 
-def _handler():
+def _handler(*, configured=True, runtime_config=TEST_RUNTIME_CONFIG):
     manager = FakePluginManager()
-    context = SimpleNamespace(plugin_mgr=manager, ws_debug_port=5401)
+    context = RuntimeContext()
+    context.plugin_mgr = manager
+    context.ws_debug_port = 5401
     handler = ControlConnectionHandler(ProtocolConnection(), context)
+    context.activate_control_handler(handler)
+    if configured:
+        handler.configure_runtime(runtime_config)
     return handler, manager
 
 
@@ -221,7 +310,11 @@ async def test_control_handler_ping_protocol_response():
     handler, _manager = _handler()
 
     async with ProtocolSession(handler) as session:
-        response = await session.request(CommonAction.PING.value, seq_id=10)
+        response = await session.request(
+            CommonAction.PING.value,
+            seq_id=10,
+            action_context=None,
+        )
 
     assert response["seq_id"] == 10
     assert response["code"] == 0
@@ -262,17 +355,80 @@ async def test_control_handler_get_plugin_info_returns_match_or_none():
 async def test_control_handler_set_runtime_config_updates_cloud_service_url(
     monkeypatch,
 ):
-    handler, _manager = _handler()
+    handler, _manager = _handler(configured=False)
     monkeypatch.setattr(runtime_settings, "cloud_service_url", "https://old.example")
+    config = TEST_RUNTIME_CONFIG.model_copy(
+        update={"cloud_service_url": "https://space.example"}
+    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
             LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
-            {"cloud_service_url": "https://space.example/"},
+            config.model_dump(),
+            action_context=None,
         )
 
     assert response["data"] == {}
     assert runtime_settings.cloud_service_url == "https://space.example"
+    assert handler.context.runtime_identity == TEST_RUNTIME_IDENTITY
+    assert handler.context.worker_policy == TEST_WORKER_POLICY
+    assert handler.context.workspace_binding is None
+
+
+async def test_control_handler_rejects_incomplete_runtime_config():
+    handler, _manager = _handler(configured=False)
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            {},
+            action_context=None,
+        )
+
+    assert response["code"] == 1
+    assert "runtime_identity" in response["message"]
+    assert handler.context.workspace_binding is None
+    assert handler.context.runtime_identity is None
+
+
+async def test_control_handler_binds_runtime_once_to_identity_and_policy():
+    context = RuntimeContext()
+    context.plugin_mgr = FakePluginManager()
+    context.ws_debug_port = 5401
+    handler = ControlConnectionHandler(ProtocolConnection(), context)
+    context.activate_control_handler(handler)
+
+    async with ProtocolSession(handler) as session:
+        first = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            TEST_RUNTIME_CONFIG.model_dump(),
+            action_context=None,
+        )
+        repeated = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            TEST_RUNTIME_CONFIG.model_dump(),
+            action_context=None,
+        )
+        rebound = await session.request(
+            LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+            TEST_RUNTIME_CONFIG.model_copy(
+                update={
+                    "runtime_identity": TEST_RUNTIME_IDENTITY.model_copy(
+                        update={"runtime_id": "runtime-boot-2"}
+                    )
+                }
+            ).model_dump(),
+            action_context=None,
+        )
+
+    assert first["code"] == 0
+    assert repeated["code"] == 0
+    assert context.runtime_identity == TEST_RUNTIME_IDENTITY
+    assert context.worker_policy == TEST_WORKER_POLICY
+    assert context.workspace_binding is None
+    assert handler.bound_action_context is None
+    assert rebound["code"] == 1
+    assert "identity cannot be rebound" in rebound["message"]
 
 
 async def test_control_handler_get_debug_info_returns_runtime_settings(monkeypatch):
@@ -280,12 +436,217 @@ async def test_control_handler_get_debug_info_returns_runtime_settings(monkeypat
     monkeypatch.setattr(runtime_settings, "plugin_debug_key", "debug-key")
 
     async with ProtocolSession(handler) as session:
-        response = await session.request(LangBotToRuntimeAction.GET_DEBUG_INFO.value)
+        response = await session.request(
+            LangBotToRuntimeAction.GET_DEBUG_INFO.value,
+            action_context=None,
+        )
 
     assert response["data"] == {
         "plugin_debug_key": "debug-key",
         "ws_debug_port": 5401,
+        "resources": {
+            "event_loop": {},
+            "blocking_executor": {},
+            "plugin_handlers": 0,
+            "legacy_supervisors": 0,
+            "installation_runtimes": 0,
+            "pending_registrations": 0,
+            "restart_coordinator": {"configured": False},
+        },
     }
+
+
+async def test_control_handler_rejects_tenant_action_without_complete_binding():
+    handler, manager = _handler()
+    workspace_only = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=4,
+    )
+
+    async with ProtocolSession(handler) as session:
+        missing = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            action_context=None,
+            seq_id=1,
+        )
+        partial = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            action_context=workspace_only,
+            seq_id=2,
+        )
+
+    assert missing["code"] == 1
+    assert partial["code"] == 1
+    assert "complete InstallationBinding" in missing["message"]
+    assert "complete InstallationBinding" in partial["message"]
+    assert manager.calls == []
+    assert handler.context.workspace_binding is None
+
+
+async def test_control_handler_rejects_cross_instance_and_cross_workspace_actions():
+    handler, _manager = _handler()
+
+    async with ProtocolSession(handler) as session:
+        accepted = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            seq_id=1,
+        )
+        cross_instance = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            action_context=TEST_INSTALLATION_BINDING.model_copy(
+                update={"instance_uuid": "instance-2"}
+            ),
+            seq_id=2,
+        )
+        cross_workspace = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            action_context=TEST_INSTALLATION_BINDING.model_copy(
+                update={
+                    "workspace_uuid": "workspace-b",
+                    "installation_uuid": "installation-2",
+                }
+            ),
+            seq_id=3,
+        )
+
+    assert accepted["code"] == 0
+    assert cross_instance["code"] == 1
+    assert "does not match Runtime instance" in cross_instance["message"]
+    assert cross_workspace["code"] == 1
+    assert "cannot dispatch another Workspace safely" in cross_workspace["message"]
+
+
+async def test_control_handler_rejects_changed_installation_revision_or_artifact():
+    handler, _manager = _handler()
+
+    async with ProtocolSession(handler) as session:
+        accepted = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            seq_id=1,
+        )
+        stale_or_rebound = await session.request(
+            LangBotToRuntimeAction.LIST_PLUGINS.value,
+            action_context=TEST_INSTALLATION_BINDING.model_copy(
+                update={"runtime_revision": 3, "artifact_digest": "b" * 64}
+            ),
+            seq_id=2,
+        )
+
+    assert accepted["code"] == 0
+    assert stale_or_rebound["code"] == 1
+    assert (
+        "cannot change generation, revision, or artifact" in stale_or_rebound["message"]
+    )
+
+
+async def test_superseded_control_handler_rejects_even_instance_scoped_actions():
+    context = RuntimeContext()
+    context.plugin_mgr = FakePluginManager()
+    context.ws_debug_port = 5401
+    old_handler = ControlConnectionHandler(ProtocolConnection(), context)
+    context.activate_control_handler(old_handler)
+    old_handler.configure_runtime(TEST_RUNTIME_CONFIG)
+
+    new_handler = ControlConnectionHandler(ProtocolConnection(), context)
+    previous = context.activate_control_handler(new_handler)
+    assert previous is old_handler
+    old_handler.invalidate()
+    new_handler.configure_runtime(TEST_RUNTIME_CONFIG)
+
+    async with ProtocolSession(old_handler) as old_session:
+        rejected = await old_session.request(
+            CommonAction.PING.value,
+            action_context=None,
+        )
+    async with ProtocolSession(new_handler) as new_session:
+        accepted = await new_session.request(
+            CommonAction.PING.value,
+            action_context=None,
+        )
+
+    assert rejected["code"] == 1
+    assert "superseded" in rejected["message"]
+    assert accepted["code"] == 0
+
+
+async def test_control_handler_reconciles_instance_desired_state_without_context():
+    handler, manager = _handler()
+    second_binding = TEST_INSTALLATION_BINDING.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-2",
+        }
+    )
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.RECONCILE_PLUGIN_INSTALLATIONS.value,
+            {
+                "installations": [
+                    {
+                        "binding": TEST_INSTALLATION_BINDING.model_dump(),
+                        "enabled": True,
+                    },
+                    {"binding": second_binding.model_dump(), "enabled": False},
+                ]
+            },
+            action_context=None,
+        )
+
+    assert response["code"] == 0
+    call_name, desired = manager.calls[0]
+    assert call_name == "reconcile_plugin_installations"
+    assert [item.binding for item in desired] == [
+        TEST_INSTALLATION_BINDING,
+        second_binding,
+    ]
+
+
+async def test_control_handler_applies_artifact_with_envelope_binding(monkeypatch):
+    handler, manager = _handler()
+    file_ops = []
+
+    async def fake_read(file_key):
+        file_ops.append(("read", file_key))
+        return b"verified-package"
+
+    async def fake_delete(file_key):
+        file_ops.append(("delete", file_key))
+
+    monkeypatch.setattr(handler, "read_local_file", fake_read)
+    monkeypatch.setattr(handler, "delete_local_file", fake_delete)
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
+            {"artifact_file_key": "artifact-key", "enabled": True},
+        )
+
+    assert response["code"] == 0
+    assert file_ops == [("read", "artifact-key"), ("delete", "artifact-key")]
+    assert manager.calls == [
+        (
+            "apply_plugin_installation",
+            TEST_INSTALLATION_BINDING,
+            b"verified-package",
+            True,
+        )
+    ]
+
+
+async def test_control_handler_remove_requires_exact_current_binding():
+    handler, manager = _handler()
+    handler.context.activate_installation_binding(TEST_INSTALLATION_BINDING)
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION.value,
+            {},
+        )
+
+    assert response["code"] == 0
+    assert manager.calls == [("remove_plugin_installation", TEST_INSTALLATION_BINDING)]
 
 
 async def test_control_handler_get_plugin_icon_sends_file_key(monkeypatch):
@@ -520,7 +881,13 @@ async def test_control_handler_install_plugin_streams_progress_and_reads_local_p
             LangBotToRuntimeAction.INSTALL_PLUGIN.value,
             {
                 "install_source": "local",
-                "install_info": {"plugin_file_key": "pkg-key"},
+                "install_info": {
+                    "plugin_file_key": "pkg-key",
+                    "workspace_uuid": "workspace-forged",
+                    "instance_uuid": "instance-forged",
+                    "placement_generation": 999,
+                    "installation_uuid": "installation-forged",
+                },
             },
             count=4,
         )
@@ -581,6 +948,54 @@ async def test_control_handler_install_plugin_marketplace_does_not_read_local_fi
         {"current_action": "plugin installed"},
         {},
     ]
+
+
+async def test_shared_control_handler_rejects_legacy_plugin_lifecycle_before_io(
+    monkeypatch,
+):
+    handler, manager = _handler(runtime_config=TEST_SHARED_RUNTIME_CONFIG)
+    file_ops = []
+
+    async def fake_read_local_file(file_key):
+        file_ops.append(("read", file_key))
+        return b"package"
+
+    monkeypatch.setattr(handler, "read_local_file", fake_read_local_file)
+
+    requests = [
+        (
+            LangBotToRuntimeAction.INSTALL_PLUGIN,
+            {
+                "install_source": "local",
+                "install_info": {"plugin_file_key": "pkg-key"},
+            },
+        ),
+        *(
+            (
+                action,
+                {"plugin_author": "tester", "plugin_name": "demo"},
+            )
+            for action in (
+                LangBotToRuntimeAction.RESTART_PLUGIN,
+                LangBotToRuntimeAction.DELETE_PLUGIN,
+                LangBotToRuntimeAction.UPGRADE_PLUGIN,
+            )
+        ),
+    ]
+
+    async with ProtocolSession(handler) as session:
+        responses = [
+            await session.request(action.value, data, seq_id=index)
+            for index, (action, data) in enumerate(requests, start=1)
+        ]
+
+    assert all(response["code"] == 1 for response in responses)
+    assert all(
+        "unavailable in the shared Runtime profile" in response["message"]
+        for response in responses
+    )
+    assert file_ops == []
+    assert manager.calls == []
 
 
 @pytest.mark.parametrize(
@@ -794,6 +1209,7 @@ async def test_control_handler_call_tool_delegates_session_and_query_context():
                 "tool_parameters": {"city": "Shanghai"},
                 "session": {"id": "s"},
                 "query_id": 7,
+                "query_uuid": "query-opaque-7",
                 "include_plugins": ["tester/demo"],
             },
         )
@@ -804,9 +1220,15 @@ async def test_control_handler_call_tool_delegates_session_and_query_context():
             "call_tool",
             "weather",
             {"city": "Shanghai"},
-            {"id": "s"},
+            {
+                "id": "s",
+                "instance_uuid": "instance-1",
+                "workspace_uuid": "workspace-a",
+                "placement_generation": 4,
+            },
             7,
             ["tester/demo"],
+            "query-opaque-7",
         )
     ]
 

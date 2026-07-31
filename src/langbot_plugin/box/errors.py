@@ -17,6 +17,18 @@ class BoxRuntimeUnavailableError(BoxError):
     """Raised when the standalone Box Runtime service is unavailable."""
 
 
+class BoxAdmissionError(BoxError):
+    """Raised when a managed sandbox request has no valid admission grant."""
+
+
+class BoxReadinessError(BoxError):
+    """Raised when strict sandbox isolation is not ready."""
+
+
+class BoxCapacityExceededError(BoxError):
+    """Raised when a configured runtime capacity limit is reached."""
+
+
 class BoxSessionConflictError(BoxError):
     """Raised when an existing session cannot satisfy a new request."""
 

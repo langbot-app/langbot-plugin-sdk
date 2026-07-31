@@ -9,9 +9,10 @@ import pydantic
 
 from langbot_plugin.api.entities.builtin.platform import entities as platform_entities
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
+from langbot_plugin.api.entities.execution import WorkspaceExecutionScope
 
 
-class Event(pydantic.BaseModel):
+class Event(WorkspaceExecutionScope):
     """Base event class.
 
     Args:
@@ -94,6 +95,7 @@ class FriendMessage(MessageEvent):
 
     def model_dump(self, **kwargs):
         return {
+            **self.execution_scope_dump(),
             "type": self.type,
             "sender": self.sender.model_dump(),
             "message_chain": self.message_chain.model_dump(),
@@ -123,6 +125,7 @@ class GroupMessage(MessageEvent):
 
     def model_dump(self, **kwargs):
         return {
+            **self.execution_scope_dump(),
             "type": self.type,
             "sender": self.sender.model_dump(),
             "message_chain": self.message_chain.model_dump(),

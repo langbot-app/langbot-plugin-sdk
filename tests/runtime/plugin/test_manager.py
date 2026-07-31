@@ -6,6 +6,7 @@ import os
 import zipfile
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,12 +28,16 @@ from langbot_plugin.runtime.plugin.container import (
     PluginContainer,
     RuntimeContainerStatus,
 )
+from langbot_plugin.runtime.plugin import mgr as manager_module
 from langbot_plugin.runtime.plugin.mgr import PluginInstallSource, PluginManager
 from langbot_plugin.entities.io.actions.enums import RuntimeToLangBotAction
 from langbot_plugin.entities.io.errors import (
     DependencyInstallError,
     DependencyVerificationError,
 )
+from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.runtime.context import RuntimeContext
+from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 
 
 def _manifest(
@@ -97,6 +102,56 @@ def _manager() -> PluginManager:
     return manager
 
 
+def _registration_capability(
+    manager: PluginManager,
+    plugin: PluginContainer,
+) -> str:
+    return manager._issue_registration_capability(
+        plugin_author=str(plugin.manifest.metadata.author),
+        plugin_name=plugin.manifest.metadata.name,
+        plugin_path=f"/tmp/{plugin.manifest.metadata.author}__{plugin.manifest.metadata.name}",
+    )
+
+
+def _write_installed_plugin(
+    root,
+    *,
+    author: str = "tester",
+    name: str = "demo",
+):
+    plugin_path = root / f"{author}__{name}"
+    plugin_path.mkdir()
+    (plugin_path / "manifest.yaml").write_text(
+        f"""
+apiVersion: v1
+kind: Plugin
+metadata:
+  author: {author}
+  name: {name}
+spec: {{}}
+""",
+        encoding="utf-8",
+    )
+    return plugin_path
+
+
+def _bound_runtime_context(
+    control_handler: FakeControlHandler | None = None,
+) -> RuntimeContext:
+    context = RuntimeContext()
+    context.ws_debug_port = 18080
+    if control_handler is not None:
+        context.control_handler = control_handler
+    context.bind_workspace(
+        ActionContext(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=9,
+        )
+    )
+    return context
+
+
 def _plugin_zip(author: str = "tester", name: str = "demo", version: str = "1.0.0"):
     manifest = f"""
 apiVersion: v1
@@ -117,7 +172,7 @@ spec: {{}}
 
 
 @pytest.mark.asyncio
-async def test_launch_plugin_inherits_parent_environment(monkeypatch, tmp_path):
+async def test_launch_plugin_uses_sanitized_environment(monkeypatch, tmp_path):
     from langbot_plugin.runtime.plugin import mgr as mgr_module
 
     captured: dict[str, Any] = {}
@@ -142,12 +197,14 @@ async def test_launch_plugin_inherits_parent_environment(monkeypatch, tmp_path):
         FakeStdioClientController,
     )
 
+    plugin_path = _write_installed_plugin(tmp_path)
     manager = _manager()
-    await manager.launch_plugin(str(tmp_path))
+    await manager.launch_plugin(str(plugin_path))
 
-    assert captured["working_dir"] == str(tmp_path)
+    assert captured["working_dir"] == str(plugin_path)
     assert captured["env"] is not os.environ
-    assert captured["env"]["PYTHONPATH"] == "/tmp/langbot-plugin-sdk/src"
+    assert "PYTHONPATH" not in captured["env"]
+    assert captured["env"][PLUGIN_REGISTRATION_CAPABILITY_ENV]
 
 
 class FakeControlHandler:
@@ -162,6 +219,7 @@ class FakeControlHandler:
             "plugin_config": {"api_key": "secret"},
             "install_source": PluginInstallSource.MARKETPLACE.value,
             "install_info": {"plugin_version": "1.0.0"},
+            "installation_uuid": "installation-1",
         }
 
 
@@ -196,11 +254,16 @@ class FakeHandler:
         self.diagnostics = []
         self.log_buffer = FakeLogBuffer()
         self.agent_run_calls: list[tuple[Any, dict[str, Any], float]] = []
+        self.bound_action_context = None
         self.files = {
             "icon-key": b"<svg/>",
             "readme-key": b"# Demo",
             "asset-key": b"asset-bytes",
         }
+
+    def bind_action_context(self, action_context):
+        self.bound_action_context = action_context
+        return action_context
 
     async def initialize_plugin(self, plugin_settings):
         self.initialized_with = plugin_settings
@@ -220,12 +283,22 @@ class FakeHandler:
     async def emit_event(self, event_context):
         return {"emitted": True, "event_context": event_context}
 
-    async def call_tool(self, tool_name, tool_parameters, session, query_id):
+    async def call_tool(
+        self,
+        tool_name,
+        tool_parameters,
+        session,
+        query_id,
+        query_uuid=None,
+    ):
+        query_ref = {"query_id": query_id}
+        if query_uuid is not None:
+            query_ref["query_uuid"] = query_uuid
         return {
             "tool_response": {
                 "tool_name": tool_name,
                 "params": tool_parameters,
-                "query_id": query_id,
+                **query_ref,
             }
         }
 
@@ -305,6 +378,20 @@ class ReplyChangingFakeHandler(FakeHandler):
         return {"emitted": True, "event_context": event_context}
 
 
+class QueryUuidChangingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context["query_uuid"] = "query-forged"
+        event_context["event"]["query_uuid"] = "query-forged"
+        return {"emitted": True, "event_context": event_context}
+
+
+class QueryUuidDroppingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context.pop("query_uuid", None)
+        event_context["event"].pop("query_uuid", None)
+        return {"emitted": True, "event_context": event_context}
+
+
 def test_plugin_manager_instances_should_not_share_plugin_state():
     PluginManager.plugins = []
     first = PluginManager(SimpleNamespace())
@@ -313,6 +400,151 @@ def test_plugin_manager_instances_should_not_share_plugin_state():
     first.plugins.append(_plugin())
 
     assert second.plugins == []
+
+
+@pytest.mark.asyncio
+async def test_launch_plugin_passes_registration_capability_not_debug_key(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, Any] = {}
+
+    class FakeStdioController:
+        process = None
+
+        def __init__(self, command, args, env, working_dir):
+            captured.update(
+                command=command,
+                args=args,
+                env=env,
+                working_dir=working_dir,
+            )
+
+        async def run(self, _callback):
+            return None
+
+    monkeypatch.setattr(manager_module, "get_platform", lambda: "linux")
+    monkeypatch.setattr(
+        manager_module.stdio_client_controller,
+        "StdioClientController",
+        FakeStdioController,
+    )
+    plugin_path = _write_installed_plugin(tmp_path)
+    await _manager().launch_plugin(str(plugin_path))
+
+    assert "--plugin-debug-key" not in captured["args"]
+    assert "PLUGIN_DEBUG_KEY" not in captured["env"]
+    capability = captured["env"]["LANGBOT_PLUGIN_REGISTRATION_CAPABILITY"]
+    assert len(capability) >= 32
+
+
+@pytest.mark.asyncio
+async def test_windows_launch_uses_minimal_env_and_fences_runtime_url(
+    monkeypatch, tmp_path
+):
+    captured: dict[str, Any] = {}
+
+    class FakeProcess:
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(manager_module, "get_platform", lambda: "win32")
+    monkeypatch.setattr(
+        manager_module.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setenv("RUNTIME_WS_URL", "ws://untrusted.example/plugin/ws")
+    monkeypatch.setenv("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN", "runtime-secret")
+    monkeypatch.setenv("LANGBOT_BOX_CONTROL_TOKEN", "box-secret")
+    monkeypatch.setenv("UNRELATED_SECRET", "also-secret")
+
+    plugin_path = _write_installed_plugin(tmp_path)
+    await _manager().launch_plugin(str(plugin_path))
+
+    assert "--plugin-debug-key" not in captured["args"]
+    child_env = captured["kwargs"]["env"]
+    assert "PLUGIN_DEBUG_KEY" not in child_env
+    assert "LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN" not in child_env
+    assert "LANGBOT_BOX_CONTROL_TOKEN" not in child_env
+    assert "UNRELATED_SECRET" not in child_env
+    assert len(child_env["LANGBOT_PLUGIN_REGISTRATION_CAPABILITY"]) >= 32
+    assert child_env["RUNTIME_WS_URL"] == "ws://localhost:18080/plugin/ws"
+
+
+@pytest.mark.asyncio
+async def test_windows_launch_cancellation_reaps_worker(monkeypatch, tmp_path):
+    class HangingProcess:
+        def __init__(self):
+            self.returncode = None
+            self.wait_started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def wait(self):
+            self.wait_started.set()
+            await self.release.wait()
+
+    process = HangingProcess()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    async def stop_process(stopped_process):
+        assert stopped_process is process
+        process.returncode = -9
+        process.release.set()
+        return True
+
+    monkeypatch.setattr(manager_module, "get_platform", lambda: "win32")
+    monkeypatch.setattr(
+        manager_module.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    monkeypatch.setattr(
+        manager_module.stdio_client_controller,
+        "stop_process",
+        AsyncMock(side_effect=stop_process),
+    )
+    plugin_path = _write_installed_plugin(tmp_path)
+    launch_task = asyncio.create_task(_manager().launch_plugin(str(plugin_path)))
+    await process.wait_started.wait()
+    launch_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await launch_task
+    manager_module.stdio_client_controller.stop_process.assert_awaited_once_with(
+        process
+    )
+
+
+@pytest.mark.asyncio
+async def test_launch_all_plugins_waits_for_trusted_workspace_binding(monkeypatch):
+    context = RuntimeContext()
+    context.ws_debug_port = 18080
+    manager = PluginManager(context)
+    context.plugin_mgr = manager
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.glob.glob",
+        lambda _pattern: [],
+    )
+
+    launch_task = asyncio.create_task(manager.launch_all_plugins())
+    await asyncio.sleep(0)
+
+    assert not launch_task.done()
+
+    context.bind_workspace(
+        ActionContext(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=9,
+        )
+    )
+    await launch_task
 
 
 def test_find_plugin_and_component_lists_respect_include_filters():
@@ -436,7 +668,7 @@ async def test_notify_plugin_diagnostic_skips_synthetic_log_with_active_reader()
 
 
 @pytest.mark.asyncio
-async def test_install_plugin_from_file_extracts_manifest_and_replaces_old_version(
+async def test_install_plugin_from_file_extracts_manifest_to_staging(
     tmp_path,
     monkeypatch,
 ):
@@ -453,10 +685,12 @@ async def test_install_plugin_from_file_extracts_manifest_and_replaces_old_versi
         _plugin_zip(version="2.0.0")
     )
 
-    assert (tmp_path / "data/plugins/tester__demo/manifest.yaml").exists()
-    assert new_path == "data/plugins/tester__demo"
+    staged = tmp_path / new_path
+    assert (staged / "manifest.yaml").exists()
+    assert new_path.startswith("data/.plugin-staging/tester__demo-")
     assert (author, name, version) == ("tester", "demo", "2.0.0")
-    assert manager.plugins == []
+    assert manager.plugins == [old_plugin]
+    assert (old_path / "old.py").exists()
 
 
 @pytest.mark.asyncio
@@ -469,6 +703,117 @@ async def test_install_plugin_from_file_rejects_same_version_duplicate(
 
     with pytest.raises(ValueError, match="already exists"):
         await manager.install_plugin_from_file(_plugin_zip(version="1.0.0"))
+
+
+@pytest.mark.asyncio
+async def test_install_plugin_from_file_reuses_verified_extractor(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    with zipfile.ZipFile(io.BytesIO(_plugin_zip()), "r") as source:
+        manifest = source.read("manifest.yaml")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.yaml", manifest)
+        archive.writestr("../escaped.py", "unsafe")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        await manager.install_plugin_from_file(buffer.getvalue())
+
+    assert not (tmp_path / "escaped.py").exists()
+
+
+def test_idle_plugin_operation_locks_are_not_retained():
+    manager = _manager()
+    lock = manager._get_plugin_operation_lock("tester", "transient")
+
+    manager._forget_plugin_operation_lock("tester", "transient", lock)
+
+    assert manager._plugin_operation_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_dependency_reconciliation_isolates_plugin_failures(monkeypatch):
+    manager = _manager()
+
+    async def fake_install(plugin_path):
+        if plugin_path.endswith("bad"):
+            raise OSError("venv unavailable")
+        return 0, ""
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.glob.glob",
+        lambda pattern: ["data/plugins/bad", "data/plugins/good"],
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.os.path.isdir",
+        lambda path: True,
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.install_requirements_isolated",
+        fake_install,
+    )
+
+    await manager.ensure_all_plugins_dependencies_installed()
+
+    assert manager._dependency_errors == {
+        "data/plugins/bad": "OSError: venv unavailable"
+    }
+
+
+@pytest.mark.asyncio
+async def test_activation_stops_supervisor_without_registered_container(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    target_path = tmp_path / "data/plugins/tester__demo"
+    target_path.mkdir(parents=True)
+    (target_path / "old.py").write_text("old", encoding="utf-8")
+    staging_path = tmp_path / "data/.plugin-staging/tester__demo-new"
+    staging_path.mkdir(parents=True)
+    (staging_path / "new.py").write_text("new", encoding="utf-8")
+    manager.stop_plugin_supervisor = AsyncMock()
+
+    await manager._activate_staged_plugin(str(staging_path), "tester", "demo")
+
+    manager.stop_plugin_supervisor.assert_awaited_once_with("data/plugins/tester__demo")
+    assert (target_path / "new.py").is_file()
+
+
+@pytest.mark.asyncio
+async def test_activation_failure_restores_and_restarts_previous_generation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    target_path = tmp_path / "data/plugins/tester__demo"
+    target_path.mkdir(parents=True)
+    (target_path / "old.py").write_text("old", encoding="utf-8")
+    staging_path = tmp_path / "data/.plugin-staging/tester__demo-new"
+    staging_path.mkdir(parents=True)
+    (staging_path / "new.py").write_text("new", encoding="utf-8")
+    manager.stop_plugin_supervisor = AsyncMock()
+    restarted = []
+    manager.start_plugin_supervisor = lambda path: restarted.append(path)
+    real_replace = os.replace
+
+    def fail_new_generation(source, destination):
+        if str(source) == str(staging_path):
+            raise OSError("swap failed")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.os.replace",
+        fail_new_generation,
+    )
+
+    with pytest.raises(OSError, match="swap failed"):
+        await manager._activate_staged_plugin(str(staging_path), "tester", "demo")
+
+    assert (target_path / "old.py").read_text(encoding="utf-8") == "old"
+    assert restarted == ["data/plugins/tester__demo"]
 
 
 @pytest.mark.asyncio
@@ -486,7 +831,9 @@ async def test_install_plugin_raises_when_dependency_install_fails(
 
     call_count = {"n": 0}
 
-    async def fake_install_single_async(dep, extra_params=None):
+    async def fake_install_single_async(
+        dep, extra_params=None, *, python_executable=None, timeout_sec=300
+    ):
         call_count["n"] += 1
         return 1, 0, "pip could not find package"
 
@@ -494,9 +841,16 @@ async def test_install_plugin_raises_when_dependency_install_fails(
     async def fake_sleep(delay):
         return None
 
+    async def fake_ensure_plugin_environment(plugin_path):
+        return "plugin-python"
+
     monkeypatch.setattr(manager, "install_plugin_from_file", fake_install_from_file)
     monkeypatch.setattr(
-        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.install_single_async",
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.ensure_plugin_environment",
+        fake_ensure_plugin_environment,
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.helper.pkgmgr.install_single_async",
         fake_install_single_async,
     )
     monkeypatch.setattr(
@@ -543,13 +897,25 @@ async def test_install_plugin_raises_verification_error_when_pip_lies(
         return "data/plugins/tester__demo", "tester", "demo", "1.0.0"
 
     # pip exits 0 (success) but nothing actually got installed.
-    async def fake_install_single_async(dep, extra_params=None):
+    async def fake_install_single_async(
+        dep, extra_params=None, *, python_executable=None, timeout_sec=300
+    ):
         return 0, 0, "Successfully installed langbot-absent-after-install"
 
     monkeypatch.setattr(manager, "install_plugin_from_file", fake_install_from_file)
     monkeypatch.setattr(
-        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.install_single_async",
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.ensure_plugin_environment",
+        lambda plugin_path: asyncio.sleep(0, result="plugin-python"),
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.helper.pkgmgr.install_single_async",
         fake_install_single_async,
+    )
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr.pkgmgr_helper.classify_requirements_in_environment",
+        lambda python, deps: asyncio.sleep(
+            0, result=(["langbot-absent-after-install"], [])
+        ),
     )
 
     with pytest.raises(DependencyVerificationError) as exc_info:
@@ -569,7 +935,7 @@ async def test_install_plugin_raises_verification_error_when_pip_lies(
 async def test_register_plugin_initializes_settings_and_refreshes_container():
     manager = _manager()
     control_handler = FakeControlHandler()
-    manager.context = SimpleNamespace(control_handler=control_handler)
+    manager.context = _bound_runtime_context(control_handler)
     plugin = _plugin(
         name="demo",
         components=[_component("Tool", "lookup")],
@@ -577,7 +943,12 @@ async def test_register_plugin_initializes_settings_and_refreshes_container():
     )
     handler = FakeHandler(plugin)
 
-    await manager.register_plugin(handler, plugin.model_dump())
+    capability = _registration_capability(manager, plugin)
+    await manager.register_plugin(
+        handler,
+        plugin.model_dump(),
+        registration_capability=capability,
+    )
 
     registered = manager.plugins[0]
     assert registered._runtime_plugin_handler is handler
@@ -591,10 +962,153 @@ async def test_register_plugin_initializes_settings_and_refreshes_container():
 
 
 @pytest.mark.asyncio
+async def test_register_plugin_binds_installation_from_trusted_host_settings():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    workspace_binding = manager.context.workspace_binding
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+
+    capability = _registration_capability(manager, plugin)
+    await manager.register_plugin(
+        handler,
+        plugin.model_dump(),
+        registration_capability=capability,
+    )
+
+    assert handler.bound_action_context == workspace_binding.for_installation(
+        "installation-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_registration_capability_is_one_use_and_manifest_bound():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    expected = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    forged = _plugin(
+        author="attacker",
+        name="forged",
+        status=RuntimeContainerStatus.MOUNTED,
+    )
+    capability = _registration_capability(manager, expected)
+
+    with pytest.raises(ValueError, match="manifest identity"):
+        await manager.register_plugin(
+            FakeHandler(forged),
+            forged.model_dump(),
+            registration_capability=capability,
+        )
+
+    assert control_handler.calls == []
+    assert not manager.is_registration_capability_pending(capability)
+    with pytest.raises(ValueError, match="invalid or already used"):
+        await manager.register_plugin(
+            FakeHandler(expected),
+            expected.model_dump(),
+            registration_capability=capability,
+        )
+
+
+@pytest.mark.asyncio
+async def test_registered_plugin_cannot_change_manifest_identity_on_refresh():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+    capability = _registration_capability(manager, plugin)
+
+    async def forged_container():
+        payload = plugin.model_dump()
+        payload["manifest"]["manifest"]["metadata"]["name"] = "forged"
+        return payload
+
+    handler.get_plugin_container = forged_container
+
+    with pytest.raises(ValueError, match="changed its manifest identity"):
+        await manager.register_plugin(
+            handler,
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
+
+    assert manager.plugins == []
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_waits_for_binding_before_host_settings_request():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    context = RuntimeContext()
+    context.control_handler = control_handler
+    context.ws_debug_port = 18080
+    manager.context = context
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+
+    capability = _registration_capability(manager, plugin)
+    register_task = asyncio.create_task(
+        manager.register_plugin(
+            handler,
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert not register_task.done()
+    assert control_handler.calls == []
+
+    context.bind_workspace(
+        ActionContext(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=9,
+        )
+    )
+    await register_task
+
+    assert [call[0] for call in control_handler.calls] == [
+        RuntimeToLangBotAction.GET_PLUGIN_SETTINGS
+    ]
+    assert handler.bound_action_context == context.workspace_binding.for_installation(
+        "installation-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_rejects_missing_installation_capability():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+
+    async def settings_without_installation(action, payload):
+        result = await FakeControlHandler.call_action(control_handler, action, payload)
+        result.pop("installation_uuid")
+        return result
+
+    control_handler.call_action = settings_without_installation
+    manager.context = _bound_runtime_context(control_handler)
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    capability = _registration_capability(manager, plugin)
+
+    with pytest.raises(ValueError, match="installation capability"):
+        await manager.register_plugin(
+            FakeHandler(plugin),
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
+
+    assert manager.plugins == []
+
+
+@pytest.mark.asyncio
 async def test_register_debug_plugin_initializes_settings_first():
     manager = _manager()
     control_handler = FakeControlHandler()
-    manager.context = SimpleNamespace(control_handler=control_handler)
+    manager.context = _bound_runtime_context(control_handler)
     plugin = _plugin(name="debug", status=RuntimeContainerStatus.MOUNTED)
     handler = FakeHandler(plugin)
     handler.debug_plugin = True
@@ -614,17 +1128,23 @@ async def test_register_debug_plugin_initializes_settings_first():
 @pytest.mark.asyncio
 async def test_register_plugin_requires_control_handler():
     manager = _manager()
+    manager.context = _bound_runtime_context()
     plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    capability = _registration_capability(manager, plugin)
 
     with pytest.raises(ValueError, match="Failed to get plugin settings"):
-        await manager.register_plugin(FakeHandler(plugin), plugin.model_dump())
+        await manager.register_plugin(
+            FakeHandler(plugin),
+            plugin.model_dump(),
+            registration_capability=capability,
+        )
 
 
 @pytest.mark.asyncio
 async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
     manager = _manager()
     control_handler = FakeControlHandler()
-    manager.context = SimpleNamespace(control_handler=control_handler)
+    manager.context = _bound_runtime_context(control_handler)
     components = [
         _component("Tool", "lookup"),
         _component("Command", "admin"),
@@ -645,8 +1165,13 @@ async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
         status=RuntimeContainerStatus.MOUNTED,
     )
     handler = FakeHandler(plugin)
+    capability = _registration_capability(manager, plugin)
 
-    await manager.register_plugin(handler, plugin.model_dump())
+    await manager.register_plugin(
+        handler,
+        plugin.model_dump(),
+        registration_capability=capability,
+    )
 
     assert [tool.metadata.name for tool in await manager.list_tools()] == ["lookup"]
     assert [tool.owner for tool in await manager.list_tools()] == ["tester/toy"]
@@ -734,6 +1259,7 @@ async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
         {"city": "Paris"},
         {"launcher_type": "person"},
         query_id=99,
+        query_uuid="query-opaque-99",
     )
     command_responses = [
         response
@@ -749,6 +1275,7 @@ async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
         "tool_name": "lookup",
         "params": {"city": "Paris"},
         "query_id": 99,
+        "query_uuid": "query-opaque-99",
     }
     assert command_responses == [CommandReturn(text="admin")]
 
@@ -801,6 +1328,74 @@ async def test_shutdown_plugin_closes_connection_and_removes_container():
     assert manager.plugin_handlers == []
     assert handler.shutdown_calls == 1
     assert handler.conn.closed is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_all_plugins_uses_snapshot_and_closes_every_plugin():
+    manager = _manager()
+    plugins = [_plugin(name="one"), _plugin(name="two")]
+    handlers = [FakeHandler(plugin) for plugin in plugins]
+    for plugin, handler in zip(plugins, handlers, strict=True):
+        plugin._runtime_plugin_handler = handler
+    manager.plugins = list(plugins)
+    manager.plugin_handlers = list(handlers)
+
+    await manager.shutdown_all_plugins()
+
+    assert manager.plugins == []
+    assert manager.plugin_handlers == []
+    assert [handler.shutdown_calls for handler in handlers] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_plugin_supervisor_restarts_after_crash(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    plugin_path = tmp_path / "data/plugins/tester__demo"
+    plugin_path.mkdir(parents=True)
+    manager = _manager()
+    second_generation_started = asyncio.Event()
+    calls = 0
+
+    async def fake_launch(path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("crash")
+        second_generation_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(manager, "launch_plugin", fake_launch)
+    monkeypatch.setattr(
+        "langbot_plugin.runtime.plugin.mgr._PLUGIN_RESTART_INITIAL_DELAY_SEC",
+        0,
+    )
+
+    manager.start_plugin_supervisor(str(plugin_path))
+    await asyncio.wait_for(second_generation_started.wait(), timeout=1)
+    assert calls == 2
+
+    await manager.stop_plugin_supervisor(str(plugin_path))
+    assert str(plugin_path) not in manager._desired_plugin_paths
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_rolls_back_container_when_initialize_fails():
+    manager = _manager()
+    manager.context = _bound_runtime_context(FakeControlHandler())
+    plugin = _plugin(status=RuntimeContainerStatus.MOUNTED)
+    handler = FakeHandler(plugin)
+    handler.initialize_plugin = AsyncMock(side_effect=RuntimeError("init failed"))
+    registration_capability = _registration_capability(manager, plugin)
+
+    with pytest.raises(RuntimeError, match="init failed"):
+        await manager.register_plugin(
+            handler,
+            plugin.model_dump(),
+            registration_capability=registration_capability,
+        )
+
+    assert manager.plugins == []
+    assert manager.plugin_handlers == []
 
 
 @pytest.mark.asyncio
@@ -1116,6 +1711,60 @@ async def test_emit_event_should_report_each_emitting_plugin_once():
 
 
 @pytest.mark.asyncio
+async def test_emit_event_rejects_plugin_query_uuid_forgery():
+    manager = _manager()
+    plugin = _plugin()
+    plugin._runtime_plugin_handler = QueryUuidChangingFakeHandler(plugin)
+    manager.plugins = [plugin]
+    event_context = EventContext(
+        query_id=1,
+        query_uuid="query-trusted",
+        event_name="PersonCommandSent",
+        event=PersonCommandSent(
+            query_uuid="query-trusted",
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            command="demo",
+            params=[],
+            text_message="/demo",
+            is_admin=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="changed EventContext query_uuid"):
+        await manager.emit_event(event_context)
+
+
+@pytest.mark.asyncio
+async def test_emit_event_restores_query_uuid_dropped_by_legacy_plugin():
+    manager = _manager()
+    plugin = _plugin()
+    plugin._runtime_plugin_handler = QueryUuidDroppingFakeHandler(plugin)
+    manager.plugins = [plugin]
+    event_context = EventContext(
+        query_id=1,
+        query_uuid="query-trusted",
+        event_name="PersonCommandSent",
+        event=PersonCommandSent(
+            query_uuid="query-trusted",
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            command="demo",
+            params=[],
+            text_message="/demo",
+            is_admin=False,
+        ),
+    )
+
+    _, returned_context, _ = await manager.emit_event(event_context)
+
+    assert returned_context.query_uuid == "query-trusted"
+    assert returned_context.event.query_uuid == "query-trusted"
+
+
+@pytest.mark.asyncio
 async def test_emit_event_reports_only_plugins_that_changed_reply_message_chain():
     manager = _manager()
     observer = _plugin(name="observer")
@@ -1174,12 +1823,15 @@ async def test_install_plugin_marketplace_streams_progress_and_launches(monkeypa
 
     async def fake_install_plugin_from_file(plugin_file):
         assert plugin_file == b"zip"
-        return "data/plugins/tester__demo", "tester", "demo", "1.0.0"
+        return "data/.plugin-staging/tester__demo-stage", "tester", "demo", "1.0.0"
 
     launched = []
 
-    async def fake_launch_plugin(plugin_path):
+    def fake_start_plugin_supervisor(plugin_path):
         launched.append(plugin_path)
+
+    async def fake_wait_for_plugin_ready(author, name, timeout):
+        return None
 
     monkeypatch.setattr(
         marketplace_helper,
@@ -1189,7 +1841,15 @@ async def test_install_plugin_marketplace_streams_progress_and_launches(monkeypa
     monkeypatch.setattr(
         manager, "install_plugin_from_file", fake_install_plugin_from_file
     )
-    monkeypatch.setattr(manager, "launch_plugin", fake_launch_plugin)
+    monkeypatch.setattr(
+        manager, "start_plugin_supervisor", fake_start_plugin_supervisor
+    )
+    monkeypatch.setattr(manager, "_wait_for_plugin_ready", fake_wait_for_plugin_ready)
+    monkeypatch.setattr(
+        manager,
+        "_activate_staged_plugin",
+        lambda path, author, name: asyncio.sleep(0, result=None),
+    )
 
     progress = [
         item
@@ -1202,8 +1862,6 @@ async def test_install_plugin_marketplace_streams_progress_and_launches(monkeypa
             },
         )
     ]
-    await asyncio.gather(*manager.plugin_run_tasks)
-
     assert [item["current_action"] for item in progress] == [
         "downloading plugin package",
         "downloading plugin package",

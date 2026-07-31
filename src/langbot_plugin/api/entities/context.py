@@ -1,24 +1,31 @@
 from __future__ import annotations
 
 from typing import Any
+import weakref
 
 import pydantic
 
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.events import BaseEventModel
+from langbot_plugin.api.entities.execution import WorkspaceExecutionScope
 import langbot_plugin.api.entities.events as events_module
 
 
 global_eid_index = 0
 
-cached_event_contexts: dict[int, EventContext] = {}
+cached_event_contexts: weakref.WeakValueDictionary[int, EventContext] = (
+    weakref.WeakValueDictionary()
+)
 
 
-class EventContext(pydantic.BaseModel):
+class EventContext(WorkspaceExecutionScope):
     """事件上下文, 保存此次事件运行的信息"""
 
     query_id: int = 0
     """请求ID"""
+
+    query_uuid: str | None = None
+    """Opaque query identifier preferred by multi-tenant Hosts."""
 
     eid: int = 0
     """事件编号"""
@@ -84,7 +91,8 @@ class EventContext(pydantic.BaseModel):
     @classmethod
     def from_event(cls, event: BaseEventModel) -> EventContext:
         global global_eid_index
-        query_id = event.query.query_id if event.query else 0
+        query = event.query
+        query_id = query.query_id if query else 0
         eid = global_eid_index
         event = event
         event_name = event.__class__.__name__
@@ -92,7 +100,13 @@ class EventContext(pydantic.BaseModel):
         is_prevent_postorder = False
 
         obj = cls(
+            instance_uuid=query.instance_uuid if query else event.instance_uuid,
+            workspace_uuid=query.workspace_uuid if query else event.workspace_uuid,
+            placement_generation=(
+                query.placement_generation if query else event.placement_generation
+            ),
             query_id=query_id,
+            query_uuid=query.query_uuid if query else event.query_uuid,
             eid=eid,
             event_name=event_name,
             event=event,
@@ -105,6 +119,21 @@ class EventContext(pydantic.BaseModel):
         global_eid_index += 1
 
         return obj
+
+    @pydantic.model_validator(mode="after")
+    def align_event_execution_scope(self) -> EventContext:
+        self.inherit_execution_scope(self.event)
+        self.event.inherit_execution_scope(self)
+        if self.query_uuid is None:
+            self.query_uuid = self.event.query_uuid
+        elif (
+            self.event.query_uuid is not None
+            and self.query_uuid != self.event.query_uuid
+        ):
+            raise ValueError("EventContext query_uuid does not match Event query_uuid")
+        if self.event.query_uuid is None:
+            self.event.query_uuid = self.query_uuid
+        return self
 
     @pydantic.field_validator("event", mode="before")
     def validate_event(cls, v):
