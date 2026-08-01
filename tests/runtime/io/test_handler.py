@@ -19,8 +19,12 @@ from langbot_plugin.entities.io.context import ActionContext, InstallationBindin
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io import handler as handler_module
 from langbot_plugin.runtime.io.handler import FILE_CHUNK_LENGTH, Handler
-from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
+from langbot_plugin.runtime.security import (
+    PLUGIN_FILE_STORAGE_DIR_ENV,
+    PLUGIN_RUNTIME_PROFILE_ENV,
+)
 from langbot_plugin.runtime.bounded_executor import (
+    blocking_work_scope,
     current_blocking_work_scope,
 )
 
@@ -114,6 +118,23 @@ async def test_call_action_carries_bound_context_outside_data_payload():
         ActionResponse(seq_id=request["seq_id"], code=0, message="ok", data={})
     )
     await task
+
+
+def test_nested_outbound_action_inherits_current_inbound_context():
+    handler = Handler(QueueConnection())
+    context = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=5,
+        installation_uuid="installation-1",
+        runtime_revision=2,
+        artifact_digest="a" * 64,
+    )
+    token = handler._current_action_context.set(context)
+    try:
+        assert handler.resolve_outbound_action_context(None) == context
+    finally:
+        handler._current_action_context.reset(token)
 
 
 def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installation():
@@ -580,18 +601,38 @@ async def test_send_file_calls_file_chunk_action_for_each_chunk(monkeypatch):
     conn = QueueConnection()
     handler = Handler(conn)
     calls: list[dict] = []
+    action_context = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=5,
+        installation_uuid="installation-1",
+        runtime_revision=2,
+        artifact_digest="a" * 64,
+    )
 
-    async def fake_call_action(action, data, timeout=15.0):
-        calls.append({"action": action, "data": data, "timeout": timeout})
+    async def fake_call_action(action, data, timeout=15.0, action_context=None):
+        calls.append(
+            {
+                "action": action,
+                "data": data,
+                "timeout": timeout,
+                "action_context": action_context,
+            }
+        )
         return {}
 
     monkeypatch.setattr(handler, "call_action", fake_call_action)
-    file_key = await handler.send_file(b"abc", "txt")
+    file_key = await handler.send_file(
+        b"abc",
+        "txt",
+        action_context=action_context,
+    )
 
     assert file_key.endswith(".txt")
     assert calls[0]["action"] is CommonAction.FILE_CHUNK
     assert calls[0]["data"]["file_length"] == 3
     assert calls[0]["data"]["chunk_amount"] == 1
+    assert calls[0]["action_context"] == action_context
 
 
 def test_handler_file_storage_dir_is_created_for_instances(tmp_path, monkeypatch):
@@ -609,6 +650,21 @@ def test_shared_worker_file_storage_uses_private_writable_tmp(tmp_path, monkeypa
         "langbot_plugin.runtime.io.handler.SHARED_WORKER_FILE_STORAGE_DIR",
         str(worker_tmp),
     )
+
+    handler = Handler(QueueConnection())
+
+    assert handler.file_storage_dir == str(worker_tmp)
+    assert worker_tmp.is_dir()
+
+
+def test_worker_file_storage_env_overrides_read_only_artifact_cwd(tmp_path, monkeypatch):
+    artifact_dir = tmp_path / "artifact" / "code"
+    artifact_dir.mkdir(parents=True)
+    artifact_dir.chmod(0o555)
+    worker_tmp = tmp_path / "installation" / "rpc-transfer"
+    monkeypatch.chdir(artifact_dir)
+    monkeypatch.setenv(PLUGIN_RUNTIME_PROFILE_ENV, "oss_dev")
+    monkeypatch.setenv(PLUGIN_FILE_STORAGE_DIR_ENV, str(worker_tmp))
 
     handler = Handler(QueueConnection())
 
@@ -895,6 +951,36 @@ async def test_file_chunk_action_reassembles_file_and_read_delete_roundtrip(
     # Delete once, then again: the second call must swallow FileNotFoundError.
     await handler.delete_local_file(file_key)
     await handler.delete_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_file_transfer_io_uses_backpressure_aware_executor(
+    tmp_path, monkeypatch
+):
+    handler = Handler(
+        ProtocolConnection(),
+        file_storage_dir=tmp_path / "rpc-transfer",
+    )
+    scopes = []
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        scopes.append(current_blocking_work_scope())
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", fake_to_thread)
+    with blocking_work_scope("workspace-a"):
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "backpressure.bin",
+                "chunk_base64": base64.b64encode(b"payload").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+        assert await handler.read_local_file("backpressure.bin") == b"payload"
+        await handler.delete_local_file("backpressure.bin")
+
+    assert scopes == ["workspace-a", "workspace-a", "workspace-a"]
 
 
 @pytest.mark.asyncio

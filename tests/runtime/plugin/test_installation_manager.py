@@ -157,13 +157,14 @@ async def test_instance_worker_capacity_blocks_new_process_but_allows_replacemen
         enabled=True,
     )
     rejected = await manager.apply_plugin_installation(second, enabled=True)
+    replacement_binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+        revision=2,
+    )
     replacement = await manager.apply_plugin_installation(
-        _binding(
-            "installation-a",
-            digest,
-            workspace_uuid="workspace-a",
-            revision=2,
-        ),
+        replacement_binding,
         enabled=True,
     )
 
@@ -171,13 +172,21 @@ async def test_instance_worker_capacity_blocks_new_process_but_allows_replacemen
     assert rejected["error_code"] == "worker_capacity_exceeded"
     assert replacement["state"] == "starting"
 
-    with pytest.raises(ValueError, match="aggregate worker capacity"):
-        await manager.reconcile_plugin_installations(
-            (
-                PluginInstallationDesiredState(binding=first),
-                PluginInstallationDesiredState(binding=second),
-            )
+    reconciled = await manager.reconcile_plugin_installations(
+        (
+            PluginInstallationDesiredState(binding=replacement_binding),
+            PluginInstallationDesiredState(binding=second),
         )
+    )
+
+    assert reconciled["applied"] == ["installation-a", "installation-b"]
+    assert reconciled["failed_installations"] == [
+        {
+            "installation_uuid": "installation-b",
+            "error_code": "worker_capacity_exceeded",
+            "message": "Plugin worker capacity reached (1)",
+        }
+    ]
 
 
 async def test_installation_lifecycle_serializes_dependency_preparation_across_tenants(
@@ -832,6 +841,49 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
     assert runtime.plugin_handler is None
     assert runtime.plugin_container is None
     assert runtime.launch_task is None
+
+
+async def test_stop_installation_worker_bounds_stuck_supervisor_cleanup(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    release = asyncio.Event()
+
+    async def ignore_cancellation_until_released():
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+
+    launch_task = asyncio.create_task(ignore_cancellation_until_released())
+    runtime.launch_task = launch_task
+    monkeypatch.setattr(manager_module, "_PLUGIN_WORKER_STOP_TIMEOUT_SEC", 0.01)
+    await asyncio.sleep(0)
+
+    await manager._stop_installation_worker(runtime)
+
+    assert runtime.launch_task is None
+    assert not launch_task.done()
+    assert "Plugin installation supervisor did not stop within" in caplog.text
+
+    release.set()
+    await launch_task
 
 
 @pytest.mark.parametrize(

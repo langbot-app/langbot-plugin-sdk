@@ -80,6 +80,7 @@ _PLUGIN_RESTART_INITIAL_DELAY_SEC = 1.0
 _PLUGIN_RESTART_MAX_DELAY_SEC = 60.0
 _PLUGIN_STABLE_WINDOW_SEC = 60.0
 _PLUGIN_READY_TIMEOUT_SEC = 30.0
+_PLUGIN_WORKER_STOP_TIMEOUT_SEC = 5.0
 
 
 class PluginInstallSource(enum.Enum):
@@ -952,13 +953,6 @@ class PluginManager:
         ]
         if len(set(installation_uuids)) != len(installation_uuids):
             raise ValueError("Plugin desired state contains duplicate installations")
-        enabled_count = sum(1 for desired in desired_states if desired.enabled)
-        if enabled_count > policy.effective_worker_capacity:
-            raise ValueError(
-                "Plugin desired state exceeds the aggregate worker capacity "
-                f"({policy.effective_worker_capacity})"
-            )
-
         desired_by_uuid = {
             desired.binding.installation_uuid: desired for desired in desired_states
         }
@@ -1256,8 +1250,19 @@ class PluginManager:
         task = runtime.launch_task
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            done, _ = await asyncio.wait(
+                {task},
+                timeout=_PLUGIN_WORKER_STOP_TIMEOUT_SEC,
+            )
+            if task in done:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            else:
+                logger.error(
+                    "Plugin installation supervisor did not stop within %.1f seconds: %s",
+                    _PLUGIN_WORKER_STOP_TIMEOUT_SEC,
+                    runtime.binding.installation_uuid,
+                )
         if runtime.launch_task is task:
             runtime.launch_task = None
 
@@ -1266,8 +1271,10 @@ class PluginManager:
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
     ):
         self.plugin_handlers.append(handler)
-
-        await handler.run()
+        try:
+            await handler.run()
+        finally:
+            await self.remove_plugin_handler(handler)
 
     async def remove_plugin_handler(
         self,
@@ -1994,7 +2001,26 @@ class PluginManager:
                     yield {"current_action": "plugin deleted"}
                     break
         else:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+            plugin_path = self.get_plugin_path(plugin_author, plugin_name)
+            if not os.path.isdir(plugin_path):
+                raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+
+            installed_identity = self._installed_plugin_identity(plugin_path)
+            if installed_identity != (plugin_author, plugin_name):
+                raise ValueError(
+                    f"Plugin {plugin_author}/{plugin_name} installation identity mismatch"
+                )
+
+            self._desired_plugin_paths.discard(plugin_path)
+            yield {"current_action": "stopping plugin supervisor"}
+            await self.stop_plugin_supervisor(plugin_path)
+            yield {"current_action": "deleting plugin files"}
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                plugin_path,
+            )
+            self._dependency_errors.pop(plugin_path, None)
+            yield {"current_action": "plugin deleted"}
 
     async def upgrade_plugin(
         self,

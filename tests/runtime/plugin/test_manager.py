@@ -1348,6 +1348,22 @@ async def test_shutdown_all_plugins_uses_snapshot_and_closes_every_plugin():
 
 
 @pytest.mark.asyncio
+async def test_add_plugin_handler_cleans_up_after_unexpected_run_failure():
+    manager = _manager()
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    handler.run = AsyncMock(side_effect=RuntimeError("protocol failure"))
+
+    with pytest.raises(RuntimeError, match="protocol failure"):
+        await manager.add_plugin_handler(handler)
+
+    assert manager.plugin_handlers == []
+    assert manager.plugins == []
+
+
+@pytest.mark.asyncio
 async def test_plugin_supervisor_restarts_after_crash(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     plugin_path = tmp_path / "data/plugins/tester__demo"
@@ -1457,6 +1473,31 @@ async def test_delete_plugin_removes_files_and_rejects_debug_plugins(
     with pytest.raises(ValueError, match="is a debugging plugin"):
         async for _ in manager.delete_plugin("tester", "demo"):
             pass
+
+
+@pytest.mark.asyncio
+async def test_delete_plugin_removes_installed_files_when_plugin_is_not_running(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    plugin_path = tmp_path / "data/plugins/tester__demo"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "manifest.yaml").write_text(
+        "kind: Plugin\nmetadata:\n  author: tester\n  name: demo\n",
+        encoding="utf-8",
+    )
+
+    actions = [
+        item["current_action"] async for item in manager.delete_plugin("tester", "demo")
+    ]
+
+    assert actions == [
+        "stopping plugin supervisor",
+        "deleting plugin files",
+        "plugin deleted",
+    ]
+    assert not plugin_path.exists()
 
 
 @pytest.mark.asyncio
