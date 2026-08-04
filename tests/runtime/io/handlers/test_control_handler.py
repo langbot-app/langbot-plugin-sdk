@@ -450,13 +450,13 @@ async def test_control_handler_get_debug_info_returns_workspace_token():
     assert response["data"]["expires_at"].endswith("Z")
     assert response["data"]["ws_debug_port"] == 5401
     assert response["data"]["resources"] == {
-            "event_loop": {},
-            "blocking_executor": {},
-            "plugin_handlers": 0,
-            "legacy_supervisors": 0,
-            "installation_runtimes": 0,
-            "pending_registrations": 0,
-            "restart_coordinator": {"configured": False},
+        "event_loop": {},
+        "blocking_executor": {},
+        "plugin_handlers": 0,
+        "legacy_supervisors": 0,
+        "installation_runtimes": 0,
+        "pending_registrations": 0,
+        "restart_coordinator": {"configured": False},
     }
 
 

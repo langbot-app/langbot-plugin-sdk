@@ -151,7 +151,9 @@ def _handler(debug_plugin=False, action_context=None):
 
 
 async def test_plugin_handler_registers_plugin_when_debug_key_matches():
-    binding = ActionContext(instance_uuid="i", workspace_uuid="w", placement_generation=1)
+    binding = ActionContext(
+        instance_uuid="i", workspace_uuid="w", placement_generation=1
+    )
     handler, manager, _control = _handler(debug_plugin=True, action_context=binding)
 
     async with ProtocolSession(handler) as session:
@@ -193,7 +195,9 @@ def test_shared_plugin_handler_rejects_unregistered_and_revoked_worker_actions()
 
 
 async def test_plugin_handler_rejects_plugin_with_invalid_debug_key():
-    binding = ActionContext(instance_uuid="i", workspace_uuid="w", placement_generation=1)
+    binding = ActionContext(
+        instance_uuid="i", workspace_uuid="w", placement_generation=1
+    )
     handler, manager, _control = _handler(debug_plugin=True, action_context=binding)
 
     async with ProtocolSession(handler) as session:

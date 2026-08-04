@@ -169,7 +169,10 @@ class PluginConnectionHandler(handler.Handler):
                 debug_binding = self.context.workspace_debug_tokens.binding_for_token(
                     str(plugin_debug_key)
                 )
-                if debug_binding is None or debug_binding != self.debug_workspace_binding:
+                if (
+                    debug_binding is None
+                    or debug_binding != self.debug_workspace_binding
+                ):
                     logger.warning(
                         "Plugin debug key verification failed. Expected key does not match."
                     )

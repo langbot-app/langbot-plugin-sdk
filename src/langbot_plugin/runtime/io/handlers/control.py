@@ -667,7 +667,8 @@ class ControlConnectionHandler(handler.Handler):
             ):
                 raise ValueError("GET_DEBUG_INFO requires Workspace context")
             if self.context.runtime_identity is None or (
-                action_context.instance_uuid != self.context.runtime_identity.instance_uuid
+                action_context.instance_uuid
+                != self.context.runtime_identity.instance_uuid
             ):
                 raise ValueError("GET_DEBUG_INFO targets another Runtime instance")
             return action_context

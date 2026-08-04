@@ -232,7 +232,9 @@ def test_workspace_debug_tokens_are_distinct_and_rotate(monkeypatch):
     app = runtime_app.RuntimeApplication(_args(stdio_control=True))
     app.context.workspace_debug_tokens._clock = lambda: now[0]
     first = ActionContext(instance_uuid="i", workspace_uuid="a", placement_generation=1)
-    second = ActionContext(instance_uuid="i", workspace_uuid="b", placement_generation=1)
+    second = ActionContext(
+        instance_uuid="i", workspace_uuid="b", placement_generation=1
+    )
 
     first_token = app.context.workspace_debug_tokens.issue(first).token
     assert app.context.workspace_debug_tokens.issue(first).token == first_token
@@ -244,7 +246,6 @@ def test_workspace_debug_tokens_are_distinct_and_rotate(monkeypatch):
     assert rotated != first_token
     assert not app._authenticate_plugin_request({PLUGIN_DEBUG_KEY_HEADER: first_token})
     assert app._authenticate_plugin_request({PLUGIN_DEBUG_KEY_HEADER: rotated})
-
 
 
 async def test_set_control_handler_runs_handler(monkeypatch):
