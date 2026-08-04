@@ -50,6 +50,7 @@ class PluginConnectionHandler(handler.Handler):
     """If this plugin is a debug plugin."""
 
     debug_workspace_binding: ActionContext | None = None
+    debug_auth_token: str | None = None
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
@@ -91,6 +92,7 @@ class PluginConnectionHandler(handler.Handler):
         self.context = context
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
+        self.debug_auth_token = None
         self.stdio_process = stdio_process
         runtime_binding = getattr(self.context, "workspace_binding", None)
         if runtime_binding is not None and (
@@ -732,7 +734,21 @@ class PluginConnectionHandler(handler.Handler):
     ) -> ActionEnvelopeContext | None:
         """Fence production worker actions to the consumed launch capability."""
 
-        if self.debug_plugin:
+        if self.debug_plugin and not (
+            action == PluginToRuntimeAction.REGISTER_PLUGIN.value
+            and not self.debug_auth_token
+        ):
+            if self.debug_auth_token:
+                current_binding = self.context.workspace_debug_tokens.binding_for_token(
+                    self.debug_auth_token
+                )
+                if current_binding is None:
+                    raise ValueError("Workspace debug credential expired")
+                if (
+                    self.debug_workspace_binding is None
+                    or not self.debug_workspace_binding.same_workspace(current_binding)
+                ):
+                    raise ValueError("Workspace debug credential was fenced")
             return super().validate_inbound_action_context(action, action_context)
 
         if action == PluginToRuntimeAction.REGISTER_PLUGIN.value:
