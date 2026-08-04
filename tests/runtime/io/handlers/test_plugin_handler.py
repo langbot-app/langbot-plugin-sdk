@@ -137,20 +137,22 @@ def _handler(debug_plugin=False, action_context=None):
         control_handler=control_handler,
         plugin_mgr=manager,
         workspace_binding=action_context,
+        workspace_debug_tokens=SimpleNamespace(
+            binding_for_token=lambda token: action_context if token == "key" else None
+        ),
     )
     handler = PluginConnectionHandler(
         ProtocolConnection(),
         context,
         debug_plugin=debug_plugin,
     )
+    handler.debug_workspace_binding = action_context
     return handler, manager, control_handler
 
 
-async def test_plugin_handler_registers_plugin_when_debug_key_matches(monkeypatch):
-    handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(
-        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
-    )
+async def test_plugin_handler_registers_plugin_when_debug_key_matches():
+    binding = ActionContext(instance_uuid="i", workspace_uuid="w", placement_generation=1)
+    handler, manager, _control = _handler(debug_plugin=True, action_context=binding)
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -190,11 +192,9 @@ def test_shared_plugin_handler_rejects_unregistered_and_revoked_worker_actions()
         )
 
 
-async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch):
-    handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(
-        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
-    )
+async def test_plugin_handler_rejects_plugin_with_invalid_debug_key():
+    binding = ActionContext(instance_uuid="i", workspace_uuid="w", placement_generation=1)
+    handler, manager, _control = _handler(debug_plugin=True, action_context=binding)
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -207,9 +207,8 @@ async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch)
     assert manager.calls == []
 
 
-async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch):
+async def test_plugin_handler_prod_registration_disables_debug_mode():
     handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(plugin_handler_module.runtime_settings, "plugin_debug_key", "")
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -234,13 +233,8 @@ async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch)
     ]
 
 
-async def test_plugin_handler_rejects_prod_registration_without_capability(
-    monkeypatch,
-):
+async def test_plugin_handler_rejects_prod_registration_without_capability():
     handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(
-        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
-    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(

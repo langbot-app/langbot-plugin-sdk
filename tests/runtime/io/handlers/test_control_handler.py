@@ -431,20 +431,25 @@ async def test_control_handler_binds_runtime_once_to_identity_and_policy():
     assert "identity cannot be rebound" in rebound["message"]
 
 
-async def test_control_handler_get_debug_info_returns_runtime_settings(monkeypatch):
+async def test_control_handler_get_debug_info_returns_workspace_token():
     handler, _manager = _handler()
-    monkeypatch.setattr(runtime_settings, "plugin_debug_key", "debug-key")
+    workspace_context = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=4,
+    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
             LangBotToRuntimeAction.GET_DEBUG_INFO.value,
-            action_context=None,
+            action_context=workspace_context,
         )
 
-    assert response["data"] == {
-        "plugin_debug_key": "debug-key",
-        "ws_debug_port": 5401,
-        "resources": {
+    assert response["code"] == 0
+    assert len(response["data"]["plugin_debug_key"]) >= 32
+    assert response["data"]["expires_at"].endswith("Z")
+    assert response["data"]["ws_debug_port"] == 5401
+    assert response["data"]["resources"] == {
             "event_loop": {},
             "blocking_executor": {},
             "plugin_handlers": 0,
@@ -452,7 +457,6 @@ async def test_control_handler_get_debug_info_returns_runtime_settings(monkeypat
             "installation_runtimes": 0,
             "pending_registrations": 0,
             "restart_coordinator": {"configured": False},
-        },
     }
 
 

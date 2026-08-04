@@ -116,4 +116,7 @@ class WebSocketServerController(Controller):
     async def handle_connection(self, websocket: websockets.ServerConnection):
         logger.info(f"New connection from {websocket.remote_address}")
         connection = ws_connection.WebSocketConnection(websocket)
+        request = getattr(websocket, "request", None)
+        if request is not None:
+            connection.request_headers = request.headers
         await self._new_connection_callback(connection)

@@ -15,6 +15,7 @@ from langbot_plugin.entities.io.context import (
     PluginWorkerPolicy,
     RuntimeIdentity,
 )
+from langbot_plugin.runtime.security import WorkspaceDebugTokenStore
 
 
 class RuntimeContext:
@@ -57,6 +58,7 @@ class RuntimeContext:
         self._workspace_binding_ready = asyncio.Event()
         self._installation_bindings: dict[str, InstallationBinding] = {}
         self._installation_watermarks: dict[str, InstallationBinding] = {}
+        self.workspace_debug_tokens = WorkspaceDebugTokenStore()
 
     def get_runtime_resource_stats(self) -> dict[str, Any]:
         """Return aggregate O(1) counters safe for public health probes."""

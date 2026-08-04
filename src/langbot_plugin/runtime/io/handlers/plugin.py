@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator
-import hmac
 import logging
 
 from langbot_plugin.runtime.io import handler, connection
@@ -14,7 +13,7 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 import asyncio
-from langbot_plugin.runtime.settings import settings as runtime_settings
+
 from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
 from langbot_plugin.entities.io.context import (
     ActionContext,
@@ -49,6 +48,8 @@ class PluginConnectionHandler(handler.Handler):
 
     debug_plugin: bool = False
     """If this plugin is a debug plugin."""
+
+    debug_workspace_binding: ActionContext | None = None
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
@@ -165,16 +166,17 @@ class PluginConnectionHandler(handler.Handler):
                 # Get the debug key from plugin data
                 plugin_debug_key = data.get("plugin_debug_key", "")
 
-                if not plugin_debug_key or not hmac.compare_digest(
-                    str(plugin_debug_key),
-                    str(runtime_settings.plugin_debug_key),
-                ):
+                debug_binding = self.context.workspace_debug_tokens.binding_for_token(
+                    str(plugin_debug_key)
+                )
+                if debug_binding is None or debug_binding != self.debug_workspace_binding:
                     logger.warning(
                         "Plugin debug key verification failed. Expected key does not match."
                     )
                     return handler.ActionResponse.error(
                         "Plugin debug key verification failed"
                     )
+                self.bind_action_context(debug_binding)
 
             await self.context.plugin_mgr.register_plugin(
                 self,
