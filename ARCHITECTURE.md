@@ -273,12 +273,14 @@ the same manifest identity after initialization. On Windows the child receives
 an explicit environment allowlist, so Runtime and Box control secrets are not
 inherited.
 
-WebSocket control requires the high-entropy
+WebSocket control may use the high-entropy
 `LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN` in the
-`X-LangBot-Plugin-Runtime-Token` handshake header. The debug server never
-accepts an empty key: it validates an explicitly configured `PLUGIN_DEBUG_KEY`
-or generates one at process start, and `lbp run` sends that value in the
-`X-LangBot-Plugin-Debug-Key` handshake header for explicit development
+`X-LangBot-Plugin-Runtime-Token` handshake header. OSS defaults to no control
+token when both LangBot and Runtime leave it unset; if either side configures
+one, both sides must use the same value. The debug server instead accepts only
+Workspace-scoped random credentials issued through the authenticated control
+channel. Each Workspace gets a different token, valid for two hours, and
+`lbp run` sends it in the `X-LangBot-Plugin-Debug-Key` handshake header
 sessions. Windows production children use their one-use registration
 capability in `X-LangBot-Plugin-Registration-Capability` instead. The
 instance-scoped `SET_RUNTIME_CONFIG` handshake and per-action installation

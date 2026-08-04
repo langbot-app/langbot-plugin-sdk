@@ -14,6 +14,7 @@ from langbot_plugin.runtime.security import (
     PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER,
 )
 from langbot_plugin.entities.io.context import (
+    ActionContext,
     PluginWorkerPolicy,
     RuntimeIdentity,
 )
@@ -138,7 +139,6 @@ def _configure_runtime(app, profile="oss_dev"):
 
 @pytest.fixture(autouse=True)
 def _runtime_secrets(monkeypatch):
-    monkeypatch.setattr(runtime_app.settings, "plugin_debug_key", "")
     monkeypatch.setenv(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV, "c" * 48)
 
 
@@ -171,11 +171,8 @@ def test_runtime_application_initializes_stdio_control_mode(monkeypatch):
     assert isinstance(app.context.stdio_server, FakeServerController)
     assert app.context.ws_control_server is None
     assert app.context.ws_debug_server.port == 5401
-    assert len(runtime_app.settings.plugin_debug_key) >= 32
     authenticator = app.context.ws_debug_server.kwargs["request_authenticator"]
-    assert authenticator(
-        {PLUGIN_DEBUG_KEY_HEADER: runtime_app.settings.plugin_debug_key}
-    )
+    assert not authenticator({PLUGIN_DEBUG_KEY_HEADER: "legacy-static-key"})
     assert authenticator(
         {PLUGIN_REGISTRATION_CAPABILITY_HEADER: ("pending-registration-capability")}
     )
@@ -219,20 +216,36 @@ def test_runtime_application_initializes_websocket_control_mode(monkeypatch):
     assert app.context.ws_debug_server.port == 5501
 
 
-def test_runtime_application_rejects_websocket_control_without_secret(monkeypatch):
+def test_runtime_application_allows_websocket_control_without_secret(monkeypatch):
     monkeypatch.setattr(runtime_app.plugin_mgr_cls, "PluginManager", FakePluginManager)
     monkeypatch.delenv(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV)
 
-    with pytest.raises(ValueError, match=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV):
-        runtime_app.RuntimeApplication(_args(stdio_control=False))
+    app = runtime_app.RuntimeApplication(_args(stdio_control=False))
+
+    assert app.context.ws_control_server is not None
+    assert app.context.ws_control_server.expected_headers == {}
 
 
-def test_runtime_application_rejects_weak_configured_debug_key(monkeypatch):
+def test_workspace_debug_tokens_are_distinct_and_rotate(monkeypatch):
     monkeypatch.setattr(runtime_app.plugin_mgr_cls, "PluginManager", FakePluginManager)
-    monkeypatch.setattr(runtime_app.settings, "plugin_debug_key", "short")
+    now = [1_000.0]
+    app = runtime_app.RuntimeApplication(_args(stdio_control=True))
+    app.context.workspace_debug_tokens._clock = lambda: now[0]
+    first = ActionContext(instance_uuid="i", workspace_uuid="a", placement_generation=1)
+    second = ActionContext(
+        instance_uuid="i", workspace_uuid="b", placement_generation=1
+    )
 
-    with pytest.raises(ValueError, match="PLUGIN_DEBUG_KEY"):
-        runtime_app.RuntimeApplication(_args(stdio_control=True))
+    first_token = app.context.workspace_debug_tokens.issue(first).token
+    assert app.context.workspace_debug_tokens.issue(first).token == first_token
+    assert app.context.workspace_debug_tokens.issue(second).token != first_token
+    assert app._authenticate_plugin_request({PLUGIN_DEBUG_KEY_HEADER: first_token})
+
+    now[0] += 2 * 60 * 60
+    rotated = app.context.workspace_debug_tokens.issue(first).token
+    assert rotated != first_token
+    assert not app._authenticate_plugin_request({PLUGIN_DEBUG_KEY_HEADER: first_token})
+    assert app._authenticate_plugin_request({PLUGIN_DEBUG_KEY_HEADER: rotated})
 
 
 async def test_set_control_handler_runs_handler(monkeypatch):

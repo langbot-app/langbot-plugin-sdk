@@ -6,6 +6,7 @@ from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import connection, handler
 from langbot_plugin.entities.io.context import (
+    ActionContext,
     ActionEnvelopeContext,
     ApplyPluginInstallationRequest,
     InstallationBinding,
@@ -27,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 INSTANCE_SCOPED_CONTROL_ACTIONS = frozenset(
     {
-        LangBotToRuntimeAction.GET_DEBUG_INFO.value,
         LangBotToRuntimeAction.RECONCILE_PLUGIN_INSTALLATIONS.value,
         LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
     }
@@ -37,6 +37,7 @@ INSTANCE_SCOPED_CONTROL_ACTIONS = frozenset(
 # added LangBot-to-Runtime action to choose a scope before it can ship.
 TENANT_SCOPED_CONTROL_ACTIONS = frozenset(
     {
+        LangBotToRuntimeAction.GET_DEBUG_INFO.value,
         LangBotToRuntimeAction.LIST_PLUGINS.value,
         LangBotToRuntimeAction.GET_PLUGIN_INFO.value,
         LangBotToRuntimeAction.GET_PLUGIN_ICON.value,
@@ -461,12 +462,17 @@ class ControlConnectionHandler(handler.Handler):
 
         @self.action(LangBotToRuntimeAction.GET_DEBUG_INFO)
         async def get_debug_info(data: dict[str, Any]) -> handler.ActionResponse:
-            """Get debug information including debug key and WS URL."""
-            from langbot_plugin.runtime.settings import settings as runtime_settings
+            """Get the current Workspace-scoped rotating debug credential."""
+
+            action_context = self.current_action_context
+            if action_context is None:
+                raise ValueError("GET_DEBUG_INFO requires Workspace context")
+            credential = self.context.workspace_debug_tokens.issue(action_context)
 
             return handler.ActionResponse.success(
                 {
-                    "plugin_debug_key": runtime_settings.plugin_debug_key,
+                    "plugin_debug_key": credential.token,
+                    "expires_at": credential.expires_at,
                     "ws_debug_port": self.context.ws_debug_port,
                     "resources": self.context.get_runtime_resource_stats(),
                 }
@@ -654,6 +660,18 @@ class ControlConnectionHandler(handler.Handler):
             if action_context is not None:
                 raise ValueError(f"{action} does not accept tenant context")
             return None
+
+        if action == LangBotToRuntimeAction.GET_DEBUG_INFO.value:
+            if not isinstance(action_context, ActionContext) or isinstance(
+                action_context, InstallationBinding
+            ):
+                raise ValueError("GET_DEBUG_INFO requires Workspace context")
+            if self.context.runtime_identity is None or (
+                action_context.instance_uuid
+                != self.context.runtime_identity.instance_uuid
+            ):
+                raise ValueError("GET_DEBUG_INFO targets another Runtime instance")
+            return action_context
 
         if (
             self.context.runtime_profile == "shared"

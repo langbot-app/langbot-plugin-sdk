@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import websockets
 import asyncio
+from collections.abc import Mapping
 from websockets.exceptions import ConnectionClosed as WebSocketClosed
 
 from langbot_plugin.runtime.io import connection as io_connection
@@ -23,6 +24,7 @@ class WebSocketConnection(io_connection.Connection):
     ):
         self.websocket = websocket
         self.chunk_size = chunk_size
+        self.request_headers: Mapping[str, str] = {}
         self._send_lock = asyncio.Lock()  # 发送锁，防止并发发送冲突
 
     async def send(self, message: str) -> None:
