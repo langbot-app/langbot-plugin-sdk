@@ -89,9 +89,21 @@ class RuntimeApplication:
                         name=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
                     )
                 )
+            allow_network_without_token = str(
+                os.environ.get(
+                    "LANGBOT_PLUGIN_RUNTIME_ALLOW_UNAUTHENTICATED_NETWORK_CONTROL",
+                    "",
+                )
+            ).strip().lower() in {"1", "true", "yes"}
+            control_host = (
+                "0.0.0.0"
+                if configured_control_token or allow_network_without_token
+                else "127.0.0.1"
+            )
             self.context.ws_control_server = (
                 ws_controller_server.WebSocketServerController(
                     self.args.ws_control_port,
+                    host=control_host,
                     expected_headers=expected_headers,
                     health_snapshot_provider=self._health_snapshot,
                 )
@@ -239,6 +251,9 @@ class RuntimeApplication:
                 self.context.workspace_debug_tokens.binding_for_token(
                     str(request_headers.get(PLUGIN_DEBUG_KEY_HEADER) or "")
                 )
+            )
+            plugin_handler.debug_auth_token = str(
+                request_headers.get(PLUGIN_DEBUG_KEY_HEADER) or ""
             )
 
             await self.context.plugin_mgr.add_plugin_handler(plugin_handler)

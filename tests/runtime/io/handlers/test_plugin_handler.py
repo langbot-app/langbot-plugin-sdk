@@ -131,6 +131,7 @@ def _installation_binding(runtime_revision=1):
 
 
 def _handler(debug_plugin=False, action_context=None):
+    valid_tokens = {"key"}
     control_handler = FakeControlHandler()
     manager = FakePluginManager()
     context = SimpleNamespace(
@@ -138,7 +139,9 @@ def _handler(debug_plugin=False, action_context=None):
         plugin_mgr=manager,
         workspace_binding=action_context,
         workspace_debug_tokens=SimpleNamespace(
-            binding_for_token=lambda token: action_context if token == "key" else None
+            binding_for_token=lambda token: action_context
+            if token in valid_tokens
+            else None
         ),
     )
     handler = PluginConnectionHandler(
@@ -147,7 +150,30 @@ def _handler(debug_plugin=False, action_context=None):
         debug_plugin=debug_plugin,
     )
     handler.debug_workspace_binding = action_context
+    handler.debug_auth_token = (
+        "key" if debug_plugin and action_context is not None else None
+    )
     return handler, manager, control_handler
+
+
+async def test_debug_handler_rejects_actions_after_credential_expiry():
+    binding = ActionContext(
+        instance_uuid="i", workspace_uuid="w", placement_generation=1
+    )
+    handler, _manager, _control = _handler(debug_plugin=True, action_context=binding)
+    handler.bind_action_context(binding)
+    handler.context.workspace_debug_tokens.binding_for_token = (
+        lambda supplied_token: None
+    )
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.GET_BOTS.value,
+            {},
+        )
+
+    assert response["code"] != 0
+    assert "expired" in response["message"].lower()
 
 
 async def test_plugin_handler_registers_plugin_when_debug_key_matches():
