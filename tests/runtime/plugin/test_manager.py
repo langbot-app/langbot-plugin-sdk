@@ -171,9 +171,11 @@ spec: {{}}
 class FakeControlHandler:
     def __init__(self):
         self.calls: list[tuple[Any, dict[str, Any]]] = []
+        self.contexts: list[ActionContext | None] = []
 
-    async def call_action(self, action, payload):
+    async def call_action(self, action, payload, *, action_context=None):
         self.calls.append((action, payload))
+        self.contexts.append(action_context)
         return {
             "enabled": True,
             "priority": 7,
@@ -1032,8 +1034,10 @@ async def test_register_plugin_rejects_missing_installation_capability():
     manager = _manager()
     control_handler = FakeControlHandler()
 
-    async def settings_without_installation(action, payload):
-        result = await FakeControlHandler.call_action(control_handler, action, payload)
+    async def settings_without_installation(action, payload, *, action_context=None):
+        result = await FakeControlHandler.call_action(
+            control_handler, action, payload, action_context=action_context
+        )
         result.pop("installation_uuid")
         return result
 
@@ -1060,8 +1064,14 @@ async def test_register_debug_plugin_initializes_settings_first():
     plugin = _plugin(name="debug", status=RuntimeContainerStatus.MOUNTED)
     handler = FakeHandler(plugin)
     handler.debug_plugin = True
+    handler.bound_action_context = manager.context.workspace_binding
 
     await manager.register_plugin(handler, plugin.model_dump(), debug_plugin=True)
+
+    assert control_handler.contexts[:2] == [
+        manager.context.workspace_binding,
+        manager.context.workspace_binding,
+    ]
 
     assert [call[0] for call in control_handler.calls] == [
         RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,

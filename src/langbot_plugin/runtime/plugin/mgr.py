@@ -50,6 +50,7 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 from langbot_plugin.entities.io.context import (
+    ActionContext,
     InstallationBinding,
     PluginInstallationDesiredState,
     PluginWorkerPolicy,
@@ -1713,6 +1714,7 @@ class PluginManager:
 
         installation_binding: InstallationBinding | None = None
         installation_runtime: PluginInstallationRuntime | None = None
+        runtime_binding: ActionContext | None = None
         if debug_plugin:
             if registration_capability:
                 raise ValueError(
@@ -1756,8 +1758,9 @@ class PluginManager:
 
             # if it's a debug plugin, we need to initialize the plugin settings first
             if debug_plugin:
-                # Debug plugins preserve the OSS single-Workspace flow.
-                runtime_binding = await self.context.wait_for_workspace_binding()
+                runtime_binding = handler.bound_action_context
+                if not isinstance(runtime_binding, ActionContext):
+                    raise ValueError("Debug plugin is not bound to a Workspace")
                 await self.context.control_handler.call_action(
                     RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
                     {
@@ -1766,23 +1769,25 @@ class PluginManager:
                         "install_source": PluginInstallSource.DEBUG.value,
                         "install_info": {},
                     },
+                    action_context=runtime_binding,
                 )
             elif installation_binding is None:
                 # Temporary OSS compatibility for legacy data/plugins launches.
                 runtime_binding = await self.context.wait_for_workspace_binding()
 
             # get plugin settings from LangBot
+            settings_kwargs: dict[str, typing.Any] = {}
+            if installation_binding is not None or debug_plugin:
+                settings_kwargs["action_context"] = (
+                    installation_binding or runtime_binding
+                )
             plugin_settings = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
                 {
                     "plugin_author": plugin_author,
                     "plugin_name": plugin_name,
                 },
-                **(
-                    {"action_context": installation_binding}
-                    if installation_binding is not None
-                    else {}
-                ),
+                **settings_kwargs,
             )
         except Exception as e:
             raise ValueError(
@@ -1805,6 +1810,8 @@ class PluginManager:
                 raise ValueError(
                     "LangBot did not provide a trusted plugin installation capability"
                 )
+            if runtime_binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             handler.bind_action_context(
                 runtime_binding.for_installation(installation_uuid.strip())
             )
