@@ -58,15 +58,7 @@ IN_REPO_RECEIVERS = {"Runtime", "Plugin"}
 # Accepted, documented exceptions to keep the gate green while tracking known debt.
 # Map (EnumClassName, MEMBER) -> reason. Remove an entry once the underlying issue
 # is fixed; the checker reports any entry that has become unnecessary.
-KNOWN_EXCEPTIONS: dict[tuple[str, str], str] = {
-    # invoke_llm_stream_events() references this member, but on the 0.4.x line the
-    # enum member and its runtime forwarder are absent (both exist and are wired on
-    # feat/agent-runner-plugin). Tracked for forward-port; the LangBot host already
-    # registers PluginToRuntimeAction.INVOKE_LLM_STREAM.
-    ("PluginToRuntimeAction", "INVOKE_LLM_STREAM"): (
-        "streaming LLM forwarder not yet ported to this branch; see feat/agent-runner-plugin"
-    ),
-}
+KNOWN_EXCEPTIONS: dict[tuple[str, str], str] = {}
 
 
 class Ref:
