@@ -426,11 +426,14 @@ class PluginConnectionHandler(handler.Handler):
                 data,
                 timeout=60,
             )
-            # LangBot sent the file via FILE_CHUNK; read from local temp
+            # LangBot sent the file to the control connection's transfer
+            # storage. Repackage it into this plugin connection's isolated
+            # transfer storage before returning the new key to the plugin.
             file_key = result.get("file_key", "")
             if file_key:
-                file_bytes = await self.read_local_file(file_key)
-                await self.delete_local_file(file_key)
+                control_handler = self.context.control_handler
+                file_bytes = await control_handler.read_local_file(file_key)
+                await control_handler.delete_local_file(file_key)
                 # Forward to plugin subprocess via chunked transfer
                 plugin_file_key = await self.send_file(file_bytes, "")
                 return handler.ActionResponse.success({"file_key": plugin_file_key})
