@@ -89,17 +89,7 @@ class RuntimeApplication:
                         name=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
                     )
                 )
-            allow_network_without_token = str(
-                os.environ.get(
-                    "LANGBOT_PLUGIN_RUNTIME_ALLOW_UNAUTHENTICATED_NETWORK_CONTROL",
-                    "",
-                )
-            ).strip().lower() in {"1", "true", "yes"}
-            control_host = (
-                "0.0.0.0"
-                if configured_control_token or allow_network_without_token
-                else "127.0.0.1"
-            )
+            control_host = "0.0.0.0"
             self.context.ws_control_server = (
                 ws_controller_server.WebSocketServerController(
                     self.args.ws_control_port,

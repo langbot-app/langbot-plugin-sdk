@@ -216,7 +216,9 @@ def test_runtime_application_initializes_websocket_control_mode(monkeypatch):
     assert app.context.ws_debug_server.port == 5501
 
 
-def test_runtime_application_binds_unauthenticated_control_to_loopback(monkeypatch):
+def test_runtime_application_binds_unauthenticated_control_to_all_interfaces(
+    monkeypatch,
+):
     monkeypatch.setattr(runtime_app.plugin_mgr_cls, "PluginManager", FakePluginManager)
     monkeypatch.delenv(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV)
 
@@ -224,20 +226,6 @@ def test_runtime_application_binds_unauthenticated_control_to_loopback(monkeypat
 
     assert app.context.ws_control_server is not None
     assert app.context.ws_control_server.expected_headers == {}
-    assert app.context.ws_control_server.host == "127.0.0.1"
-
-
-def test_runtime_application_allows_explicit_trusted_network_control_without_secret(
-    monkeypatch,
-):
-    monkeypatch.setattr(runtime_app.plugin_mgr_cls, "PluginManager", FakePluginManager)
-    monkeypatch.delenv(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV)
-    monkeypatch.setenv(
-        "LANGBOT_PLUGIN_RUNTIME_ALLOW_UNAUTHENTICATED_NETWORK_CONTROL", "true"
-    )
-
-    app = runtime_app.RuntimeApplication(_args(stdio_control=False))
-
     assert app.context.ws_control_server.host == "0.0.0.0"
 
 
