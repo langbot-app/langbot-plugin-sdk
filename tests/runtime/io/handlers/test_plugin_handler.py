@@ -678,19 +678,25 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
         "file_key": "host-file"
     }
 
-    async def fake_read_local_file(file_key):
-        file_ops.append(("read", file_key))
+    async def fake_read_control_file(file_key):
+        file_ops.append(("control-read", file_key))
         return b"file-bytes"
 
-    async def fake_delete_local_file(file_key):
-        file_ops.append(("delete", file_key))
+    async def fake_delete_control_file(file_key):
+        file_ops.append(("control-delete", file_key))
+
+    async def reject_plugin_storage_read(file_key):
+        raise AssertionError(
+            f"host file must not be read from plugin storage: {file_key}"
+        )
 
     async def fake_send_file(file_bytes, extension):
         file_ops.append(("send", file_bytes, extension))
         return "plugin-file"
 
-    monkeypatch.setattr(handler, "read_local_file", fake_read_local_file)
-    monkeypatch.setattr(handler, "delete_local_file", fake_delete_local_file)
+    control.read_local_file = fake_read_control_file
+    control.delete_local_file = fake_delete_control_file
+    monkeypatch.setattr(handler, "read_local_file", reject_plugin_storage_read)
     monkeypatch.setattr(handler, "send_file", fake_send_file)
 
     async with ProtocolSession(handler) as session:
@@ -700,8 +706,8 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
         )
 
     assert file_ops == [
-        ("read", "host-file"),
-        ("delete", "host-file"),
+        ("control-read", "host-file"),
+        ("control-delete", "host-file"),
         ("send", b"file-bytes", ""),
     ]
     assert response["data"] == {"file_key": "plugin-file"}
