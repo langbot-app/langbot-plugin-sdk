@@ -97,14 +97,12 @@ def _authenticate_host_request(
     *,
     bind_instance: bool,
 ) -> str | None:
-    """Authenticate one control/relay handshake without exposing the secret."""
+    """Validate the optional control secret and pin one instance identity."""
 
     expected_token = str(request.app.get(_APP_CONTROL_TOKEN_KEY) or "")
     supplied_token = str(request.headers.get(BOX_CONTROL_TOKEN_HEADER) or "")
-    if (
-        not expected_token
-        or not supplied_token
-        or not hmac.compare_digest(expected_token, supplied_token)
+    if expected_token and (
+        not supplied_token or not hmac.compare_digest(expected_token, supplied_token)
     ):
         return None
     try:
@@ -1146,9 +1144,9 @@ def create_app(
     generation_fence: BoxGenerationFence | None = None,
 ) -> web.Application:
     """Create the aiohttp app with all WebSocket routes on a single port."""
-    token = validate_control_token(
-        control_token or os.environ.get(BOX_CONTROL_TOKEN_ENV, "")
-    )
+    token = str(control_token or os.environ.get(BOX_CONTROL_TOKEN_ENV, "")).strip()
+    if token:
+        token = validate_control_token(token)
     app = web.Application()
     app[_APP_RUNTIME_KEY] = runtime
     app[_APP_CONTROL_TOKEN_KEY] = token
@@ -1204,7 +1202,9 @@ async def _run_server(host: str, port: int, mode: str) -> None:
     blocking_executor = configure_bounded_default_executor_from_env(
         thread_name_prefix="langbot-box-runtime-blocking",
     )
-    control_token = validate_control_token(os.environ.get(BOX_CONTROL_TOKEN_ENV, ""))
+    control_token = str(os.environ.get(BOX_CONTROL_TOKEN_ENV, "")).strip()
+    if control_token:
+        control_token = validate_control_token(control_token)
     configured_instance_uuid = (
         os.environ.get(BOX_TRUSTED_INSTANCE_ENV, "").strip() or None
     )

@@ -83,10 +83,8 @@ async def arun_plugin_process(
         prod_mode,
     )
 
-    controller_run_task = asyncio.create_task(controller.run())
     await controller.mount()
-
-    await controller_run_task
+    await controller.run()
 
 
 def run_plugin_process(
