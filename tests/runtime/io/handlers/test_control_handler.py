@@ -455,6 +455,12 @@ async def test_control_handler_get_debug_info_returns_workspace_token():
         "plugin_handlers": 0,
         "legacy_supervisors": 0,
         "installation_runtimes": 0,
+        "installation_states": {
+            "running": 0,
+            "starting": 0,
+            "failed": 0,
+            "disabled": 0,
+        },
         "pending_registrations": 0,
         "restart_coordinator": {"configured": False},
     }

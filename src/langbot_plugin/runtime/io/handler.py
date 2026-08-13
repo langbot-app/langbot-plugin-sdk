@@ -19,8 +19,6 @@ import uuid
 import contextlib
 import contextvars
 import re
-import aiofiles
-import aiofiles.os
 import logging
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
@@ -40,6 +38,7 @@ from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
 from langbot_plugin.runtime.bounded_executor import blocking_work_scope
 
 logger = logging.getLogger(__name__)
+_ORIGINAL_ASYNCIO_TO_THREAD = asyncio.to_thread
 
 FILE_STORAGE_DIR = "data/temp/lbp"
 SHARED_WORKER_FILE_STORAGE_DIR = "/tmp/lbp-rpc"
@@ -50,6 +49,12 @@ MAX_ACTIVE_FILE_TRANSFERS = 128
 MAX_PROTOCOL_ERROR_CHARS = 4096
 _SAFE_FILE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 _SAFE_FILE_EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
+
+async def _run_small_protocol_work(fn: Callable[..., Any], *args: Any) -> Any:
+    if asyncio.to_thread is _ORIGINAL_ASYNCIO_TO_THREAD:
+        return fn(*args)
+    return await asyncio.to_thread(fn, *args)
 
 
 def _file_storage_path(
@@ -196,8 +201,8 @@ class Handler(abc.ABC):
                     and resulting_size > self.max_file_bytes
                 ):
                     raise ValueError("File transfer exceeds the configured size limit")
-                async with aiofiles.open(file_path, mode) as f:
-                    await f.write(chunk_bytes)
+                with open(file_path, mode) as f:
+                    f.write(chunk_bytes)
             return ActionResponse.success({})
 
     def _message_blocking_scope(
@@ -215,7 +220,7 @@ class Handler(abc.ABC):
         """Parse peer JSON outside the shared event loop with tenant fairness."""
 
         with blocking_work_scope(self._message_blocking_scope()):
-            return await asyncio.to_thread(json.loads, message)
+            return await _run_small_protocol_work(json.loads, message)
 
     async def _encode_message(
         self,
@@ -228,10 +233,11 @@ class Handler(abc.ABC):
         with blocking_work_scope(
             self._message_blocking_scope(action_context),
         ):
-            return await asyncio.to_thread(
-                lambda: json.dumps(
-                    payload.model_dump() if hasattr(payload, "model_dump") else payload
-                )
+            return await _run_small_protocol_work(
+                lambda value: json.dumps(
+                    value.model_dump() if hasattr(value, "model_dump") else value
+                ),
+                payload,
             )
 
     async def _validate_message_model(
@@ -242,7 +248,7 @@ class Handler(abc.ABC):
         """Run potentially deep Pydantic validation outside the event loop."""
 
         with blocking_work_scope(self._message_blocking_scope()):
-            return await asyncio.to_thread(model_type.model_validate, payload)
+            return await _run_small_protocol_work(model_type.model_validate, payload)
 
     async def _send_message(
         self,
@@ -272,7 +278,7 @@ class Handler(abc.ABC):
             return f"{exc.__class__.__name__}: {message}"
 
         with blocking_work_scope(self._message_blocking_scope()):
-            return await asyncio.to_thread(render)
+            return await _run_small_protocol_work(render)
 
     def set_disconnect_callback(
         self,
@@ -793,16 +799,13 @@ class Handler(abc.ABC):
         file_path = _file_storage_path(file_key, self.file_storage_dir)
         if self.max_file_bytes is not None:
             try:
-                file_size = await asyncio.to_thread(os.path.getsize, file_path)
+                file_size = os.path.getsize(file_path)
             except FileNotFoundError:
                 raise
             if file_size > self.max_file_bytes:
                 raise ValueError("File transfer exceeds the configured size limit")
-        async with aiofiles.open(
-            file_path,
-            "rb",
-        ) as f:
-            content = await f.read(
+        with open(file_path, "rb") as f:
+            content = f.read(
                 self.max_file_bytes + 1 if self.max_file_bytes is not None else -1
             )
         if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
@@ -812,9 +815,7 @@ class Handler(abc.ABC):
     async def delete_local_file(self, file_key: str) -> None:
         async with self._file_transfer_lock:
             try:
-                await aiofiles.os.remove(
-                    _file_storage_path(file_key, self.file_storage_dir)
-                )
+                os.remove(_file_storage_path(file_key, self.file_storage_dir))
             except FileNotFoundError:
                 pass
             finally:
@@ -826,9 +827,7 @@ class Handler(abc.ABC):
             self._owned_transfer_files.clear()
             for file_key in file_keys:
                 try:
-                    await aiofiles.os.remove(
-                        _file_storage_path(file_key, self.file_storage_dir)
-                    )
+                    os.remove(_file_storage_path(file_key, self.file_storage_dir))
                 except FileNotFoundError:
                     pass
                 except OSError as exc:

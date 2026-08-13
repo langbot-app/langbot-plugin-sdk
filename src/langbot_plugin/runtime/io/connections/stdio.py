@@ -39,7 +39,7 @@ class StdioConnection(connection.Connection):
     async def send(self, message: str) -> None:
         """Send message with chunking support for large data."""
         async with self._send_lock:  # 确保同一时间只有一个send操作
-            message_bytes = await asyncio.to_thread(message.encode, "utf-8")
+            message_bytes = message.encode("utf-8")
             message_size = len(message_bytes)
             if message_size > MAX_MESSAGE_BYTES:
                 raise ValueError(
@@ -62,11 +62,7 @@ class StdioConnection(connection.Connection):
             # For large messages, send in chunks
             try:
                 del message_bytes
-                chunks = await asyncio.to_thread(
-                    split_utf8_chunks,
-                    message,
-                    self.chunk_size,
-                )
+                chunks = split_utf8_chunks(message, self.chunk_size)
                 # Send start marker for chunked message
                 chunk_header = json.dumps(
                     {"type": "chunk_start", "total_size": message_size}
@@ -216,10 +212,7 @@ class StdioConnection(connection.Connection):
                                                     "Incomplete runtime chunked message"
                                                 )
                                             # Reconstruct original message
-                                            return await asyncio.to_thread(
-                                                "".join,
-                                                chunks,
-                                            )
+                                            return "".join(chunks)
 
                                         # Yield control periodically
                                         if len(chunks) % 50 == 0:

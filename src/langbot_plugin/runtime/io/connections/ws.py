@@ -30,7 +30,7 @@ class WebSocketConnection(io_connection.Connection):
     async def send(self, message: str) -> None:
         """Send message with chunking support for large data."""
         async with self._send_lock:  # 确保同一时间只有一个send操作
-            message_bytes = await asyncio.to_thread(message.encode, "utf-8")
+            message_bytes = message.encode("utf-8")
             message_size = len(message_bytes)
             if message_size > MAX_MESSAGE_BYTES:
                 raise ValueError(
@@ -55,11 +55,7 @@ class WebSocketConnection(io_connection.Connection):
                 # an independent message forces the receiver to guess message
                 # boundaries and permits unbounded cross-message accumulation.
                 del message_bytes
-                chunks = await asyncio.to_thread(
-                    split_utf8_chunks,
-                    message,
-                    self.chunk_size,
-                )
+                chunks = split_utf8_chunks(message, self.chunk_size)
                 await self.websocket.send(chunks)
             except WebSocketClosed:
                 raise ConnectionClosedError("Connection closed during send")
@@ -89,7 +85,7 @@ class WebSocketConnection(io_connection.Connection):
             # recv_streaming yields exactly one WebSocket message. JSON
             # validation belongs to Handler; never concatenate separate peer
             # messages while waiting for one that happens to parse.
-            return await asyncio.to_thread("".join, message_chunks)
+            return "".join(message_chunks)
 
         except WebSocketClosed:
             raise ConnectionClosedError("Connection closed")

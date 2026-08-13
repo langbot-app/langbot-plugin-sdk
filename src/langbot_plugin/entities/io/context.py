@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Literal
@@ -39,6 +40,7 @@ class PluginWorkerPolicy(pydantic.BaseModel):
     max_total_cpus: float = 8.0
     max_total_memory_mb: int = 8192
     max_installations: int = 10_000
+    max_pending_registrations: int = 1024
     max_concurrent_restarts: int = 1
     restart_failure_threshold: int = 8
     restart_failure_window_seconds: float = 30.0
@@ -62,6 +64,7 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         "max_workers",
         "max_total_memory_mb",
         "max_installations",
+        "max_pending_registrations",
         "max_concurrent_restarts",
         "restart_failure_threshold",
         mode="before",
@@ -112,6 +115,7 @@ class PluginWorkerPolicy(pydantic.BaseModel):
         "max_workers",
         "max_total_memory_mb",
         "max_installations",
+        "max_pending_registrations",
         "max_concurrent_restarts",
         "restart_failure_threshold",
     )
@@ -129,10 +133,6 @@ class PluginWorkerPolicy(pydantic.BaseModel):
             raise ValueError("max_total_memory_mb cannot be lower than max_memory_mb")
         if self.max_installations < self.max_workers:
             raise ValueError("max_installations cannot be lower than max_workers")
-        if self.max_concurrent_restarts > self.effective_worker_capacity:
-            raise ValueError(
-                "max_concurrent_restarts cannot exceed effective worker capacity"
-            )
         if self.restart_failure_threshold > self.max_installations:
             raise ValueError(
                 "restart_failure_threshold cannot exceed max_installations"
@@ -291,6 +291,31 @@ class RuntimeConfig(pydantic.BaseModel):
     cloud_service_url: str | None = None
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    def model_dump(self, **kwargs):
+        include_pending_registration_limit = kwargs.pop(
+            "include_pending_registration_limit",
+            False,
+        )
+        payload = super().model_dump(**kwargs)
+        if not include_pending_registration_limit and isinstance(
+            payload.get("worker_policy"),
+            dict,
+        ):
+            payload["worker_policy"].pop("max_pending_registrations", None)
+        return payload
+
+    def model_dump_json(self, **kwargs) -> str:
+        include_pending_registration_limit = kwargs.pop(
+            "include_pending_registration_limit",
+            False,
+        )
+        return json.dumps(
+            self.model_dump(
+                include_pending_registration_limit=include_pending_registration_limit,
+                **kwargs,
+            )
+        )
 
     @pydantic.field_validator("cloud_service_url")
     @classmethod
