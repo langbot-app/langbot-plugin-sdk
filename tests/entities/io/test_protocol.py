@@ -170,7 +170,9 @@ def test_runtime_config_default_wire_payload_is_compatible_with_legacy_policy_sh
     assert "max_pending_registrations" not in wire_payload["worker_policy"]
     assert LegacyPluginWorkerPolicy.model_validate(wire_payload["worker_policy"])
     assert (
-        RuntimeConfig.model_validate(wire_payload).worker_policy.max_pending_registrations
+        RuntimeConfig.model_validate(
+            wire_payload
+        ).worker_policy.max_pending_registrations
         == 1024
     )
     assert (

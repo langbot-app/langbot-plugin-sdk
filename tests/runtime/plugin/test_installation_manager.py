@@ -442,7 +442,9 @@ async def test_reconcile_watermark_gc_does_not_delete_newer_direct_state(
         await release_gc.wait()
         original_gc(authoritative_bindings)
 
-    monkeypatch.setattr(manager, "_reconcile_installation_watermarks_locked", blocked_gc)
+    monkeypatch.setattr(
+        manager, "_reconcile_installation_watermarks_locked", blocked_gc
+    )
 
     reconcile_task = asyncio.create_task(manager.reconcile_plugin_installations(()))
     await gc_started.wait()
@@ -1064,6 +1066,7 @@ async def test_unrelated_artifact_publications_do_not_block_each_other(
             enabled=False,
         )
     )
+
     async def wait_for_install_started():
         while not install_started.is_set():
             await asyncio.sleep(0)

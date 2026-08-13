@@ -1003,10 +1003,9 @@ class PluginManager:
 
                     # A concurrent newer apply/remove can fence this binding while
                     # its shared environment is being prepared. Never launch it.
-                    if self._installations.get(
-                        binding
-                    ) is not current or not self.context.is_current_installation_binding(
-                        binding
+                    if (
+                        self._installations.get(binding) is not current
+                        or not self.context.is_current_installation_binding(binding)
                     ):
                         return {
                             "installation_uuid": binding.installation_uuid,
@@ -1206,9 +1205,7 @@ class PluginManager:
             authoritative_bindings
         )
         for watermark in snapshots:
-            lock = self._retain_installation_operation_lock(
-                watermark.installation_uuid
-            )
+            lock = self._retain_installation_operation_lock(watermark.installation_uuid)
             try:
                 async with lock:
                     self.context.drop_installation_watermark_if_current(watermark)
