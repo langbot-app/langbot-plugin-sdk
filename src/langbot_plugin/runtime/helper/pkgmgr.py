@@ -532,10 +532,7 @@ async def ensure_plugin_environment(plugin_path: str) -> str:
     if candidate.is_file():
         return str(candidate.resolve())
 
-    await asyncio.to_thread(
-        venv.EnvBuilder(with_pip=True, system_site_packages=True).create,
-        root,
-    )
+    venv.EnvBuilder(with_pip=True, system_site_packages=True).create(root)
     if not candidate.is_file():
         raise RuntimeError(f"Plugin virtual environment was not created at {root}")
     return str(candidate.resolve())

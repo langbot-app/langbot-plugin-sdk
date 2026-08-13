@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 
@@ -44,7 +43,7 @@ async def _request_json(client: httpx.AsyncClient, url: str) -> dict:
             response,
             max_bytes=_MAX_MARKETPLACE_JSON_BYTES,
         )
-        payload = await asyncio.to_thread(json.loads, body)
+        payload = json.loads(body)
     if not isinstance(payload, dict):
         raise RuntimeError("Marketplace returned a non-object response")
     if payload.get("code") != 0:
@@ -61,10 +60,7 @@ async def get_plugin_info(
     )
     async with httpx.AsyncClient(timeout=30) as client:
         payload = await _request_json(client, url)
-        return await asyncio.to_thread(
-            entities_marketplace.PluginInfo.model_validate,
-            payload["data"]["plugin"],
-        )
+        return entities_marketplace.PluginInfo.model_validate(payload["data"]["plugin"])
 
 
 async def download_plugin(
