@@ -219,6 +219,23 @@ class PluginManager:
                 initial_policy.max_concurrent_restarts
             )
 
+    async def _complete_installation_transition(
+        self,
+        operation: typing.Coroutine[typing.Any, typing.Any, None],
+    ) -> None:
+        """Join one lifecycle mutation through repeated caller cancellation."""
+
+        task = asyncio.create_task(operation)
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
     @property
     def installation_runtimes(
         self,
@@ -1058,11 +1075,20 @@ class PluginManager:
         self,
         binding: InstallationBinding,
     ) -> dict[str, typing.Any]:
-        binding = self.context.deactivate_installation_binding(binding)
-        async with self._installation_lifecycle_semaphore():
-            await self._revoke_installation_runtime(binding)
-        if self._active_binding_by_uuid.get(binding.installation_uuid) == binding:
-            self._active_binding_by_uuid.pop(binding.installation_uuid, None)
+        async def remove() -> None:
+            removed_binding = self.context.deactivate_installation_binding(binding)
+            async with self._installation_lifecycle_semaphore():
+                await self._revoke_installation_runtime(removed_binding)
+            if (
+                self._active_binding_by_uuid.get(removed_binding.installation_uuid)
+                == removed_binding
+            ):
+                self._active_binding_by_uuid.pop(
+                    removed_binding.installation_uuid,
+                    None,
+                )
+
+        await self._complete_installation_transition(remove())
         return {
             "installation_uuid": binding.installation_uuid,
             "state": "removed",
@@ -1108,22 +1134,26 @@ class PluginManager:
                 lock = self._retain_installation_operation_lock(installation_uuid)
                 try:
                     async with lock:
-                        if self.context.is_current_installation_binding(
-                            current_binding
-                        ):
-                            self.context.deactivate_installation_binding(
+
+                        async def remove_current() -> None:
+                            if self.context.is_current_installation_binding(
                                 current_binding
-                            )
-                        async with self._installation_lifecycle_semaphore():
-                            await self._revoke_installation_runtime(current_binding)
-                        if (
-                            self._active_binding_by_uuid.get(installation_uuid)
-                            == current_binding
-                        ):
-                            self._active_binding_by_uuid.pop(
-                                installation_uuid,
-                                None,
-                            )
+                            ):
+                                self.context.deactivate_installation_binding(
+                                    current_binding
+                                )
+                            async with self._installation_lifecycle_semaphore():
+                                await self._revoke_installation_runtime(current_binding)
+                            if (
+                                self._active_binding_by_uuid.get(installation_uuid)
+                                == current_binding
+                            ):
+                                self._active_binding_by_uuid.pop(
+                                    installation_uuid,
+                                    None,
+                                )
+
+                        await self._complete_installation_transition(remove_current())
                         removed.append(installation_uuid)
                 finally:
                     self._forget_installation_operation_lock(
@@ -1469,10 +1499,12 @@ class PluginManager:
         binding: InstallationBinding,
     ) -> None:
         self._revoke_registration_capabilities_for_binding(binding)
-        runtime = self._installations.pop(binding, None)
+        runtime = self._installations.get(binding)
         if runtime is None:
             return
         await self._stop_installation_worker(runtime)
+        if self._installations.get(binding) is runtime:
+            self._installations.pop(binding, None)
 
     async def _stop_installation_worker(
         self,
@@ -1486,20 +1518,29 @@ class PluginManager:
             except Exception as exc:
                 logger.warning("Failed to notify revoked plugin worker: %s", exc)
             close = getattr(handler, "close", None)
-            if close is not None:
-                await close()
-            else:
-                await handler.conn.close()
-            if handler in self.plugin_handlers:
-                self.plugin_handlers.remove(handler)
+            try:
+                if close is not None:
+                    await close()
+                else:
+                    await handler.conn.close()
+            except Exception as exc:
+                logger.warning("Failed to close revoked plugin worker: %s", exc)
+            finally:
+                if handler in self.plugin_handlers:
+                    self.plugin_handlers.remove(handler)
+                runtime.plugin_handler = None
             process = handler.stdio_process
             if process is not None and process.returncode is None:
-                stopped = await stdio_client_controller.stop_process(process)
-                if not stopped:
-                    logger.error(
-                        "Plugin worker process did not exit after SIGKILL: %s",
-                        runtime.binding.installation_uuid,
-                    )
+                try:
+                    stopped = await stdio_client_controller.stop_process(process)
+                except Exception as exc:
+                    logger.error("Failed to stop revoked plugin worker: %s", exc)
+                else:
+                    if not stopped:
+                        logger.error(
+                            "Plugin worker process did not exit after SIGKILL: %s",
+                            runtime.binding.installation_uuid,
+                        )
         runtime.plugin_handler = None
         if runtime.plugin_container is not None:
             self._binding_by_container_id.pop(id(runtime.plugin_container), None)
