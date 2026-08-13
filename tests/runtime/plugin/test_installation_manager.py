@@ -131,6 +131,110 @@ async def test_manager_indexes_same_artifact_installations_by_complete_binding(
     assert context.is_current_installation_binding(binding_b)
 
 
+async def test_cancelled_remove_finishes_worker_revoke_before_propagating(
+    tmp_path,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    shutdown_started = asyncio.Event()
+    allow_shutdown = asyncio.Event()
+
+    class Handler:
+        stdio_process = None
+        conn = None
+
+        def cancel_inflight_messages(self):
+            return None
+
+        async def shutdown_plugin(self):
+            shutdown_started.set()
+            await allow_shutdown.wait()
+
+        async def close(self):
+            return None
+
+    handler = Handler()
+    runtime.plugin_handler = handler
+    manager.plugin_handlers.append(handler)
+
+    remove_task = asyncio.create_task(manager.remove_plugin_installation(binding))
+    await asyncio.wait_for(shutdown_started.wait(), timeout=1)
+    remove_task.cancel()
+    await asyncio.sleep(0)
+    remove_task.cancel()
+    allow_shutdown.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await remove_task
+    assert not context.is_current_installation_binding(binding)
+    assert binding not in manager.installation_runtimes
+    assert binding.installation_uuid not in manager._active_binding_by_uuid
+    assert handler not in manager.plugin_handlers
+    assert runtime.plugin_handler is None
+
+    with pytest.raises(ValueError, match="stale"):
+        await manager.reconcile_plugin_installations(
+            (PluginInstallationDesiredState(binding=binding, enabled=False),)
+        )
+
+
+async def test_remove_finishes_state_cleanup_when_handler_close_fails(
+    tmp_path,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+
+    class Handler:
+        stdio_process = None
+        conn = None
+
+        def cancel_inflight_messages(self):
+            return None
+
+        async def shutdown_plugin(self):
+            return None
+
+        async def close(self):
+            raise RuntimeError("close failed")
+
+    handler = Handler()
+    runtime.plugin_handler = handler
+    manager.plugin_handlers.append(handler)
+
+    result = await manager.remove_plugin_installation(binding)
+
+    assert result["state"] == "removed"
+    assert not context.is_current_installation_binding(binding)
+    assert binding not in manager.installation_runtimes
+    assert binding.installation_uuid not in manager._active_binding_by_uuid
+    assert handler not in manager.plugin_handlers
+    assert runtime.plugin_handler is None
+
+
 async def test_desired_state_does_not_reject_on_aggregate_worker_capacity(
     tmp_path,
     monkeypatch,

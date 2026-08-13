@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import collections
 import time
-from collections.abc import Awaitable
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Callable
 
 from langbot_plugin.entities.io.context import PluginWorkerPolicy
 
 
-async def _complete_state_transition(operation: Awaitable[None]) -> None:
+async def _complete_state_transition(
+    operation: Coroutine[object, object, None],
+) -> None:
     """Finish one tiny coordinator mutation even if its caller is cancelled.
 
     A supervisor cancellation must not strand the circuit in half-open state.
@@ -19,14 +21,19 @@ async def _complete_state_transition(operation: Awaitable[None]) -> None:
     """
 
     task = asyncio.create_task(operation)
-    try:
-        await asyncio.shield(task)
-    except asyncio.CancelledError:
-        # The cancellation has already been delivered to this caller; the
-        # shielded mutation remains live and can now be joined directly before
-        # propagating the original cancellation.
-        await task
-        raise
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # A caller can be cancelled repeatedly while the mutation is
+            # waiting for the state lock. Keep joining the shielded task until
+            # the transition is complete; otherwise a half-open probe can be
+            # stranded permanently.
+            cancelled = True
+    task.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 @dataclass(slots=True)

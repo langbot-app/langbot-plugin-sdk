@@ -198,6 +198,42 @@ async def test_abandoned_probe_releases_slot_without_counting_failure():
     await replacement_probe.abandon()
 
 
+async def test_repeated_cancellation_cannot_strand_half_open_probe():
+    coordinator = PluginRestartCoordinator()
+    coordinator.configure(
+        _policy(
+            max_concurrent_restarts=1,
+            restart_failure_threshold=1,
+            restart_circuit_open_seconds=0.01,
+        )
+    )
+    failed = await coordinator.acquire("installation-a")
+    await failed.record_failure()
+    probe = await asyncio.wait_for(
+        coordinator.acquire("installation-a"),
+        timeout=1,
+    )
+    assert probe.is_half_open_probe is True
+
+    await coordinator._state_lock.acquire()
+    abandon_task = asyncio.create_task(probe.abandon())
+    await asyncio.sleep(0)
+    abandon_task.cancel()
+    await asyncio.sleep(0)
+    abandon_task.cancel()
+    coordinator._state_lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await abandon_task
+    assert coordinator.snapshot()["half_open_probe_inflight"] is False
+
+    replacement = await asyncio.wait_for(
+        coordinator.acquire("installation-a"),
+        timeout=1,
+    )
+    await replacement.abandon()
+
+
 async def test_cancelled_acquire_does_not_leak_launch_slot():
     coordinator = PluginRestartCoordinator()
     coordinator.configure(
