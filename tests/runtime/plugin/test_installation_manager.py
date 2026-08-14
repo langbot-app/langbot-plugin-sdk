@@ -1483,6 +1483,49 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
     assert runtime.launch_task is None
 
 
+async def test_stop_installation_worker_bounds_stuck_supervisor_cleanup(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    release = asyncio.Event()
+
+    async def ignore_cancellation_until_released():
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+
+    launch_task = asyncio.create_task(ignore_cancellation_until_released())
+    runtime.launch_task = launch_task
+    monkeypatch.setattr(manager_module, "_PLUGIN_WORKER_STOP_TIMEOUT_SEC", 0.01)
+    await asyncio.sleep(0)
+
+    await manager._stop_installation_worker(runtime)
+
+    assert runtime.launch_task is None
+    assert not launch_task.done()
+    assert "Plugin installation supervisor did not stop within" in caplog.text
+
+    release.set()
+    await launch_task
+
+
 @pytest.mark.parametrize(
     "lifecycle_operation",
     ["remove", "reconcile", "shutdown"],

@@ -12,6 +12,28 @@ from watchdog.events import FileSystemEventHandler
 logger = logging.getLogger(__name__)
 
 
+IGNORED_DIRECTORY_NAMES = {
+    ".git",
+    ".hg",
+    ".langbot-codex-home",
+    ".mypy_cache",
+    ".nox",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "venv",
+}
+
+
+def _is_ignored_path(path: str) -> bool:
+    parts = {part.casefold() for part in Path(path).parts}
+    return bool(parts & IGNORED_DIRECTORY_NAMES)
+
+
 class PythonFileChangeHandler(FileSystemEventHandler):
     """Handler for Python file changes."""
 
@@ -35,8 +57,7 @@ class PythonFileChangeHandler(FileSystemEventHandler):
         if not event.src_path.endswith(".py"):
             return
 
-        # Ignore __pycache__ and .pyc files
-        if "__pycache__" in event.src_path or event.src_path.endswith(".pyc"):
+        if _is_ignored_path(event.src_path):
             return
 
         logger.info(f"Detected change in {event.src_path}")
