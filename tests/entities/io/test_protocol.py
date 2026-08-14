@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import pydantic
 from pydantic import ValidationError
 
 from langbot_plugin.entities.io.actions.enums import (
@@ -115,6 +116,7 @@ def test_runtime_config_models_are_frozen_and_instance_scoped():
     assert policy.restart_failure_threshold == 8
     assert policy.restart_failure_window_seconds == 30
     assert policy.restart_circuit_open_seconds == 60
+    assert policy.max_pending_registrations == 1024
     with pytest.raises(ValidationError):
         identity.runtime_id = "runtime-boot-2"
     with pytest.raises(ValidationError):
@@ -128,14 +130,62 @@ def test_runtime_config_models_are_frozen_and_instance_scoped():
         )
 
 
+def test_runtime_config_default_wire_payload_is_compatible_with_legacy_policy_shape():
+    class LegacyPluginWorkerPolicy(pydantic.BaseModel):
+        max_cpus: float
+        max_memory_mb: int
+        max_pids: int
+        max_open_files: int
+        max_file_size_mb: int
+        max_workers: int = 16
+        max_total_cpus: float = 8.0
+        max_total_memory_mb: int = 8192
+        max_installations: int = 10_000
+        max_concurrent_restarts: int = 1
+        restart_failure_threshold: int = 8
+        restart_failure_window_seconds: float = 30.0
+        restart_circuit_open_seconds: float = 60.0
+        require_hard_limits: bool = False
+
+        model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    config = RuntimeConfig(
+        runtime_identity=RuntimeIdentity(
+            instance_uuid="instance-1",
+            runtime_id="runtime-boot-1",
+        ),
+        worker_policy=PluginWorkerPolicy(
+            max_cpus=1.0,
+            max_memory_mb=512,
+            max_pids=128,
+            max_open_files=256,
+            max_file_size_mb=512,
+            max_pending_registrations=77,
+        ),
+        runtime_profile="shared",
+    )
+
+    wire_payload = config.model_dump()
+
+    assert "max_pending_registrations" not in wire_payload["worker_policy"]
+    assert LegacyPluginWorkerPolicy.model_validate(wire_payload["worker_policy"])
+    assert (
+        RuntimeConfig.model_validate(
+            wire_payload
+        ).worker_policy.max_pending_registrations
+        == 1024
+    )
+    assert (
+        config.model_dump(include_pending_registration_limit=True)["worker_policy"][
+            "max_pending_registrations"
+        ]
+        == 77
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        (
-            "max_concurrent_restarts",
-            9,
-            "cannot exceed effective worker capacity",
-        ),
         (
             "restart_failure_threshold",
             10_001,
@@ -165,6 +215,40 @@ def test_worker_restart_policy_rejects_unsafe_limits(field, value, message):
 
     with pytest.raises(ValidationError, match=message):
         PluginWorkerPolicy.model_validate(policy)
+
+
+def test_worker_restart_concurrency_is_not_capped_by_aggregate_worker_capacity():
+    policy = PluginWorkerPolicy(
+        max_cpus=1.0,
+        max_memory_mb=512,
+        max_pids=128,
+        max_open_files=256,
+        max_file_size_mb=512,
+        max_workers=1,
+        max_total_cpus=1.0,
+        max_total_memory_mb=512,
+        max_concurrent_restarts=8,
+    )
+
+    assert policy.effective_worker_capacity == 1
+    assert policy.max_concurrent_restarts == 8
+
+
+def test_pending_registration_bound_is_independent_from_worker_capacity():
+    policy = PluginWorkerPolicy(
+        max_cpus=1.0,
+        max_memory_mb=512,
+        max_pids=128,
+        max_open_files=256,
+        max_file_size_mb=512,
+        max_workers=1,
+        max_total_cpus=1.0,
+        max_total_memory_mb=512,
+        max_pending_registrations=3,
+    )
+
+    assert policy.effective_worker_capacity == 1
+    assert policy.max_pending_registrations == 3
 
 
 @pytest.mark.parametrize(

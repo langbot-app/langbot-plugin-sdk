@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from langbot_plugin.cli.commands import runplugin
 
 
@@ -187,6 +189,37 @@ async def test_arun_plugin_process_uses_debug_runtime_ws_url(tmp_path, monkeypat
     await runplugin.arun_plugin_process(stdio=False)
 
     assert FakeRuntimeController.instances[-1].ws_debug_url == "ws://debug"
+
+
+async def test_arun_plugin_process_does_not_start_run_task_when_mount_fails(
+    tmp_path, monkeypatch
+):
+    calls = []
+    (tmp_path / "manifest.yaml").write_text("kind: Plugin\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DEBUG_RUNTIME_WS_URL", "ws://debug")
+    monkeypatch.setattr(runplugin, "ComponentDiscoveryEngine", FakeDiscoveryEngine)
+    monkeypatch.setattr(runplugin, "discover_plugin_components", lambda *_args: [])
+    monkeypatch.setattr(runplugin, "populate_plugin_pages", lambda *_args: None)
+
+    class FailingRuntimeController:
+        def __init__(self, *_args):
+            pass
+
+        async def mount(self):
+            calls.append("mount")
+            raise ValueError("missing debug credential")
+
+        async def run(self):
+            calls.append("run")
+
+    monkeypatch.setattr(runplugin, "PluginRuntimeController", FailingRuntimeController)
+
+    with pytest.raises(ValueError, match="missing debug credential"):
+        await runplugin.arun_plugin_process(stdio=False)
+
+    await asyncio.sleep(0)
+    assert calls == ["mount"]
 
 
 def test_run_plugin_process_configures_logging_and_runs_async_entry(monkeypatch):

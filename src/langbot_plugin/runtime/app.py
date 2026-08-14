@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import argparse
 from enum import Enum
-import hmac
 import logging
 import os
-import secrets
 import signal
 from collections.abc import Mapping
 
@@ -25,7 +23,7 @@ from langbot_plugin.runtime.bounded_executor import (
     configure_bounded_default_executor_from_env,
 )
 from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
-from langbot_plugin.runtime.settings import settings
+
 from langbot_plugin.runtime.security import (
     PLUGIN_DEBUG_KEY_HEADER,
     PLUGIN_REGISTRATION_CAPABILITY_HEADER,
@@ -65,8 +63,6 @@ class RuntimeApplication:
         self._closing = False
         self._shutdown_complete = False
 
-        logger.info(f"settings.cloud_service_url: {settings.cloud_service_url}")
-
         # Set the debug port in context so PluginManager can use it
         self.context.ws_debug_port = self.args.ws_debug_port
 
@@ -77,33 +73,28 @@ class RuntimeApplication:
         else:
             self._control_connection_mode = ControlConnectionMode.WS
 
-        configured_debug_key = str(settings.plugin_debug_key or "").strip()
-        if configured_debug_key:
-            settings.plugin_debug_key = validate_runtime_secret(
-                configured_debug_key,
-                name="PLUGIN_DEBUG_KEY",
-            )
-        else:
-            # Debug access is enabled by default for development, but never
-            # with the historical empty-key bypass. The authenticated control
-            # channel is the only place where this generated key is exposed.
-            settings.plugin_debug_key = secrets.token_urlsafe(48)
-
         # build controllers layer
         if self._control_connection_mode == ControlConnectionMode.STDIO:
             self.context.stdio_server = stdio_controller_server.StdioServerController()
 
         elif self._control_connection_mode == ControlConnectionMode.WS:
-            control_token = validate_runtime_secret(
-                os.environ.get(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV, ""),
-                name=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
-            )
+            configured_control_token = str(
+                os.environ.get(PLUGIN_RUNTIME_CONTROL_TOKEN_ENV, "")
+            ).strip()
+            expected_headers = {}
+            if configured_control_token:
+                expected_headers[PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER] = (
+                    validate_runtime_secret(
+                        configured_control_token,
+                        name=PLUGIN_RUNTIME_CONTROL_TOKEN_ENV,
+                    )
+                )
+            control_host = "0.0.0.0"
             self.context.ws_control_server = (
                 ws_controller_server.WebSocketServerController(
                     self.args.ws_control_port,
-                    expected_headers={
-                        PLUGIN_RUNTIME_CONTROL_TOKEN_HEADER: control_token,
-                    },
+                    host=control_host,
+                    expected_headers=expected_headers,
                     health_snapshot_provider=self._health_snapshot,
                 )
             )
@@ -128,10 +119,7 @@ class RuntimeApplication:
         """Admit explicit debug clients or one pending installed plugin."""
 
         supplied_debug_key = str(headers.get(PLUGIN_DEBUG_KEY_HEADER) or "")
-        if supplied_debug_key and hmac.compare_digest(
-            settings.plugin_debug_key,
-            supplied_debug_key,
-        ):
+        if self.context.workspace_debug_tokens.binding_for_token(supplied_debug_key):
             return True
 
         registration_capability = str(
@@ -247,6 +235,15 @@ class RuntimeApplication:
         async def new_plugin_debug_connection_callback(connection: Connection):
             plugin_handler = plugin_handler_cls.PluginConnectionHandler(
                 connection, self.context, debug_plugin=True
+            )
+            request_headers = getattr(connection, "request_headers", {})
+            plugin_handler.debug_workspace_binding = (
+                self.context.workspace_debug_tokens.binding_for_token(
+                    str(request_headers.get(PLUGIN_DEBUG_KEY_HEADER) or "")
+                )
+            )
+            plugin_handler.debug_auth_token = str(
+                request_headers.get(PLUGIN_DEBUG_KEY_HEADER) or ""
             )
 
             await self.context.plugin_mgr.add_plugin_handler(plugin_handler)

@@ -4,7 +4,6 @@ import asyncio
 import os
 import mimetypes
 import typing
-import aiofiles
 import logging
 from copy import deepcopy
 from pathlib import Path
@@ -44,12 +43,13 @@ MAX_RUNTIME_UI_FILE_BYTES = 4 * 1024 * 1024
 
 
 async def _read_runtime_ui_file_limited(path: str | Path) -> bytes:
-    if await asyncio.to_thread(os.path.getsize, path) > MAX_RUNTIME_UI_FILE_BYTES:
+    file_path = Path(path)
+    if file_path.stat().st_size > MAX_RUNTIME_UI_FILE_BYTES:
         raise ValueError(
             f"Plugin UI file exceeds the {MAX_RUNTIME_UI_FILE_BYTES}-byte limit"
         )
-    async with aiofiles.open(path, "rb") as file:
-        content = await file.read(MAX_RUNTIME_UI_FILE_BYTES + 1)
+    with file_path.open("rb") as file:
+        content = file.read(MAX_RUNTIME_UI_FILE_BYTES + 1)
     if len(content) > MAX_RUNTIME_UI_FILE_BYTES:
         raise ValueError(
             f"Plugin UI file exceeds the {MAX_RUNTIME_UI_FILE_BYTES}-byte limit"

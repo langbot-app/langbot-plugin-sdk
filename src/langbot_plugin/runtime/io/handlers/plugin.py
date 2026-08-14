@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator
-import hmac
 import logging
 
 from langbot_plugin.runtime.io import handler, connection
@@ -14,7 +13,7 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 import asyncio
-from langbot_plugin.runtime.settings import settings as runtime_settings
+
 from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
 from langbot_plugin.entities.io.context import (
     ActionContext,
@@ -50,6 +49,9 @@ class PluginConnectionHandler(handler.Handler):
 
     debug_plugin: bool = False
     """If this plugin is a debug plugin."""
+
+    debug_workspace_binding: ActionContext | None = None
+    debug_auth_token: str | None = None
 
     stdio_process: asyncio.subprocess.Process | None = None
     """The stdio process of the plugin."""
@@ -91,6 +93,7 @@ class PluginConnectionHandler(handler.Handler):
         self.context = context
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
+        self.debug_auth_token = None
         self.stdio_process = stdio_process
         runtime_binding = getattr(self.context, "workspace_binding", None)
         if runtime_binding is not None and (
@@ -192,9 +195,12 @@ class PluginConnectionHandler(handler.Handler):
                 # Get the debug key from plugin data
                 plugin_debug_key = data.get("plugin_debug_key", "")
 
-                if not plugin_debug_key or not hmac.compare_digest(
-                    str(plugin_debug_key),
-                    str(runtime_settings.plugin_debug_key),
+                debug_binding = self.context.workspace_debug_tokens.binding_for_token(
+                    str(plugin_debug_key)
+                )
+                if (
+                    debug_binding is None
+                    or debug_binding != self.debug_workspace_binding
                 ):
                     logger.warning(
                         "Plugin debug key verification failed. Expected key does not match."
@@ -202,6 +208,7 @@ class PluginConnectionHandler(handler.Handler):
                     return handler.ActionResponse.error(
                         "Plugin debug key verification failed"
                     )
+                self.bind_action_context(debug_binding)
 
             await self.context.plugin_mgr.register_plugin(
                 self,
@@ -484,11 +491,14 @@ class PluginConnectionHandler(handler.Handler):
                 data,
                 timeout=60,
             )
-            # LangBot sent the file via FILE_CHUNK; read from local temp
+            # LangBot sent the file to the control connection's transfer
+            # storage. Repackage it into this plugin connection's isolated
+            # transfer storage before returning the new key to the plugin.
             file_key = result.get("file_key", "")
             if file_key:
-                file_bytes = await self.read_local_file(file_key)
-                await self.delete_local_file(file_key)
+                control_handler = self.context.control_handler
+                file_bytes = await control_handler.read_local_file(file_key)
+                await control_handler.delete_local_file(file_key)
                 # Forward to plugin subprocess via chunked transfer
                 plugin_file_key = await self.send_file(file_bytes, "")
                 return handler.ActionResponse.success({"file_key": plugin_file_key})
@@ -923,7 +933,21 @@ class PluginConnectionHandler(handler.Handler):
     ) -> ActionEnvelopeContext | None:
         """Fence production worker actions to the consumed launch capability."""
 
-        if self.debug_plugin:
+        if self.debug_plugin and not (
+            action == PluginToRuntimeAction.REGISTER_PLUGIN.value
+            and not self.debug_auth_token
+        ):
+            if self.debug_auth_token:
+                current_binding = self.context.workspace_debug_tokens.binding_for_token(
+                    self.debug_auth_token
+                )
+                if current_binding is None:
+                    raise ValueError("Workspace debug credential expired")
+                if (
+                    self.debug_workspace_binding is None
+                    or not self.debug_workspace_binding.same_workspace(current_binding)
+                ):
+                    raise ValueError("Workspace debug credential was fenced")
             return super().validate_inbound_action_context(action, action_context)
 
         if action == PluginToRuntimeAction.REGISTER_PLUGIN.value:

@@ -15,6 +15,7 @@ from langbot_plugin.entities.io.context import (
     PluginWorkerPolicy,
     RuntimeIdentity,
 )
+from langbot_plugin.runtime.security import WorkspaceDebugTokenStore
 
 
 class RuntimeContext:
@@ -57,6 +58,7 @@ class RuntimeContext:
         self._workspace_binding_ready = asyncio.Event()
         self._installation_bindings: dict[str, InstallationBinding] = {}
         self._installation_watermarks: dict[str, InstallationBinding] = {}
+        self.workspace_debug_tokens = WorkspaceDebugTokenStore()
 
     def get_runtime_resource_stats(self) -> dict[str, Any]:
         """Return aggregate O(1) counters safe for public health probes."""
@@ -68,6 +70,17 @@ class RuntimeContext:
             getattr(plugin_manager, "handlers", ()),
         )
         event_loop_monitor = self.event_loop_monitor
+        installation_state_counts = {
+            "running": 0,
+            "starting": 0,
+            "failed": 0,
+            "disabled": 0,
+        }
+        for runtime in getattr(plugin_manager, "_installations", {}).values():
+            state = str(getattr(runtime, "state", "disabled"))
+            if state in installation_state_counts:
+                installation_state_counts[state] += 1
+
         return {
             "event_loop": (
                 event_loop_monitor.snapshot() if event_loop_monitor is not None else {}
@@ -82,6 +95,7 @@ class RuntimeContext:
                 getattr(plugin_manager, "_plugin_supervisors", ())
             ),
             "installation_runtimes": len(getattr(plugin_manager, "_installations", ())),
+            "installation_states": installation_state_counts,
             "pending_registrations": len(
                 getattr(plugin_manager, "_pending_registrations", ())
             ),
@@ -284,6 +298,49 @@ class RuntimeContext:
         del self._installation_bindings[binding.installation_uuid]
         self._installation_watermarks[binding.installation_uuid] = binding
         return binding
+
+    def reconcile_installation_watermarks(
+        self,
+        authoritative_bindings: tuple[InstallationBinding, ...],
+    ) -> None:
+        """Drop inactive historical fences absent from an authoritative replay."""
+
+        for binding in self.inactive_installation_watermark_snapshots(
+            authoritative_bindings
+        ):
+            self.drop_installation_watermark_if_current(binding)
+
+    def inactive_installation_watermark_snapshots(
+        self,
+        authoritative_bindings: tuple[InstallationBinding, ...],
+    ) -> tuple[InstallationBinding, ...]:
+        """Return inactive watermark values eligible for authoritative GC."""
+
+        authoritative_uuids = {
+            binding.installation_uuid for binding in authoritative_bindings
+        }
+        snapshots: list[InstallationBinding] = []
+        for installation_uuid, watermark in list(self._installation_watermarks.items()):
+            if installation_uuid in authoritative_uuids:
+                continue
+            if installation_uuid in self._installation_bindings:
+                continue
+            snapshots.append(watermark)
+        return tuple(snapshots)
+
+    def drop_installation_watermark_if_current(
+        self,
+        binding: InstallationBinding,
+    ) -> bool:
+        """Drop one inactive watermark only if it still matches ``binding``."""
+
+        current = self._installation_watermarks.get(binding.installation_uuid)
+        if current != binding:
+            return False
+        if binding.installation_uuid in self._installation_bindings:
+            return False
+        self._installation_watermarks.pop(binding.installation_uuid, None)
+        return True
 
     def is_current_installation_binding(
         self,

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import glob
+import hashlib
 import os
+import queue
 import secrets
 import shutil
+import threading
 import typing
 from typing import AsyncGenerator
 import asyncio
@@ -51,6 +54,7 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 from langbot_plugin.entities.io.context import (
+    ActionContext,
     InstallationBinding,
     PluginInstallationDesiredState,
     PluginWorkerPolicy,
@@ -102,6 +106,12 @@ class _PendingPluginRegistration:
     plugin_path: str
     binding: InstallationBinding | None
     expires_at: float
+
+
+@dataclass(slots=True)
+class _InstallationOperationEntry:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
 
 
 @dataclass(slots=True)
@@ -195,13 +205,16 @@ class PluginManager:
         self._installations: dict[InstallationBinding, PluginInstallationRuntime] = {}
         self._active_binding_by_uuid: dict[str, InstallationBinding] = {}
         self._binding_by_container_id: dict[int, InstallationBinding] = {}
-        # Capacity is instance-wide, so lifecycle operations for different
-        # installations must share one admission critical section.  Per-plugin
-        # locks cannot prevent concurrent tenants from all observing the same
-        # pre-admission worker count.
-        self._installation_operation_lock = asyncio.Lock()
+        # Desired-state lock order:
+        # 1. _reconcile_operation_lock, only for one authoritative replay.
+        # 2. installation-scoped operation locks for apply/remove/path/GC state.
+        # 3. _installation_lifecycle_limiter for dependency/worker mutations.
+        # Artifact publication is independent and uses digest-scoped locks only.
+        self._installation_operation_locks: dict[str, _InstallationOperationEntry] = {}
+        self._artifact_publication_locks: dict[str, _InstallationOperationEntry] = {}
+        self._reconcile_operation_lock = asyncio.Lock()
+        self._installation_lifecycle_limiter: asyncio.Semaphore | None = None
         self.artifact_store = PluginArtifactStore()
-        self._artifact_store_lock = asyncio.Lock()
         self.dependency_environment_store = PluginDependencyEnvironmentStore(
             self.artifact_store.base_path
         )
@@ -210,6 +223,26 @@ class PluginManager:
         initial_policy = getattr(context, "worker_policy", None)
         if isinstance(initial_policy, PluginWorkerPolicy):
             self.restart_coordinator.configure(initial_policy)
+            self._installation_lifecycle_limiter = asyncio.Semaphore(
+                initial_policy.max_concurrent_restarts
+            )
+
+    async def _complete_installation_transition(
+        self,
+        operation: typing.Coroutine[typing.Any, typing.Any, None],
+    ) -> None:
+        """Join one lifecycle mutation through repeated caller cancellation."""
+
+        task = asyncio.create_task(operation)
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        task.result()
+        if cancelled:
+            raise asyncio.CancelledError
 
     @property
     def installation_runtimes(
@@ -224,26 +257,159 @@ class PluginManager:
     ) -> None:
         self.worker_launcher.configure(policy, runtime_profile)
         self.restart_coordinator.configure(policy)
+        if self._installation_lifecycle_limiter is None:
+            self._installation_lifecycle_limiter = asyncio.Semaphore(
+                policy.max_concurrent_restarts
+            )
 
-    def _worker_capacity_would_be_exceeded(
+    @staticmethod
+    def _retain_keyed_operation_lock(
+        locks: dict[str, _InstallationOperationEntry],
+        key: str,
+    ) -> asyncio.Lock:
+        entry = locks.get(key)
+        if entry is None:
+            entry = _InstallationOperationEntry()
+            locks[key] = entry
+        entry.users += 1
+        return entry.lock
+
+    @staticmethod
+    def _forget_keyed_operation_lock(
+        locks: dict[str, _InstallationOperationEntry],
+        key: str,
+        lock: asyncio.Lock,
+    ) -> None:
+        entry = locks.get(key)
+        if entry is None or entry.lock is not lock:
+            return
+        entry.users -= 1
+        if entry.users == 0:
+            locks.pop(key, None)
+
+    def _retain_installation_operation_lock(
+        self,
+        installation_uuid: str,
+    ) -> asyncio.Lock:
+        return self._retain_keyed_operation_lock(
+            self._installation_operation_locks,
+            installation_uuid,
+        )
+
+    def _forget_installation_operation_lock(
+        self,
+        installation_uuid: str,
+        lock: asyncio.Lock,
+    ) -> None:
+        self._forget_keyed_operation_lock(
+            self._installation_operation_locks,
+            installation_uuid,
+            lock,
+        )
+
+    def _retain_artifact_publication_lock(
+        self,
+        artifact_digest: str,
+    ) -> asyncio.Lock:
+        return self._retain_keyed_operation_lock(
+            self._artifact_publication_locks,
+            artifact_digest,
+        )
+
+    def _forget_artifact_publication_lock(
+        self,
+        artifact_digest: str,
+        lock: asyncio.Lock,
+    ) -> None:
+        self._forget_keyed_operation_lock(
+            self._artifact_publication_locks,
+            artifact_digest,
+            lock,
+        )
+
+    def _installation_lifecycle_semaphore(self) -> asyncio.Semaphore:
+        if self._installation_lifecycle_limiter is None:
+            policy = getattr(self.context, "worker_policy", None)
+            limit = (
+                policy.max_concurrent_restarts
+                if isinstance(policy, PluginWorkerPolicy)
+                else 1
+            )
+            self._installation_lifecycle_limiter = asyncio.Semaphore(limit)
+        return self._installation_lifecycle_limiter
+
+    async def _resolve_installation_artifact_locked(
         self,
         binding: InstallationBinding,
-    ) -> bool:
-        policy = getattr(self.context, "worker_policy", None)
-        if policy is None:
-            raise ValueError("Plugin worker policy is unavailable")
-        current_binding = self._active_binding_by_uuid.get(binding.installation_uuid)
-        current_runtime = (
-            self._installations.get(current_binding)
-            if current_binding is not None
-            else None
+        artifact_package: bytes | None,
+    ) -> PluginArtifact | None:
+        """Resolve or publish code while holding only the digest publication lock."""
+
+        if artifact_package is None:
+            return await self._run_artifact_store_operation(
+                self.artifact_store.get_verified,
+                binding.artifact_digest,
+            )
+        actual_digest = hashlib.sha256(artifact_package).hexdigest()
+        if actual_digest != binding.artifact_digest:
+            raise ValueError(
+                "Plugin artifact digest mismatch: "
+                f"expected {binding.artifact_digest}, got {actual_digest}"
+            )
+
+        lock = self._retain_artifact_publication_lock(binding.artifact_digest)
+        try:
+            async with lock:
+                existing = await self._run_artifact_store_operation(
+                    self.artifact_store.get_verified,
+                    binding.artifact_digest,
+                )
+                if existing is not None:
+                    return existing
+                return await self._run_artifact_store_operation(
+                    self.artifact_store.install_package,
+                    artifact_package,
+                    binding.artifact_digest,
+                )
+        finally:
+            self._forget_artifact_publication_lock(binding.artifact_digest, lock)
+
+    @staticmethod
+    async def _run_artifact_store_operation(
+        operation: typing.Callable[..., typing.Any],
+        /,
+        *args: typing.Any,
+    ) -> typing.Any:
+        result_queue: queue.Queue[tuple[bool, typing.Any]] = queue.Queue(maxsize=1)
+
+        def runner() -> None:
+            try:
+                result_queue.put((True, operation(*args)))
+            except BaseException as exc:
+                result_queue.put((False, exc))
+
+        thread = threading.Thread(
+            target=runner,
+            name="langbot-artifact-store",
+            daemon=True,
         )
-        if current_runtime is not None and current_runtime.enabled:
-            return False
-        enabled_count = sum(
-            1 for runtime in self._installations.values() if runtime.enabled
-        )
-        return enabled_count >= policy.effective_worker_capacity
+        thread.start()
+        caller_cancelled = False
+        while True:
+            try:
+                ok, result = result_queue.get_nowait()
+                break
+            except queue.Empty:
+                try:
+                    await asyncio.sleep(0.001)
+                except asyncio.CancelledError:
+                    caller_cancelled = True
+        thread.join()
+        if not ok:
+            raise result
+        if caller_cancelled:
+            raise asyncio.CancelledError
+        return result
 
     @staticmethod
     def _installed_plugin_identity(plugin_path: str) -> tuple[str, str]:
@@ -303,9 +469,10 @@ class PluginManager:
 
         self._prune_expired_registration_capabilities()
         policy = getattr(self.context, "worker_policy", None)
-        pending_limit = max(
-            (policy.effective_worker_capacity * 2 if policy is not None else 0),
-            32,
+        pending_limit = (
+            policy.max_pending_registrations
+            if isinstance(policy, PluginWorkerPolicy)
+            else 1024
         )
         if len(self._pending_registrations) >= pending_limit:
             raise RuntimeError("Plugin registration capability capacity reached")
@@ -571,6 +738,9 @@ class PluginManager:
         if existing is not None and not existing.done():
             return existing
 
+        # Legacy OSS `data/plugins` supervisors still use the historical
+        # aggregate cap. Shared desired-state workers use launch admission and
+        # per-worker hard isolation instead.
         policy = getattr(self.context, "worker_policy", None)
         active_supervisors = sum(
             1 for task in self._plugin_supervisors.values() if not task.done()
@@ -746,61 +916,45 @@ class PluginManager:
     ) -> dict[str, typing.Any]:
         """Apply one desired installation and fence an older worker first."""
 
-        async with self._installation_operation_lock:
-            return await self._apply_plugin_installation_unlocked(
-                binding,
-                artifact_package=artifact_package,
-                enabled=enabled,
-            )
+        binding = InstallationBinding.model_validate(binding)
+        lock = self._retain_installation_operation_lock(binding.installation_uuid)
+        try:
+            async with lock:
+                return await self._apply_plugin_installation_locked(
+                    binding,
+                    artifact_package=artifact_package,
+                    enabled=enabled,
+                )
+        finally:
+            self._forget_installation_operation_lock(binding.installation_uuid, lock)
 
-    async def _apply_plugin_installation_unlocked(
+    async def _apply_plugin_installation_locked(
         self,
         binding: InstallationBinding,
         *,
         artifact_package: bytes | None = None,
         enabled: bool = True,
     ) -> dict[str, typing.Any]:
-        """Apply while the instance-wide installation admission lock is held."""
+        """Apply while the installation-specific operation lock is held."""
 
         binding = self.context.validate_installation_candidate(binding)
-        async with self._artifact_store_lock:
-            artifact = (
-                await asyncio.to_thread(
-                    self.artifact_store.install_package,
-                    artifact_package,
-                    binding.artifact_digest,
-                )
-                if artifact_package is not None
-                else await asyncio.to_thread(
-                    self.artifact_store.get_verified,
-                    binding.artifact_digest,
-                )
+        artifact = await self._resolve_installation_artifact_locked(
+            binding,
+            artifact_package,
+        )
+        paths = (
+            await self._run_artifact_store_operation(
+                self.artifact_store.ensure_installation_paths,
+                binding,
             )
-            paths = (
-                await asyncio.to_thread(
-                    self.artifact_store.ensure_installation_paths,
-                    binding,
-                )
-                if artifact is not None
-                else None
-            )
-
-        if enabled and self._worker_capacity_would_be_exceeded(binding):
-            policy = self.context.worker_policy
-            assert policy is not None
-            return {
-                "installation_uuid": binding.installation_uuid,
-                "state": "failed",
-                "error_code": "worker_capacity_exceeded",
-                "message": (
-                    "Plugin worker capacity reached "
-                    f"({policy.effective_worker_capacity})"
-                ),
-            }
+            if artifact is not None
+            else None
+        )
 
         previous = self.context.activate_installation_binding(binding)
         if previous is not None and previous != binding:
-            await self._revoke_installation_runtime(previous)
+            async with self._installation_lifecycle_semaphore():
+                await self._revoke_installation_runtime(previous)
         self._active_binding_by_uuid[binding.installation_uuid] = binding
 
         if artifact is None:
@@ -825,67 +979,71 @@ class PluginManager:
         if enabled:
             current.error_code = None
             current.error_message = None
-            if getattr(self.context, "runtime_profile", "oss_dev") == "shared":
-                current.dependency_environment = None
-                if (
-                    self.dependency_environment_store.base_path
-                    != self.artifact_store.base_path
-                ):
-                    # Tests and embedders may replace the artifact store after
-                    # construction; dependency state must follow that same
-                    # Runtime-owned volume.
-                    self.dependency_environment_store = (
-                        PluginDependencyEnvironmentStore(self.artifact_store.base_path)
-                    )
-                try:
-                    current.dependency_environment = (
-                        await self.worker_launcher.prepare_dependency_environment(
-                            self.dependency_environment_store,
-                            artifact,
+            async with self._installation_lifecycle_semaphore():
+                if getattr(self.context, "runtime_profile", "oss_dev") == "shared":
+                    current.dependency_environment = None
+                    if (
+                        self.dependency_environment_store.base_path
+                        != self.artifact_store.base_path
+                    ):
+                        # Tests and embedders may replace the artifact store after
+                        # construction; dependency state must follow that same
+                        # Runtime-owned volume.
+                        self.dependency_environment_store = (
+                            PluginDependencyEnvironmentStore(
+                                self.artifact_store.base_path
+                            )
                         )
-                    )
-                except DependencyEnvironmentPreparationError as exc:
-                    await self._stop_installation_worker(current)
-                    current.state = "failed"
-                    current.error_code = "dependency_prepare_failed"
-                    current.error_message = str(exc)
-                    logger.error(
-                        "Plugin dependency preparation failed for installation %s: %s",
-                        binding.installation_uuid,
-                        exc,
-                    )
-                    return self._installation_state_result(current)
-                except Exception:
-                    await self._stop_installation_worker(current)
-                    current.state = "failed"
-                    current.error_code = "dependency_prepare_failed"
-                    current.error_message = (
-                        "Plugin dependency environment preparation failed"
-                    )
-                    logger.exception(
-                        "Unexpected plugin dependency preparation failure for %s",
-                        binding.installation_uuid,
-                    )
-                    return self._installation_state_result(current)
+                    try:
+                        current.dependency_environment = (
+                            await self.worker_launcher.prepare_dependency_environment(
+                                self.dependency_environment_store,
+                                artifact,
+                            )
+                        )
+                    except DependencyEnvironmentPreparationError as exc:
+                        await self._stop_installation_worker(current)
+                        current.state = "failed"
+                        current.error_code = "dependency_prepare_failed"
+                        current.error_message = str(exc)
+                        logger.error(
+                            "Plugin dependency preparation failed for "
+                            "installation %s: %s",
+                            binding.installation_uuid,
+                            exc,
+                        )
+                        return self._installation_state_result(current)
+                    except Exception:
+                        await self._stop_installation_worker(current)
+                        current.state = "failed"
+                        current.error_code = "dependency_prepare_failed"
+                        current.error_message = (
+                            "Plugin dependency environment preparation failed"
+                        )
+                        logger.exception(
+                            "Unexpected plugin dependency preparation failure for %s",
+                            binding.installation_uuid,
+                        )
+                        return self._installation_state_result(current)
 
-                # A concurrent newer apply/remove can fence this binding while
-                # its shared environment is being prepared. Never launch it.
-                if self._installations.get(
-                    binding
-                ) is not current or not self.context.is_current_installation_binding(
-                    binding
-                ):
-                    return {
-                        "installation_uuid": binding.installation_uuid,
-                        "state": "superseded",
-                    }
-            current.state = "starting"
-            self._schedule_installation_worker(current)
+                    # A concurrent newer apply/remove can fence this binding while
+                    # its shared environment is being prepared. Never launch it.
+                    if (
+                        self._installations.get(binding) is not current
+                        or not self.context.is_current_installation_binding(binding)
+                    ):
+                        return {
+                            "installation_uuid": binding.installation_uuid,
+                            "state": "superseded",
+                        }
+                current.state = "starting"
+                self._schedule_installation_worker(current)
         else:
             current.state = "disabled"
             current.error_code = None
             current.error_message = None
-            await self._stop_installation_worker(current)
+            async with self._installation_lifecycle_semaphore():
+                await self._stop_installation_worker(current)
         return self._installation_state_result(current)
 
     @staticmethod
@@ -913,16 +1071,32 @@ class PluginManager:
     ) -> dict[str, typing.Any]:
         """Remove exactly the active desired binding and revoke its worker."""
 
-        async with self._installation_operation_lock:
-            return await self._remove_plugin_installation_unlocked(binding)
+        binding = InstallationBinding.model_validate(binding)
+        lock = self._retain_installation_operation_lock(binding.installation_uuid)
+        try:
+            async with lock:
+                return await self._remove_plugin_installation_locked(binding)
+        finally:
+            self._forget_installation_operation_lock(binding.installation_uuid, lock)
 
-    async def _remove_plugin_installation_unlocked(
+    async def _remove_plugin_installation_locked(
         self,
         binding: InstallationBinding,
     ) -> dict[str, typing.Any]:
-        binding = self.context.deactivate_installation_binding(binding)
-        await self._revoke_installation_runtime(binding)
-        self._active_binding_by_uuid.pop(binding.installation_uuid, None)
+        async def remove() -> None:
+            removed_binding = self.context.deactivate_installation_binding(binding)
+            async with self._installation_lifecycle_semaphore():
+                await self._revoke_installation_runtime(removed_binding)
+            if (
+                self._active_binding_by_uuid.get(removed_binding.installation_uuid)
+                == removed_binding
+            ):
+                self._active_binding_by_uuid.pop(
+                    removed_binding.installation_uuid,
+                    None,
+                )
+
+        await self._complete_installation_transition(remove())
         return {
             "installation_uuid": binding.installation_uuid,
             "state": "removed",
@@ -934,14 +1108,14 @@ class PluginManager:
     ) -> dict[str, typing.Any]:
         """Replay the authoritative instance desired state after reconnect."""
 
-        async with self._installation_operation_lock:
-            return await self._reconcile_plugin_installations_unlocked(desired_states)
+        async with self._reconcile_operation_lock:
+            return await self._reconcile_plugin_installations_locked(desired_states)
 
-    async def _reconcile_plugin_installations_unlocked(
+    async def _reconcile_plugin_installations_locked(
         self,
         desired_states: tuple[PluginInstallationDesiredState, ...],
     ) -> dict[str, typing.Any]:
-        """Reconcile while the instance-wide installation lock is held."""
+        """Reconcile one authoritative desired-state replay."""
 
         policy = self.context.worker_policy
         if policy is None:
@@ -965,20 +1139,72 @@ class PluginManager:
         ):
             desired = desired_by_uuid.get(installation_uuid)
             if desired is None or desired.binding != current_binding:
-                if self.context.is_current_installation_binding(current_binding):
-                    self.context.deactivate_installation_binding(current_binding)
-                await self._revoke_installation_runtime(current_binding)
-                self._active_binding_by_uuid.pop(installation_uuid, None)
-                removed.append(installation_uuid)
+                lock = self._retain_installation_operation_lock(installation_uuid)
+                try:
+                    async with lock:
+
+                        async def remove_current() -> None:
+                            if self.context.is_current_installation_binding(
+                                current_binding
+                            ):
+                                self.context.deactivate_installation_binding(
+                                    current_binding
+                                )
+                            async with self._installation_lifecycle_semaphore():
+                                await self._revoke_installation_runtime(current_binding)
+                            if (
+                                self._active_binding_by_uuid.get(installation_uuid)
+                                == current_binding
+                            ):
+                                self._active_binding_by_uuid.pop(
+                                    installation_uuid,
+                                    None,
+                                )
+
+                        await self._complete_installation_transition(remove_current())
+                        removed.append(installation_uuid)
+                finally:
+                    self._forget_installation_operation_lock(
+                        installation_uuid,
+                        lock,
+                    )
 
         applied: list[str] = []
         missing_artifacts: list[str] = []
         failed_installations: list[dict[str, str]] = []
-        for desired in desired_states:
-            result = await self._apply_plugin_installation_unlocked(
-                desired.binding,
-                enabled=desired.enabled,
+
+        async def apply_desired(
+            desired: PluginInstallationDesiredState,
+        ) -> dict[str, typing.Any]:
+            lock = self._retain_installation_operation_lock(
+                desired.binding.installation_uuid
             )
+            try:
+                async with lock:
+                    return await self._apply_plugin_installation_locked(
+                        desired.binding,
+                        enabled=desired.enabled,
+                    )
+            finally:
+                self._forget_installation_operation_lock(
+                    desired.binding.installation_uuid,
+                    lock,
+                )
+
+        results: list[dict[str, typing.Any]] = []
+        lifecycle_limit = policy.max_concurrent_restarts
+        for offset in range(0, len(desired_states), lifecycle_limit):
+            batch = desired_states[offset : offset + lifecycle_limit]
+            tasks = [asyncio.create_task(apply_desired(item)) for item in batch]
+            try:
+                results.extend(await asyncio.gather(*tasks))
+            except BaseException:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+        for desired, result in zip(desired_states, results, strict=True):
             applied.append(desired.binding.installation_uuid)
             if result["state"] == "artifact_missing":
                 missing_artifacts.append(desired.binding.installation_uuid)
@@ -991,12 +1217,41 @@ class PluginManager:
                     }
                 )
 
+        await self._reconcile_installation_watermarks_locked(
+            tuple(desired.binding for desired in desired_states)
+        )
+
         return {
             "applied": applied,
             "removed": removed,
             "missing_artifacts": missing_artifacts,
             "failed_installations": failed_installations,
         }
+
+    async def _reconcile_installation_watermarks_locked(
+        self,
+        authoritative_bindings: tuple[InstallationBinding, ...],
+    ) -> None:
+        """GC inactive watermarks behind per-installation locks.
+
+        The conditional context deletion protects against a stale reconcile
+        snapshot deleting a newer direct apply/remove state for the same
+        installation UUID.
+        """
+
+        snapshots = self.context.inactive_installation_watermark_snapshots(
+            authoritative_bindings
+        )
+        for watermark in snapshots:
+            lock = self._retain_installation_operation_lock(watermark.installation_uuid)
+            try:
+                async with lock:
+                    self.context.drop_installation_watermark_if_current(watermark)
+            finally:
+                self._forget_installation_operation_lock(
+                    watermark.installation_uuid,
+                    lock,
+                )
 
     def _schedule_installation_worker(
         self,
@@ -1049,10 +1304,10 @@ class PluginManager:
             and self.context.is_current_installation_binding(binding)
         ):
             permit: RestartPermit | None = None
-            if attempt_number > 0:
-                permit = await self.restart_coordinator.acquire()
+            permit = await self.restart_coordinator.acquire(binding.installation_uuid)
             started_at = asyncio.get_running_loop().time()
             try:
+                runtime.state = "starting"
                 await self._run_installation_worker_attempt(runtime, permit)
             except asyncio.CancelledError:
                 if permit is not None:
@@ -1074,10 +1329,7 @@ class PluginManager:
                     await permit.abandon()
                 return
 
-            if permit is None:
-                await self.restart_coordinator.record_unadmitted_failure()
-            else:
-                await permit.record_failure()
+            await permit.record_failure()
             uptime = asyncio.get_running_loop().time() - started_at
             if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
                 delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
@@ -1111,29 +1363,64 @@ class PluginManager:
                 timeout=_PLUGIN_READY_TIMEOUT_SEC,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if worker_task in done:
-                await worker_task
-                return
-            if ready_task not in done:
-                raise TimeoutError(
-                    "Plugin installation worker did not become ready within "
-                    f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+            if ready_task in done:
+                if permit is not None:
+                    permit.mark_ready()
+                runtime.state = "running"
+                runtime.error_code = None
+                runtime.error_message = None
+                if permit is None or not permit.is_half_open_probe:
+                    try:
+                        await worker_task
+                    except Exception as exc:
+                        self._record_installation_launch_failure(runtime, exc)
+                        raise
+                    if runtime.enabled:
+                        self._record_installation_launch_failure(
+                            runtime,
+                            RuntimeError("Plugin installation worker exited"),
+                        )
+                    return
+
+                stable_task = asyncio.create_task(
+                    asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC)
                 )
-
-            if permit is not None:
-                permit.mark_ready()
-            if permit is None or not permit.is_half_open_probe:
-                await worker_task
+                done, _ = await asyncio.wait(
+                    {worker_task, stable_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stable_task in done:
+                    await permit.mark_stable()
+                try:
+                    await worker_task
+                except Exception as exc:
+                    self._record_installation_launch_failure(runtime, exc)
+                    raise
+                if runtime.enabled:
+                    self._record_installation_launch_failure(
+                        runtime,
+                        RuntimeError("Plugin installation worker exited"),
+                    )
                 return
 
-            stable_task = asyncio.create_task(asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC))
-            done, _ = await asyncio.wait(
-                {worker_task, stable_task},
-                return_when=asyncio.FIRST_COMPLETED,
+            if worker_task in done:
+                try:
+                    await worker_task
+                except Exception as exc:
+                    self._record_installation_launch_failure(runtime, exc)
+                    raise
+                self._record_installation_launch_failure(
+                    runtime,
+                    RuntimeError("Plugin installation worker exited before ready"),
+                )
+                return
+
+            timeout_error = TimeoutError(
+                "Plugin installation worker did not become ready within "
+                f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
             )
-            if stable_task in done:
-                await permit.mark_stable()
-            await worker_task
+            self._record_installation_launch_failure(runtime, timeout_error)
+            raise timeout_error
         finally:
             for task in (ready_task, stable_task):
                 if task is not None and not task.done():
@@ -1145,6 +1432,15 @@ class PluginManager:
             if not worker_task.done():
                 worker_task.cancel()
                 await asyncio.gather(worker_task, return_exceptions=True)
+
+    @staticmethod
+    def _record_installation_launch_failure(
+        runtime: PluginInstallationRuntime,
+        exc: BaseException,
+    ) -> None:
+        runtime.state = "failed"
+        runtime.error_code = "worker_launch_failed"
+        runtime.error_message = str(exc) or type(exc).__name__
 
     async def launch_plugin_installation(
         self,
@@ -1211,10 +1507,12 @@ class PluginManager:
         binding: InstallationBinding,
     ) -> None:
         self._revoke_registration_capabilities_for_binding(binding)
-        runtime = self._installations.pop(binding, None)
+        runtime = self._installations.get(binding)
         if runtime is None:
             return
         await self._stop_installation_worker(runtime)
+        if self._installations.get(binding) is runtime:
+            self._installations.pop(binding, None)
 
     async def _stop_installation_worker(
         self,
@@ -1228,20 +1526,29 @@ class PluginManager:
             except Exception as exc:
                 logger.warning("Failed to notify revoked plugin worker: %s", exc)
             close = getattr(handler, "close", None)
-            if close is not None:
-                await close()
-            else:
-                await handler.conn.close()
-            if handler in self.plugin_handlers:
-                self.plugin_handlers.remove(handler)
+            try:
+                if close is not None:
+                    await close()
+                else:
+                    await handler.conn.close()
+            except Exception as exc:
+                logger.warning("Failed to close revoked plugin worker: %s", exc)
+            finally:
+                if handler in self.plugin_handlers:
+                    self.plugin_handlers.remove(handler)
+                runtime.plugin_handler = None
             process = handler.stdio_process
             if process is not None and process.returncode is None:
-                stopped = await stdio_client_controller.stop_process(process)
-                if not stopped:
-                    logger.error(
-                        "Plugin worker process did not exit after SIGKILL: %s",
-                        runtime.binding.installation_uuid,
-                    )
+                try:
+                    stopped = await stdio_client_controller.stop_process(process)
+                except Exception as exc:
+                    logger.error("Failed to stop revoked plugin worker: %s", exc)
+                else:
+                    if not stopped:
+                        logger.error(
+                            "Plugin worker process did not exit after SIGKILL: %s",
+                            runtime.binding.installation_uuid,
+                        )
         runtime.plugin_handler = None
         if runtime.plugin_container is not None:
             self._binding_by_container_id.pop(id(runtime.plugin_container), None)
@@ -1323,50 +1630,18 @@ class PluginManager:
                 shutil.rmtree(pending_path, ignore_errors=True)
                 raise
 
-        extract_task = asyncio.create_task(asyncio.to_thread(extract_verified))
-        try:
-            (
-                pending_path,
-                plugin_author,
-                plugin_name,
-                plugin_version,
-            ) = await asyncio.shield(extract_task)
-        except asyncio.CancelledError:
-            (
-                pending_path,
-                _plugin_author,
-                _plugin_name,
-                _plugin_version,
-            ) = await extract_task
-            await bounded_executor.run_blocking_cleanup(
-                shutil.rmtree,
-                pending_path,
-                True,
-            )
-            raise
+        pending_path, plugin_author, plugin_name, plugin_version = extract_verified()
         staging_path: pathlib.Path | None = None
         try:
             self._validate_install_target(plugin_author, plugin_name, plugin_version)
             staging_path = staging_root / (
                 f"{plugin_author}__{plugin_name}-{uuid.uuid4().hex}"
             )
-            await bounded_executor.run_blocking_atomic(
-                os.replace,
-                pending_path,
-                staging_path,
-            )
+            os.replace(pending_path, staging_path)
         except BaseException:
-            await bounded_executor.run_blocking_cleanup(
-                shutil.rmtree,
-                pending_path,
-                True,
-            )
+            shutil.rmtree(pending_path, ignore_errors=True)
             if staging_path is not None:
-                await bounded_executor.run_blocking_cleanup(
-                    shutil.rmtree,
-                    staging_path,
-                    True,
-                )
+                shutil.rmtree(staging_path, ignore_errors=True)
             raise
         return str(staging_path), plugin_author, plugin_name, plugin_version
 
@@ -1452,27 +1727,10 @@ class PluginManager:
                 raise
             return backup_path
 
-        operation_task = asyncio.create_task(asyncio.to_thread(activate_files))
         try:
-            return await asyncio.shield(operation_task)
-        except asyncio.CancelledError:
-            backup_path = await operation_task
-            await bounded_executor.run_blocking_cleanup(
-                shutil.rmtree,
-                target_path,
-                True,
-            )
-            if backup_path is not None:
-                await bounded_executor.run_blocking_atomic(
-                    os.replace,
-                    backup_path,
-                    target_path,
-                )
-                if not self._shutting_down:
-                    self.start_plugin_supervisor(target_path)
-            raise
+            return activate_files()
         except Exception:
-            target_exists = await asyncio.to_thread(os.path.isdir, target_path)
+            target_exists = os.path.isdir(target_path)
             if target_exists and not self._shutting_down:
                 self.start_plugin_supervisor(target_path)
             raise
@@ -1511,10 +1769,7 @@ class PluginManager:
             target_path,
             True,
         )
-        restore_backup = backup_path is not None and await asyncio.to_thread(
-            os.path.isdir,
-            backup_path,
-        )
+        restore_backup = backup_path is not None and os.path.isdir(backup_path)
         if restore_backup:
             await bounded_executor.run_blocking_atomic(
                 os.replace,
@@ -1587,11 +1842,8 @@ class PluginManager:
             logger.info("installing isolated plugin dependencies")
             yield {"current_action": "installing dependencies"}
             requirements_file = os.path.join(plugin_path, "requirements.txt")
-            if await asyncio.to_thread(os.path.exists, requirements_file):
-                deps = await asyncio.to_thread(
-                    pkgmgr_helper.parse_requirements,
-                    requirements_file,
-                )
+            if os.path.exists(requirements_file):
+                deps = pkgmgr_helper.parse_requirements(requirements_file)
                 python_path = await pkgmgr_helper.ensure_plugin_environment(plugin_path)
                 total_downloaded = 0
                 started_at = time.time()
@@ -1728,6 +1980,7 @@ class PluginManager:
 
         installation_binding: InstallationBinding | None = None
         installation_runtime: PluginInstallationRuntime | None = None
+        runtime_binding: ActionContext | None = None
         if debug_plugin:
             if registration_capability:
                 raise ValueError(
@@ -1771,8 +2024,9 @@ class PluginManager:
 
             # if it's a debug plugin, we need to initialize the plugin settings first
             if debug_plugin:
-                # Debug plugins preserve the OSS single-Workspace flow.
-                runtime_binding = await self.context.wait_for_workspace_binding()
+                runtime_binding = handler.bound_action_context
+                if not isinstance(runtime_binding, ActionContext):
+                    raise ValueError("Debug plugin is not bound to a Workspace")
                 await self.context.control_handler.call_action(
                     RuntimeToLangBotAction.INITIALIZE_PLUGIN_SETTINGS,
                     {
@@ -1781,23 +2035,25 @@ class PluginManager:
                         "install_source": PluginInstallSource.DEBUG.value,
                         "install_info": {},
                     },
+                    action_context=runtime_binding,
                 )
             elif installation_binding is None:
                 # Temporary OSS compatibility for legacy data/plugins launches.
                 runtime_binding = await self.context.wait_for_workspace_binding()
 
             # get plugin settings from LangBot
+            settings_kwargs: dict[str, typing.Any] = {}
+            if installation_binding is not None or debug_plugin:
+                settings_kwargs["action_context"] = (
+                    installation_binding or runtime_binding
+                )
             plugin_settings = await self.context.control_handler.call_action(
                 RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
                 {
                     "plugin_author": plugin_author,
                     "plugin_name": plugin_name,
                 },
-                **(
-                    {"action_context": installation_binding}
-                    if installation_binding is not None
-                    else {}
-                ),
+                **settings_kwargs,
             )
         except Exception as e:
             raise ValueError(
@@ -1820,6 +2076,8 @@ class PluginManager:
                 raise ValueError(
                     "LangBot did not provide a trusted plugin installation capability"
                 )
+            if runtime_binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             handler.bind_action_context(
                 runtime_binding.for_installation(installation_uuid.strip())
             )

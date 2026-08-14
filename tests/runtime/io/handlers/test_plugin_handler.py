@@ -131,26 +131,56 @@ def _installation_binding(runtime_revision=1):
 
 
 def _handler(debug_plugin=False, action_context=None):
+    valid_tokens = {"key"}
     control_handler = FakeControlHandler()
     manager = FakePluginManager()
     context = SimpleNamespace(
         control_handler=control_handler,
         plugin_mgr=manager,
         workspace_binding=action_context,
+        workspace_debug_tokens=SimpleNamespace(
+            binding_for_token=lambda token: action_context
+            if token in valid_tokens
+            else None
+        ),
     )
     handler = PluginConnectionHandler(
         ProtocolConnection(),
         context,
         debug_plugin=debug_plugin,
     )
+    handler.debug_workspace_binding = action_context
+    handler.debug_auth_token = (
+        "key" if debug_plugin and action_context is not None else None
+    )
     return handler, manager, control_handler
 
 
-async def test_plugin_handler_registers_plugin_when_debug_key_matches(monkeypatch):
-    handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(
-        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
+async def test_debug_handler_rejects_actions_after_credential_expiry():
+    binding = ActionContext(
+        instance_uuid="i", workspace_uuid="w", placement_generation=1
     )
+    handler, _manager, _control = _handler(debug_plugin=True, action_context=binding)
+    handler.bind_action_context(binding)
+    handler.context.workspace_debug_tokens.binding_for_token = (
+        lambda supplied_token: None
+    )
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.GET_BOTS.value,
+            {},
+        )
+
+    assert response["code"] != 0
+    assert "expired" in response["message"].lower()
+
+
+async def test_plugin_handler_registers_plugin_when_debug_key_matches():
+    binding = ActionContext(
+        instance_uuid="i", workspace_uuid="w", placement_generation=1
+    )
+    handler, manager, _control = _handler(debug_plugin=True, action_context=binding)
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -190,11 +220,11 @@ def test_shared_plugin_handler_rejects_unregistered_and_revoked_worker_actions()
         )
 
 
-async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch):
-    handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(
-        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
+async def test_plugin_handler_rejects_plugin_with_invalid_debug_key():
+    binding = ActionContext(
+        instance_uuid="i", workspace_uuid="w", placement_generation=1
     )
+    handler, manager, _control = _handler(debug_plugin=True, action_context=binding)
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -207,9 +237,8 @@ async def test_plugin_handler_rejects_plugin_with_invalid_debug_key(monkeypatch)
     assert manager.calls == []
 
 
-async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch):
+async def test_plugin_handler_prod_registration_disables_debug_mode():
     handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(plugin_handler_module.runtime_settings, "plugin_debug_key", "")
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -234,13 +263,8 @@ async def test_plugin_handler_prod_registration_disables_debug_mode(monkeypatch)
     ]
 
 
-async def test_plugin_handler_rejects_prod_registration_without_capability(
-    monkeypatch,
-):
+async def test_plugin_handler_rejects_prod_registration_without_capability():
     handler, manager, _control = _handler(debug_plugin=True)
-    monkeypatch.setattr(
-        plugin_handler_module.runtime_settings, "plugin_debug_key", "key"
-    )
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -709,19 +733,25 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
         "file_key": "host-file"
     }
 
-    async def fake_read_local_file(file_key):
-        file_ops.append(("read", file_key))
+    async def fake_read_control_file(file_key):
+        file_ops.append(("control-read", file_key))
         return b"file-bytes"
 
-    async def fake_delete_local_file(file_key):
-        file_ops.append(("delete", file_key))
+    async def fake_delete_control_file(file_key):
+        file_ops.append(("control-delete", file_key))
+
+    async def reject_plugin_storage_read(file_key):
+        raise AssertionError(
+            f"host file must not be read from plugin storage: {file_key}"
+        )
 
     async def fake_send_file(file_bytes, extension):
         file_ops.append(("send", file_bytes, extension))
         return "plugin-file"
 
-    monkeypatch.setattr(handler, "read_local_file", fake_read_local_file)
-    monkeypatch.setattr(handler, "delete_local_file", fake_delete_local_file)
+    control.read_local_file = fake_read_control_file
+    control.delete_local_file = fake_delete_control_file
+    monkeypatch.setattr(handler, "read_local_file", reject_plugin_storage_read)
     monkeypatch.setattr(handler, "send_file", fake_send_file)
 
     async with ProtocolSession(handler) as session:
@@ -731,8 +761,8 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
         )
 
     assert file_ops == [
-        ("read", "host-file"),
-        ("delete", "host-file"),
+        ("control-read", "host-file"),
+        ("control-delete", "host-file"),
         ("send", b"file-bytes", ""),
     ]
     assert response["data"] == {"file_key": "plugin-file"}

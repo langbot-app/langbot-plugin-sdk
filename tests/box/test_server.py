@@ -1257,6 +1257,19 @@ def test_create_ws_relay_app_is_alias(mock_runtime):
     assert app["runtime"] is mock_runtime
 
 
+def test_create_app_allows_unconfigured_control_token(monkeypatch, mock_runtime):
+    monkeypatch.delenv(server.BOX_CONTROL_TOKEN_ENV, raising=False)
+
+    app = create_app(mock_runtime)
+
+    assert app["_box_control_token"] == ""
+
+
+def test_create_app_rejects_invalid_configured_control_token(mock_runtime):
+    with pytest.raises(ValueError, match=server.BOX_CONTROL_TOKEN_ENV):
+        create_app(mock_runtime, control_token="too-short")
+
+
 async def test_run_server_cleans_runtime_when_app_setup_fails(monkeypatch):
     calls = []
 
@@ -1517,6 +1530,38 @@ async def test_handle_rpc_ws_rejects_missing_or_wrong_token_before_upgrade(
     websocket_response.assert_not_called()
 
 
+@pytest.mark.parametrize("supplied_token", ["", _CONTROL_TOKEN])
+async def test_handle_rpc_ws_allows_optional_token_when_runtime_is_unconfigured(
+    mock_runtime, supplied_token
+):
+    fake_ws = mock.MagicMock()
+    fake_ws.prepare = mock.AsyncMock()
+    request = mock.MagicMock()
+    request.app = {
+        "runtime": mock_runtime,
+        "_box_control_token": "",
+        "_box_trusted_instance_uuid": {"value": None},
+        "_box_generation_fence": BoxGenerationFence(),
+    }
+    request.headers = {BOX_INSTANCE_HEADER: _ACTION_CONTEXT.instance_uuid}
+    if supplied_token:
+        request.headers[BOX_CONTROL_TOKEN_HEADER] = supplied_token
+
+    run_mock = mock.AsyncMock()
+    with (
+        mock.patch.object(server.web, "WebSocketResponse", return_value=fake_ws),
+        mock.patch.object(BoxServerHandler, "run", run_mock),
+    ):
+        result = await handle_rpc_ws(request)
+
+    assert result is fake_ws
+    assert (
+        request.app["_box_trusted_instance_uuid"]["value"]
+        == _ACTION_CONTEXT.instance_uuid
+    )
+    run_mock.assert_awaited_once()
+
+
 async def test_handle_rpc_ws_pins_instance_and_rejects_rebind(mock_runtime):
     app = {
         "runtime": mock_runtime,
@@ -1556,6 +1601,7 @@ def _ws_request(
     process_id=None,
     *,
     token=_CONTROL_TOKEN,
+    expected_token=_CONTROL_TOKEN,
     instance_uuid=_ACTION_CONTEXT.instance_uuid,
     bound_instance_uuid=_ACTION_CONTEXT.instance_uuid,
     action_context=_ACTION_CONTEXT,
@@ -1570,16 +1616,17 @@ def _ws_request(
     request = mock.MagicMock()
     request.app = {
         "runtime": runtime,
-        "_box_control_token": _CONTROL_TOKEN,
+        "_box_control_token": expected_token,
         "_box_trusted_instance_uuid": {"value": bound_instance_uuid},
         "_box_generation_fence": generation_fence,
     }
     request.headers = {
-        BOX_CONTROL_TOKEN_HEADER: token,
         BOX_INSTANCE_HEADER: instance_uuid,
         BOX_WORKSPACE_HEADER: action_context.workspace_uuid,
         BOX_PLACEMENT_GENERATION_HEADER: str(action_context.placement_generation),
     }
+    if token:
+        request.headers[BOX_CONTROL_TOKEN_HEADER] = token
     match_info = {"session_id": session_id}
     if process_id is not None:
         match_info["process_id"] = process_id
@@ -1651,6 +1698,21 @@ async def test_managed_process_ws_session_not_found(mock_runtime):
     request = _ws_request(mock_runtime, session_id="missing")
     resp = await handle_managed_process_ws(request)
     assert isinstance(resp, web.Response)
+    assert resp.status == 400
+    assert "BoxSessionNotFoundError" in resp.text
+
+
+async def test_managed_process_ws_allows_tokenless_unconfigured_runtime(mock_runtime):
+    mock_runtime._sessions = {}
+    request = _ws_request(
+        mock_runtime,
+        session_id="missing",
+        token="",
+        expected_token="",
+    )
+
+    resp = await handle_managed_process_ws(request)
+
     assert resp.status == 400
     assert "BoxSessionNotFoundError" in resp.text
 
