@@ -128,7 +128,9 @@ class Handler(abc.ABC):
         if file_storage_dir is None:
             runtime_profile = os.environ.get(PLUGIN_RUNTIME_PROFILE_ENV, "oss_dev")
             file_storage_dir = os.environ.get(PLUGIN_FILE_STORAGE_DIR_ENV) or (
-                SHARED_WORKER_FILE_STORAGE_DIR if runtime_profile == "shared" else FILE_STORAGE_DIR
+                SHARED_WORKER_FILE_STORAGE_DIR
+                if runtime_profile == "shared"
+                else FILE_STORAGE_DIR
             )
         self.file_storage_dir = os.fspath(file_storage_dir)
         if max_file_bytes is not None and (
