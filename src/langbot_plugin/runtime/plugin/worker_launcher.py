@@ -28,6 +28,7 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
 from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 from langbot_plugin.runtime import bounded_executor
 from langbot_plugin.runtime.security import (
+    PLUGIN_FILE_STORAGE_DIR_ENV,
     PLUGIN_REGISTRATION_CAPABILITY_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
@@ -140,6 +141,9 @@ class PluginWorkerLauncher:
                 "--prod",
             ],
             env={
+                PLUGIN_FILE_STORAGE_DIR_ENV: str(
+                    launch_spec.paths.root_path / "rpc-transfer"
+                ),
                 PLUGIN_REGISTRATION_CAPABILITY_ENV: (
                     launch_spec.registration_capability
                 ),
