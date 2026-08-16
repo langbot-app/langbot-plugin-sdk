@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from langbot_plugin.entities.io.context import InstallationBinding, PluginWorkerPolicy
+from langbot_plugin.runtime import bounded_executor
+from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
@@ -25,15 +27,12 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
     PluginDependencyEnvironment,
     PluginDependencyEnvironmentStore,
 )
-from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
-from langbot_plugin.runtime import bounded_executor
 from langbot_plugin.runtime.security import (
     PLUGIN_FILE_STORAGE_DIR_ENV,
     PLUGIN_REGISTRATION_CAPABILITY_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
 from langbot_plugin.utils.platform import get_platform
-
 
 _READONLY_SYSTEM_MOUNTS = (
     "/bin",
@@ -142,7 +141,7 @@ class PluginWorkerLauncher:
             ],
             env={
                 PLUGIN_FILE_STORAGE_DIR_ENV: str(
-                    launch_spec.paths.root_path / "rpc-transfer"
+                    (launch_spec.paths.root_path / "rpc-transfer").resolve()
                 ),
                 PLUGIN_REGISTRATION_CAPABILITY_ENV: (
                     launch_spec.registration_capability
