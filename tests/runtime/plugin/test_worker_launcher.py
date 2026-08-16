@@ -22,6 +22,7 @@ from langbot_plugin.runtime.plugin.worker_launcher import (
     PluginWorkerLauncher,
 )
 from langbot_plugin.runtime.security import (
+    PLUGIN_FILE_STORAGE_DIR_ENV,
     PLUGIN_REGISTRATION_CAPABILITY_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
@@ -327,6 +328,7 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
     assert oss_controller.command == sys.executable
     assert oss_controller.working_dir == str(launch_spec.artifact.code_path)
     assert oss_controller.env == {
+        PLUGIN_FILE_STORAGE_DIR_ENV: str(launch_spec.paths.root_path / "rpc-transfer"),
         PLUGIN_REGISTRATION_CAPABILITY_ENV: "capability-value",
         PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
     }

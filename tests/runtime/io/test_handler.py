@@ -511,6 +511,21 @@ def test_handler_file_storage_dir_is_created_for_instances(tmp_path, monkeypatch
     assert (tmp_path / "data" / "temp" / "lbp").is_dir()
 
 
+def test_managed_worker_file_storage_uses_launcher_directory(tmp_path, monkeypatch):
+    artifact = tmp_path / "artifact" / "code"
+    artifact.mkdir(parents=True)
+    artifact.chmod(0o555)
+    rpc_transfer = tmp_path / "installations" / "installation-a" / "rpc-transfer"
+    monkeypatch.chdir(artifact)
+    monkeypatch.setenv("LANGBOT_PLUGIN_FILE_STORAGE_DIR", str(rpc_transfer))
+
+    handler = Handler(QueueConnection())
+
+    assert handler.file_storage_dir == str(rpc_transfer)
+    assert rpc_transfer.is_dir()
+    assert not (artifact / "data").exists()
+
+
 def test_shared_worker_file_storage_uses_private_writable_tmp(tmp_path, monkeypatch):
     worker_tmp = tmp_path / "lbp-rpc"
     monkeypatch.setenv(PLUGIN_RUNTIME_PROFILE_ENV, "shared")

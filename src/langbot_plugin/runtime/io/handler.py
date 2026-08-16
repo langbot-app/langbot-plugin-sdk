@@ -34,7 +34,10 @@ from langbot_plugin.entities.io.errors import (
     ActionCallError,
 )
 from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
-from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
+from langbot_plugin.runtime.security import (
+    PLUGIN_FILE_STORAGE_DIR_ENV,
+    PLUGIN_RUNTIME_PROFILE_ENV,
+)
 from langbot_plugin.runtime.bounded_executor import blocking_work_scope
 
 logger = logging.getLogger(__name__)
@@ -124,10 +127,8 @@ class Handler(abc.ABC):
 
         if file_storage_dir is None:
             runtime_profile = os.environ.get(PLUGIN_RUNTIME_PROFILE_ENV, "oss_dev")
-            file_storage_dir = (
-                SHARED_WORKER_FILE_STORAGE_DIR
-                if runtime_profile == "shared"
-                else FILE_STORAGE_DIR
+            file_storage_dir = os.environ.get(PLUGIN_FILE_STORAGE_DIR_ENV) or (
+                SHARED_WORKER_FILE_STORAGE_DIR if runtime_profile == "shared" else FILE_STORAGE_DIR
             )
         self.file_storage_dir = os.fspath(file_storage_dir)
         if max_file_bytes is not None and (
