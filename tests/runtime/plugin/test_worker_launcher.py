@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import io
 import pathlib
@@ -11,15 +12,15 @@ import pytest
 
 from langbot_plugin.cli.commands.runplugin import should_load_artifact_dotenv
 from langbot_plugin.entities.io.context import InstallationBinding, PluginWorkerPolicy
-from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
+from langbot_plugin.runtime.plugin import worker_launcher as worker_launcher_module
+from langbot_plugin.runtime.plugin.artifact import PluginArtifact, PluginArtifactStore
 from langbot_plugin.runtime.plugin.dependency_environment import (
     DependencyEnvironmentStaging,
     PluginDependencyEnvironment,
 )
-from langbot_plugin.runtime.plugin import worker_launcher as worker_launcher_module
 from langbot_plugin.runtime.plugin.worker_launcher import (
-    PluginWorkerLaunchSpec,
     PluginWorkerLauncher,
+    PluginWorkerLaunchSpec,
 )
 from langbot_plugin.runtime.security import (
     PLUGIN_FILE_STORAGE_DIR_ENV,
@@ -332,6 +333,50 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
         PLUGIN_REGISTRATION_CAPABILITY_ENV: "capability-value",
         PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
     }
+
+
+def test_oss_launcher_passes_absolute_rpc_storage_when_store_base_is_relative(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    store = PluginArtifactStore()
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        runtime_revision=1,
+        artifact_digest="0" * 64,
+        installation_uuid="installation-1",
+        workspace_uuid="workspace-1",
+        placement_generation=1,
+    )
+    paths = store.ensure_installation_paths(binding)
+    artifact_code = tmp_path / "data/plugin-runtime/artifacts/sha256/digest/code"
+    artifact_code.mkdir(parents=True)
+    artifact = PluginArtifact(
+        digest="0" * 64,
+        root_path=artifact_code.parent,
+        code_path=artifact_code,
+        plugin_author="author",
+        plugin_name="plugin",
+        plugin_version="1.0.0",
+    )
+    launch_spec = dataclasses.replace(
+        _launch_spec(tmp_path),
+        artifact=artifact,
+        paths=paths,
+    )
+    launcher = PluginWorkerLauncher(
+        nsjail_path="",
+        cgroup_v2_available=False,
+        platform="linux",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+
+    controller = launcher.create_controller(launch_spec)
+    storage_path = pathlib.Path(controller.env[PLUGIN_FILE_STORAGE_DIR_ENV])
+
+    assert storage_path.is_absolute()
+    assert storage_path == (paths.root_path / "rpc-transfer").resolve()
 
 
 async def test_prepare_dependency_environment_delegates_only_in_shared_profile(
