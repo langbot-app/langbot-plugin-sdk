@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
 
+import pytest
+
+import langbot_plugin.runtime.plugin.container  # noqa: F401
 from langbot_plugin.entities.io.actions.enums import (
     PluginToRuntimeAction,
-    RuntimeToPluginAction,
     RuntimeToLangBotAction,
+    RuntimeToPluginAction,
 )
-import langbot_plugin.runtime.plugin.container  # noqa: F401
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_module
 from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
-from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
-
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
 
 
@@ -154,6 +154,29 @@ def _handler(debug_plugin=False, action_context=None):
         "key" if debug_plugin and action_context is not None else None
     )
     return handler, manager, control_handler
+
+
+async def test_bound_plugin_handler_accepts_legacy_api_call_without_context():
+    """An installed SDK 0.4.x worker omits envelopes; host binding stays authoritative."""
+
+    binding = _installation_binding()
+    handler, _manager, control = _handler()
+    handler.bind_action_context(binding)
+    handler.context.is_current_installation_binding = lambda action_context: action_context == binding
+    control.results[PluginToRuntimeAction.GET_LLM_MODELS] = {"llm_models": ["model-a"]}
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.GET_LLM_MODELS.value,
+            {},
+            action_context=None,
+        )
+
+    assert response["code"] == 0
+    assert response["data"] == {"llm_models": ["model-a"]}
+    assert control.calls == [
+        (PluginToRuntimeAction.GET_LLM_MODELS, {}, 15.0, binding)
+    ]
 
 
 async def test_debug_handler_rejects_actions_after_credential_expiry():

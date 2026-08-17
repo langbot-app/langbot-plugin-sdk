@@ -9,21 +9,20 @@ import stat
 import pytest
 
 from langbot_plugin.entities.io.actions.enums import ActionType, CommonAction
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.entities.io.errors import (
     ActionCallError,
     ActionCallTimeoutError,
     ConnectionClosedError,
 )
 from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
-from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
-from langbot_plugin.runtime.io.connection import Connection
-from langbot_plugin.runtime.io import handler as handler_module
-from langbot_plugin.runtime.io.handler import FILE_CHUNK_LENGTH, Handler
-from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
 from langbot_plugin.runtime.bounded_executor import (
     current_blocking_work_scope,
 )
-
+from langbot_plugin.runtime.io import handler as handler_module
+from langbot_plugin.runtime.io.connection import Connection
+from langbot_plugin.runtime.io.handler import FILE_CHUNK_LENGTH, Handler
+from langbot_plugin.runtime.security import PLUGIN_RUNTIME_PROFILE_ENV
 from tests.helpers.protocol import ProtocolConnection
 
 
@@ -114,6 +113,40 @@ async def test_call_action_carries_bound_context_outside_data_payload():
         ActionResponse(seq_id=request["seq_id"], code=0, message="ok", data={})
     )
     await task
+
+
+@pytest.mark.asyncio
+async def test_bound_handler_accepts_legacy_peer_request_without_context():
+    """SDK 0.4.x peers omit the context envelope; the trusted binding supplies it."""
+
+    conn = ProtocolConnection()
+    handler = Handler(conn)
+    binding = _action_context(installation_uuid="installation-1")
+    handler.bind_action_context(binding)
+    seen = []
+
+    @handler.action(SampleAction.ECHO)
+    async def echo(data):
+        seen.append((data, handler.current_action_context))
+        return ActionResponse.success({"ok": True})
+
+    run_task = asyncio.create_task(handler.run())
+    await conn.incoming.put(
+        json.dumps(
+            {
+                "seq_id": 7,
+                "action": SampleAction.ECHO.value,
+                "data": {"legacy": True},
+            }
+        )
+    )
+    [response] = await conn.sent_messages(1)
+    await conn.close_peer()
+    await run_task
+
+    assert response["code"] == 0
+    assert response["data"] == {"ok": True}
+    assert seen == [({"legacy": True}, binding)]
 
 
 def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installation():
