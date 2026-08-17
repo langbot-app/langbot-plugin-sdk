@@ -139,9 +139,9 @@ def _handler(debug_plugin=False, action_context=None):
         plugin_mgr=manager,
         workspace_binding=action_context,
         workspace_debug_tokens=SimpleNamespace(
-            binding_for_token=lambda token: action_context
-            if token in valid_tokens
-            else None
+            binding_for_token=lambda token: (
+                action_context if token in valid_tokens else None
+            )
         ),
     )
     handler = PluginConnectionHandler(
@@ -162,7 +162,9 @@ async def test_bound_plugin_handler_accepts_legacy_api_call_without_context():
     binding = _installation_binding()
     handler, _manager, control = _handler()
     handler.bind_action_context(binding)
-    handler.context.is_current_installation_binding = lambda action_context: action_context == binding
+    handler.context.is_current_installation_binding = lambda action_context: (
+        action_context == binding
+    )
     control.results[PluginToRuntimeAction.GET_LLM_MODELS] = {"llm_models": ["model-a"]}
 
     async with ProtocolSession(handler) as session:
@@ -174,9 +176,7 @@ async def test_bound_plugin_handler_accepts_legacy_api_call_without_context():
 
     assert response["code"] == 0
     assert response["data"] == {"llm_models": ["model-a"]}
-    assert control.calls == [
-        (PluginToRuntimeAction.GET_LLM_MODELS, {}, 15.0, binding)
-    ]
+    assert control.calls == [(PluginToRuntimeAction.GET_LLM_MODELS, {}, 15.0, binding)]
 
 
 async def test_debug_handler_rejects_actions_after_credential_expiry():
@@ -185,8 +185,8 @@ async def test_debug_handler_rejects_actions_after_credential_expiry():
     )
     handler, _manager, _control = _handler(debug_plugin=True, action_context=binding)
     handler.bind_action_context(binding)
-    handler.context.workspace_debug_tokens.binding_for_token = (
-        lambda supplied_token: None
+    handler.context.workspace_debug_tokens.binding_for_token = lambda supplied_token: (
+        None
     )
 
     async with ProtocolSession(handler) as session:
