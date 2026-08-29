@@ -233,10 +233,18 @@ class RuntimeApplication:
 
         # ==== plugin debug server ====
         async def new_plugin_debug_connection_callback(connection: Connection):
-            plugin_handler = plugin_handler_cls.PluginConnectionHandler(
-                connection, self.context, debug_plugin=True
-            )
             request_headers = getattr(connection, "request_headers", {})
+            # A connection carrying a debug key is an explicit debug client
+            # (lbp run). Windows production workers connect to the same port
+            # (`/plugin/ws`) but authenticate with a registration capability and
+            # carry no debug key. Such a handler must NOT be marked
+            # debug_plugin=True, otherwise the constructor pre-binds the
+            # workspace binding and REGISTER_PLUGIN is rejected as
+            # "already registered".
+            is_debug_client = bool(request_headers.get(PLUGIN_DEBUG_KEY_HEADER) or "")
+            plugin_handler = plugin_handler_cls.PluginConnectionHandler(
+                connection, self.context, debug_plugin=is_debug_client
+            )
             plugin_handler.debug_workspace_binding = (
                 self.context.workspace_debug_tokens.binding_for_token(
                     str(request_headers.get(PLUGIN_DEBUG_KEY_HEADER) or "")
