@@ -52,6 +52,42 @@ _DEV_NODES = ("/dev/null", "/dev/random", "/dev/urandom")
 _DEPENDENCY_INSTALL_TIMEOUT_SECONDS = 600
 _DEPENDENCY_INSTALLER_SCHEMA_VERSION = 1
 
+# Windows cannot initialize parts of the standard library (notably
+# ``_overlapped``/Winsock) when a child process is started without the core OS
+# environment. Keep the boundary allowlisted: plugin workers need enough of the
+# host environment to start Python, but must not inherit Runtime credentials.
+_WINDOWS_OSS_WORKER_ENV_ALLOWLIST = frozenset(
+    {
+        "ALL_PROXY",
+        "APPDATA",
+        "COMSPEC",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "LANG",
+        "LC_ALL",
+        "LOCALAPPDATA",
+        "NO_PROXY",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PYTHONIOENCODING",
+        "PYTHONUTF8",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+        "USERPROFILE",
+        "WINDIR",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class PluginWorkerLaunchSpec:
@@ -127,6 +163,20 @@ class PluginWorkerLauncher:
                 working_dir="/",
             )
 
+        worker_env = {
+            PLUGIN_REGISTRATION_CAPABILITY_ENV: launch_spec.registration_capability,
+            PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
+            PLUGIN_FILE_STORAGE_DIR_ENV: str(
+                (launch_spec.paths.root_path / "rpc-transfer").absolute()
+            ),
+        }
+        if self.platform == "win32":
+            worker_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key.upper() in _WINDOWS_OSS_WORKER_ENV_ALLOWLIST
+            } | worker_env
+
         # OSS development keeps the historical direct-process behavior and
         # artifact .env loading. Only the one-use registration capability and
         # explicit profile cross this process boundary.
@@ -140,15 +190,7 @@ class PluginWorkerLauncher:
                 "-s",
                 "--prod",
             ],
-            env={
-                PLUGIN_REGISTRATION_CAPABILITY_ENV: (
-                    launch_spec.registration_capability
-                ),
-                PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
-                PLUGIN_FILE_STORAGE_DIR_ENV: str(
-                    (launch_spec.paths.root_path / "rpc-transfer").absolute()
-                ),
-            },
+            env=worker_env,
             working_dir=str(launch_spec.artifact.code_path),
         )
 

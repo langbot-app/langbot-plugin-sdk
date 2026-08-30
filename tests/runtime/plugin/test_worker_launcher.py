@@ -336,6 +336,30 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
     }
 
 
+def test_launcher_preserves_required_windows_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("LANGBOT_RUNTIME_SECRET", "must-not-leak")
+    launcher = PluginWorkerLauncher(
+        nsjail_path="",
+        cgroup_v2_available=False,
+        platform="win32",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+    launch_spec = _launch_spec(tmp_path)
+
+    controller = launcher.create_controller(launch_spec)
+
+    assert controller.env["SYSTEMROOT"] == r"C:\Windows"
+    assert controller.env["WINDIR"] == r"C:\Windows"
+    assert "LANGBOT_RUNTIME_SECRET" not in controller.env
+    assert controller.env[PLUGIN_REGISTRATION_CAPABILITY_ENV] == "capability-value"
+    assert controller.env[PLUGIN_RUNTIME_PROFILE_ENV] == "oss_dev"
+    assert controller.env[PLUGIN_FILE_STORAGE_DIR_ENV] == str(
+        (launch_spec.paths.root_path / "rpc-transfer").absolute()
+    )
+
+
 async def test_prepare_dependency_environment_delegates_only_in_shared_profile(
     tmp_path,
 ):
