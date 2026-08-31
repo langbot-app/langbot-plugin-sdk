@@ -948,7 +948,7 @@ async def test_reconcile_batch_failure_cancels_and_joins_sibling_mutations(
     assert not manager._reconcile_operation_lock.locked()
 
 
-async def test_oss_desired_state_keeps_legacy_worker_without_shared_environment(
+async def test_oss_desired_state_prepares_environment_before_worker_launch(
     tmp_path,
     monkeypatch,
 ):
@@ -967,6 +967,7 @@ async def test_oss_desired_state_keeps_legacy_worker_without_shared_environment(
     )
     manager = PluginManager(context)
     manager.artifact_store = PluginArtifactStore(tmp_path / "plugin-runtime")
+    manager.configure_worker_runtime(context.worker_policy, "oss_dev")
     context.plugin_mgr = manager
     package = _package(requirements="third-party-demo==1.0.0\n")
     digest = hashlib.sha256(package).hexdigest()
@@ -975,11 +976,31 @@ async def test_oss_desired_state_keeps_legacy_worker_without_shared_environment(
         digest,
         workspace_uuid="workspace-a",
     )
-    scheduled = []
+    order: list[str] = []
+
+    async def prepare(store, artifact):
+        order.append("prepare")
+        root = store.base_path / "test-environment"
+        site_packages = root / "site-packages"
+        site_packages.mkdir(parents=True)
+        return PluginDependencyEnvironment(
+            digest="b" * 64,
+            artifact_digest=artifact.digest,
+            requirements_digest="c" * 64,
+            runtime_fingerprint="d" * 64,
+            root_path=root,
+            site_packages_path=site_packages,
+        )
 
     def schedule(runtime):
-        scheduled.append(runtime)
+        assert runtime.dependency_environment is not None
+        order.append("launch")
 
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        prepare,
+    )
     monkeypatch.setattr(manager, "_schedule_installation_worker", schedule)
 
     result = await manager.apply_plugin_installation(
@@ -989,9 +1010,8 @@ async def test_oss_desired_state_keeps_legacy_worker_without_shared_environment(
     )
 
     assert result["state"] == "starting"
-    assert "dependency_environment_digest" not in result
-    assert len(scheduled) == 1
-    assert scheduled[0].dependency_environment is None
+    assert result["dependency_environment_digest"] == "b" * 64
+    assert order == ["prepare", "launch"]
 
 
 async def test_installation_supervisor_restarts_crashed_enabled_worker(
@@ -1403,6 +1423,9 @@ async def test_launch_installation_builds_private_scoped_handler(
     assert captured["launch_spec"].binding == binding
     assert captured["launch_spec"].dependency_environment is (
         runtime.dependency_environment
+    )
+    assert captured["launch_spec"].runtime_ws_url == (
+        f"ws://localhost:{manager.context.ws_debug_port}/plugin/ws"
     )
     assert captured["handler_connection"] is connection
     assert captured["handler_context"] is manager.context
