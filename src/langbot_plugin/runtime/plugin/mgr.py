@@ -980,62 +980,59 @@ class PluginManager:
             current.error_code = None
             current.error_message = None
             async with self._installation_lifecycle_semaphore():
-                if getattr(self.context, "runtime_profile", "oss_dev") == "shared":
-                    current.dependency_environment = None
-                    if (
-                        self.dependency_environment_store.base_path
-                        != self.artifact_store.base_path
-                    ):
-                        # Tests and embedders may replace the artifact store after
-                        # construction; dependency state must follow that same
-                        # Runtime-owned volume.
-                        self.dependency_environment_store = (
-                            PluginDependencyEnvironmentStore(
-                                self.artifact_store.base_path
-                            )
+                current.dependency_environment = None
+                if (
+                    self.dependency_environment_store.base_path
+                    != self.artifact_store.base_path
+                ):
+                    # Tests and embedders may replace the artifact store after
+                    # construction; dependency state must follow that same
+                    # Runtime-owned volume.
+                    self.dependency_environment_store = (
+                        PluginDependencyEnvironmentStore(self.artifact_store.base_path)
+                    )
+                try:
+                    current.dependency_environment = (
+                        await self.worker_launcher.prepare_dependency_environment(
+                            self.dependency_environment_store,
+                            artifact,
                         )
-                    try:
-                        current.dependency_environment = (
-                            await self.worker_launcher.prepare_dependency_environment(
-                                self.dependency_environment_store,
-                                artifact,
-                            )
-                        )
-                    except DependencyEnvironmentPreparationError as exc:
-                        await self._stop_installation_worker(current)
-                        current.state = "failed"
-                        current.error_code = "dependency_prepare_failed"
-                        current.error_message = str(exc)
-                        logger.error(
-                            "Plugin dependency preparation failed for "
-                            "installation %s: %s",
-                            binding.installation_uuid,
-                            exc,
-                        )
-                        return self._installation_state_result(current)
-                    except Exception:
-                        await self._stop_installation_worker(current)
-                        current.state = "failed"
-                        current.error_code = "dependency_prepare_failed"
-                        current.error_message = (
-                            "Plugin dependency environment preparation failed"
-                        )
-                        logger.exception(
-                            "Unexpected plugin dependency preparation failure for %s",
-                            binding.installation_uuid,
-                        )
-                        return self._installation_state_result(current)
+                    )
+                except DependencyEnvironmentPreparationError as exc:
+                    await self._stop_installation_worker(current)
+                    current.state = "failed"
+                    current.error_code = "dependency_prepare_failed"
+                    current.error_message = str(exc)
+                    logger.error(
+                        "Plugin dependency preparation failed for installation %s: %s",
+                        binding.installation_uuid,
+                        exc,
+                    )
+                    return self._installation_state_result(current)
+                except Exception:
+                    await self._stop_installation_worker(current)
+                    current.state = "failed"
+                    current.error_code = "dependency_prepare_failed"
+                    current.error_message = (
+                        "Plugin dependency environment preparation failed"
+                    )
+                    logger.exception(
+                        "Unexpected plugin dependency preparation failure for %s",
+                        binding.installation_uuid,
+                    )
+                    return self._installation_state_result(current)
 
-                    # A concurrent newer apply/remove can fence this binding while
-                    # its shared environment is being prepared. Never launch it.
-                    if (
-                        self._installations.get(binding) is not current
-                        or not self.context.is_current_installation_binding(binding)
-                    ):
-                        return {
-                            "installation_uuid": binding.installation_uuid,
-                            "state": "superseded",
-                        }
+                # A concurrent newer apply/remove can fence this binding while
+                # its dependency environment is being prepared. Never launch it.
+                is_current_runtime = self._installations.get(binding) is current
+                is_current_binding = self.context.is_current_installation_binding(
+                    binding
+                )
+                if not is_current_runtime or not is_current_binding:
+                    return {
+                        "installation_uuid": binding.installation_uuid,
+                        "state": "superseded",
+                    }
                 current.state = "starting"
                 self._schedule_installation_worker(current)
         else:
@@ -1451,10 +1448,7 @@ class PluginManager:
             return
         if not self.context.is_current_installation_binding(binding):
             raise ValueError("Plugin installation binding is no longer current")
-        if (
-            getattr(self.context, "runtime_profile", "oss_dev") == "shared"
-            and runtime.dependency_environment is None
-        ):
+        if runtime.dependency_environment is None:
             raise ValueError(
                 "Plugin installation dependency environment is unavailable"
             )
@@ -1473,6 +1467,9 @@ class PluginManager:
                     paths=runtime.paths,
                     registration_capability=capability,
                     dependency_environment=runtime.dependency_environment,
+                    runtime_ws_url=(
+                        f"ws://localhost:{self.context.ws_debug_port}/plugin/ws"
+                    ),
                 )
             )
 
@@ -1483,7 +1480,7 @@ class PluginManager:
                 plugin_handler = runtime_plugin_handler_cls.PluginConnectionHandler(
                     connection,
                     self.context,
-                    stdio_process=controller.process,
+                    stdio_process=getattr(controller, "process", None),
                     file_storage_dir=str(runtime.paths.root_path / "rpc-transfer"),
                     max_file_bytes=(
                         self.context.worker_policy.max_file_size_mb * 1024 * 1024
@@ -1643,7 +1640,7 @@ class PluginManager:
             if staging_path is not None:
                 shutil.rmtree(staging_path, ignore_errors=True)
             raise
-        return str(staging_path), plugin_author, plugin_name, plugin_version
+        return staging_path.as_posix(), plugin_author, plugin_name, plugin_version
 
     def _validate_install_target(
         self, plugin_author: str, plugin_name: str, plugin_version: str

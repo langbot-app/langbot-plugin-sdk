@@ -9,12 +9,16 @@ import pathlib
 import shutil
 import sys
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Callable, Coroutine, Literal, Sequence
 
 from langbot_plugin.entities.io.context import InstallationBinding, PluginWorkerPolicy
+from langbot_plugin.runtime import bounded_executor
+from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
+from langbot_plugin.runtime.io.connection import Connection
+from langbot_plugin.runtime.io.controller import Controller
 from langbot_plugin.runtime.plugin.artifact import (
     PluginArtifact,
     PluginInstallationPaths,
@@ -25,15 +29,12 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
     PluginDependencyEnvironment,
     PluginDependencyEnvironmentStore,
 )
-from langbot_plugin.runtime.helper import pkgmgr as pkgmgr_helper
-from langbot_plugin.runtime import bounded_executor
 from langbot_plugin.runtime.security import (
     PLUGIN_FILE_STORAGE_DIR_ENV,
     PLUGIN_REGISTRATION_CAPABILITY_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
 from langbot_plugin.utils.platform import get_platform
-
 
 _READONLY_SYSTEM_MOUNTS = (
     "/bin",
@@ -50,41 +51,39 @@ _READONLY_ETC_FILES = (
 )
 _DEV_NODES = ("/dev/null", "/dev/random", "/dev/urandom")
 _DEPENDENCY_INSTALL_TIMEOUT_SECONDS = 600
-_DEPENDENCY_INSTALLER_SCHEMA_VERSION = 1
-
-# Windows cannot initialize parts of the standard library (notably
-# ``_overlapped``/Winsock) when a child process is started without the core OS
-# environment. Keep the boundary allowlisted: plugin workers need enough of the
-# host environment to start Python, but must not inherit Runtime credentials.
-_WINDOWS_OSS_WORKER_ENV_ALLOWLIST = frozenset(
+_DEPENDENCY_INSTALLER_SCHEMA_VERSION = 2
+_WINDOWS_WORKER_ENV_ALLOWLIST = frozenset(
+    {
+        "COMSPEC",
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+    }
+)
+_DEPENDENCY_INSTALL_ENV_ALLOWLIST = frozenset(
     {
         "ALL_PROXY",
-        "APPDATA",
         "COMSPEC",
-        "HOMEDRIVE",
-        "HOMEPATH",
+        "CURL_CA_BUNDLE",
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "LANG",
         "LC_ALL",
-        "LOCALAPPDATA",
         "NO_PROXY",
         "PATH",
         "PATHEXT",
-        "PROGRAMDATA",
-        "PROGRAMFILES",
-        "PROGRAMFILES(X86)",
-        "PYTHONIOENCODING",
-        "PYTHONUTF8",
+        "PIP_CERT",
+        "PIP_CLIENT_CERT",
         "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_DIR",
         "SSL_CERT_FILE",
         "SYSTEMROOT",
-        "TEMP",
-        "TMP",
-        "TMPDIR",
-        "TZ",
-        "USERPROFILE",
         "WINDIR",
+        "all_proxy",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
     }
 )
 
@@ -96,6 +95,46 @@ class PluginWorkerLaunchSpec:
     paths: PluginInstallationPaths
     registration_capability: str
     dependency_environment: PluginDependencyEnvironment | None = None
+    runtime_ws_url: str | None = None
+
+
+class PluginWorkerProcessController(Controller):
+    """Own a worker that connects back through the Runtime WebSocket server."""
+
+    def __init__(
+        self,
+        *,
+        command: str,
+        args: list[str],
+        env: dict[str, str],
+        working_dir: str,
+    ) -> None:
+        self.command = command
+        self.args = args
+        self.env = env
+        self.working_dir = working_dir
+        self.process: asyncio.subprocess.Process | None = None
+
+    async def run(
+        self,
+        new_connection_callback: Callable[[Connection], Coroutine[Any, Any, None]],
+    ) -> None:
+        # The Runtime WebSocket server owns the connection callback. This
+        # controller only owns the child process lifetime.
+        del new_connection_callback
+        self.process = await asyncio.create_subprocess_exec(
+            self.command,
+            *self.args,
+            env=self.env,
+            cwd=self.working_dir,
+        )
+        try:
+            await self.process.wait()
+        finally:
+            if self.process.returncode is None:
+                stopped = await stdio_client_controller.stop_process(self.process)
+                if not stopped:
+                    raise RuntimeError("Plugin worker did not exit after SIGKILL")
 
 
 class PluginWorkerLauncher:
@@ -153,8 +192,9 @@ class PluginWorkerLauncher:
     def create_controller(
         self,
         launch_spec: PluginWorkerLaunchSpec,
-    ) -> stdio_client_controller.StdioClientController:
+    ) -> Controller:
         policy, profile = self._require_configuration()
+        dependency_environment = self._require_dependency_environment(launch_spec)
         if profile == "shared":
             return stdio_client_controller.StdioClientController(
                 command=str(self.nsjail_path),
@@ -163,34 +203,54 @@ class PluginWorkerLauncher:
                 working_dir="/",
             )
 
-        worker_env = {
-            PLUGIN_REGISTRATION_CAPABILITY_ENV: launch_spec.registration_capability,
-            PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
-            PLUGIN_FILE_STORAGE_DIR_ENV: str(
-                (launch_spec.paths.root_path / "rpc-transfer").absolute()
-            ),
-        }
-        if self.platform == "win32":
-            worker_env = {
-                key: value
-                for key, value in os.environ.items()
-                if key.upper() in _WINDOWS_OSS_WORKER_ENV_ALLOWLIST
-            } | worker_env
-
         # OSS development keeps the historical direct-process behavior and
         # artifact .env loading. Only the one-use registration capability and
         # explicit profile cross this process boundary.
         del policy
+        worker_environment = self._windows_worker_environment()
+        worker_environment.update(
+            {
+                PLUGIN_FILE_STORAGE_DIR_ENV: str(
+                    (launch_spec.paths.root_path / "rpc-transfer").resolve()
+                ),
+                PLUGIN_REGISTRATION_CAPABILITY_ENV: (
+                    launch_spec.registration_capability
+                ),
+                PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(self._runtime_site_packages_path()),
+                        str(dependency_environment.site_packages_path.resolve()),
+                    )
+                ),
+                "PYTHONUNBUFFERED": "1",
+            }
+        )
+        worker_args = [
+            "-m",
+            "langbot_plugin.cli.__init__",
+            "run",
+            "--prod",
+        ]
+        if self.platform == "win32":
+            runtime_ws_url = str(launch_spec.runtime_ws_url or "").strip()
+            if not runtime_ws_url:
+                raise RuntimeError(
+                    "Windows plugin worker Runtime WebSocket URL is missing"
+                )
+            worker_environment["RUNTIME_WS_URL"] = runtime_ws_url
+            return PluginWorkerProcessController(
+                command=str(self.python_executable),
+                args=worker_args,
+                env=worker_environment,
+                working_dir=str(launch_spec.artifact.code_path),
+            )
+
         return stdio_client_controller.StdioClientController(
-            command=sys.executable,
-            args=[
-                "-m",
-                "langbot_plugin.cli.__init__",
-                "run",
-                "-s",
-                "--prod",
-            ],
-            env=worker_env,
+            command=str(self.python_executable),
+            args=[*worker_args[:-1], "-s", worker_args[-1]],
+            env=worker_environment,
             working_dir=str(launch_spec.artifact.code_path),
         )
 
@@ -199,22 +259,24 @@ class PluginWorkerLauncher:
         store: PluginDependencyEnvironmentStore,
         artifact: PluginArtifact,
     ) -> PluginDependencyEnvironment:
-        """Prepare shared dependencies before issuing a worker capability."""
+        """Prepare artifact dependencies before issuing a worker capability."""
 
         _, profile = self._require_configuration()
-        if profile != "shared":
-            raise RuntimeError(
-                "Immutable dependency environments require the shared Runtime profile"
-            )
+        installer = (
+            self._install_dependency_environment
+            if profile == "shared"
+            else self._install_dependency_environment_direct
+        )
         return await store.prepare(
             artifact,
             runtime_fingerprint=self.dependency_runtime_fingerprint(),
-            installer=self._install_dependency_environment,
+            installer=installer,
         )
 
     def dependency_runtime_fingerprint(self) -> str:
         """Key environments by the worker ABI and Runtime dependency contract."""
 
+        _, profile = self._require_configuration()
         try:
             sdk_version = importlib.metadata.version("langbot-plugin")
         except importlib.metadata.PackageNotFoundError:  # pragma: no cover - dev tree
@@ -224,6 +286,7 @@ class PluginWorkerLauncher:
             "python_cache_tag": sys.implementation.cache_tag,
             "python_implementation": sys.implementation.name,
             "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+            "runtime_profile": profile,
             "sdk_version": sdk_version,
         }
         return hashlib.sha256(
@@ -233,7 +296,7 @@ class PluginWorkerLauncher:
     async def _install_dependency_environment(
         self,
         staging: DependencyEnvironmentStaging,
-        requirements: tuple[str, ...] | list[str],
+        requirements: Sequence[str],
     ) -> None:
         if not requirements:
             return
@@ -250,6 +313,36 @@ class PluginWorkerLauncher:
             env={},
             cwd="/",
         )
+        await self._wait_for_dependency_installer(process)
+
+    async def _install_dependency_environment_direct(
+        self,
+        staging: DependencyEnvironmentStaging,
+        requirements: Sequence[str],
+    ) -> None:
+        """Prepare an OSS dependency tree without mutating the Runtime venv."""
+
+        if not requirements:
+            return
+        args = await bounded_executor.run_blocking_atomic(
+            self.build_dependency_prepare_direct_args,
+            staging,
+            requirements,
+        )
+        tmp_path = self._absolute_runtime_path(staging.tmp_path)
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=self._direct_dependency_installer_environment(tmp_path),
+            cwd=str(tmp_path),
+        )
+        await self._wait_for_dependency_installer(process)
+
+    @staticmethod
+    async def _wait_for_dependency_installer(
+        process: asyncio.subprocess.Process,
+    ) -> None:
         try:
             await asyncio.wait_for(
                 process.wait(),
@@ -278,10 +371,45 @@ class PluginWorkerLauncher:
                 f"Plugin dependency installer exited with code {process.returncode}"
             )
 
+    def build_dependency_prepare_direct_args(
+        self,
+        staging: DependencyEnvironmentStaging,
+        requirements: Sequence[str],
+    ) -> list[str]:
+        """Build the direct OSS pip command for one isolated target tree."""
+
+        _, profile = self._require_configuration()
+        if profile != "oss_dev":
+            raise RuntimeError(
+                "Direct dependency preparation requires the OSS Runtime profile"
+            )
+        site_packages_path = self._absolute_runtime_path(staging.site_packages_path)
+        requirements_path = self._write_dependency_requirements(
+            staging,
+            requirements,
+        )
+        return [
+            str(self.python_executable),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--ignore-installed",
+            "--no-cache-dir",
+            "--no-compile",
+            "--no-input",
+            "--no-warn-script-location",
+            "--target",
+            str(site_packages_path),
+            *pkgmgr_helper.get_pip_index_args(),
+            "-r",
+            str(requirements_path),
+        ]
+
     def build_dependency_prepare_nsjail_args(
         self,
         staging: DependencyEnvironmentStaging,
-        requirements: tuple[str, ...] | list[str],
+        requirements: Sequence[str],
     ) -> list[str]:
         policy, profile = self._require_configuration()
         if profile != "shared" or not self.nsjail_path:
@@ -292,12 +420,7 @@ class PluginWorkerLauncher:
         jail_root_path = self._absolute_runtime_path(staging.jail_root_path)
         site_packages_path = self._absolute_runtime_path(staging.site_packages_path)
         tmp_path = self._absolute_runtime_path(staging.tmp_path)
-        requirements_path = tmp_path / "requirements.txt"
-        requirements_path.write_text(
-            "".join(f"{requirement}\n" for requirement in requirements),
-            encoding="utf-8",
-        )
-        requirements_path.chmod(0o600)
+        self._write_dependency_requirements(staging, requirements)
 
         runtime_prefix_mount = self._python_prefix_mount()
         self._ensure_jail_mount_targets(
@@ -370,13 +493,7 @@ class PluginWorkerLauncher:
         if profile != "shared" or not self.nsjail_path:
             raise RuntimeError("nsjail arguments require the shared Runtime profile")
 
-        dependency_environment = launch_spec.dependency_environment
-        if dependency_environment is None:
-            raise RuntimeError("Shared plugin worker dependency environment is missing")
-        if dependency_environment.artifact_digest != launch_spec.artifact.digest:
-            raise RuntimeError(
-                "Shared plugin worker dependency environment does not match artifact"
-            )
+        dependency_environment = self._require_dependency_environment(launch_spec)
 
         jail_root_path = self._absolute_runtime_path(launch_spec.paths.jail_root_path)
         artifact_code_path = self._absolute_runtime_path(launch_spec.artifact.code_path)
@@ -440,8 +557,7 @@ class PluginWorkerLauncher:
                 "--env",
                 (
                     "PYTHONPATH="
-                    f"{self.python_prefix}/lib/"
-                    f"python{sys.version_info.major}.{sys.version_info.minor}/site-packages:"
+                    f"{self._runtime_site_packages_path()}:"
                     "/plugin-dependencies"
                 ),
                 "--env",
@@ -529,6 +645,77 @@ class PluginWorkerLauncher:
         if self.policy is None or self.runtime_profile is None:
             raise RuntimeError("Plugin worker launcher is not configured")
         return self.policy, self.runtime_profile
+
+    @staticmethod
+    def _require_dependency_environment(
+        launch_spec: PluginWorkerLaunchSpec,
+    ) -> PluginDependencyEnvironment:
+        dependency_environment = launch_spec.dependency_environment
+        if dependency_environment is None:
+            raise RuntimeError("Plugin worker dependency environment is missing")
+        if dependency_environment.artifact_digest != launch_spec.artifact.digest:
+            raise RuntimeError(
+                "Plugin worker dependency environment does not match artifact"
+            )
+        return dependency_environment
+
+    def _runtime_site_packages_path(self) -> pathlib.Path:
+        if self.platform == "win32":
+            return self.python_prefix / "Lib" / "site-packages"
+        return (
+            self.python_prefix
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        )
+
+    def _windows_worker_environment(self) -> dict[str, str]:
+        if self.platform != "win32":
+            return {}
+        return {
+            name: value
+            for name in _WINDOWS_WORKER_ENV_ALLOWLIST
+            if (value := os.environ.get(name)) is not None
+        }
+
+    def _write_dependency_requirements(
+        self,
+        staging: DependencyEnvironmentStaging,
+        requirements: Sequence[str],
+    ) -> pathlib.Path:
+        requirements_path = (
+            self._absolute_runtime_path(staging.tmp_path) / "requirements.txt"
+        )
+        requirements_path.write_text(
+            "".join(f"{requirement}\n" for requirement in requirements),
+            encoding="utf-8",
+        )
+        requirements_path.chmod(0o600)
+        return requirements_path
+
+    @staticmethod
+    def _direct_dependency_installer_environment(
+        tmp_path: pathlib.Path,
+    ) -> dict[str, str]:
+        environment = {
+            name: value
+            for name in _DEPENDENCY_INSTALL_ENV_ALLOWLIST
+            if (value := os.environ.get(name)) is not None
+        }
+        environment.update(
+            {
+                "HOME": str(tmp_path),
+                "PIP_CACHE_DIR": str(tmp_path / "pip-cache"),
+                "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONUNBUFFERED": "1",
+                "TEMP": str(tmp_path),
+                "TMP": str(tmp_path),
+                "TMPDIR": str(tmp_path),
+            }
+        )
+        return environment
 
     @staticmethod
     def _ensure_jail_mount_targets(

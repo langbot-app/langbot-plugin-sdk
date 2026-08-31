@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import os
 import stat
 
 import pytest
@@ -135,6 +136,40 @@ def test_nested_outbound_action_inherits_current_inbound_context():
         assert handler.resolve_outbound_action_context(None) == context
     finally:
         handler._current_action_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_bound_handler_accepts_legacy_peer_request_without_context():
+    """SDK 0.4.x peers omit the context envelope; the trusted binding supplies it."""
+
+    conn = ProtocolConnection()
+    handler = Handler(conn)
+    binding = _action_context(installation_uuid="installation-1")
+    handler.bind_action_context(binding)
+    seen = []
+
+    @handler.action(SampleAction.ECHO)
+    async def echo(data):
+        seen.append((data, handler.current_action_context))
+        return ActionResponse.success({"ok": True})
+
+    run_task = asyncio.create_task(handler.run())
+    await conn.incoming.put(
+        json.dumps(
+            {
+                "seq_id": 7,
+                "action": SampleAction.ECHO.value,
+                "data": {"legacy": True},
+            }
+        )
+    )
+    [response] = await conn.sent_messages(1)
+    await conn.close_peer()
+    await run_task
+
+    assert response["code"] == 0
+    assert response["data"] == {"ok": True}
+    assert seen == [({"legacy": True}, binding)]
 
 
 def test_handler_binding_is_idempotent_but_cannot_change_workspace_or_installation():
@@ -657,7 +692,9 @@ def test_shared_worker_file_storage_uses_private_writable_tmp(tmp_path, monkeypa
     assert worker_tmp.is_dir()
 
 
-def test_worker_file_storage_env_overrides_read_only_artifact_cwd(tmp_path, monkeypatch):
+def test_worker_file_storage_env_overrides_read_only_artifact_cwd(
+    tmp_path, monkeypatch
+):
     artifact_dir = tmp_path / "artifact" / "code"
     artifact_dir.mkdir(parents=True)
     artifact_dir.chmod(0o555)
@@ -685,10 +722,11 @@ def test_handler_file_storage_can_be_isolated_per_installation(tmp_path):
     assert first.file_storage_dir != second.file_storage_dir
     assert (tmp_path / "installation-a" / "rpc-transfer").is_dir()
     assert (tmp_path / "installation-b" / "rpc-transfer").is_dir()
-    assert (
-        stat.S_IMODE((tmp_path / "installation-a" / "rpc-transfer").stat().st_mode)
-        == 0o700
-    )
+    if os.name != "nt":
+        assert (
+            stat.S_IMODE((tmp_path / "installation-a" / "rpc-transfer").stat().st_mode)
+            == 0o700
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -954,9 +992,7 @@ async def test_file_chunk_action_reassembles_file_and_read_delete_roundtrip(
 
 
 @pytest.mark.asyncio
-async def test_file_transfer_io_uses_backpressure_aware_executor(
-    tmp_path, monkeypatch
-):
+async def test_file_transfer_io_uses_backpressure_aware_executor(tmp_path, monkeypatch):
     handler = Handler(
         ProtocolConnection(),
         file_storage_dir=tmp_path / "rpc-transfer",

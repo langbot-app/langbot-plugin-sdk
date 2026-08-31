@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import posixpath
 from typing import Any
 
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
@@ -42,12 +42,14 @@ def populate_plugin_pages(
         if page_id in seen_page_ids:
             continue
 
-        yaml_dir = os.path.dirname(component_manifest.rel_path)
+        yaml_dir = posixpath.dirname(component_manifest.rel_path.replace("\\", "/"))
         html_rel_path = component_manifest.spec.get("path", "index.html")
         page_entry = {
             "id": page_id,
             "label": component_manifest.manifest["metadata"].get("label", {}),
-            "path": os.path.normpath(os.path.join(yaml_dir, html_rel_path)),
+            "path": posixpath.normpath(
+                posixpath.join(yaml_dir, str(html_rel_path).replace("\\", "/"))
+            ),
         }
 
         pages.append(page_entry)

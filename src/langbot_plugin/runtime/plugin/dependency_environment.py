@@ -30,7 +30,7 @@ _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class DependencyEnvironmentPreparationError(RuntimeError):
-    """A stable, user-safe failure raised before a shared worker is launched."""
+    """A stable, user-safe failure raised before an artifact worker is launched."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,7 +237,7 @@ class PluginDependencyEnvironmentStore:
             ) from exc
         if len(content) > _MAX_REQUIREMENTS_BYTES:
             raise DependencyEnvironmentPreparationError(
-                "Plugin requirements.txt exceeds the shared Runtime limit"
+                "Plugin requirements.txt exceeds the artifact Runtime limit"
             )
         requirements_digest = hashlib.sha256(content).hexdigest()
         try:
@@ -254,14 +254,14 @@ class PluginDependencyEnvironmentStore:
                 continue
             if line.startswith("-"):
                 raise DependencyEnvironmentPreparationError(
-                    "Shared Runtime requirements.txt cannot contain pip options "
+                    "Artifact requirements.txt cannot contain pip options "
                     f"(line {line_number})"
                 )
             try:
                 requirement = Requirement(line)
             except InvalidRequirement as exc:
                 raise DependencyEnvironmentPreparationError(
-                    "Shared Runtime requirements.txt contains an invalid requirement "
+                    "Artifact requirements.txt contains an invalid requirement "
                     f"(line {line_number})"
                 ) from exc
             requirements.append(str(requirement))

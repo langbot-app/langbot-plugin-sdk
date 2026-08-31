@@ -194,7 +194,7 @@ async def test_cancellation_removes_dependency_staging(tmp_path):
     assert list(store.environments_path.iterdir()) == []
 
 
-async def test_shared_requirements_reject_pip_control_options(tmp_path):
+async def test_artifact_requirements_reject_pip_control_options(tmp_path):
     artifact = _artifact(tmp_path, "--extra-index-url https://attacker.invalid\n")
     store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
 

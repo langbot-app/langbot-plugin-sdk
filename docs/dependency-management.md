@@ -1,68 +1,63 @@
 # Plugin Dependency Management
 
-## Problem
+## Desired-state artifact installations
 
-When users update their LangBot containers (by pulling new images and rebuilding), the Python environment is fresh but the `data/plugins/` directory persists as a mounted volume. This causes plugin dependencies to be lost, leading to plugin failures.
-
-## OSS development profile
-
-The runtime now **automatically reinstalls all plugin dependencies on every startup**. This is a simple and straightforward approach that ensures dependencies are always available.
-
-### How It Works
-
-When the runtime starts and launches plugins (in `launch_all_plugins()`):
-1. For each plugin directory in `data/plugins/`
-2. Check if a `requirements.txt` file exists
-3. If it exists, run `pip install -r requirements.txt`
-4. Then launch the plugin
-
-This happens **every time** the runtime starts, ensuring that:
-- After container rebuild, all dependencies are reinstalled
-- After requirements.txt changes, new dependencies are installed
-- No state tracking or complexity needed
-
-This is the legacy `oss_dev` behavior and remains backward compatible.
-
-## Shared multi-tenant profile
-
-The shared Runtime never installs plugin dependencies into its own Python
-environment. Before an enabled desired installation can launch, it:
+LangBot sends marketplace, GitHub, and uploaded plugin packages to the Runtime
+as digest-addressed artifacts. Before any enabled artifact worker launches, the
+Runtime:
 
 1. Parses the verified artifact's `requirements.txt` as PEP 508 requirements.
-2. Runs pip inside a policy-limited nsjail with only a writable staging target
-   and temporary directory.
+2. Installs dependencies into a writable staging target without modifying the
+   Runtime's own Python environment.
 3. Rejects symbolic links and verifies the installed distribution metadata.
 4. Atomically publishes the dependency tree as read-only under
    `data/plugin-runtime/environments/sha256/<environment-digest>`.
-5. Mounts that tree read-only into each matching plugin worker.
+5. Adds that tree to the matching worker's Python import path.
 
 The environment digest includes the artifact and requirements digests, Python
-ABI, Runtime version, and installer schema. Therefore the same verified
-artifact can reuse one immutable dependency tree across installations without
-sharing any writable plugin state. Concurrent preparation is serialized, and a
-failure leaves no ready or half-published tree. Apply/reconcile reports
-`state=failed`, `error_code=dependency_prepare_failed`, and does not launch the
-worker. Reapplying the same desired revision retries preparation.
+ABI, Runtime version, installer schema, and Runtime profile. Therefore the same
+verified artifact can reuse one immutable dependency tree across installations
+without sharing writable plugin state. Concurrent preparation is serialized,
+and a failure leaves no ready or half-published tree.
 
-Shared artifacts cannot place pip control options such as `--index-url`,
-`--extra-index-url`, or nested `-r` files in `requirements.txt`; index and trust
-configuration is owned by the Runtime process.
+Apply and reconcile report `state=failed` with
+`error_code=dependency_prepare_failed` and do not launch the worker when
+preparation fails. Reapplying the same desired revision retries preparation.
 
-### Implementation
+Artifact `requirements.txt` files cannot contain pip control options such as
+`--index-url`, `--extra-index-url`, or nested `-r` files. Index and trust
+configuration is owned by the Runtime process through
+`LANGBOT_PLUGIN_PYPI_INDEX_URL` and `LANGBOT_PLUGIN_PYPI_TRUSTED_HOST`.
 
-Modified `src/langbot_plugin/runtime/plugin/mgr.py`:
-- `launch_all_plugins()`: Added `pip install -r requirements.txt` before launching each plugin
+## OSS development profile
 
-### Benefits
+The `oss_dev` profile runs pip directly with the Runtime interpreter and an
+allowlisted subprocess environment. Pip writes only to the environment staging
+target, and the worker continues to use the trusted Runtime interpreter while
+loading the published dependency tree through `PYTHONPATH`.
 
-1. **Simple**: No complex state tracking or hash computation
-2. **Reliable**: Dependencies always installed, regardless of container state
-3. **Automatic**: Works automatically after container rebuild
-4. **Backward Compatible**: Works with existing plugins without modification
-5. **Robust**: Handles all edge cases (pip handles already-installed packages efficiently)
+Because `data/plugin-runtime` is the normal persistent Runtime volume, prepared
+dependencies survive container recreation. Dependencies from different plugin
+artifacts are never installed into the container-global virtual environment and
+cannot overwrite one another.
 
-### Performance Considerations
+On POSIX systems, the direct worker communicates with the Runtime over stdio.
+On Windows, the Runtime still owns and reaps the child process, but the worker
+uses the authenticated loopback WebSocket endpoint because asyncio subprocess
+pipes are not compatible with the required Windows event-loop behavior.
 
-- `pip` is smart enough to skip reinstalling packages that are already installed at the correct version
-- The startup time will increase slightly due to pip checking installed packages
-- For most plugins with few dependencies, this overhead is minimal
+## Shared multi-tenant profile
+
+The `shared` profile prepares the same immutable environment inside a
+policy-limited nsjail. Only the writable staging target and temporary directory
+are exposed to pip. The completed tree is mounted read-only into each matching
+plugin worker, while the trusted Runtime SDK path remains first on
+`PYTHONPATH`.
+
+## Legacy OSS installations
+
+Older OSS installations stored under `data/plugins/<author>__<name>` keep their
+compatibility path. At Runtime startup, each legacy plugin receives a local
+`.venv` with `system_site_packages` enabled, its requirements are reconciled,
+and the plugin is launched with that interpreter. This path is separate from
+the desired-state artifact environment described above.

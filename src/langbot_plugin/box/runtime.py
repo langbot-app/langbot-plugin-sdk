@@ -522,13 +522,46 @@ class BoxRuntime:
 
         marker_name = validate_shared_workspace_probe_name(marker_name)
         workspace_root = self._managed_workspace_root()
-        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
         nofollow = getattr(os, "O_NOFOLLOW", 0)
-        root_fd = os.open(workspace_root, directory_flags | nofollow)
+        root_fd: int | None = None
         marker_fd: int | None = None
         try:
-            marker_fd = os.open(marker_name, os.O_RDONLY | nofollow, dir_fd=root_fd)
-            marker_stat = os.fstat(marker_fd)
+            if os.name == "nt":
+                # Windows does not allow opening a directory with os.open().
+                # Validate the marker itself before and after opening it so a
+                # reparse point or path swap cannot redirect the readiness probe.
+                marker_path = os.path.join(workspace_root, marker_name)
+                marker_lstat = os.lstat(marker_path)
+                file_attributes = getattr(marker_lstat, "st_file_attributes", 0)
+                reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+                if stat.S_ISLNK(marker_lstat.st_mode) or (
+                    reparse_point and file_attributes & reparse_point
+                ):
+                    raise BoxReadinessError(
+                        "Box Runtime cannot read the Core shared Workspace probe"
+                    )
+                marker_fd = os.open(
+                    marker_path,
+                    os.O_RDONLY | getattr(os, "O_BINARY", 0),
+                )
+                marker_stat = os.fstat(marker_fd)
+                if (marker_lstat.st_dev, marker_lstat.st_ino) != (
+                    marker_stat.st_dev,
+                    marker_stat.st_ino,
+                ):
+                    raise BoxReadinessError(
+                        "Box shared Workspace probe changed while being verified"
+                    )
+            else:
+                directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                root_fd = os.open(workspace_root, directory_flags | nofollow)
+                marker_fd = os.open(
+                    marker_name,
+                    os.O_RDONLY | nofollow,
+                    dir_fd=root_fd,
+                )
+                marker_stat = os.fstat(marker_fd)
+
             if not stat.S_ISREG(marker_stat.st_mode):
                 raise BoxReadinessError(
                     "Box shared Workspace probe is not a regular file"
@@ -567,7 +600,8 @@ class BoxRuntime:
         finally:
             if marker_fd is not None:
                 os.close(marker_fd)
-            os.close(root_fd)
+            if root_fd is not None:
+                os.close(root_fd)
 
     def _canonical_workspace_path(self, context: ActionContext) -> str:
         context = ActionContext.model_validate(context).without_installation()
@@ -1998,14 +2032,18 @@ class BoxRuntime:
             if process.stdin is not None:
                 process.stdin.close()
         except Exception as exc:
-            self.logger.debug("Failed to close managed process stdin: %s", exc, exc_info=True)
+            self.logger.debug(
+                "Failed to close managed process stdin: %s", exc, exc_info=True
+            )
 
         try:
             if process.returncode is None:
                 try:
                     process.terminate()
                 except ProcessLookupError as exc:
-                    self.logger.debug("Managed process exited before terminate: %s", exc)
+                    self.logger.debug(
+                        "Managed process exited before terminate: %s", exc
+                    )
             await asyncio.wait_for(asyncio.shield(process.wait()), timeout=5)
         except asyncio.TimeoutError:
             if process.returncode is None:

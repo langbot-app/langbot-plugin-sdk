@@ -197,6 +197,7 @@ class Handler(abc.ABC):
                 # behalf of an untrusted worker so protocol transfer cannot
                 # bypass the worker's per-file policy.
                 mode = "wb" if chunk_index == 0 else "ab"
+
                 def write_chunk() -> None:
                     existing_size = 0
                     if mode == "ab":
@@ -213,7 +214,9 @@ class Handler(abc.ABC):
                         self.max_file_bytes is not None
                         and resulting_size > self.max_file_bytes
                     ):
-                        raise ValueError("File transfer exceeds the configured size limit")
+                        raise ValueError(
+                            "File transfer exceeds the configured size limit"
+                        )
                     with open(file_path, mode) as file:
                         file.write(chunk_bytes)
 
@@ -826,6 +829,7 @@ class Handler(abc.ABC):
 
     async def read_local_file(self, file_key: str) -> bytes:
         file_path = _file_storage_path(file_key, self.file_storage_dir)
+
         def read_file() -> bytes:
             if self.max_file_bytes is not None:
                 file_size = os.path.getsize(file_path)
@@ -833,9 +837,7 @@ class Handler(abc.ABC):
                     raise ValueError("File transfer exceeds the configured size limit")
             with open(file_path, "rb") as file:
                 return file.read(
-                    self.max_file_bytes + 1
-                    if self.max_file_bytes is not None
-                    else -1
+                    self.max_file_bytes + 1 if self.max_file_bytes is not None else -1
                 )
 
         content = await run_blocking_with_backpressure(read_file)
