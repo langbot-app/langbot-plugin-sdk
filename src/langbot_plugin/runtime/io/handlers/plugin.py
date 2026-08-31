@@ -95,9 +95,12 @@ class PluginConnectionHandler(handler.Handler):
         self.debug_auth_token = None
         self.stdio_process = stdio_process
         runtime_binding = getattr(self.context, "workspace_binding", None)
-        if runtime_binding is not None and (
-            debug_plugin or not hasattr(self.context, "runtime_profile")
-        ):
+        if runtime_binding is not None and not hasattr(self.context, "runtime_profile"):
+            # Compatibility for older embedders that predate authenticated
+            # registration. A modern WebSocket listener initially accepts
+            # both debug clients and Windows production workers; binding it as
+            # debug before REGISTER_PLUGIN would make the production worker
+            # look already registered.
             self.bind_action_context(runtime_binding)
 
         # Capture the plugin subprocess's stderr (Python `logging` output) into

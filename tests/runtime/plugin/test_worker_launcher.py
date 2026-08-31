@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import hashlib
 import io
+import os
 import pathlib
 import sys
 import zipfile
@@ -19,6 +20,7 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
     PluginDependencyEnvironment,
 )
 from langbot_plugin.runtime.plugin.worker_launcher import (
+    PluginWorkerProcessController,
     PluginWorkerLauncher,
     PluginWorkerLaunchSpec,
 )
@@ -77,6 +79,7 @@ spec:
         artifact=artifact,
         paths=store.ensure_installation_paths(binding),
         registration_capability="capability-value",
+        runtime_ws_url="ws://localhost:5401/plugin/ws",
         dependency_environment=PluginDependencyEnvironment(
             digest="b" * 64,
             artifact_digest=digest,
@@ -328,10 +331,24 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
 
     assert oss_controller.command == sys.executable
     assert oss_controller.working_dir == str(launch_spec.artifact.code_path)
+    runtime_site_packages = (
+        pathlib.Path(sys.prefix)
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
     assert oss_controller.env == {
         PLUGIN_FILE_STORAGE_DIR_ENV: str(launch_spec.paths.root_path / "rpc-transfer"),
         PLUGIN_REGISTRATION_CAPABILITY_ENV: "capability-value",
         PLUGIN_RUNTIME_PROFILE_ENV: "oss_dev",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": os.pathsep.join(
+            (
+                str(runtime_site_packages),
+                str(launch_spec.dependency_environment.site_packages_path.resolve()),
+            )
+        ),
+        "PYTHONUNBUFFERED": "1",
     }
 
 
@@ -360,10 +377,17 @@ def test_oss_launcher_passes_absolute_rpc_storage_when_store_base_is_relative(
         plugin_name="plugin",
         plugin_version="1.0.0",
     )
+    original_spec = _launch_spec(tmp_path)
+    dependency_environment = original_spec.dependency_environment
+    assert dependency_environment is not None
     launch_spec = dataclasses.replace(
-        _launch_spec(tmp_path),
+        original_spec,
         artifact=artifact,
         paths=paths,
+        dependency_environment=dataclasses.replace(
+            dependency_environment,
+            artifact_digest=artifact.digest,
+        ),
     )
     launcher = PluginWorkerLauncher(
         nsjail_path="",
@@ -379,7 +403,100 @@ def test_oss_launcher_passes_absolute_rpc_storage_when_store_base_is_relative(
     assert storage_path == (paths.root_path / "rpc-transfer").resolve()
 
 
-async def test_prepare_dependency_environment_delegates_only_in_shared_profile(
+def test_windows_oss_worker_keeps_required_system_env_without_runtime_secrets(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT")
+    monkeypatch.setenv("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN", "control-secret")
+    monkeypatch.setenv("LANGBOT_BOX_CONTROL_TOKEN", "box-secret")
+    launcher = PluginWorkerLauncher(
+        cgroup_v2_available=False,
+        platform="win32",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+
+    controller = launcher.create_controller(_launch_spec(tmp_path))
+
+    assert controller.env["SYSTEMROOT"] == r"C:\Windows"
+    assert controller.env["WINDIR"] == r"C:\Windows"
+    assert controller.env["COMSPEC"] == r"C:\Windows\System32\cmd.exe"
+    assert controller.env["PATH"] == r"C:\Windows\System32"
+    assert controller.env["PATHEXT"] == ".COM;.EXE;.BAT"
+    assert controller.env["RUNTIME_WS_URL"] == "ws://localhost:5401/plugin/ws"
+    assert "-s" not in controller.args
+    assert "LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN" not in controller.env
+    assert "LANGBOT_BOX_CONTROL_TOKEN" not in controller.env
+
+
+async def test_windows_oss_worker_controller_reaps_process_when_cancelled(
+    tmp_path,
+    monkeypatch,
+):
+    launcher = PluginWorkerLauncher(
+        cgroup_v2_available=False,
+        platform="win32",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+    controller = launcher.create_controller(_launch_spec(tmp_path))
+    assert isinstance(controller, PluginWorkerProcessController)
+    wait_started = asyncio.Event()
+    stop_calls = []
+    callback_called = False
+
+    class FakeProcess:
+        returncode = None
+
+        async def wait(self):
+            wait_started.set()
+            await asyncio.Future()
+
+    process = FakeProcess()
+
+    async def create_subprocess_exec(*args, **kwargs):
+        assert args == (controller.command, *controller.args)
+        assert kwargs == {
+            "env": controller.env,
+            "cwd": controller.working_dir,
+        }
+        return process
+
+    async def stop_process(owned_process):
+        stop_calls.append(owned_process)
+        owned_process.returncode = 0
+        return True
+
+    async def callback(connection):
+        nonlocal callback_called
+        callback_called = True
+
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+    monkeypatch.setattr(
+        worker_launcher_module.stdio_client_controller,
+        "stop_process",
+        stop_process,
+    )
+
+    task = asyncio.create_task(controller.run(callback))
+    await wait_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert controller.process is process
+    assert stop_calls == [process]
+    assert callback_called is False
+
+
+async def test_prepare_dependency_environment_selects_profile_installer(
     tmp_path,
 ):
     launcher = PluginWorkerLauncher(
@@ -415,14 +532,90 @@ async def test_prepare_dependency_environment_delegates_only_in_shared_profile(
     assert captured["artifact"] is launch_spec.artifact
     assert len(captured["runtime_fingerprint"]) == 64
     assert captured["installer"] == launcher._install_dependency_environment
+    shared_fingerprint = captured["runtime_fingerprint"]
 
     oss = PluginWorkerLauncher(
         cgroup_v2_available=False,
         platform="darwin",
     )
     oss.configure(_policy(require_hard_limits=False), "oss_dev")
-    with pytest.raises(RuntimeError, match="shared Runtime profile"):
-        await oss.prepare_dependency_environment(FakeStore(), launch_spec.artifact)
+    oss_result = await oss.prepare_dependency_environment(
+        FakeStore(),
+        launch_spec.artifact,
+    )
+
+    assert oss_result is launch_spec.dependency_environment
+    assert captured["installer"] == oss._install_dependency_environment_direct
+    assert captured["runtime_fingerprint"] != shared_fingerprint
+
+
+async def test_oss_dependency_installer_targets_environment_without_control_secrets(
+    tmp_path,
+    monkeypatch,
+):
+    staging_root = tmp_path / "staging"
+    staging = DependencyEnvironmentStaging(
+        root_path=staging_root,
+        site_packages_path=staging_root / "site-packages",
+        scratch_path=staging_root / ".scratch",
+        jail_root_path=staging_root / ".scratch" / "root",
+        tmp_path=staging_root / ".scratch" / "tmp",
+    )
+    staging.site_packages_path.mkdir(parents=True)
+    staging.tmp_path.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        cgroup_v2_available=False,
+        platform="win32",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+    monkeypatch.setenv("LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN", "control-secret")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid")
+
+    class FakeProcess:
+        returncode = 0
+        waited = False
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = FakeProcess()
+    captured = {}
+
+    async def create_subprocess_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(
+        worker_launcher_module.asyncio,
+        "create_subprocess_exec",
+        create_subprocess_exec,
+    )
+
+    await launcher._install_dependency_environment_direct(
+        staging,
+        ["private-package==1.0.0"],
+    )
+
+    args = captured["args"]
+    kwargs = captured["kwargs"]
+    assert process.waited is True
+    assert args[0] == sys.executable
+    assert args[args.index("--target") + 1] == str(
+        staging.site_packages_path.absolute()
+    )
+    assert args[args.index("-r") + 1] == str(
+        (staging.tmp_path / "requirements.txt").absolute()
+    )
+    assert "private-package==1.0.0" not in args
+    assert (staging.tmp_path / "requirements.txt").read_text(encoding="utf-8") == (
+        "private-package==1.0.0\n"
+    )
+    assert kwargs["cwd"] == str(staging.tmp_path.absolute())
+    assert kwargs["env"]["HTTPS_PROXY"] == "http://proxy.invalid"
+    assert "LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN" not in kwargs["env"]
+    assert kwargs["env"]["HOME"] == str(staging.tmp_path.absolute())
 
 
 @pytest.mark.parametrize("returncode", [0, 7])

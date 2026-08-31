@@ -180,21 +180,27 @@ code tree, but each gets a separate process and private `home`, `tmp`, and `data
 directories. A worker receives a short-lived, one-use registration capability
 bound to the complete installation tuple; it cannot select its own tenant scope.
 
-Before a shared worker is launched, the Runtime prepares dependencies in a
-separate nsjail. The resulting `site-packages` tree is keyed by the verified
-artifact, requirements bytes, Python ABI, Runtime version, and installer schema,
-then atomically published under `environments/sha256/<environment-digest>`.
-Concurrent installations reuse the same ready tree. Workers mount it read-only;
-failed or partial preparations are removed and reported as the stable
-`dependency_prepare_failed` desired-state failure. Pip control options in an
-artifact's `requirements.txt` are rejected because only Runtime configuration
+Before any desired-state artifact worker is launched, the Runtime prepares an
+immutable dependency tree. The resulting `site-packages` tree is keyed by the
+verified artifact, requirements bytes, Python ABI, Runtime version, installer
+schema, and Runtime profile, then atomically published under
+`environments/sha256/<environment-digest>`. Concurrent installations reuse the
+same ready tree. Failed or partial preparations are removed and reported as the
+stable `dependency_prepare_failed` desired-state failure. Pip control options in
+an artifact's `requirements.txt` are rejected because only Runtime configuration
 may select indexes or trusted hosts.
 
 Shared workers launch through nsjail with policy-owned cgroup CPU, memory, and
 PID limits plus file/process rlimits. If `require_hard_limits` is true, missing
-nsjail or cgroup v2 delegation makes configuration fail closed. Artifact `.env`
-files are not loaded in the shared profile. The default `oss_dev` profile keeps
-the direct-process and `.env` behavior needed for local open-source development.
+nsjail or cgroup v2 delegation makes configuration fail closed. Their dependency
+tree is prepared in a separate nsjail and mounted read-only into the worker.
+Artifact `.env` files are not loaded in the shared profile. The default
+`oss_dev` profile prepares the same kind of persistent tree with direct pip and
+adds it to the direct worker's import path, while keeping artifact `.env`
+behavior for local open-source development. POSIX workers use stdio RPC. On
+Windows, where asyncio cannot support the required subprocess and pipe behavior
+together, the Runtime owns the worker process while the worker connects back to
+the loopback WebSocket server with its one-use registration capability.
 The Runtime waits for this immutable profile handshake before inspecting legacy
 plugin state. A shared Runtime never scans, installs dependencies for, or
 launches the global `data/plugins` tree; only apply/reconcile desired state may
