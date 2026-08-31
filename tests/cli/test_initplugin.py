@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import ntpath
 import subprocess
 
 import yaml
@@ -15,7 +15,18 @@ def test_get_lbp_path_uses_platform_specific_script_location(monkeypatch):
 
     monkeypatch.setattr(initplugin.sys, "executable", r"C:\Python\python.exe")
     monkeypatch.setattr(initplugin.platform, "system", lambda: "Windows")
-    assert initplugin.get_lbp_path().endswith(os.path.join("Scripts", "lbp.exe"))
+    assert initplugin.get_lbp_path() == ntpath.join(
+        r"C:\Python", "Scripts", "lbp.exe"
+    )
+
+    monkeypatch.setattr(
+        initplugin.sys,
+        "executable",
+        r"C:\workspace\.venv\Scripts\python.exe",
+    )
+    assert initplugin.get_lbp_path() == ntpath.join(
+        r"C:\workspace\.venv\Scripts", "lbp.exe"
+    )
 
 
 def test_is_git_available_returns_false_when_git_missing(monkeypatch):

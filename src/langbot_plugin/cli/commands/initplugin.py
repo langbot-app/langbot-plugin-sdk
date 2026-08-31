@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import ntpath
 import os
-import pathlib
-import re
-import sys
-import subprocess
 import platform
+import posixpath
+import re
+import subprocess
+import sys
 
-from langbot_plugin.cli.gen.renderer import render_template, init_plugin_files
-from langbot_plugin.cli.utils.form import input_form_values, NAME_REGEXP
+from langbot_plugin.cli.gen.renderer import init_plugin_files, render_template
 from langbot_plugin.cli.i18n import cli_print, t
+from langbot_plugin.cli.utils.form import NAME_REGEXP, input_form_values
 
 
 # Check if Git is installed
@@ -39,13 +40,16 @@ def get_lbp_path() -> str:
     system = platform.system()
 
     if system == "Windows":
-        # Windows: Scripts\lbp.exe
-        return str(
-            pathlib.PureWindowsPath(sys.executable).parent / "Scripts" / "lbp.exe"
+        python_dir = ntpath.dirname(sys.executable)
+        scripts_dir = (
+            python_dir
+            if ntpath.basename(python_dir).casefold() == "scripts"
+            else ntpath.join(python_dir, "Scripts")
         )
+        return ntpath.join(scripts_dir, "lbp.exe")
 
-    # macOS and Linux: bin/lbp
-    return str(pathlib.PurePosixPath(sys.executable).parent / "lbp")
+    python_dir = posixpath.dirname(sys.executable)
+    return posixpath.join(python_dir, "lbp")
 
 
 # Initialize Git repository and add basic configuration
