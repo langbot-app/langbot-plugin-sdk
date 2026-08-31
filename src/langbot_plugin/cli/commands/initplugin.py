@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import ntpath
+import posixpath
 import re
 import sys
 import subprocess
@@ -35,17 +37,19 @@ def get_lbp_path() -> str:
     Returns:
         str: Path to lbp executable
     """
-    python_dir = os.path.dirname(sys.executable)
     system = platform.system()
 
     if system == "Windows":
-        # Windows: Scripts\lbp.exe
-        lbp_path = os.path.join(python_dir, "Scripts", "lbp.exe")
-    else:
-        # macOS and Linux: bin/lbp
-        lbp_path = os.path.join(python_dir, "lbp")
+        python_dir = ntpath.dirname(sys.executable)
+        scripts_dir = (
+            python_dir
+            if ntpath.basename(python_dir).casefold() == "scripts"
+            else ntpath.join(python_dir, "Scripts")
+        )
+        return ntpath.join(scripts_dir, "lbp.exe")
 
-    return lbp_path
+    python_dir = posixpath.dirname(sys.executable)
+    return posixpath.join(python_dir, "lbp")
 
 
 # Initialize Git repository and add basic configuration
