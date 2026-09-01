@@ -20,13 +20,14 @@ from packaging.utils import canonicalize_name
 from langbot_plugin.runtime.plugin.artifact import PluginArtifact
 
 
-_ENVIRONMENT_SCHEMA_VERSION = 1
+_ENVIRONMENT_SCHEMA_VERSION = 2
 _READY_MARKER = ".ready.json"
 _MAX_REQUIREMENTS_BYTES = 1024 * 1024
 _MAX_REQUIREMENT_COUNT = 1024
 _MAX_ENVIRONMENT_ENTRIES = 100_000
 _MAX_ENVIRONMENT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_RUNTIME_PROVIDED_DISTRIBUTIONS = frozenset({"langbot-plugin"})
 
 
 class DependencyEnvironmentPreparationError(RuntimeError):
@@ -264,6 +265,34 @@ class PluginDependencyEnvironmentStore:
                     "Artifact requirements.txt contains an invalid requirement "
                     f"(line {line_number})"
                 ) from exc
+            canonical_name = canonicalize_name(requirement.name)
+            if canonical_name in _RUNTIME_PROVIDED_DISTRIBUTIONS:
+                if requirement.marker is not None and not requirement.marker.evaluate():
+                    continue
+                if requirement.url:
+                    raise DependencyEnvironmentPreparationError(
+                        "Runtime-provided dependency langbot-plugin cannot use a direct URL"
+                    )
+                try:
+                    runtime_version = importlib.metadata.version(requirement.name)
+                except importlib.metadata.PackageNotFoundError as exc:
+                    raise DependencyEnvironmentPreparationError(
+                        "Runtime-provided dependency langbot-plugin is unavailable"
+                    ) from exc
+                if (
+                    requirement.specifier
+                    and runtime_version not in requirement.specifier
+                ):
+                    raise DependencyEnvironmentPreparationError(
+                        "Plugin requires "
+                        f"{requirement}, but the Runtime provides "
+                        f"langbot-plugin=={runtime_version}"
+                    )
+                # The worker must always import the Runtime-owned SDK. Installing
+                # another SDK into the plugin dependency tree can shadow newer
+                # Runtime APIs, especially in editable development environments.
+                continue
+
             requirements.append(str(requirement))
             if len(requirements) > _MAX_REQUIREMENT_COUNT:
                 raise DependencyEnvironmentPreparationError(

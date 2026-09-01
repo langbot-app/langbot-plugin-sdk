@@ -102,6 +102,12 @@ def test_shared_launcher_maps_only_trusted_policy_to_nsjail(tmp_path):
         platform="linux",
         python_executable=str(python_executable),
         python_prefix=str(python_prefix),
+        runtime_import_root=str(
+            python_prefix
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        ),
     )
     launcher.configure(_policy(), "shared")
 
@@ -335,11 +341,8 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
 
     assert oss_controller.command == sys.executable
     assert oss_controller.working_dir == str(launch_spec.artifact.code_path)
-    runtime_site_packages = (
-        pathlib.Path(sys.prefix)
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
+    runtime_import_root = (
+        pathlib.Path(worker_launcher_module.__file__).resolve().parents[3]
     )
     assert oss_controller.env == {
         PLUGIN_FILE_STORAGE_DIR_ENV: str(launch_spec.paths.root_path / "rpc-transfer"),
@@ -348,7 +351,7 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONPATH": os.pathsep.join(
             (
-                str(runtime_site_packages),
+                str(runtime_import_root),
                 str(launch_spec.dependency_environment.site_packages_path.resolve()),
             )
         ),
