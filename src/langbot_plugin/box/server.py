@@ -402,6 +402,7 @@ class BoxServerHandler(Handler):
         *,
         host_control_authenticated: bool,
         trusted_instance_uuid: str,
+        allow_host_backend: bool = False,
         generation_fence: BoxGenerationFence | None = None,
     ):
         super().__init__(
@@ -410,6 +411,7 @@ class BoxServerHandler(Handler):
         )
         self._runtime = runtime
         self._host_control_authenticated = bool(host_control_authenticated)
+        self._allow_host_backend = bool(allow_host_backend)
         self._trusted_instance_uuid = normalize_instance_uuid(trusted_instance_uuid)
         self._generation_fence = generation_fence or BoxGenerationFence(
             max_records=runtime.max_admission_records
@@ -870,6 +872,11 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.INIT)
         async def init(data: dict[str, Any]) -> ActionResponse:
             self._require_host_control()
+            if data.get("backend") == "host" and not self._allow_host_backend:
+                return ActionResponse.error(
+                    "BoxValidationError: host backend requires local stdio control "
+                    "or WebSocket control protected by LANGBOT_BOX_CONTROL_TOKEN"
+                )
             self._runtime.init(data)
             return ActionResponse.success({"initialized": True})
 
@@ -1046,6 +1053,7 @@ async def handle_rpc_ws(request: web.Request) -> web.StreamResponse:
         runtime,
         host_control_authenticated=True,
         trusted_instance_uuid=trusted_instance_uuid,
+        allow_host_backend=bool(request.app.get(_APP_CONTROL_TOKEN_KEY)),
         generation_fence=generation_fence,
     )
     try:
@@ -1217,6 +1225,15 @@ async def _run_server(host: str, port: int, mode: str) -> None:
 
     runtime = BoxRuntime(logger=logger)
     runtime.blocking_executor = blocking_executor
+    runtime_box_config = getattr(runtime, "_box_config", {})
+    if (
+        mode != "stdio"
+        and runtime_box_config.get("backend") == "host"
+        and not control_token
+    ):
+        raise RuntimeError(
+            "WebSocket-controlled host backend requires LANGBOT_BOX_CONTROL_TOKEN"
+        )
     runner: web.AppRunner | None = None
     initialized = False
     try:
@@ -1257,6 +1274,7 @@ async def _run_server(host: str, port: int, mode: str) -> None:
                     runtime,
                     host_control_authenticated=True,
                     trusted_instance_uuid=configured_instance_uuid,
+                    allow_host_backend=True,
                     generation_fence=generation_fence,
                 )
                 await handler.run()
