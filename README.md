@@ -28,7 +28,9 @@ three things:
 - **Plugin Runtime** (`lbp rt`) — the host process that discovers, installs and
   runs plugins, bridging them to LangBot over stdio or WebSocket.
 - **Box Runtime** (`lbp box`) — the code-sandbox service backing LangBot's Box
-  subsystem, executing untrusted code via Docker / nsjail / E2B backends.
+  subsystem, executing untrusted code via Docker / nsjail / E2B backends. An
+  explicit, non-sandboxed `host` backend is available for trusted local
+  development only.
 
 LangBot depends on this package as the pinned `langbot-plugin==<x.y.z>` in its
 `pyproject.toml`; the canonical version lives in this repo's `pyproject.toml`.

@@ -23,6 +23,7 @@ from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
 
 from .backend import BaseSandboxBackend, DockerBackend
+from .host_backend import HostProcessBackend
 from .nsjail_backend import NsjailBackend
 from .errors import (
     BoxAdmissionError,
@@ -196,6 +197,7 @@ class BoxRuntime:
                 DockerBackend(logger),
                 NsjailBackend(logger),
                 self._create_e2b_backend(logger),
+                HostProcessBackend(logger),
             ]
 
         self.backends = backends
@@ -1268,13 +1270,18 @@ class BoxRuntime:
                     available = await backend.is_available()
                 except Exception:
                     available = False
+            backend_info = {
+                "name": backend.name if backend is not None else None,
+                "available": available,
+            }
+            if backend is not None and getattr(
+                backend, "unsafe_direct_execution", False
+            ):
+                backend_info["unsafe_direct_execution"] = True
             result = {
                 "ready": available,
                 "mode": "standard",
-                "backend": {
-                    "name": backend.name if backend is not None else None,
-                    "available": available,
-                },
+                "backend": backend_info,
                 "checks": {"backend_available": available},
             }
             self._readiness_cache = (now_monotonic, result)
@@ -1394,7 +1401,10 @@ class BoxRuntime:
             available = await backend.is_available()
         except Exception:
             available = False
-        return {"name": backend.name, "available": available}
+        result = {"name": backend.name, "available": available}
+        if getattr(backend, "unsafe_direct_execution", False):
+            result["unsafe_direct_execution"] = True
+        return result
 
     def get_sessions(self) -> list[dict]:
         return [self._session_to_dict(s.info) for s in self._sessions.values()]
@@ -1639,7 +1649,8 @@ class BoxRuntime:
                     self._backend = await self._select_backend()
         if self._backend is None:
             raise BoxBackendUnavailableError(
-                "LangBot Box backend unavailable. Install and start Docker or nsjail before using exec."
+                "LangBot Box backend unavailable. Install and start Docker or "
+                "nsjail, configure E2B, or explicitly select the unsafe host backend."
             )
         return self._backend
 
@@ -1649,8 +1660,9 @@ class BoxRuntime:
 
     async def _select_backend(self) -> BaseSandboxBackend | None:
         # Backend selection comes from box.backend only.
-        # Accepted values: 'local', 'docker', 'nsjail', 'e2b'. 'local' fans out
-        # to local container backends; everything else must match one backend exactly.
+        # Accepted values: 'local', 'docker', 'nsjail', 'e2b', 'host'. 'local'
+        # fans out to local sandbox backends. The unsafe host backend is never
+        # auto-selected and must be requested explicitly.
         forced = (self._box_config.get("backend") or "").strip()
         source_label = "box.backend"
 
@@ -1679,7 +1691,11 @@ class BoxRuntime:
                 )
                 return None
         else:
-            candidates = [b for b in self.backends if b is not None]
+            candidates = [
+                b
+                for b in self.backends
+                if b is not None and not getattr(b, "unsafe_direct_execution", False)
+            ]
 
         for backend in candidates:
             try:
@@ -1704,7 +1720,9 @@ class BoxRuntime:
             )
 
         self.logger.warning(
-            "LangBot Box backend unavailable: no supported backend (Docker, nsjail, E2B) is ready"
+            "LangBot Box backend unavailable: no supported sandbox backend "
+            "(Docker, nsjail, E2B) is ready; the unsafe host backend is "
+            "available only through explicit box.backend=host configuration"
         )
         return None
 

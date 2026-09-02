@@ -26,7 +26,8 @@
 - **插件运行时**（`lbp rt`）—— 负责发现、安装并运行插件的宿主进程，通过 stdio
   或 WebSocket 与 LangBot 通信。
 - **Box 运行时**（`lbp box`）—— 支撑 LangBot Box 子系统的代码沙箱服务，通过
-  Docker / nsjail / E2B 后端执行不受信任的代码。
+  Docker / nsjail / E2B 后端执行不受信任的代码；另提供仅供可信本地开发显式启用、
+  不具备沙箱隔离能力的 `host` 后端。
 
 LangBot 通过 `pyproject.toml` 中固定的 `langbot-plugin==<x.y.z>` 依赖此包；
 版本号以本仓库的 `pyproject.toml` 为准。

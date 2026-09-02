@@ -86,9 +86,9 @@ def test_e2b_backend_none_if_package_not_installed(logger):
         runtime = BoxRuntime(logger)
         # Third backend is None (package not installed)
         assert runtime.backends[2] is None
-        # Filtered list for selection
+        # Docker, nsjail, and explicit-only host remain registered.
         active_backends = [b for b in runtime.backends if b is not None]
-        assert len(active_backends) == 2
+        assert len(active_backends) == 3
 
 
 def test_e2b_import_failure_returns_none(logger):
@@ -213,6 +213,51 @@ async def test_auto_detect_none_when_all_unavailable(logger):
         selected = await runtime._select_backend()
 
     assert selected is None
+
+
+@pytest.mark.anyio
+async def test_auto_detect_never_selects_unsafe_host(logger):
+    backend_host = MockBackend(logger, "host", available=True)
+    backend_host.unsafe_direct_execution = True
+    runtime = BoxRuntime(logger, backends=[backend_host])
+
+    selected = await runtime._select_backend()
+
+    assert selected is None
+
+
+@pytest.mark.anyio
+async def test_box_backend_config_can_explicitly_select_host(logger):
+    backend_host = MockBackend(logger, "host", available=True)
+    backend_host.unsafe_direct_execution = True
+    runtime = BoxRuntime(logger, backends=[backend_host])
+    runtime.init({"backend": "host"})
+
+    selected = await runtime._select_backend()
+
+    assert selected is backend_host
+
+
+@pytest.mark.anyio
+async def test_admission_readiness_rejects_explicit_host(logger, tmp_path):
+    backend_host = MockBackend(logger, "host", available=True)
+    backend_host.unsafe_direct_execution = True
+    runtime = BoxRuntime(logger, backends=[backend_host])
+    runtime.init(
+        {
+            "backend": "host",
+            "local": {
+                "host_root": str(tmp_path / "box"),
+                "allowed_mount_roots": [str(tmp_path / "box")],
+            },
+            "admission": {"required": True},
+        }
+    )
+
+    readiness = await runtime.get_readiness(force=True)
+
+    assert readiness["ready"] is False
+    assert readiness["checks"]["required_backend"] is False
 
 
 @pytest.mark.anyio

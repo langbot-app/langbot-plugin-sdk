@@ -76,6 +76,7 @@ def _new_handler(
     runtime,
     *,
     authenticated: bool = True,
+    allow_host_backend: bool = False,
     generation_fence: BoxGenerationFence | None = None,
 ):
     return BoxServerHandler(
@@ -83,6 +84,7 @@ def _new_handler(
         runtime,
         host_control_authenticated=authenticated,
         trusted_instance_uuid=_ACTION_CONTEXT.instance_uuid,
+        allow_host_backend=allow_host_backend,
         generation_fence=generation_fence,
     )
 
@@ -1218,6 +1220,31 @@ async def test_init(handler, mock_runtime):
     assert resp.code == 0
     assert resp.data == {"initialized": True}
     mock_runtime.init.assert_called_once_with(config)
+
+
+async def test_init_rejects_host_without_secure_control(mock_connection, mock_runtime):
+    handler = _new_handler(mock_connection, mock_runtime)
+
+    resp = await _invoke(handler, LangBotToBoxAction.INIT, {"backend": "host"})
+
+    assert resp.code != 0
+    assert "LANGBOT_BOX_CONTROL_TOKEN" in resp.message
+    mock_runtime.init.assert_not_called()
+
+
+async def test_init_allows_host_for_local_or_token_control(
+    mock_connection, mock_runtime
+):
+    handler = _new_handler(
+        mock_connection,
+        mock_runtime,
+        allow_host_backend=True,
+    )
+
+    resp = await _invoke(handler, LangBotToBoxAction.INIT, {"backend": "host"})
+
+    assert resp.code == 0
+    mock_runtime.init.assert_called_once_with({"backend": "host"})
 
 
 async def test_shutdown(handler, mock_runtime):

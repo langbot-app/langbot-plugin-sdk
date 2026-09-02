@@ -313,7 +313,7 @@ LangBot BoxService
   ↔ BoxServerHandler
   → BoxRuntime
   → Backend session(s)
-  → Docker/Podman, nsjail, or E2B sandbox
+  → Docker/Podman, nsjail, E2B sandbox, or explicit unsafe host process
 ```
 
 Important modules:
@@ -324,6 +324,8 @@ Important modules:
 - `box/client.py`: action-RPC client used by LangBot-side connector/service.
 - `box/actions.py`: `LangBotToBoxAction` enum.
 - `box/backend.py`: backend abstraction and local backend selection.
+- `box/host_backend.py`: explicit non-sandboxed host-process backend for
+  trusted local development.
 - `box/nsjail_backend.py`: nsjail backend.
 - `box/e2b_backend.py`: E2B backend.
 - `box/skill_store.py`: Box-owned skill package CRUD and install/preview helpers.
@@ -352,8 +354,10 @@ Box can execute through multiple sandbox backends:
 - Docker/Podman through the local CLI backend path.
 - nsjail for local Linux sandboxing.
 - E2B for remote cloud sandboxes.
+- Host processes for explicitly opted-in, trusted local development without
+  sandbox isolation.
 
-LangBot sends Box config during initialization. Backend selection is controlled by LangBot's `box.backend` config (`local`, `docker`, `nsjail`, `e2b`) and the Box runtime's backend availability probes.
+LangBot sends Box config during initialization. Backend selection is controlled by LangBot's `box.backend` config (`local`, `docker`, `nsjail`, `e2b`, `host`) and the Box runtime's backend availability probes. `host` is never auto-selected and does not participate in the `local` fallback.
 
 A false “no backend” often means Docker exists but the user cannot access the Docker socket. nsjail inside containers requires host cgroup namespace for cgroup v2 limits if hard memory/pid/cpu enforcement is expected.
 
