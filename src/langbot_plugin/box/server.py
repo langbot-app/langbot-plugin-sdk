@@ -685,6 +685,11 @@ class BoxServerHandler(Handler):
             info = await self._runtime.get_backend_info()
             return ActionResponse.success(info)
 
+        @self.action(LangBotToBoxAction.GET_STORAGE_ANALYSIS)
+        async def get_storage_analysis(data: dict[str, Any]) -> ActionResponse:
+            result = await self._runtime.get_storage_analysis(self._action_context())
+            return ActionResponse.success(result)
+
         @self.action(LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT)
         async def upsert_sandbox_admission_grant(
             data: dict[str, Any],

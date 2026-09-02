@@ -28,6 +28,7 @@ from .errors import (
     BoxAdmissionError,
     BoxBackendUnavailableError,
     BoxCapacityExceededError,
+    BoxError,
     BoxManagedProcessNotFoundError,
     BoxReadinessError,
     BoxSessionConflictError,
@@ -58,6 +59,7 @@ from .tenancy import (
     box_namespace,
     namespace_session_id,
 )
+from langbot_plugin.storage import collect_storage_directories, storage_total_bytes
 
 if TYPE_CHECKING:
     from .e2b_backend import E2BSandboxBackend
@@ -511,6 +513,191 @@ class BoxRuntime:
         if not os.access(resolved_default, os.R_OK | os.W_OK | os.X_OK):
             raise BoxReadinessError("Managed sandbox workspace path is not writable")
         return resolved_default
+
+    async def get_storage_analysis(self, action_context: ActionContext) -> dict:
+        """Measure host-persistent and backend-internal Workspace storage."""
+
+        context = ActionContext.model_validate(action_context).without_installation()
+        namespace = box_namespace(context)
+        host_roots: list[tuple[str, Path, str, str | None]] = []
+        try:
+            managed_root = self._managed_workspace_root()
+        except BoxReadinessError:
+            managed_root = None
+        if managed_root is not None:
+            tenants_root = _resolve_local_path(os.path.join(managed_root, "tenants"))
+            if not self._path_is_under(tenants_root, managed_root):
+                raise BoxAdmissionError(
+                    "Managed sandbox tenant directory escapes the configured workspace"
+                )
+            workspace_path = Path(tenants_root) / namespace
+            host_roots.extend(
+                (
+                    ("workspace", workspace_path, "root", None),
+                    ("mcp", workspace_path / ".mcp", "detail", "workspace"),
+                    ("inbox", workspace_path / "inbox", "detail", "workspace"),
+                    ("outbox", workspace_path / "outbox", "detail", "workspace"),
+                )
+            )
+
+        skills_path = Path(self.skill_store.scoped(namespace).root)
+        host_roots.append(("skills", skills_path, "root", None))
+        directories = await asyncio.to_thread(collect_storage_directories, host_roots)
+        for directory in directories:
+            directory["scope"] = "runtime_host"
+
+        async with self._lock:
+            sessions = [
+                self._sessions[session_id]
+                for session_id in self._workspace_session_ids_locked(context)
+                if session_id in self._sessions
+            ]
+            managed_processes = sum(
+                len(runtime_session.managed_processes) for runtime_session in sessions
+            )
+
+        sandbox_reports = await asyncio.gather(
+            *(
+                self._sandbox_session_storage(runtime_session)
+                for runtime_session in sessions
+            ),
+            return_exceptions=True,
+        )
+        directories.extend(self._aggregate_sandbox_storage(sessions, sandbox_reports))
+        return {
+            "size_bytes": storage_total_bytes(directories),
+            "directories": directories,
+            "active_sessions": len(sessions),
+            "managed_processes": managed_processes,
+        }
+
+    async def _sandbox_session_storage(
+        self,
+        runtime_session: _RuntimeSession,
+    ) -> dict[str, dict[str, int | bool]]:
+        command = """
+for item in 'session_workspaces|/workspace' 'session_caches|/root/.cache' 'session_temp|/tmp'; do
+  key=${item%%|*}
+  path=${item#*|}
+  if [ -e "$path" ]; then
+    set -- $(du -sk "$path" 2>/dev/null)
+    kb=${1:-0}
+    files=$(find "$path" -type f 2>/dev/null | wc -l)
+    printf '%s\t1\t%s\t%s\n' "$key" "$kb" "$files"
+  else
+    printf '%s\t0\t0\t0\n' "$key"
+  fi
+done
+""".strip()
+        spec = BoxSpec(
+            session_id=runtime_session.info.session_id,
+            cmd=command,
+            workdir="/",
+            timeout_sec=15,
+        )
+        async with runtime_session.lock:
+            if runtime_session.closing:
+                raise BoxSessionNotFoundError(
+                    f"session {runtime_session.info.session_id} is being deleted"
+                )
+            result = await (await self._get_backend()).exec(runtime_session.info, spec)
+        if not result.ok:
+            raise BoxError(result.stderr or "Sandbox storage probe failed")
+
+        report: dict[str, dict[str, int | bool]] = {}
+        for line in result.stdout.splitlines():
+            fields = line.split("\t")
+            if len(fields) != 4 or fields[0] not in {
+                "session_workspaces",
+                "session_caches",
+                "session_temp",
+            }:
+                continue
+            try:
+                report[fields[0]] = {
+                    "exists": fields[1] == "1",
+                    "size_bytes": max(int(fields[2]), 0) * 1024,
+                    "file_count": max(int(fields[3]), 0),
+                }
+            except ValueError:
+                continue
+        return report
+
+    @staticmethod
+    def _aggregate_sandbox_storage(
+        sessions: list[_RuntimeSession],
+        reports: list[dict[str, dict[str, int | bool]] | BaseException],
+    ) -> list[dict]:
+        keys = ("session_workspaces", "session_caches", "session_temp")
+        totals = {
+            key: {"exists": False, "size_bytes": 0, "file_count": 0} for key in keys
+        }
+        managed_workspaces = {"exists": False, "size_bytes": 0, "file_count": 0}
+        error_count = 0
+        included_sessions = 0
+        managed_sessions = 0
+        for runtime_session, report in zip(sessions, reports, strict=True):
+            if isinstance(report, BaseException):
+                error_count += 1
+                continue
+            included_sessions += 1
+            workspace_is_host_mounted = runtime_session.info.host_path is not None
+            has_managed_process = bool(runtime_session.managed_processes)
+            for key in keys:
+                if key == "session_workspaces" and workspace_is_host_mounted:
+                    continue
+                value = report.get(key) or {}
+                totals[key]["exists"] = totals[key]["exists"] or bool(
+                    value.get("exists")
+                )
+                totals[key]["size_bytes"] += int(value.get("size_bytes") or 0)
+                totals[key]["file_count"] += int(value.get("file_count") or 0)
+            if has_managed_process and not workspace_is_host_mounted:
+                managed_sessions += 1
+                value = report.get("session_workspaces") or {}
+                managed_workspaces["exists"] = managed_workspaces["exists"] or bool(
+                    value.get("exists")
+                )
+                managed_workspaces["size_bytes"] += int(value.get("size_bytes") or 0)
+                managed_workspaces["file_count"] += int(value.get("file_count") or 0)
+
+        if not sessions:
+            return []
+        directories = []
+        paths = {
+            "session_workspaces": "/workspace",
+            "session_caches": "/root/.cache",
+            "session_temp": "/tmp",
+        }
+        for key in keys:
+            value = totals[key]
+            directories.append(
+                {
+                    "key": key,
+                    "path": f"{paths[key]} ({included_sessions} sandbox sessions)",
+                    "kind": "root",
+                    "exists": value["exists"],
+                    "size_bytes": value["size_bytes"],
+                    "file_count": value["file_count"],
+                    "error_count": error_count,
+                    "scope": "sandbox_sessions",
+                }
+            )
+        if managed_sessions:
+            directories.append(
+                {
+                    "key": "managed_process_workspaces",
+                    "path": f"/workspace ({managed_sessions} managed-process sessions)",
+                    "kind": "detail",
+                    "parent_key": "session_workspaces",
+                    "exists": managed_workspaces["exists"],
+                    "size_bytes": managed_workspaces["size_bytes"],
+                    "file_count": managed_workspaces["file_count"],
+                    "error_count": error_count,
+                    "scope": "sandbox_sessions",
+                }
+            )
+        return directories
 
     def verify_shared_workspace(self, marker_name: str) -> dict:
         """Digest one Core-created marker from the canonical shared root.

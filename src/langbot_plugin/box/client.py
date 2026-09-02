@@ -47,6 +47,11 @@ class BoxRuntimeClient(abc.ABC):
     @abc.abstractmethod
     async def get_backend_info(self) -> dict: ...
 
+    async def get_storage_analysis(
+        self, action_context: ActionContext | None = None
+    ) -> dict:
+        raise NotImplementedError
+
     @abc.abstractmethod
     async def delete_session(
         self, session_id: str, action_context: ActionContext | None = None
@@ -278,7 +283,11 @@ class ActionRPCBoxClient(BoxRuntimeClient):
             try:
                 await self._call(LangBotToBoxAction.SHUTDOWN, {})
             except Exception as exc:
-                self._logger.debug("Box runtime shutdown action failed during cleanup: %s", exc, exc_info=True)
+                self._logger.debug(
+                    "Box runtime shutdown action failed during cleanup: %s",
+                    exc,
+                    exc_info=True,
+                )
             self._handler = None
 
     async def get_status(self, action_context: ActionContext | None = None) -> dict:
@@ -305,6 +314,16 @@ class ActionRPCBoxClient(BoxRuntimeClient):
 
     async def get_backend_info(self) -> dict:
         return await self._call(LangBotToBoxAction.GET_BACKEND_INFO, {})
+
+    async def get_storage_analysis(
+        self, action_context: ActionContext | None = None
+    ) -> dict:
+        return await self._call(
+            LangBotToBoxAction.GET_STORAGE_ANALYSIS,
+            {},
+            timeout=60.0,
+            action_context=action_context,
+        )
 
     async def delete_session(
         self, session_id: str, action_context: ActionContext | None = None

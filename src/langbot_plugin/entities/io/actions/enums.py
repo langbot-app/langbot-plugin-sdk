@@ -194,6 +194,10 @@ class LangBotToRuntimeAction(ActionType):
     # Debug info
     GET_DEBUG_INFO = "get_debug_info"
 
+    # Instance-scoped Runtime filesystem diagnostics. The Host only exposes
+    # this in its single-Workspace maintenance surface.
+    GET_STORAGE_ANALYSIS = "get_storage_analysis"
+
     # Runtime configuration pushed by LangBot at connection init (e.g. the
     # marketplace / cloud service URL), so the runtime does not rely on its own
     # env/default.
