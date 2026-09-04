@@ -10,7 +10,7 @@
 
 English / [简体中文](README_CN.md)
 
-[Documentation](https://docs.langbot.app/zh/plugin/dev/tutor) ·
+[Documentation](https://langbot.app/docs/zh/plugin/dev/tutor) ·
 [Plugin Market](https://space.langbot.app) ·
 [LangBot](https://github.com/langbot-app/LangBot)
 
@@ -77,9 +77,9 @@ Plugins extend LangBot through six component types, scaffolded with
 
 ## Documentation
 
-- Plugin development tutorial — https://docs.langbot.app/zh/plugin/dev/tutor
-- Debugging the Runtime / CLI / SDK — https://docs.langbot.app/zh/develop/plugin-runtime
-- Dev environment setup — https://docs.langbot.app/zh/develop/dev-config
+- Plugin development tutorial — https://langbot.app/docs/zh/plugin/dev/tutor
+- Debugging the Runtime / CLI / SDK — https://langbot.app/docs/zh/develop/plugin-runtime
+- Dev environment setup — https://langbot.app/docs/zh/develop/dev-config
 
 ## License
 
