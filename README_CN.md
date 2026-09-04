@@ -10,7 +10,7 @@
 
 [English](README.md) / 简体中文
 
-[文档](https://docs.langbot.app/zh/plugin/dev/tutor) ·
+[文档](https://langbot.app/docs/zh/plugin/dev/tutor) ·
 [插件市场](https://space.langbot.app) ·
 [LangBot](https://github.com/langbot-app/LangBot)
 
@@ -73,9 +73,9 @@ lbp --help
 
 ## 文档
 
-- 插件开发教程 —— https://docs.langbot.app/zh/plugin/dev/tutor
-- 调试运行时 / CLI / SDK —— https://docs.langbot.app/zh/develop/plugin-runtime
-- 开发环境配置 —— https://docs.langbot.app/zh/develop/dev-config
+- 插件开发教程 —— https://langbot.app/docs/zh/plugin/dev/tutor
+- 调试运行时 / CLI / SDK —— https://langbot.app/docs/zh/develop/plugin-runtime
+- 开发环境配置 —— https://langbot.app/docs/zh/develop/dev-config
 
 ## 许可证
 

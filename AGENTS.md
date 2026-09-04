@@ -47,8 +47,8 @@ uv run python scripts/check_action_consistency.py
 - Plugin Runtime: `src/langbot_plugin/runtime/`.
 - Box Runtime: `src/langbot_plugin/box/`.
 - Action protocol: `src/langbot_plugin/entities/io/` and `src/langbot_plugin/runtime/io/handler.py`.
-- Plugin tutorial: https://docs.langbot.app/zh/plugin/dev/tutor.
-- Runtime/CLI/SDK debugging: https://docs.langbot.app/zh/develop/plugin-runtime.
+- Plugin tutorial: https://langbot.app/docs/zh/plugin/dev/tutor.
+- Runtime/CLI/SDK debugging: https://langbot.app/docs/zh/develop/plugin-runtime.
 - LangBot main repo: `../LangBot/`.
 
 ## Cross-Repo LangBot Testing
