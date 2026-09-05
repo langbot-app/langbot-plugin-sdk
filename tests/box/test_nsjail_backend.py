@@ -99,7 +99,7 @@ async def test_strict_readiness_reports_cgroup_namespace_mount_and_network(
         "available": True,
         "cgroup_v2": True,
         "hard_workspace_quota": False,
-        "hard_skill_storage_quota": False,
+        "hard_read_only_mount_quota": False,
         "bounded_ephemeral_storage": False,
         "inode_quota": False,
         **expected_probe,

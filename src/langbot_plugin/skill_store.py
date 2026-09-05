@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import collections
 import datetime as dt
+import hashlib
 import io
+import mimetypes
 import os
 import posixpath
 import shutil
@@ -13,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+
+from .workspace import workspace_namespace
 
 
 _FRONTMATTER_FIELDS = (
@@ -33,7 +37,7 @@ _PUBLIC_SKILL_FIELDS = (
     "updated_at",
 )
 
-# Skill uploads are untrusted. These fixed Runtime-owned caps apply to both
+# Skill uploads are untrusted. These fixed store-owned caps apply to both
 # preview and installation and are deliberately not configurable per tenant.
 _MAX_ZIP_COMPRESSED_BYTES = 20 * 1024 * 1024
 _MAX_ZIP_ENTRIES = 512
@@ -47,6 +51,19 @@ _MAX_SKILL_SCAN_ENTRIES = 10_000
 _MAX_SKILL_LIST_ENTRIES = 1_000
 _MAX_SKILL_DIRECTORY_ENTRIES = 10_000
 _MAX_SKILL_LIST_TOTAL_TEXT_BYTES = 16 * 1024 * 1024
+_MAX_REVISION_FILES = 2_048
+_MAX_REVISION_BYTES = 64 * 1024 * 1024
+_REVISION_SKIP_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
+
+
+class SkillRevisionMismatchError(ValueError):
+    """Raised when a caller reads a package other than the activated revision."""
+
+
+def skill_namespace(instance_uuid: str, workspace_uuid: str) -> str:
+    """Return the durable Skill namespace for one instance and Workspace."""
+
+    return workspace_namespace(instance_uuid, workspace_uuid)
 
 
 def _read_utf8_text_limited(path: str, *, subject: str) -> str:
@@ -101,14 +118,22 @@ def build_skill_md(metadata: dict, instructions: str) -> str:
     return f"---\n{frontmatter_text}\n---\n\n{instructions}"
 
 
-class BoxSkillStore:
-    """Skill package storage owned by the Box runtime process."""
+class SkillStore:
+    """Filesystem-backed Skill package storage independent from execution."""
 
-    def __init__(self, config: dict | None = None, *, namespace: str | None = None):
-        self._config = config or {}
+    def __init__(
+        self,
+        root: str | os.PathLike[str] = "./data/skills",
+        *,
+        namespace: str | None = None,
+    ):
+        root_path = Path(root).expanduser()
+        if not root_path.is_absolute():
+            root_path = Path.cwd() / root_path
+        self._base_root = root_path.resolve()
         self._namespace = namespace
 
-    def scoped(self, namespace: str) -> BoxSkillStore:
+    def scoped(self, namespace: str) -> SkillStore:
         """Return an immutable Workspace view over the configured skill store."""
 
         normalized = str(namespace or "").strip()
@@ -118,27 +143,12 @@ class BoxSkillStore:
             or "\\" in normalized
             or normalized in {".", ".."}
         ):
-            raise ValueError("Invalid Box skill namespace")
-        return BoxSkillStore(self._config, namespace=normalized)
-
-    def update_config(self, config: dict) -> None:
-        self._config = config or {}
+            raise ValueError("Invalid Skill store namespace")
+        return SkillStore(self._base_root, namespace=normalized)
 
     @property
     def root(self) -> str:
-        local_config = self._config.get("local") or {}
-        host_root = str(local_config.get("host_root") or "./data/box").strip()
-        skills_root = str(local_config.get("skills_root") or "skills").strip()
-
-        host_root_path = Path(host_root).expanduser()
-        if not host_root_path.is_absolute():
-            host_root_path = Path.cwd() / host_root_path
-        host_root_path = host_root_path.resolve()
-
-        skills_root_path = Path(skills_root).expanduser()
-        if not skills_root_path.is_absolute():
-            skills_root_path = host_root_path / skills_root_path
-        resolved_root = skills_root_path.resolve()
+        resolved_root = self._base_root
         if self._namespace is not None:
             resolved_root = resolved_root / "tenants" / self._namespace
         return str(resolved_root)
@@ -170,6 +180,16 @@ class BoxSkillStore:
             if skill.get("name") == skill_name:
                 return skill
         return None
+
+    def get_skill_snapshot(self, skill_name: str) -> Optional[dict]:
+        """Return one Skill together with its immutable package revision."""
+
+        skill = self.get_skill(skill_name)
+        if skill is None:
+            return None
+        result = dict(skill)
+        result["revision"] = self._package_revision(result["package_root"])
+        return result
 
     def resolve_skill_package_root(self, skill_name: str) -> str:
         """Return a trusted package root for a Runtime-owned sandbox mount.
@@ -281,7 +301,7 @@ class BoxSkillStore:
         managed_install_root = self._managed_install_root_for_package(package_root)
         if not managed_install_root:
             raise ValueError(
-                "Only managed skills under the Box skills root can be deleted"
+                "Only managed skills under the Skill store root can be deleted"
             )
 
         shutil.rmtree(managed_install_root, ignore_errors=True)
@@ -307,10 +327,32 @@ class BoxSkillStore:
         package_root, entry_file = discovered[0]
         return self._load_skill_package(package_root, entry_file)
 
+    def scan_import_directory(self, path: str, *, source_root: str) -> dict:
+        """Scan a trusted import source without granting arbitrary host access."""
+
+        source = self._require_path_under(path, source_root, "scan path")
+        self._require_safe_import_tree(source)
+        return SkillStore(self.root).scan_directory(source)
+
+    def import_skill_directory(
+        self,
+        path: str,
+        data: dict,
+        *,
+        source_root: str,
+    ) -> dict:
+        """Copy a package from a fenced source tree into this managed store."""
+
+        source = self._require_path_under(path, source_root, "import path")
+        self._require_safe_import_tree(source)
+        payload = dict(data)
+        payload["package_root"] = source
+        return SkillStore(self.root).create_skill(payload)
+
     def _require_scoped_path(self, path: str, label: str) -> str:
         """Keep host-path operations inside this Workspace's skill root.
 
-        A scoped Box Runtime is shared by mutually untrusted Workspaces. Host
+        A scoped SkillStore may be shared by mutually untrusted Workspaces. Host
         paths supplied over RPC are therefore routing input, not authority.
         ``realpath`` also prevents a symlink inside one tenant root from being
         used to import or scan another tenant's files.
@@ -402,6 +444,51 @@ class BoxSkillStore:
             "content": content,
         }
 
+    def list_skill_resources(
+        self,
+        skill_name: str,
+        path: str = ".",
+        include_hidden: bool = False,
+        max_entries: int = 200,
+        *,
+        expected_revision: str | None = None,
+    ) -> dict:
+        """List read-only package resources pinned to one Skill revision."""
+
+        skill = self._require_skill(skill_name)
+        revision = self._require_revision(skill, expected_revision)
+        result = self.list_skill_files(
+            skill_name,
+            path,
+            include_hidden,
+            max_entries,
+        )
+        self._require_revision(skill, revision)
+        result["revision"] = revision
+        for entry in result.get("entries", []):
+            if not entry.get("is_dir"):
+                entry["mime_type"] = (
+                    mimetypes.guess_type(str(entry.get("path", "")))[0] or "text/plain"
+                )
+        return result
+
+    def read_skill_resource(
+        self,
+        skill_name: str,
+        path: str,
+        *,
+        expected_revision: str | None = None,
+    ) -> dict:
+        """Read one UTF-8 package resource pinned to one Skill revision."""
+
+        skill = self._require_skill(skill_name)
+        revision = self._require_revision(skill, expected_revision)
+        result = self.read_skill_file(skill_name, path)
+        self._require_revision(skill, revision)
+        result["revision"] = revision
+        result["mime_type"] = mimetypes.guess_type(path)[0] or "text/plain"
+        return result
+
     def write_skill_file(self, skill_name: str, path: str, content: str) -> dict:
         skill = self._require_skill(skill_name)
         target_path, relative_path = self._resolve_skill_path(
@@ -435,7 +522,7 @@ class BoxSkillStore:
             raise ValueError("Uploaded file is empty")
         self._validate_zip_upload_size(file_bytes)
 
-        tmp_dir = tempfile.mkdtemp(prefix="langbot_box_skill_preview_")
+        tmp_dir = tempfile.mkdtemp(prefix="langbot_skill_preview_")
         try:
             skill_root = self._extract_uploaded_skill_to_temp(file_bytes, tmp_dir)
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
@@ -461,7 +548,7 @@ class BoxSkillStore:
             raise ValueError("Uploaded file is empty")
         self._validate_zip_upload_size(file_bytes)
 
-        tmp_dir = tempfile.mkdtemp(prefix="langbot_box_skill_upload_")
+        tmp_dir = tempfile.mkdtemp(prefix="langbot_skill_upload_")
         try:
             skill_root = self._extract_uploaded_skill_to_temp(file_bytes, tmp_dir)
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
@@ -487,6 +574,97 @@ class BoxSkillStore:
         if not skill:
             raise ValueError(f'Skill "{skill_name}" not found')
         return skill
+
+    @staticmethod
+    def _require_path_under(path: str, root: str, label: str) -> str:
+        raw_candidate = os.path.abspath(str(path or "").strip())
+        candidate = os.path.realpath(raw_candidate)
+        trusted_root = os.path.realpath(os.path.abspath(str(root or "").strip()))
+        if (
+            not path
+            or not root
+            or (
+                candidate != trusted_root
+                and not candidate.startswith(f"{trusted_root}{os.sep}")
+            )
+        ):
+            raise ValueError(f"{label} must stay within the trusted source root")
+        if not os.path.isdir(candidate):
+            raise ValueError(f"Directory does not exist: {path}")
+        if os.path.islink(raw_candidate):
+            raise ValueError(f"{label} cannot be a symbolic link")
+        return candidate
+
+    @staticmethod
+    def _require_safe_import_tree(root: str) -> None:
+        scanned_entries = 0
+        for current_root, dir_names, file_names in os.walk(root, followlinks=False):
+            for name in (*dir_names, *file_names):
+                scanned_entries += 1
+                if scanned_entries > _MAX_SKILL_SCAN_ENTRIES:
+                    raise ValueError("Skill import exceeded the configured entry limit")
+                path = os.path.join(current_root, name)
+                stat_result = os.lstat(path)
+                if stat.S_ISLNK(stat_result.st_mode):
+                    raise ValueError("Skill imports cannot contain symbolic links")
+                if name in file_names and not stat.S_ISREG(stat_result.st_mode):
+                    raise ValueError("Skill imports can contain regular files only")
+
+    @staticmethod
+    def _package_revision(package_root: str) -> str:
+        root = os.path.realpath(str(package_root or "").strip())
+        if not root or not os.path.isdir(root):
+            raise ValueError("Skill package directory is unavailable")
+
+        digest = hashlib.sha256()
+        file_count = 0
+        total_bytes = 0
+        for current_root, dir_names, file_names in os.walk(root, followlinks=False):
+            dir_names[:] = [
+                name for name in dir_names if name not in _REVISION_SKIP_DIRS
+            ]
+            dir_names.sort()
+            file_names.sort()
+            for directory_name in tuple(dir_names):
+                if os.path.islink(os.path.join(current_root, directory_name)):
+                    raise ValueError("Skill packages cannot contain symbolic links")
+            for file_name in file_names:
+                path = os.path.join(current_root, file_name)
+                if os.path.islink(path):
+                    raise ValueError("Skill packages cannot contain symbolic links")
+                stat_result = os.stat(path, follow_symlinks=False)
+                if not stat.S_ISREG(stat_result.st_mode):
+                    raise ValueError("Skill packages can contain regular files only")
+                file_count += 1
+                if file_count > _MAX_REVISION_FILES:
+                    raise ValueError("Skill package contains too many files")
+                total_bytes += stat_result.st_size
+                if total_bytes > _MAX_REVISION_BYTES:
+                    raise ValueError("Skill package is too large to revision safely")
+
+                relative = os.path.relpath(path, root).replace(os.sep, "/")
+                digest.update(relative.encode("utf-8"))
+                digest.update(b"\0")
+                with open(path, "rb") as file:
+                    while chunk := file.read(64 * 1024):
+                        digest.update(chunk)
+                digest.update(b"\0")
+        return f"sha256:{digest.hexdigest()}"
+
+    def _require_revision(
+        self,
+        skill: dict,
+        expected_revision: str | None,
+    ) -> str:
+        revision = self._package_revision(str(skill.get("package_root") or ""))
+        normalized_expected = str(expected_revision or "").strip()
+        if normalized_expected and normalized_expected != revision:
+            raise SkillRevisionMismatchError(
+                "Skill revision changed "
+                f"(expected {normalized_expected}, current {revision}); "
+                "reactivate the Skill."
+            )
+        return revision
 
     @staticmethod
     def _serialize_skill(skill: dict) -> dict:
@@ -612,7 +790,7 @@ class BoxSkillStore:
 
     @staticmethod
     def _serialize_skill_with_source(skill: dict) -> dict:
-        data = BoxSkillStore._serialize_skill(skill)
+        data = SkillStore._serialize_skill(skill)
         if "source_path" in skill:
             data["source_path"] = skill["source_path"]
         return data
@@ -1013,3 +1191,12 @@ class BoxSkillStore:
         if imported_skill_data is not None and not value.strip():
             return str(imported_skill_data.get(field, default) or default)
         return value
+
+
+__all__ = [
+    "SkillRevisionMismatchError",
+    "SkillStore",
+    "build_skill_md",
+    "parse_frontmatter",
+    "skill_namespace",
+]

@@ -20,7 +20,7 @@ The runtime code under `src/langbot_plugin/runtime/` is AGPL; the rest of the re
 This repo is coupled to LangBot but owns different things.
 
 - The LangBot main repo owns product behavior, HTTP API, web UI, platform adapters, pipeline execution, model/tool orchestration, persistence, skills integration, and the LangBot-side runtime connectors.
-- This SDK repo owns plugin author APIs, shared message/event/context entities, the action RPC protocol, `lbp`, Plugin Runtime implementation, and Box Runtime implementation.
+- This SDK repo owns plugin author APIs, shared message/event/context entities, the action RPC protocol, the execution-independent filesystem Skill store, `lbp`, Plugin Runtime implementation, and Box Runtime implementation.
 - Plugins import this package directly; LangBot also imports it for shared entities and runtime protocols.
 
 If a change alters shared entities, component contracts, action names/payloads, runtime behavior, or Box models, update/test both repos in lockstep.
@@ -37,6 +37,8 @@ langbot-plugin-sdk/
 │   ├── cli/                  # `lbp` entrypoint and subcommands
 │   ├── runtime/              # Plugin Runtime (`lbp rt`)
 │   ├── box/                  # Box Runtime (`lbp box`)
+│   ├── skill_store.py        # Execution-independent Skill package storage
+│   ├── workspace.py          # Neutral Workspace namespace identity
 │   ├── entities/io/          # Action RPC request/response/error/action models
 │   ├── assets/               # Scaffolding templates and page SDK asset
 │   └── utils/
@@ -320,7 +322,7 @@ Important modules:
 
 - `box/server.py`: CLI entrypoint, aiohttp WebSocket routes, `BoxServerHandler` action registration.
 - `box/runtime.py`: session lifecycle, per-session locks, TTL cleanup, command execution, managed processes.
-- `box/models.py`: `BoxSpec`, execution results, managed-process specs.
+- `box/models.py`: generic `BoxSpec`/read-only mount contracts, execution results, managed-process specs.
 - `box/client.py`: action-RPC client used by LangBot-side connector/service.
 - `box/actions.py`: `LangBotToBoxAction` enum.
 - `box/backend.py`: backend abstraction and local backend selection.
@@ -328,7 +330,11 @@ Important modules:
   trusted local development.
 - `box/nsjail_backend.py`: nsjail backend.
 - `box/e2b_backend.py`: E2B backend.
-- `box/skill_store.py`: Box-owned skill package CRUD and install/preview helpers.
+- `skill_store.py`: generic Skill package CRUD, revision, and read-only resource helpers; it does not start or connect to Box.
+- `box/legacy_skill_compat.py`: temporary old-Core wire bridge used only while
+  rolling replicas forward. It translates the retired `skill_name` payload to
+  a generic read-only mount and serves old Skill RPC action strings. Deploy Box
+  before Core; the module is marked for deletion in the next major version.
 - `box/security.py`: path/security helper logic.
 
 Default Box WebSocket endpoints on port `5410`:
@@ -337,8 +343,11 @@ Default Box WebSocket endpoints on port `5410`:
 - `/v1/sessions/{session_id}/managed-process/ws`: legacy default process stdio relay.
 - `/v1/sessions/{session_id}/managed-process/{process_id}/ws`: named process stdio relay.
 
-Box keeps durable skill/storage paths in an `(instance, workspace)` namespace,
-while sandbox sessions and managed processes use an
+The Skill store keeps durable package paths in an `(instance, workspace)`
+namespace. LangBot Core owns that store and composes executable packages into
+generic read-only `BoxMountSpec` values. Box has no Skill model, CRUD API, or
+`SKILL.md` knowledge in its normal path; it only validates and mounts artifacts.
+Sandbox sessions and managed processes use an
 `(instance, workspace, placement_generation)` namespace. Authenticated tenant
 RPCs advance a monotonic generation fence, cancel in-flight older RPCs, and
 retire older sessions. Managed-process relay handshakes carry Workspace and
@@ -384,5 +393,6 @@ The SDK `AGENTS.md` keeps the short command checklist; this file keeps the struc
 - Keep plugin-author SDK APIs stable and explicit.
 - Treat action enums and Pydantic models as cross-process API contracts.
 - Keep runtime process management separate from LangBot product logic.
-- Keep Box sandbox semantics in `box/`; LangBot should call Box through the service/client protocol.
+- Keep Box limited to generic sandbox/session/mount semantics; Skill policy and
+  package orchestration belong to LangBot Core.
 - Prefer tests around protocol shape and black-box CLI behavior when changing runtime boundaries.
