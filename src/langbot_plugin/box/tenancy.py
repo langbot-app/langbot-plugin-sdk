@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import re
 
 from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.skill_store import skill_namespace
 
 
 def box_namespace(action_context: ActionContext) -> str:
@@ -15,10 +15,7 @@ def box_namespace(action_context: ActionContext) -> str:
     """
 
     context = ActionContext.model_validate(action_context)
-    digest = hashlib.sha256(
-        f"{context.instance_uuid}\0{context.workspace_uuid}".encode("utf-8")
-    ).hexdigest()[:24]
-    return f"ws-{digest}"
+    return skill_namespace(context.instance_uuid, context.workspace_uuid)
 
 
 def box_runtime_namespace(action_context: ActionContext) -> str:

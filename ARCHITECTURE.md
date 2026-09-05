@@ -20,7 +20,7 @@ The runtime code under `src/langbot_plugin/runtime/` is AGPL; the rest of the re
 This repo is coupled to LangBot but owns different things.
 
 - The LangBot main repo owns product behavior, HTTP API, web UI, platform adapters, pipeline execution, model/tool orchestration, persistence, skills integration, and the LangBot-side runtime connectors.
-- This SDK repo owns plugin author APIs, shared message/event/context entities, the action RPC protocol, `lbp`, Plugin Runtime implementation, and Box Runtime implementation.
+- This SDK repo owns plugin author APIs, shared message/event/context entities, the action RPC protocol, the execution-independent filesystem Skill store, `lbp`, Plugin Runtime implementation, and Box Runtime implementation.
 - Plugins import this package directly; LangBot also imports it for shared entities and runtime protocols.
 
 If a change alters shared entities, component contracts, action names/payloads, runtime behavior, or Box models, update/test both repos in lockstep.
@@ -37,6 +37,7 @@ langbot-plugin-sdk/
 │   ├── cli/                  # `lbp` entrypoint and subcommands
 │   ├── runtime/              # Plugin Runtime (`lbp rt`)
 │   ├── box/                  # Box Runtime (`lbp box`)
+│   ├── skill_store.py        # Execution-independent Skill package storage
 │   ├── entities/io/          # Action RPC request/response/error/action models
 │   ├── assets/               # Scaffolding templates and page SDK asset
 │   └── utils/
@@ -328,7 +329,8 @@ Important modules:
   trusted local development.
 - `box/nsjail_backend.py`: nsjail backend.
 - `box/e2b_backend.py`: E2B backend.
-- `box/skill_store.py`: Box-owned skill package CRUD and install/preview helpers.
+- `skill_store.py`: generic Skill package CRUD, revision, and read-only resource helpers; it does not start or connect to Box.
+- `box/skill_store.py`: compatibility adapter from legacy Box configuration to the generic Skill store.
 - `box/security.py`: path/security helper logic.
 
 Default Box WebSocket endpoints on port `5410`:
@@ -337,8 +339,9 @@ Default Box WebSocket endpoints on port `5410`:
 - `/v1/sessions/{session_id}/managed-process/ws`: legacy default process stdio relay.
 - `/v1/sessions/{session_id}/managed-process/{process_id}/ws`: named process stdio relay.
 
-Box keeps durable skill/storage paths in an `(instance, workspace)` namespace,
-while sandbox sessions and managed processes use an
+The shared Skill store keeps durable package paths in an `(instance, workspace)`
+namespace. Box consumes those packages only for execution. Sandbox sessions and
+managed processes use an
 `(instance, workspace, placement_generation)` namespace. Authenticated tenant
 RPCs advance a monotonic generation fence, cancel in-flight older RPCs, and
 retire older sessions. Managed-process relay handshakes carry Workspace and
