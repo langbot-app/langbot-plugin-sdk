@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import pathlib
 import stat
 import zipfile
 
@@ -57,10 +58,19 @@ def _publish_fake_distribution(staging, requirements):
     )
 
 
-async def test_missing_requirement_is_prepared_once_and_reused(tmp_path):
+async def test_missing_requirement_is_prepared_once_and_reused(tmp_path, monkeypatch):
     artifact = _artifact(tmp_path)
     store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
     install_count = 0
+    original_rename = dependency_environment_module.os.rename
+
+    def macos_rename(source, target):
+        if not pathlib.Path(source).stat().st_mode & stat.S_IWUSR:
+            raise PermissionError("macOS cannot rename a read-only directory")
+        original_rename(source, target)
+        assert store.get_ready(pathlib.Path(target).name) is None
+
+    monkeypatch.setattr(dependency_environment_module.os, "rename", macos_rename)
 
     async def installer(staging, requirements):
         nonlocal install_count

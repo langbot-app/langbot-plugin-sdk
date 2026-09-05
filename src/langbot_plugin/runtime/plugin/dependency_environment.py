@@ -199,7 +199,6 @@ class PluginDependencyEnvironmentStore:
             shutil.rmtree(staging.scratch_path)
             self._make_tree_read_only(staging.site_packages_path)
             self._write_marker(temporary_root / _READY_MARKER, expected)
-            temporary_root.chmod(0o555)
 
             target_root = self.environments_path / digest
             try:
@@ -212,6 +211,9 @@ class PluginDependencyEnvironmentStore:
                     raise
                 shutil.rmtree(temporary_root, ignore_errors=True)
                 return ready
+            # macOS requires the source directory to be writable for rename.
+            # get_ready rejects this tree until its root is sealed below.
+            target_root.chmod(0o555)
             self._fsync_directory(self.environments_path)
 
             ready = self.get_ready(digest, expected=expected)
