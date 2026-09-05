@@ -267,7 +267,7 @@ class BoxSpec(pydantic.BaseModel):
     mount_path: str = DEFAULT_BOX_MOUNT_PATH
     extra_mounts: list[BoxMountSpec] = pydantic.Field(default_factory=list)
     # Optional logical package selection. In grant-enforced mode the Runtime
-    # resolves this name through the trusted Workspace-scoped BoxSkillStore and
+    # resolves this name through the trusted Workspace-scoped SkillStore and
     # constructs the read-only host mount itself. Callers never provide a path.
     skill_name: str | None = None
     persistent: bool = False

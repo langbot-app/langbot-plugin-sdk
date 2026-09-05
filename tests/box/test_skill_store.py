@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-import langbot_plugin.box.skill_store as skill_store_module
+import langbot_plugin.skill_store as skill_store_module
 
 from langbot_plugin.box.skill_store import (
     BoxSkillStore,
