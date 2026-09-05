@@ -21,6 +21,7 @@ from aiohttp import WSCloseCode, web
 
 from langbot_plugin.box import server
 from langbot_plugin.box.actions import LangBotToBoxAction
+from langbot_plugin.box.legacy_skill_compat import LegacySkillAction
 from langbot_plugin.box.errors import (
     BoxAdmissionError,
     BoxManagedProcessConflictError,
@@ -115,6 +116,7 @@ def mock_runtime():
     override return values / side effects as needed.
     """
     runtime = mock.MagicMock()
+    runtime._box_config = {}
     runtime.admission_required = False
     runtime.max_admission_records = 100
     runtime.max_rpc_file_bytes = 20 * 1024 * 1024
@@ -184,6 +186,17 @@ def mock_runtime():
 @pytest.fixture
 def handler(mock_connection, mock_runtime):
     handler = _new_handler(mock_connection, mock_runtime)
+    legacy_compat = mock.MagicMock()
+    legacy_compat.normalize_spec_payload = mock.AsyncMock(
+        side_effect=lambda data, context: dict(data)
+    )
+
+    async def call_legacy(context, method_name, *args, **kwargs):
+        method = getattr(mock_runtime.skill_store, method_name)
+        return method(*args, **kwargs)
+
+    legacy_compat.call = mock.AsyncMock(side_effect=call_legacy)
+    handler._legacy_skill_compat = legacy_compat
     handler.bind_action_context(_ACTION_CONTEXT)
     return handler
 
@@ -668,6 +681,7 @@ async def test_exec_success(handler, mock_runtime):
     (spec_arg,), _ = mock_runtime.execute.call_args
     assert spec_arg.session_id == _physical_session_id("s1")
     assert spec_arg.cmd == "echo hi"
+    handler._legacy_skill_compat.normalize_spec_payload.assert_not_awaited()
 
 
 async def test_exec_invalid_spec_returns_validation_error(handler, mock_runtime):
@@ -867,14 +881,14 @@ async def test_stop_managed_process_explicit(handler, mock_runtime):
 
 
 async def test_list_skills(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILLS, {})
+    resp = await _invoke(handler, LegacySkillAction.LIST_SKILLS, {})
     assert resp.code == 0
     assert resp.data == {"skills": [{"name": "demo"}]}
     mock_runtime.skill_store.list_skills.assert_called_once()
 
 
 async def test_get_skill(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.GET_SKILL, {"name": "demo"})
+    resp = await _invoke(handler, LegacySkillAction.GET_SKILL, {"name": "demo"})
     assert resp.code == 0
     assert resp.data == {"skill": {"name": "demo"}}
     mock_runtime.skill_store.get_skill.assert_called_once_with("demo")
@@ -882,7 +896,7 @@ async def test_get_skill(handler, mock_runtime):
 
 async def test_create_skill_success(handler, mock_runtime):
     resp = await _invoke(
-        handler, LangBotToBoxAction.CREATE_SKILL, {"skill": {"name": "demo"}}
+        handler, LegacySkillAction.CREATE_SKILL, {"skill": {"name": "demo"}}
     )
     assert resp.code == 0
     assert resp.data == {"skill": {"name": "demo"}}
@@ -892,7 +906,7 @@ async def test_create_skill_success(handler, mock_runtime):
 async def test_create_skill_error(handler, mock_runtime):
     mock_runtime.skill_store.create_skill.side_effect = ValueError("bad skill")
     resp = await _invoke(
-        handler, LangBotToBoxAction.CREATE_SKILL, {"skill": {"name": "demo"}}
+        handler, LegacySkillAction.CREATE_SKILL, {"skill": {"name": "demo"}}
     )
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
@@ -902,7 +916,7 @@ async def test_create_skill_error(handler, mock_runtime):
 async def test_update_skill_success(handler, mock_runtime):
     resp = await _invoke(
         handler,
-        LangBotToBoxAction.UPDATE_SKILL,
+        LegacySkillAction.UPDATE_SKILL,
         {"name": "demo", "skill": {"name": "demo2"}},
     )
     assert resp.code == 0
@@ -915,7 +929,7 @@ async def test_update_skill_error(handler, mock_runtime):
     mock_runtime.skill_store.update_skill.side_effect = KeyError("missing")
     resp = await _invoke(
         handler,
-        LangBotToBoxAction.UPDATE_SKILL,
+        LegacySkillAction.UPDATE_SKILL,
         {"name": "demo", "skill": {}},
     )
     assert resp.code == 1
@@ -923,7 +937,7 @@ async def test_update_skill_error(handler, mock_runtime):
 
 
 async def test_delete_skill_success(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"})
+    resp = await _invoke(handler, LegacySkillAction.DELETE_SKILL, {"name": "demo"})
     assert resp.code == 0
     assert resp.data == {"deleted": True}
     mock_runtime.skill_store.delete_skill.assert_called_once_with("demo")
@@ -931,14 +945,14 @@ async def test_delete_skill_success(handler, mock_runtime):
 
 async def test_delete_skill_error(handler, mock_runtime):
     mock_runtime.skill_store.delete_skill.side_effect = RuntimeError("locked")
-    resp = await _invoke(handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"})
+    resp = await _invoke(handler, LegacySkillAction.DELETE_SKILL, {"name": "demo"})
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
 
 
 async def test_scan_skill_directory_success(handler, mock_runtime):
     resp = await _invoke(
-        handler, LangBotToBoxAction.SCAN_SKILL_DIRECTORY, {"path": "/skills/demo"}
+        handler, LegacySkillAction.SCAN_SKILL_DIRECTORY, {"path": "/skills/demo"}
     )
     assert resp.code == 0
     assert resp.data == {"name": "demo"}
@@ -948,14 +962,14 @@ async def test_scan_skill_directory_success(handler, mock_runtime):
 async def test_scan_skill_directory_error(handler, mock_runtime):
     mock_runtime.skill_store.scan_directory.side_effect = FileNotFoundError("nope")
     resp = await _invoke(
-        handler, LangBotToBoxAction.SCAN_SKILL_DIRECTORY, {"path": "/x"}
+        handler, LegacySkillAction.SCAN_SKILL_DIRECTORY, {"path": "/x"}
     )
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
 
 
 async def test_list_skill_files_uses_defaults(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"})
+    resp = await _invoke(handler, LegacySkillAction.LIST_SKILL_FILES, {"name": "demo"})
     assert resp.code == 0
     mock_runtime.skill_store.list_skill_files.assert_called_once_with(
         "demo", ".", include_hidden=False, max_entries=200
@@ -965,7 +979,7 @@ async def test_list_skill_files_uses_defaults(handler, mock_runtime):
 async def test_list_skill_files_passes_overrides(handler, mock_runtime):
     await _invoke(
         handler,
-        LangBotToBoxAction.LIST_SKILL_FILES,
+        LegacySkillAction.LIST_SKILL_FILES,
         {
             "name": "demo",
             "path": "sub",
@@ -980,7 +994,7 @@ async def test_list_skill_files_passes_overrides(handler, mock_runtime):
 
 async def test_list_skill_files_error(handler, mock_runtime):
     mock_runtime.skill_store.list_skill_files.side_effect = ValueError("nope")
-    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"})
+    resp = await _invoke(handler, LegacySkillAction.LIST_SKILL_FILES, {"name": "demo"})
     assert resp.code == 1
     assert "BoxValidationError" in resp.message
 
@@ -988,7 +1002,7 @@ async def test_list_skill_files_error(handler, mock_runtime):
 async def test_read_skill_file_success(handler, mock_runtime):
     resp = await _invoke(
         handler,
-        LangBotToBoxAction.READ_SKILL_FILE,
+        LegacySkillAction.READ_SKILL_FILE,
         {"name": "demo", "path": "notes.txt"},
     )
     assert resp.code == 0
@@ -1002,7 +1016,7 @@ async def test_read_skill_file_error(handler, mock_runtime):
     mock_runtime.skill_store.read_skill_file.side_effect = ValueError("nope")
     resp = await _invoke(
         handler,
-        LangBotToBoxAction.READ_SKILL_FILE,
+        LegacySkillAction.READ_SKILL_FILE,
         {"name": "demo", "path": "x"},
     )
     assert resp.code == 1
@@ -1012,7 +1026,7 @@ async def test_read_skill_file_error(handler, mock_runtime):
 async def test_write_skill_file_success(handler, mock_runtime):
     resp = await _invoke(
         handler,
-        LangBotToBoxAction.WRITE_SKILL_FILE,
+        LegacySkillAction.WRITE_SKILL_FILE,
         {"name": "demo", "path": "notes.txt", "content": "hi"},
     )
     assert resp.code == 0
@@ -1025,7 +1039,7 @@ async def test_write_skill_file_success(handler, mock_runtime):
 async def test_write_skill_file_defaults_content(handler, mock_runtime):
     await _invoke(
         handler,
-        LangBotToBoxAction.WRITE_SKILL_FILE,
+        LegacySkillAction.WRITE_SKILL_FILE,
         {"name": "demo", "path": "notes.txt"},
     )
     mock_runtime.skill_store.write_skill_file.assert_called_once_with(
@@ -1037,7 +1051,7 @@ async def test_write_skill_file_error(handler, mock_runtime):
     mock_runtime.skill_store.write_skill_file.side_effect = OSError("disk full")
     resp = await _invoke(
         handler,
-        LangBotToBoxAction.WRITE_SKILL_FILE,
+        LegacySkillAction.WRITE_SKILL_FILE,
         {"name": "demo", "path": "x"},
     )
     assert resp.code == 1
@@ -1058,7 +1072,7 @@ async def test_preview_skill_zip_reads_and_deletes_local_file(handler, mock_runt
     ):
         resp = await _invoke(
             handler,
-            LangBotToBoxAction.PREVIEW_SKILL_ZIP,
+            LegacySkillAction.PREVIEW_SKILL_ZIP,
             {"file_key": "key1", "filename": "demo.zip", "source_subdir": "pkgs"},
         )
 
@@ -1084,7 +1098,7 @@ async def test_preview_skill_zip_error(handler, mock_runtime):
     ):
         resp = await _invoke(
             handler,
-            LangBotToBoxAction.PREVIEW_SKILL_ZIP,
+            LegacySkillAction.PREVIEW_SKILL_ZIP,
             {"file_key": "key1"},
         )
     assert resp.code == 1
@@ -1100,7 +1114,7 @@ async def test_install_skill_zip_passes_all_args(handler, mock_runtime):
     ):
         resp = await _invoke(
             handler,
-            LangBotToBoxAction.INSTALL_SKILL_ZIP,
+            LegacySkillAction.INSTALL_SKILL_ZIP,
             {
                 "file_key": "key1",
                 "filename": "demo.zip",
@@ -1132,7 +1146,7 @@ async def test_install_skill_zip_error(handler, mock_runtime):
     ):
         resp = await _invoke(
             handler,
-            LangBotToBoxAction.INSTALL_SKILL_ZIP,
+            LegacySkillAction.INSTALL_SKILL_ZIP,
             {"file_key": "key1"},
         )
     assert resp.code == 1

@@ -59,6 +59,7 @@ from .models import (
     SandboxAdmissionGrant,
     SandboxAdmissionRevocation,
 )
+from .legacy_skill_compat import LegacySkillCompat, register_legacy_skill_actions
 from .runtime import BoxRuntime
 from .security import (
     BOX_CONTROL_TOKEN_ENV,
@@ -71,7 +72,6 @@ from .security import (
     validate_control_token,
 )
 from .tenancy import (
-    box_namespace,
     logical_session_id,
     namespace_session_id,
     session_belongs_to_placement,
@@ -416,6 +416,7 @@ class BoxServerHandler(Handler):
         self._generation_fence = generation_fence or BoxGenerationFence(
             max_records=runtime.max_admission_records
         )
+        self._legacy_skill_compat: LegacySkillCompat | None = None
         inherited_file_chunk = self.actions[CommonAction.FILE_CHUNK.value]
 
         async def authenticated_file_chunk(data: dict[str, Any]) -> ActionResponse:
@@ -519,14 +520,12 @@ class BoxServerHandler(Handler):
             logical_session_id = canonical_id
         return namespace_session_id(context, logical_session_id)
 
-    def _skill_store(self):
-        return self._runtime.skill_store.scoped(box_namespace(self._action_context()))
-
-    async def _call_skill_store(self, method_name: str, *args, **kwargs):
-        scoped_store = self._skill_store()
-        method = getattr(scoped_store, method_name)
-        async with self._runtime.skill_operation_lock:
-            return await asyncio.to_thread(method, *args, **kwargs)
+    def _get_legacy_skill_compat(self) -> LegacySkillCompat:
+        if self._legacy_skill_compat is None:
+            self._legacy_skill_compat = LegacySkillCompat(
+                lambda: self._runtime._box_config
+            )
+        return self._legacy_skill_compat
 
     def _workspace_sessions(self) -> list[dict]:
         prefix = session_namespace_prefix(self._action_context())
@@ -586,8 +585,14 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.EXEC)
         async def exec_cmd(data: dict[str, Any]) -> ActionResponse:
             try:
-                spec = BoxSpec.model_validate(data)
                 context = self._action_context()
+                payload = data
+                if "skill_name" in data:
+                    payload = await self._get_legacy_skill_compat().normalize_spec_payload(
+                        data,
+                        context,
+                    )
+                spec = BoxSpec.model_validate(payload)
                 if self._runtime.admission_required:
                     result = await self._runtime.execute(spec, action_context=context)
                 else:
@@ -598,7 +603,7 @@ class BoxServerHandler(Handler):
                         spec,
                         action_context=context,
                     )
-            except pydantic.ValidationError as exc:
+            except (pydantic.ValidationError, ValueError) as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(
                 self._logical_session_data(_result_to_dict(result))
@@ -607,8 +612,14 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.CREATE_SESSION)
         async def create_session(data: dict[str, Any]) -> ActionResponse:
             try:
-                spec = BoxSpec.model_validate(data)
                 context = self._action_context()
+                payload = data
+                if "skill_name" in data:
+                    payload = await self._get_legacy_skill_compat().normalize_spec_payload(
+                        data,
+                        context,
+                    )
+                spec = BoxSpec.model_validate(payload)
                 if self._runtime.admission_required:
                     info = await self._runtime.create_session(
                         spec, action_context=context
@@ -621,7 +632,7 @@ class BoxServerHandler(Handler):
                         spec,
                         action_context=context,
                     )
-            except pydantic.ValidationError as exc:
+            except (pydantic.ValidationError, ValueError) as exc:
                 return ActionResponse.error(f"BoxValidationError: {exc}")
             return ActionResponse.success(self._logical_session_data(info))
 
@@ -738,136 +749,12 @@ class BoxServerHandler(Handler):
                 return ActionResponse.error(f"BoxReadinessError: {exc}")
             return ActionResponse.success(result)
 
-        @self.action(LangBotToBoxAction.LIST_SKILLS)
-        async def list_skills(data: dict[str, Any]) -> ActionResponse:
-            skills = await self._call_skill_store("list_skills")
-            return ActionResponse.success({"skills": skills})
-
-        @self.action(LangBotToBoxAction.GET_SKILL)
-        async def get_skill(data: dict[str, Any]) -> ActionResponse:
-            skill = await self._call_skill_store(
-                "get_skill",
-                data["name"],
-            )
-            return ActionResponse.success({"skill": skill})
-
-        @self.action(LangBotToBoxAction.CREATE_SKILL)
-        async def create_skill(data: dict[str, Any]) -> ActionResponse:
-            try:
-                skill = await self._call_skill_store(
-                    "create_skill",
-                    data["skill"],
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success({"skill": skill})
-
-        @self.action(LangBotToBoxAction.UPDATE_SKILL)
-        async def update_skill(data: dict[str, Any]) -> ActionResponse:
-            try:
-                skill = await self._call_skill_store(
-                    "update_skill",
-                    data["name"],
-                    data["skill"],
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success({"skill": skill})
-
-        @self.action(LangBotToBoxAction.DELETE_SKILL)
-        async def delete_skill(data: dict[str, Any]) -> ActionResponse:
-            try:
-                result = await self._call_skill_store(
-                    "delete_skill",
-                    data["name"],
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success(result)
-
-        @self.action(LangBotToBoxAction.SCAN_SKILL_DIRECTORY)
-        async def scan_skill_directory(data: dict[str, Any]) -> ActionResponse:
-            try:
-                skill = await self._call_skill_store(
-                    "scan_directory",
-                    data["path"],
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success(skill)
-
-        @self.action(LangBotToBoxAction.LIST_SKILL_FILES)
-        async def list_skill_files(data: dict[str, Any]) -> ActionResponse:
-            try:
-                result = await self._call_skill_store(
-                    "list_skill_files",
-                    data["name"],
-                    data.get("path", "."),
-                    include_hidden=bool(data.get("include_hidden", False)),
-                    max_entries=int(data.get("max_entries", 200)),
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success(result)
-
-        @self.action(LangBotToBoxAction.READ_SKILL_FILE)
-        async def read_skill_file(data: dict[str, Any]) -> ActionResponse:
-            try:
-                result = await self._call_skill_store(
-                    "read_skill_file",
-                    data["name"],
-                    data["path"],
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success(result)
-
-        @self.action(LangBotToBoxAction.WRITE_SKILL_FILE)
-        async def write_skill_file(data: dict[str, Any]) -> ActionResponse:
-            try:
-                result = await self._call_skill_store(
-                    "write_skill_file",
-                    data["name"],
-                    data["path"],
-                    data.get("content", ""),
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success(result)
-
-        @self.action(LangBotToBoxAction.PREVIEW_SKILL_ZIP)
-        async def preview_skill_zip(data: dict[str, Any]) -> ActionResponse:
-            try:
-                file_bytes = await self.read_local_file(data["file_key"])
-                await self.delete_local_file(data["file_key"])
-                result = await self._call_skill_store(
-                    "preview_zip_upload",
-                    file_bytes=file_bytes,
-                    filename=data.get("filename", "skill.zip"),
-                    source_subdir=data.get("source_subdir") or "",
-                    target_suffix=data.get("target_suffix", "upload"),
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success({"skills": result})
-
-        @self.action(LangBotToBoxAction.INSTALL_SKILL_ZIP)
-        async def install_skill_zip(data: dict[str, Any]) -> ActionResponse:
-            try:
-                file_bytes = await self.read_local_file(data["file_key"])
-                await self.delete_local_file(data["file_key"])
-                result = await self._call_skill_store(
-                    "install_zip_upload",
-                    file_bytes=file_bytes,
-                    filename=data.get("filename", "skill.zip"),
-                    source_paths=data.get("source_paths") or [],
-                    source_path=data.get("source_path") or "",
-                    source_subdir=data.get("source_subdir") or "",
-                    target_suffix=data.get("target_suffix", "upload"),
-                )
-            except Exception as exc:
-                return ActionResponse.error(f"BoxValidationError: {exc}")
-            return ActionResponse.success({"skills": result})
+        # TODO(next-major): remove the isolated old-Core wire protocol bridge.
+        register_legacy_skill_actions(
+            self,
+            self._get_legacy_skill_compat,
+            self._action_context,
+        )
 
         @self.action(LangBotToBoxAction.INIT)
         async def init(data: dict[str, Any]) -> ActionResponse:

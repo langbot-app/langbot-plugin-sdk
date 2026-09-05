@@ -38,6 +38,7 @@ langbot-plugin-sdk/
 │   ├── runtime/              # Plugin Runtime (`lbp rt`)
 │   ├── box/                  # Box Runtime (`lbp box`)
 │   ├── skill_store.py        # Execution-independent Skill package storage
+│   ├── workspace.py          # Neutral Workspace namespace identity
 │   ├── entities/io/          # Action RPC request/response/error/action models
 │   ├── assets/               # Scaffolding templates and page SDK asset
 │   └── utils/
@@ -321,7 +322,7 @@ Important modules:
 
 - `box/server.py`: CLI entrypoint, aiohttp WebSocket routes, `BoxServerHandler` action registration.
 - `box/runtime.py`: session lifecycle, per-session locks, TTL cleanup, command execution, managed processes.
-- `box/models.py`: `BoxSpec`, execution results, managed-process specs.
+- `box/models.py`: generic `BoxSpec`/read-only mount contracts, execution results, managed-process specs.
 - `box/client.py`: action-RPC client used by LangBot-side connector/service.
 - `box/actions.py`: `LangBotToBoxAction` enum.
 - `box/backend.py`: backend abstraction and local backend selection.
@@ -330,7 +331,10 @@ Important modules:
 - `box/nsjail_backend.py`: nsjail backend.
 - `box/e2b_backend.py`: E2B backend.
 - `skill_store.py`: generic Skill package CRUD, revision, and read-only resource helpers; it does not start or connect to Box.
-- `box/skill_store.py`: compatibility adapter from legacy Box configuration to the generic Skill store.
+- `box/legacy_skill_compat.py`: temporary old-Core wire bridge used only while
+  rolling replicas forward. It translates the retired `skill_name` payload to
+  a generic read-only mount and serves old Skill RPC action strings. Deploy Box
+  before Core; the module is marked for deletion in the next major version.
 - `box/security.py`: path/security helper logic.
 
 Default Box WebSocket endpoints on port `5410`:
@@ -339,9 +343,11 @@ Default Box WebSocket endpoints on port `5410`:
 - `/v1/sessions/{session_id}/managed-process/ws`: legacy default process stdio relay.
 - `/v1/sessions/{session_id}/managed-process/{process_id}/ws`: named process stdio relay.
 
-The shared Skill store keeps durable package paths in an `(instance, workspace)`
-namespace. Box consumes those packages only for execution. Sandbox sessions and
-managed processes use an
+The Skill store keeps durable package paths in an `(instance, workspace)`
+namespace. LangBot Core owns that store and composes executable packages into
+generic read-only `BoxMountSpec` values. Box has no Skill model, CRUD API, or
+`SKILL.md` knowledge in its normal path; it only validates and mounts artifacts.
+Sandbox sessions and managed processes use an
 `(instance, workspace, placement_generation)` namespace. Authenticated tenant
 RPCs advance a monotonic generation fence, cancel in-flight older RPCs, and
 retire older sessions. Managed-process relay handshakes carry Workspace and
@@ -387,5 +393,6 @@ The SDK `AGENTS.md` keeps the short command checklist; this file keeps the struc
 - Keep plugin-author SDK APIs stable and explicit.
 - Treat action enums and Pydantic models as cross-process API contracts.
 - Keep runtime process management separate from LangBot product logic.
-- Keep Box sandbox semantics in `box/`; LangBot should call Box through the service/client protocol.
+- Keep Box limited to generic sandbox/session/mount semantics; Skill policy and
+  package orchestration belong to LangBot Core.
 - Prefer tests around protocol shape and black-box CLI behavior when changing runtime boundaries.

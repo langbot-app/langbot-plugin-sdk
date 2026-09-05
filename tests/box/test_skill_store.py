@@ -9,8 +9,8 @@ import pytest
 
 import langbot_plugin.skill_store as skill_store_module
 
-from langbot_plugin.box.skill_store import (
-    BoxSkillStore,
+from langbot_plugin.skill_store import (
+    SkillStore,
     build_skill_md,
     parse_frontmatter,
 )
@@ -46,15 +46,8 @@ def _nested_skill_zip() -> bytes:
     return buffer.getvalue()
 
 
-def _make_store(tmp_path, skills_root: str = "skills") -> BoxSkillStore:
-    return BoxSkillStore(
-        {
-            "local": {
-                "host_root": str(tmp_path),
-                "skills_root": skills_root,
-            }
-        }
-    )
+def _make_store(tmp_path, skills_root: str = "skills") -> SkillStore:
+    return SkillStore(tmp_path / skills_root)
 
 
 def _write_skill_dir(
@@ -81,14 +74,7 @@ def _write_skill_dir(
 
 
 def test_skill_store_installs_zip_under_configured_relative_skills_root(tmp_path):
-    store = BoxSkillStore(
-        {
-            "local": {
-                "host_root": str(tmp_path),
-                "skills_root": "custom-skills",
-            }
-        }
-    )
+    store = SkillStore(tmp_path / "custom-skills")
 
     preview = store.preview_zip_upload(file_bytes=_skill_zip(), filename="demo.zip")
     assert preview[0]["package_root"] == str(tmp_path / "custom-skills" / "demo-upload")
@@ -174,14 +160,7 @@ def test_scoped_skill_store_does_not_follow_directory_symlinks(tmp_path):
 
 
 def test_skill_store_supports_source_subdir_before_selecting_candidates(tmp_path):
-    store = BoxSkillStore(
-        {
-            "local": {
-                "host_root": str(tmp_path),
-                "skills_root": "skills",
-            }
-        }
-    )
+    store = SkillStore(tmp_path / "skills")
 
     preview = store.preview_zip_upload(
         file_bytes=_nested_skill_zip(),
@@ -287,30 +266,10 @@ def test_root_uses_configured_absolute_host_root(tmp_path):
     assert store.root == str((tmp_path / "my-skills").resolve())
 
 
-def test_root_defaults_when_config_missing(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    store = BoxSkillStore()
-    expected = str((tmp_path / "data" / "box" / "skills").resolve())
-    assert store.root == expected
-
-
 def test_root_absolute_skills_root_overrides_host_root(tmp_path):
     abs_skills = tmp_path / "elsewhere" / "skills"
-    store = BoxSkillStore(
-        {
-            "local": {
-                "host_root": str(tmp_path / "host"),
-                "skills_root": str(abs_skills),
-            }
-        }
-    )
+    store = SkillStore(abs_skills)
     assert store.root == str(abs_skills.resolve())
-
-
-def test_update_config_changes_root(tmp_path):
-    store = BoxSkillStore()
-    store.update_config({"local": {"host_root": str(tmp_path), "skills_root": "sk"}})
-    assert store.root == str((tmp_path / "sk").resolve())
 
 
 # ── list_skills / get_skill ─────────────────────────────────────────────
@@ -852,7 +811,7 @@ def test_safe_extract_zip_extracts_clean_archive(tmp_path):
         zf.writestr("a/b.txt", "data")
         zf.writestr("a/c/", "")  # directory entry, should be skipped without error
     with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as zf:
-        BoxSkillStore._safe_extract_zip(zf, str(target))
+        SkillStore._safe_extract_zip(zf, str(target))
     assert (target / "a" / "b.txt").read_text() == "data"
 
 
@@ -1124,7 +1083,7 @@ def test_source_subdir_nonexistent_rejected(tmp_path):
     ],
 )
 def test_uploaded_skill_target_stem_sanitization(filename, expected_prefix):
-    assert BoxSkillStore._uploaded_skill_target_stem(filename) == expected_prefix
+    assert SkillStore._uploaded_skill_target_stem(filename) == expected_prefix
 
 
 def test_preview_target_dir_appends_leaf_and_suffix(tmp_path):

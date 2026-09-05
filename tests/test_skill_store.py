@@ -4,7 +4,6 @@ import os
 
 import pytest
 
-from langbot_plugin.box.skill_store import BoxSkillStore
 from langbot_plugin.skill_store import (
     SkillRevisionMismatchError,
     SkillStore,
@@ -135,17 +134,3 @@ def test_generic_store_rejects_symlinks_during_import(tmp_path):
             {"name": "draft", "instructions": "Draft"},
             source_root=str(workspace),
         )
-
-
-def test_box_store_adapter_preserves_legacy_configuration(tmp_path):
-    store = BoxSkillStore(
-        {
-            "local": {
-                "host_root": str(tmp_path),
-                "skills_root": "legacy-skills",
-            }
-        }
-    )
-
-    assert isinstance(store, SkillStore)
-    assert store.root == str(tmp_path / "legacy-skills")
