@@ -1,7 +1,9 @@
 # handle connection from LangBot
 from __future__ import annotations
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from langbot_plugin.runtime.io import connection, handler
@@ -22,6 +24,8 @@ from langbot_plugin.runtime import context as context_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.command.context import ExecuteContext
 from langbot_plugin.runtime.plugin import mgr as plugin_mgr_module
+from langbot_plugin.runtime.io.handler import FILE_STORAGE_DIR
+from langbot_plugin.storage import collect_storage_directories, storage_total_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ INSTANCE_SCOPED_CONTROL_ACTIONS = frozenset(
     {
         LangBotToRuntimeAction.RECONCILE_PLUGIN_INSTALLATIONS.value,
         LangBotToRuntimeAction.SET_RUNTIME_CONFIG.value,
+        LangBotToRuntimeAction.GET_STORAGE_ANALYSIS.value,
     }
 )
 
@@ -65,6 +70,8 @@ TENANT_SCOPED_CONTROL_ACTIONS = frozenset(
         LangBotToRuntimeAction.LIST_PARSERS.value,
         LangBotToRuntimeAction.PARSE_DOCUMENT.value,
         LangBotToRuntimeAction.PAGE_API.value,
+        LangBotToRuntimeAction.LIST_AGENT_RUNNERS.value,
+        LangBotToRuntimeAction.RUN_AGENT.value,
         LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
         LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION.value,
     }
@@ -115,6 +122,38 @@ class ControlConnectionHandler(handler.Handler):
                 request.installations
             )
             return handler.ActionResponse.success(result)
+
+        @self.action(LangBotToRuntimeAction.GET_STORAGE_ANALYSIS)
+        async def get_storage_analysis(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            """Measure directories owned by this Plugin Runtime process."""
+
+            plugin_mgr = self.context.plugin_mgr
+            artifact_store = plugin_mgr.artifact_store
+            environment_store = plugin_mgr.dependency_environment_store
+            directories = await asyncio.to_thread(
+                collect_storage_directories,
+                (
+                    ("legacy_plugins", Path("data/plugins"), "root", None),
+                    ("artifacts", artifact_store.artifacts_path, "root", None),
+                    (
+                        "dependency_environments",
+                        environment_store.environments_path,
+                        "root",
+                        None,
+                    ),
+                    ("installations", artifact_store.installations_path, "root", None),
+                    ("staging", Path("data/.plugin-staging"), "root", None),
+                    ("rpc_transfer", Path(FILE_STORAGE_DIR), "root", None),
+                ),
+            )
+            return handler.ActionResponse.success(
+                {
+                    "size_bytes": storage_total_bytes(directories),
+                    "directories": directories,
+                }
+            )
 
         @self.action(LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION)
         async def apply_plugin_installation(
@@ -448,8 +487,30 @@ class ControlConnectionHandler(handler.Handler):
             ):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
+        # AgentRunner actions
+        @self.action(LangBotToRuntimeAction.LIST_AGENT_RUNNERS)
+        async def list_agent_runners(data: dict[str, Any]) -> handler.ActionResponse:
+            include_plugins = data.get("include_plugins")
+            runners = await self.context.plugin_mgr.list_agent_runners(include_plugins)
+            return handler.ActionResponse.success({"runners": runners})
+
+        @self.action(LangBotToRuntimeAction.RUN_AGENT)
+        async def run_agent(
+            data: dict[str, Any],
+        ) -> AsyncGenerator[handler.ActionResponse, None]:
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            runner_name = data["runner_name"]
+            context = data["context"]
+
+            async for result in self.context.plugin_mgr.run_agent(
+                plugin_author, plugin_name, runner_name, context
+            ):
+                yield handler.ActionResponse.success(result)
+
         @self.action(LangBotToRuntimeAction.RETRIEVE_KNOWLEDGE)
         async def retrieve_knowledge(data: dict[str, Any]) -> handler.ActionResponse:
+            """Retrieve knowledge using a KnowledgeEngine instance."""
             plugin_author = data["plugin_author"]
             plugin_name = data["plugin_name"]
             retriever_name = data["retriever_name"]

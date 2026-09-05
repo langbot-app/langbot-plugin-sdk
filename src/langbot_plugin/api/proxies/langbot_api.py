@@ -48,7 +48,7 @@ class LangBotAPIProxy:
         target_type: str,
         target_id: str,
         message_chain: platform_message.MessageChain,
-    ) -> None:
+    ) -> Any:
         """Send a message to a bot
 
         Args:
@@ -57,15 +57,41 @@ class LangBotAPIProxy:
             target_id: The ID of the target
             message_chain: The message chain to send
         """
-        await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.SEND_MESSAGE,
-            {
-                "bot_uuid": bot_uuid,
-                "target_type": target_type,
-                "target_id": target_id,
-                "message_chain": message_chain.model_dump(),
-            },
-        )
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.SEND_MESSAGE,
+                {
+                    "bot_uuid": bot_uuid,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "message_chain": message_chain.model_dump(),
+                },
+            )
+        ).get("result")
+
+    async def call_platform_api(
+        self,
+        bot_uuid: str,
+        action: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        """Call a bot adapter API.
+
+        Args:
+            bot_uuid: The UUID of the bot
+            action: Adapter API name, such as "get_group_info" or "call_platform_api"
+            params: Parameters passed to the adapter API
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.CALL_PLATFORM_API,
+                {
+                    "bot_uuid": bot_uuid,
+                    "action": action,
+                    "params": params or {},
+                },
+            )
+        )["result"]
 
     async def get_llm_models(self) -> list[str]:
         """Get all LLM models"""
@@ -129,17 +155,7 @@ class LangBotAPIProxy:
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
     ):
-        """Invoke an LLM model with streaming response
-
-        Args:
-            llm_model_uuid: The UUID of the LLM model to use
-            messages: List of conversation messages
-            funcs: List of tools available to the LLM
-            extra_args: Extra arguments for the LLM provider
-
-        Yields:
-            MessageChunk: Streamed message chunks from the LLM
-        """
+        """Invoke an LLM model with streaming response."""
         async for event in self.invoke_llm_stream_events(
             llm_model_uuid=llm_model_uuid,
             messages=messages,

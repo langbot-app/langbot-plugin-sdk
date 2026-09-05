@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import os
 import stat
 import threading
 import zipfile
@@ -125,8 +126,9 @@ async def test_manager_indexes_same_artifact_installations_by_complete_binding(
     assert runtimes[binding_a].paths.home_path != runtimes[binding_b].paths.home_path
     assert runtimes[binding_a].paths.tmp_path != runtimes[binding_b].paths.tmp_path
     assert runtimes[binding_a].paths.data_path != runtimes[binding_b].paths.data_path
-    assert stat.S_IMODE(runtimes[binding_a].paths.root_path.stat().st_mode) == 0o700
-    assert stat.S_IMODE(runtimes[binding_b].paths.root_path.stat().st_mode) == 0o700
+    if os.name != "nt":
+        assert stat.S_IMODE(runtimes[binding_a].paths.root_path.stat().st_mode) == 0o700
+        assert stat.S_IMODE(runtimes[binding_b].paths.root_path.stat().st_mode) == 0o700
     assert context.is_current_installation_binding(binding_a)
     assert context.is_current_installation_binding(binding_b)
 
@@ -1504,6 +1506,49 @@ async def test_stop_installation_worker_reaps_handler_process_and_task(
     assert runtime.plugin_handler is None
     assert runtime.plugin_container is None
     assert runtime.launch_task is None
+
+
+async def test_stop_installation_worker_bounds_stuck_supervisor_cleanup(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-a",
+        digest,
+        workspace_uuid="workspace-a",
+    )
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+    )
+    runtime = manager.installation_runtimes[binding]
+    release = asyncio.Event()
+
+    async def ignore_cancellation_until_released():
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+
+    launch_task = asyncio.create_task(ignore_cancellation_until_released())
+    runtime.launch_task = launch_task
+    monkeypatch.setattr(manager_module, "_PLUGIN_WORKER_STOP_TIMEOUT_SEC", 0.01)
+    await asyncio.sleep(0)
+
+    await manager._stop_installation_worker(runtime)
+
+    assert runtime.launch_task is None
+    assert not launch_task.done()
+    assert "Plugin installation supervisor did not stop within" in caplog.text
+
+    release.set()
+    await launch_task
 
 
 @pytest.mark.parametrize(

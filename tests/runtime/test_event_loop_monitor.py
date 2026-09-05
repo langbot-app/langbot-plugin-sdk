@@ -50,7 +50,10 @@ async def test_event_loop_monitor_start_and_stop_are_idempotent() -> None:
     task = monitor._task
     monitor.start()
     assert monitor._task is task
-    await asyncio.sleep(0.005)
+    for _ in range(20):
+        if monitor.snapshot()["samples_total"] > 0:
+            break
+        await asyncio.sleep(0.005)
     assert monitor.snapshot()["samples_total"] > 0
     assert monitor.snapshot()["running"] is True
 

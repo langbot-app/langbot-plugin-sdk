@@ -39,6 +39,12 @@ def test_component_input_post_processors_create_python_class_names():
         "page_name": "settings_page",
         "page_label": "SettingsPage",
     }
+    assert (
+        renderer.agent_runner_component_input_post_process(
+            {"runner_name": "local_agent", "runner_description": "Run local agents"}
+        )["runner_attr"]
+        == "LocalAgent"
+    )
 
 
 def test_component_type_registry_contains_expected_public_component_kinds():
@@ -49,12 +55,14 @@ def test_component_type_registry_contains_expected_public_component_kinds():
         "Tool",
         "Command",
         "KnowledgeEngine",
+        "AgentRunner",
         "Parser",
         "Page",
     }
     assert by_name["Tool"].target_dir == "components/tools"
     assert "{tool_name}.py" in by_name["Tool"].template_files
     assert by_name["Page"].target_dir == "components/pages"
+    assert by_name["AgentRunner"].target_dir == "components/agent_runner"
 
 
 def test_simple_render_uses_python_format_context():

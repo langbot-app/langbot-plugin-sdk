@@ -13,7 +13,9 @@ import pytest
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.plugin import NonePlugin
+from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
+from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.events import (
@@ -35,6 +37,7 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.runtime.context import RuntimeContext
+from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 
 
 def _manifest(
@@ -168,6 +171,42 @@ spec: {{}}
     return buffer.getvalue()
 
 
+@pytest.mark.asyncio
+async def test_launch_plugin_uses_sanitized_environment(monkeypatch, tmp_path):
+    from langbot_plugin.runtime.plugin import mgr as mgr_module
+
+    captured: dict[str, Any] = {}
+
+    class FakeStdioClientController:
+        process = None
+
+        def __init__(self, command, args, env, working_dir):
+            captured["command"] = command
+            captured["args"] = args
+            captured["env"] = env
+            captured["working_dir"] = working_dir
+
+        async def run(self, new_connection_callback):
+            raise asyncio.CancelledError()
+
+    monkeypatch.setenv("PYTHONPATH", "/tmp/langbot-plugin-sdk/src")
+    monkeypatch.setattr(mgr_module, "get_platform", lambda: "linux")
+    monkeypatch.setattr(
+        mgr_module.stdio_client_controller,
+        "StdioClientController",
+        FakeStdioClientController,
+    )
+
+    plugin_path = _write_installed_plugin(tmp_path)
+    manager = _manager()
+    await manager.launch_plugin(str(plugin_path))
+
+    assert captured["working_dir"] == str(plugin_path)
+    assert captured["env"] is not os.environ
+    assert "PYTHONPATH" not in captured["env"]
+    assert captured["env"][PLUGIN_REGISTRATION_CAPABILITY_ENV]
+
+
 class FakeControlHandler:
     def __init__(self):
         self.calls: list[tuple[Any, dict[str, Any]]] = []
@@ -216,6 +255,7 @@ class FakeHandler:
         self.shutdown_calls = 0
         self.diagnostics = []
         self.log_buffer = FakeLogBuffer()
+        self.agent_run_calls: list[tuple[Any, dict[str, Any], float]] = []
         self.bound_action_context = None
         self.files = {
             "icon-key": b"<svg/>",
@@ -266,6 +306,18 @@ class FakeHandler:
 
     async def execute_command(self, command_context):
         yield {"command_response": {"text": command_context["command"]}}
+
+    async def call_action_generator(self, action, data, timeout=300):
+        self.agent_run_calls.append((action, data, timeout))
+        run_id = data["context"]["run_id"]
+        yield AgentRunResult.message_completed(
+            run_id=run_id,
+            message=Message(role="assistant", content="toy runner ok"),
+        ).model_dump(mode="json")
+        yield AgentRunResult.run_completed(
+            run_id=run_id,
+            finish_reason="stop",
+        ).model_dump(mode="json")
 
     async def get_plugin_icon(self):
         return {"plugin_icon_file_key": "icon-key", "mime_type": "image/svg+xml"}
@@ -1099,6 +1151,108 @@ async def test_register_plugin_requires_control_handler():
 
 
 @pytest.mark.asyncio
+async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
+    manager = _manager()
+    control_handler = FakeControlHandler()
+    manager.context = _bound_runtime_context(control_handler)
+    components = [
+        _component("Tool", "lookup"),
+        _component("Command", "admin"),
+        _component("Page", "settings"),
+        _component(
+            "AgentRunner",
+            "default",
+            {
+                "capabilities": {"streaming": True},
+                "permissions": {},
+                "config": [],
+            },
+        ),
+    ]
+    plugin = _plugin(
+        name="toy",
+        components=components,
+        status=RuntimeContainerStatus.MOUNTED,
+    )
+    handler = FakeHandler(plugin)
+    capability = _registration_capability(manager, plugin)
+
+    await manager.register_plugin(
+        handler,
+        plugin.model_dump(),
+        registration_capability=capability,
+    )
+
+    assert [tool.metadata.name for tool in await manager.list_tools()] == ["lookup"]
+    assert [tool.owner for tool in await manager.list_tools()] == ["tester/toy"]
+    assert [command.metadata.name for command in await manager.list_commands()] == [
+        "admin"
+    ]
+    assert await manager.call_tool(
+        "lookup",
+        {"city": "Shanghai"},
+        {"launcher_type": "person"},
+        query_id=7,
+    ) == {
+        "tool_name": "lookup",
+        "params": {"city": "Shanghai"},
+        "query_id": 7,
+    }
+    command_responses = [
+        response
+        async for response in manager.execute_command(
+            SimpleNamespace(
+                command="admin",
+                model_dump=lambda mode="json": {"command": "admin"},
+            )
+        )
+    ]
+    assert command_responses == [CommandReturn(text="admin")]
+
+    page_response = await manager.handle_page_api(
+        "tester",
+        "toy",
+        page_id="settings",
+        endpoint="/save",
+        method="POST",
+        body={"enabled": True},
+    )
+    assert page_response["data"]["body"] == {"enabled": True}
+
+    runners = await manager.list_agent_runners()
+    assert runners[0]["manifest"]["id"] == "plugin:tester/toy/default"
+    results = [
+        item
+        async for item in manager.run_agent(
+            "tester",
+            "toy",
+            "default",
+            {
+                "run_id": "run_toy",
+                "trigger": {"type": "message.received"},
+                "event": {
+                    "event_id": "event_toy",
+                    "event_type": "message.received",
+                    "source": "test",
+                },
+                "input": {"text": "hello"},
+                "delivery": {"surface": "platform"},
+                "resources": {},
+                "runtime": {},
+                "config": {},
+            },
+        )
+    ]
+
+    assert [item["type"] for item in results] == [
+        "message.completed",
+        "run.completed",
+    ]
+    assert [item["sequence"] for item in results] == [1, 2]
+    assert handler.agent_run_calls[0][1]["runner_name"] == "default"
+
+
+@pytest.mark.asyncio
 async def test_call_tool_and_execute_command_delegate_to_connected_plugin():
     manager = _manager()
     plugin = _plugin(
@@ -1201,6 +1355,22 @@ async def test_shutdown_all_plugins_uses_snapshot_and_closes_every_plugin():
     assert manager.plugins == []
     assert manager.plugin_handlers == []
     assert [handler.shutdown_calls for handler in handlers] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_add_plugin_handler_cleans_up_after_unexpected_run_failure():
+    manager = _manager()
+    plugin = _plugin()
+    handler = FakeHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    handler.run = AsyncMock(side_effect=RuntimeError("protocol failure"))
+
+    with pytest.raises(RuntimeError, match="protocol failure"):
+        await manager.add_plugin_handler(handler)
+
+    assert manager.plugin_handlers == []
+    assert manager.plugins == []
 
 
 @pytest.mark.asyncio
@@ -1313,6 +1483,31 @@ async def test_delete_plugin_removes_files_and_rejects_debug_plugins(
     with pytest.raises(ValueError, match="is a debugging plugin"):
         async for _ in manager.delete_plugin("tester", "demo"):
             pass
+
+
+@pytest.mark.asyncio
+async def test_delete_plugin_removes_installed_files_when_plugin_is_not_running(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    manager = _manager()
+    plugin_path = tmp_path / "data/plugins/tester__demo"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "manifest.yaml").write_text(
+        "kind: Plugin\nmetadata:\n  author: tester\n  name: demo\n",
+        encoding="utf-8",
+    )
+
+    actions = [
+        item["current_action"] async for item in manager.delete_plugin("tester", "demo")
+    ]
+
+    assert actions == [
+        "stopping plugin supervisor",
+        "deleting plugin files",
+        "plugin deleted",
+    ]
+    assert not plugin_path.exists()
 
 
 @pytest.mark.asyncio

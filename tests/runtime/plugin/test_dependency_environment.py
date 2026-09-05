@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import pathlib
 import stat
 import zipfile
 
@@ -57,10 +58,19 @@ def _publish_fake_distribution(staging, requirements):
     )
 
 
-async def test_missing_requirement_is_prepared_once_and_reused(tmp_path):
+async def test_missing_requirement_is_prepared_once_and_reused(tmp_path, monkeypatch):
     artifact = _artifact(tmp_path)
     store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
     install_count = 0
+    original_rename = dependency_environment_module.os.rename
+
+    def macos_rename(source, target):
+        if not pathlib.Path(source).stat().st_mode & stat.S_IWUSR:
+            raise PermissionError("macOS cannot rename a read-only directory")
+        original_rename(source, target)
+        assert store.get_ready(pathlib.Path(target).name) is None
+
+    monkeypatch.setattr(dependency_environment_module.os, "rename", macos_rename)
 
     async def installer(staging, requirements):
         nonlocal install_count
@@ -204,6 +214,63 @@ async def test_artifact_requirements_reject_pip_control_options(tmp_path):
     with pytest.raises(
         DependencyEnvironmentPreparationError,
         match="cannot contain pip options",
+    ):
+        await store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+
+
+async def test_runtime_sdk_requirement_is_not_installed_into_plugin_environment(
+    tmp_path,
+    monkeypatch,
+):
+    artifact = _artifact(
+        tmp_path,
+        "langbot-plugin>=0.1.0\nthird-party-demo==1.0.0\n",
+    )
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    captured_requirements = None
+
+    monkeypatch.setattr(
+        dependency_environment_module.importlib.metadata,
+        "version",
+        lambda name: "0.5.5" if name == "langbot-plugin" else "1.0.0",
+    )
+
+    async def installer(staging, requirements):
+        nonlocal captured_requirements
+        captured_requirements = requirements
+        _publish_fake_distribution(staging, requirements)
+
+    await store.prepare(
+        artifact,
+        runtime_fingerprint="runtime-v1",
+        installer=installer,
+    )
+
+    assert captured_requirements == ("third-party-demo==1.0.0",)
+
+
+async def test_runtime_sdk_requirement_rejects_incompatible_runtime_version(
+    tmp_path,
+    monkeypatch,
+):
+    artifact = _artifact(tmp_path, "langbot-plugin>=9.0.0\n")
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    monkeypatch.setattr(
+        dependency_environment_module.importlib.metadata,
+        "version",
+        lambda name: "0.5.5",
+    )
+
+    async def installer(staging, requirements):  # pragma: no cover - must not run
+        raise AssertionError("installer must not run")
+
+    with pytest.raises(
+        DependencyEnvironmentPreparationError,
+        match="Runtime provides langbot-plugin==0.5.5",
     ):
         await store.prepare(
             artifact,
