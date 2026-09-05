@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import typing
-import copy
 
 import pydantic
 
-from langbot_plugin.api.agent_tools.decorators import agent_tool, collect_agent_tools
-from langbot_plugin.api.agent_tools.decorators import AgentToolSpec
+from langbot_plugin.api.agent_tools.decorators import (
+    AgentToolSpec,
+    agent_tool,
+    collect_agent_tools,
+)
 from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
 from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 
@@ -27,6 +30,7 @@ class ListAssetsArgs(pydantic.BaseModel):
             "history",
             "knowledge_bases",
             "tools",
+            "platform_tools",
             "mcp_tools",
             "skills",
         ]
@@ -235,6 +239,7 @@ class AgentRunExternalTools:
                     "history",
                     "knowledge_bases",
                     "tools",
+                    "platform_tools",
                     "mcp_tools",
                     "skills",
                 }
@@ -269,6 +274,22 @@ class AgentRunExternalTools:
                     "operations": list(item.operations),
                 }
                 for item in self.ctx.resources.tools
+                if item.tool_type != "platform"
+            ]
+        if include_all or "platform_tools" in requested:
+            data["platform_tools"] = [
+                {
+                    "tool_name": item.tool_name,
+                    "description": item.description,
+                    "operations": list(item.operations),
+                    **(
+                        {"schema": _dump_jsonable(item.parameters or {})}
+                        if include_schemas
+                        else {}
+                    ),
+                }
+                for item in self.ctx.resources.tools
+                if item.tool_type == "platform"
             ]
         if include_all or "mcp_tools" in requested:
             data["mcp_tools"] = [
@@ -296,7 +317,7 @@ class AgentRunExternalTools:
 
     @agent_tool(
         name="langbot_list_assets",
-        description="List the LangBot event, history, knowledge bases, tools, skills, and MCP bridge tools authorized for the current run.",
+        description="List the LangBot event, history, knowledge bases, ordinary tools, platform action tools, skills, and MCP bridge tools authorized for the current run.",
         args_model=ListAssetsArgs,
         read_only=True,
     )

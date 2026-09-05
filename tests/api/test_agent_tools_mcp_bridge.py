@@ -8,11 +8,10 @@ import urllib.request
 
 import pydantic
 import pytest
-
 from langbot_plugin.api.agent_tools import (
     AgentMCPServerConfig,
-    AgentRunMCPAccess,
     AgentRunExternalTools,
+    AgentRunMCPAccess,
     AgentRunMCPBridge,
     agent_tool,
 )
@@ -63,7 +62,18 @@ def _authorized_ctx() -> AgentRunContext:
     ctx.resources = AgentResources.model_validate(
         {
             "knowledge_bases": [{"kb_id": "kb_1"}],
-            "tools": [{"tool_name": "weather"}],
+            "tools": [
+                {"tool_name": "weather"},
+                {
+                    "tool_name": "event_reply",
+                    "tool_type": "platform",
+                    "description": "Reply to the current event",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"text": {"type": "string"}},
+                    },
+                },
+            ],
         }
     )
     ctx.context = ContextAccess(
@@ -187,6 +197,15 @@ def test_agent_run_external_tools_call_agent_run_api() -> None:
             },
         )
     )
+    platform_assets = asyncio.run(
+        tools.call_tool(
+            "langbot_list_assets",
+            {
+                "asset_types": ["platform_tools"],
+                "include_schemas": True,
+            },
+        )
+    )
     tool_detail = asyncio.run(
         tools.call_tool(
             "langbot_get_tool_detail",
@@ -207,7 +226,18 @@ def test_agent_run_external_tools_call_agent_run_api() -> None:
 
     assert event["input"]["text"] == "hello from im"
     assert retrieved == [{"content": "kb:hello"}]
-    assert listed["tools"][0]["tool_name"] == "weather"
+    assert [item["tool_name"] for item in listed["tools"]] == ["weather"]
+    assert platform_assets["platform_tools"] == [
+        {
+            "tool_name": "event_reply",
+            "description": "Reply to the current event",
+            "operations": [],
+            "schema": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+            },
+        }
+    ]
     assert "schema" in listed["mcp_tools"][0]
     assert tool_detail["name"] == "weather"
     assert tool_result == {"ok": True, "tool_name": "weather"}

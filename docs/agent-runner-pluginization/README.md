@@ -2,6 +2,8 @@
 
 本目录只保留 SDK / Runtime 实现 AgentRunner Protocol v1 所需的说明。
 
+更新：2026-09-05。LangBot `dev/4.11.x` 已集成 EBA、独立 Agent、Bot 路由与处理器 UI；SDK 负责合同和 Runtime，不另建 Agent 产品模型。当前版本配套、平台工具工作区改动和定向测试见 [SDK_RUNTIME_PLAN.md](./SDK_RUNTIME_PLAN.md)。Core 的完整状态在其 `docs/agent-runner-pluginization/STATUS.md`，不要从早期设计稿推断当前完成度。
+
 协议 schema 的唯一事实源在 LangBot 仓库：
 
 - `docs/agent-runner-pluginization/PROTOCOL_V1.md`
@@ -23,6 +25,8 @@
 - `src/langbot_plugin/api/entities/builtin/agent_runner/`
 - `src/langbot_plugin/api/proxies/agent_run/`
 - `src/langbot_plugin/runtime/plugin/mgr.py`
+- `src/langbot_plugin/runtime/plugin/agent_runner_service.py`
+- `src/langbot_plugin/api/agent_tools/`
 - `src/langbot_plugin/runtime/io/handlers/control.py`
 - `src/langbot_plugin/assets/templates/components/agent_runner/`
 

@@ -25,7 +25,9 @@ from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
 LANGBOT_AGENT_GATEWAY_SERVER_NAME = "langbot_agent"
 LANGBOT_AGENT_GATEWAY_INFO = {"name": "langbot-agent-gateway", "version": "0.1.0"}
 LANGBOT_AGENT_GATEWAY_INSTRUCTIONS = (
-    "Use langbot_list_assets to discover run-authorized LangBot assets. "
+    "Use langbot_list_assets to discover run-authorized LangBot assets, including "
+    "platform_tools. Inspect a tool with langbot_get_tool_detail, then invoke it "
+    "with langbot_call_tool. Event-level platform tools have Host-frozen targets. "
     "Tool calls are scoped by the MCP Authorization header or by the run_token "
     "argument."
 )

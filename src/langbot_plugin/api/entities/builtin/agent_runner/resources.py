@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+
 import pydantic
 
 
@@ -31,7 +32,7 @@ class ToolResource(pydantic.BaseModel):
     """Tool name."""
 
     tool_type: str | None = None
-    """Tool type."""
+    """Tool type, including ``platform`` for Host-authorized platform actions."""
 
     description: str | None = None
     """Tool description."""
