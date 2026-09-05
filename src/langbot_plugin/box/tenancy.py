@@ -3,19 +3,18 @@ from __future__ import annotations
 import re
 
 from langbot_plugin.entities.io.context import ActionContext
-from langbot_plugin.skill_store import skill_namespace
+from langbot_plugin.workspace import workspace_namespace
 
 
 def box_namespace(action_context: ActionContext) -> str:
     """Return the persistent namespace for one Workspace.
 
-    This namespace deliberately excludes ``placement_generation``.  It owns
-    durable Workspace data such as installed skills and the mounted host
-    workspace, which must survive a placement hand-off.
+    This namespace deliberately excludes ``placement_generation`` so durable
+    Workspace data survives a placement hand-off.
     """
 
     context = ActionContext.model_validate(action_context)
-    return skill_namespace(context.instance_uuid, context.workspace_uuid)
+    return workspace_namespace(context.instance_uuid, context.workspace_uuid)
 
 
 def box_runtime_namespace(action_context: ActionContext) -> str:

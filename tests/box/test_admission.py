@@ -17,7 +17,9 @@ from langbot_plugin.box.errors import (
 from langbot_plugin.box.models import (
     BoxExecutionResult,
     BoxExecutionStatus,
+    BoxHostMountMode,
     BoxManagedProcessSpec,
+    BoxMountSpec,
     BoxNetworkMode,
     BoxSessionInfo,
     BoxSpec,
@@ -47,7 +49,7 @@ class AdmissionBackend(BaseSandboxBackend):
             "mount_isolation": True,
             "network_isolation": True,
             "hard_workspace_quota": True,
-            "hard_skill_storage_quota": True,
+            "hard_read_only_mount_quota": True,
             "bounded_ephemeral_storage": True,
             "inode_quota": True,
         }
@@ -294,21 +296,25 @@ async def test_network_and_arbitrary_host_mount_requests_fail_closed(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_managed_skill_mount_is_resolved_by_runtime_and_read_only(tmp_path):
+async def test_managed_generic_read_only_mount_is_accepted(tmp_path):
     runtime, backend = _runtime(tmp_path)
+    assert not hasattr(runtime, "skill_store")
     context = _context()
-    scoped_store = runtime.skill_store.scoped(box_namespace(context))
-    skill = scoped_store.create_skill(
-        {"name": "demo", "instructions": "Run scripts/demo.py"}
-    )
-    scoped_store.write_skill_file("demo", "scripts/demo.py", "print('ok')")
+    package_root = tmp_path / "box" / "artifacts" / "demo"
+    package_root.mkdir(parents=True)
     await runtime.upsert_sandbox_admission_grant(_grant(context))
 
     await runtime.execute(
         BoxSpec(
             session_id="caller-owned",
             cmd="python /workspace/.skills/demo/scripts/demo.py",
-            skill_name="demo",
+            extra_mounts=[
+                BoxMountSpec(
+                    host_path=str(package_root),
+                    mount_path="/workspace/.skills/demo",
+                    mode=BoxHostMountMode.READ_ONLY,
+                )
+            ],
         ),
         context,
     )
@@ -316,25 +322,50 @@ async def test_managed_skill_mount_is_resolved_by_runtime_and_read_only(tmp_path
     effective = backend.started_specs[0]
     assert len(effective.extra_mounts) == 1
     mount = effective.extra_mounts[0]
-    assert mount.host_path == skill["package_root"]
+    assert mount.host_path == str(package_root)
     assert mount.mount_path == "/workspace/.skills/demo"
     assert mount.mode.value == "ro"
 
 
 @pytest.mark.anyio
-async def test_managed_skill_mount_cannot_cross_workspace_scope(tmp_path):
+async def test_managed_generic_mount_rejects_writable_or_disallowed_sources(tmp_path):
     runtime, backend = _runtime(tmp_path)
-    first = _context(workspace="workspace-a")
-    second = _context(workspace="workspace-b")
-    runtime.skill_store.scoped(box_namespace(second)).create_skill(
-        {"name": "private", "instructions": "secret"}
-    )
-    await runtime.upsert_sandbox_admission_grant(_grant(first))
+    context = _context(workspace="workspace-a")
+    allowed_source = tmp_path / "box" / "artifacts" / "allowed"
+    allowed_source.mkdir(parents=True)
+    outside_source = tmp_path / "outside"
+    outside_source.mkdir()
+    await runtime.upsert_sandbox_admission_grant(_grant(context))
 
-    with pytest.raises(BoxAdmissionError, match="unavailable in this Workspace"):
+    with pytest.raises(BoxAdmissionError, match="must be read-only"):
         await runtime.execute(
-            BoxSpec(session_id="global", cmd="true", skill_name="private"),
-            first,
+            BoxSpec(
+                session_id="global",
+                cmd="true",
+                extra_mounts=[
+                    BoxMountSpec(
+                        host_path=str(allowed_source),
+                        mount_path="/workspace/artifact",
+                        mode=BoxHostMountMode.READ_WRITE,
+                    )
+                ],
+            ),
+            context,
+        )
+    with pytest.raises(BoxAdmissionError, match="outside allowed_mount_roots"):
+        await runtime.execute(
+            BoxSpec(
+                session_id="global",
+                cmd="true",
+                extra_mounts=[
+                    BoxMountSpec(
+                        host_path=str(outside_source),
+                        mount_path="/workspace/artifact",
+                        mode=BoxHostMountMode.READ_ONLY,
+                    )
+                ],
+            ),
+            context,
         )
 
     assert backend.started_specs == []
@@ -482,7 +513,7 @@ async def test_strict_readiness_blocks_execution_when_cgroup_is_unavailable(
     "capability",
     [
         "hard_workspace_quota",
-        "hard_skill_storage_quota",
+        "hard_read_only_mount_quota",
         "bounded_ephemeral_storage",
         "inode_quota",
     ],
@@ -508,7 +539,7 @@ async def test_explicit_nonproduction_override_only_relaxes_storage_checks(tmp_p
     runtime, backend = _runtime(tmp_path, unsafe_soft_storage_limits=True)
     for capability in (
         "hard_workspace_quota",
-        "hard_skill_storage_quota",
+        "hard_read_only_mount_quota",
         "bounded_ephemeral_storage",
         "inode_quota",
     ):
