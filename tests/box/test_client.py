@@ -563,4 +563,3 @@ async def test_init_sends_config(client, handler):
     args = handler.call_action.call_args.args
     assert args[0] is LangBotToBoxAction.INIT
     assert args[1] == {"backend": "nsjail", "foo": 1}
-

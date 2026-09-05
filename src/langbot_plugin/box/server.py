@@ -588,9 +588,11 @@ class BoxServerHandler(Handler):
                 context = self._action_context()
                 payload = data
                 if "skill_name" in data:
-                    payload = await self._get_legacy_skill_compat().normalize_spec_payload(
-                        data,
-                        context,
+                    payload = (
+                        await self._get_legacy_skill_compat().normalize_spec_payload(
+                            data,
+                            context,
+                        )
                     )
                 spec = BoxSpec.model_validate(payload)
                 if self._runtime.admission_required:
@@ -615,9 +617,11 @@ class BoxServerHandler(Handler):
                 context = self._action_context()
                 payload = data
                 if "skill_name" in data:
-                    payload = await self._get_legacy_skill_compat().normalize_spec_payload(
-                        data,
-                        context,
+                    payload = (
+                        await self._get_legacy_skill_compat().normalize_spec_payload(
+                            data,
+                            context,
+                        )
                     )
                 spec = BoxSpec.model_validate(payload)
                 if self._runtime.admission_required:
