@@ -854,9 +854,7 @@ done
                     "Managed sandbox additional mount targets must be unique"
                 )
             destinations.add(mount_path)
-            normalized.append(
-                mount.model_copy(update={"host_path": host_path})
-            )
+            normalized.append(mount.model_copy(update={"host_path": host_path}))
         return normalized
 
     def _normalize_admitted_spec(

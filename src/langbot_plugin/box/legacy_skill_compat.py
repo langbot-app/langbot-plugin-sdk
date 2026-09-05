@@ -94,7 +94,10 @@ class LegacySkillCompat:
             return payload
 
         mount_path = f"{DEFAULT_BOX_MOUNT_PATH}/.skills/{skill_name}"
-        mounts = [BoxMountSpec.model_validate(item) for item in payload.get("extra_mounts", [])]
+        mounts = [
+            BoxMountSpec.model_validate(item)
+            for item in payload.get("extra_mounts", [])
+        ]
         if not any(mount.mount_path == mount_path for mount in mounts):
             package_root = await self.call(
                 context,
@@ -133,9 +136,7 @@ def register_legacy_skill_actions(
 
     @handler.action(LegacySkillAction.GET_SKILL)
     async def get_skill(data: dict) -> ActionResponse:
-        return ActionResponse.success(
-            {"skill": await call("get_skill", data["name"])}
-        )
+        return ActionResponse.success({"skill": await call("get_skill", data["name"])})
 
     @handler.action(LegacySkillAction.CREATE_SKILL)
     async def create_skill(data: dict) -> ActionResponse:
