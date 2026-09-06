@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from unittest import mock
 
 import pytest
 
@@ -29,7 +30,7 @@ def test_generic_store_uses_an_execution_independent_root(tmp_path):
 
     snapshot = store.get_skill_snapshot("docs-only")
     assert snapshot is not None
-    assert snapshot["revision"].startswith("sha256:")
+    assert snapshot["revision"].startswith("stat-v1:")
     assert created["package_root"].startswith(store.root + os.sep)
 
     listed = store.list_skill_resources(
@@ -80,6 +81,40 @@ def test_generic_store_rejects_stale_revision_and_symbolic_links(tmp_path):
         pytest.skip("symbolic links are unavailable on this platform")
     with pytest.raises(ValueError, match="symbolic links"):
         store.get_skill_snapshot("safe")
+
+
+def test_revision_uses_metadata_and_resource_reads_scan_once(tmp_path):
+    store = SkillStore(tmp_path / "skills")
+    store.create_skill({"name": "docs", "instructions": "Read guide.md."})
+    store.write_skill_file("docs", "guide.md", "content")
+    snapshot = store.get_skill_snapshot("docs")
+    assert snapshot is not None
+
+    with (
+        mock.patch.object(
+            store,
+            "_package_revision",
+            wraps=store._package_revision,
+        ) as revision_mock,
+        mock.patch.object(
+            store,
+            "_require_skill",
+            wraps=store._require_skill,
+        ) as require_skill_mock,
+    ):
+        result = store.read_skill_resource(
+            "docs",
+            "guide.md",
+            expected_revision=snapshot["revision"],
+        )
+
+    assert result["content"] == "content"
+    assert revision_mock.call_count == 1
+    assert require_skill_mock.call_count == 1
+
+    with mock.patch("builtins.open", side_effect=AssertionError("content read")):
+        revision = store._package_revision(snapshot["package_root"])
+    assert revision.startswith("stat-v1:")
 
 
 def test_generic_store_imports_only_from_a_fenced_source_root(tmp_path):

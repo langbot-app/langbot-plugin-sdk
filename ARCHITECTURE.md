@@ -331,10 +331,6 @@ Important modules:
 - `box/nsjail_backend.py`: nsjail backend.
 - `box/e2b_backend.py`: E2B backend.
 - `skill_store.py`: generic Skill package CRUD, revision, and read-only resource helpers; it does not start or connect to Box.
-- `box/legacy_skill_compat.py`: temporary old-Core wire bridge used only while
-  rolling replicas forward. It translates the retired `skill_name` payload to
-  a generic read-only mount and serves old Skill RPC action strings. Deploy Box
-  before Core; the module is marked for deletion in the next major version.
 - `box/security.py`: path/security helper logic.
 
 Default Box WebSocket endpoints on port `5410`:
@@ -347,6 +343,8 @@ The Skill store keeps durable package paths in an `(instance, workspace)`
 namespace. LangBot Core owns that store and composes executable packages into
 generic read-only `BoxMountSpec` values. Box has no Skill model, CRUD API, or
 `SKILL.md` knowledge in its normal path; it only validates and mounts artifacts.
+Core and the Box Runtime SDK are upgraded in lockstep; Box deliberately rejects
+retired Skill-aware payload fields instead of carrying a mixed-version bridge.
 Sandbox sessions and managed processes use an
 `(instance, workspace, placement_generation)` namespace. Authenticated tenant
 RPCs advance a monotonic generation fence, cancel in-flight older RPCs, and

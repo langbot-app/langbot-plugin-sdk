@@ -26,7 +26,7 @@ from langbot_plugin.box.models import (
     SandboxAdmissionGrant,
     SandboxAdmissionRevocation,
 )
-from langbot_plugin.box.runtime import BoxRuntime
+from langbot_plugin.box.runtime import MAX_ADMITTED_READ_ONLY_MOUNTS, BoxRuntime
 from langbot_plugin.box.tenancy import box_namespace, namespace_session_id
 from langbot_plugin.entities.io.context import ActionContext
 
@@ -158,6 +158,15 @@ def _runtime(
         }
     )
     return runtime, backend
+
+
+def test_managed_read_only_mount_limit_is_256(tmp_path):
+    runtime, _ = _runtime(tmp_path)
+    assert MAX_ADMITTED_READ_ONLY_MOUNTS == 256
+    with pytest.raises(BoxAdmissionError, match="at most 256"):
+        runtime._normalize_admitted_extra_mounts(
+            [mock.MagicMock() for _ in range(MAX_ADMITTED_READ_ONLY_MOUNTS + 1)]
+        )
 
 
 @pytest.mark.anyio

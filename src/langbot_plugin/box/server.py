@@ -59,7 +59,6 @@ from .models import (
     SandboxAdmissionGrant,
     SandboxAdmissionRevocation,
 )
-from .legacy_skill_compat import LegacySkillCompat, register_legacy_skill_actions
 from .runtime import BoxRuntime
 from .security import (
     BOX_CONTROL_TOKEN_ENV,
@@ -416,7 +415,6 @@ class BoxServerHandler(Handler):
         self._generation_fence = generation_fence or BoxGenerationFence(
             max_records=runtime.max_admission_records
         )
-        self._legacy_skill_compat: LegacySkillCompat | None = None
         inherited_file_chunk = self.actions[CommonAction.FILE_CHUNK.value]
 
         async def authenticated_file_chunk(data: dict[str, Any]) -> ActionResponse:
@@ -520,13 +518,6 @@ class BoxServerHandler(Handler):
             logical_session_id = canonical_id
         return namespace_session_id(context, logical_session_id)
 
-    def _get_legacy_skill_compat(self) -> LegacySkillCompat:
-        if self._legacy_skill_compat is None:
-            self._legacy_skill_compat = LegacySkillCompat(
-                lambda: self._runtime._box_config
-            )
-        return self._legacy_skill_compat
-
     def _workspace_sessions(self) -> list[dict]:
         prefix = session_namespace_prefix(self._action_context())
         return [
@@ -586,15 +577,7 @@ class BoxServerHandler(Handler):
         async def exec_cmd(data: dict[str, Any]) -> ActionResponse:
             try:
                 context = self._action_context()
-                payload = data
-                if "skill_name" in data:
-                    payload = (
-                        await self._get_legacy_skill_compat().normalize_spec_payload(
-                            data,
-                            context,
-                        )
-                    )
-                spec = BoxSpec.model_validate(payload)
+                spec = BoxSpec.model_validate(data)
                 if self._runtime.admission_required:
                     result = await self._runtime.execute(spec, action_context=context)
                 else:
@@ -615,15 +598,7 @@ class BoxServerHandler(Handler):
         async def create_session(data: dict[str, Any]) -> ActionResponse:
             try:
                 context = self._action_context()
-                payload = data
-                if "skill_name" in data:
-                    payload = (
-                        await self._get_legacy_skill_compat().normalize_spec_payload(
-                            data,
-                            context,
-                        )
-                    )
-                spec = BoxSpec.model_validate(payload)
+                spec = BoxSpec.model_validate(data)
                 if self._runtime.admission_required:
                     info = await self._runtime.create_session(
                         spec, action_context=context
@@ -752,13 +727,6 @@ class BoxServerHandler(Handler):
             except Exception as exc:
                 return ActionResponse.error(f"BoxReadinessError: {exc}")
             return ActionResponse.success(result)
-
-        # TODO(next-major): remove the isolated old-Core wire protocol bridge.
-        register_legacy_skill_actions(
-            self,
-            self._get_legacy_skill_compat,
-            self._action_context,
-        )
 
         @self.action(LangBotToBoxAction.INIT)
         async def init(data: dict[str, Any]) -> ActionResponse:
