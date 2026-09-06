@@ -182,7 +182,7 @@ class SkillStore:
         return None
 
     def get_skill_snapshot(self, skill_name: str) -> Optional[dict]:
-        """Return one Skill together with its immutable package revision."""
+        """Return one Skill together with its opaque package revision."""
 
         skill = self.get_skill(skill_name)
         if skill is None:
@@ -374,6 +374,20 @@ class SkillStore:
         include_hidden: bool = False,
         max_entries: int = 200,
     ) -> dict:
+        return self._list_skill_files(
+            self._require_skill(skill_name),
+            path,
+            include_hidden,
+            max_entries,
+        )
+
+    def _list_skill_files(
+        self,
+        skill: dict,
+        path: str,
+        include_hidden: bool,
+        max_entries: int,
+    ) -> dict:
         if (
             isinstance(max_entries, bool)
             or not isinstance(max_entries, int)
@@ -381,7 +395,6 @@ class SkillStore:
         ):
             raise ValueError("max_entries must be a positive integer")
         max_entries = min(max_entries, _MAX_SKILL_LIST_ENTRIES)
-        skill = self._require_skill(skill_name)
         target_dir, relative_path = self._resolve_skill_path(
             skill, path, expect_directory=True
         )
@@ -426,7 +439,9 @@ class SkillStore:
         }
 
     def read_skill_file(self, skill_name: str, path: str) -> dict:
-        skill = self._require_skill(skill_name)
+        return self._read_skill_file(self._require_skill(skill_name), path)
+
+    def _read_skill_file(self, skill: dict, path: str) -> dict:
         target_path, relative_path = self._resolve_skill_path(
             skill, path, expect_directory=False
         )
@@ -453,17 +468,16 @@ class SkillStore:
         *,
         expected_revision: str | None = None,
     ) -> dict:
-        """List read-only package resources pinned to one Skill revision."""
+        """List resources after checking the activated Skill revision."""
 
         skill = self._require_skill(skill_name)
         revision = self._require_revision(skill, expected_revision)
-        result = self.list_skill_files(
-            skill_name,
+        result = self._list_skill_files(
+            skill,
             path,
             include_hidden,
             max_entries,
         )
-        self._require_revision(skill, revision)
         result["revision"] = revision
         for entry in result.get("entries", []):
             if not entry.get("is_dir"):
@@ -479,12 +493,11 @@ class SkillStore:
         *,
         expected_revision: str | None = None,
     ) -> dict:
-        """Read one UTF-8 package resource pinned to one Skill revision."""
+        """Read one UTF-8 resource after checking the activated revision."""
 
         skill = self._require_skill(skill_name)
         revision = self._require_revision(skill, expected_revision)
-        result = self.read_skill_file(skill_name, path)
-        self._require_revision(skill, revision)
+        result = self._read_skill_file(skill, path)
         result["revision"] = revision
         result["mime_type"] = mimetypes.guess_type(path)[0] or "text/plain"
         return result
@@ -612,11 +625,20 @@ class SkillStore:
 
     @staticmethod
     def _package_revision(package_root: str) -> str:
+        """Build a cheap, opaque revision from package filesystem metadata.
+
+        This deliberately is not a content digest. Reading every package byte
+        made activation and each resource access proportional to package size.
+        Paths, sizes, nanosecond timestamps and modes retain practical stale
+        revision detection without loading file contents. Callers must treat
+        the value as a change token, not as a cryptographic integrity proof.
+        """
+
         root = os.path.realpath(str(package_root or "").strip())
         if not root or not os.path.isdir(root):
             raise ValueError("Skill package directory is unavailable")
 
-        digest = hashlib.sha256()
+        digest = hashlib.blake2s(digest_size=16)
         file_count = 0
         total_bytes = 0
         for current_root, dir_names, file_names in os.walk(root, followlinks=False):
@@ -643,13 +665,18 @@ class SkillStore:
                     raise ValueError("Skill package is too large to revision safely")
 
                 relative = os.path.relpath(path, root).replace(os.sep, "/")
-                digest.update(relative.encode("utf-8"))
+                metadata = (
+                    relative,
+                    stat_result.st_size,
+                    stat_result.st_mtime_ns,
+                    stat_result.st_ctime_ns,
+                    stat.S_IMODE(stat_result.st_mode),
+                )
+                digest.update(
+                    "\0".join(str(value) for value in metadata).encode("utf-8")
+                )
                 digest.update(b"\0")
-                with open(path, "rb") as file:
-                    while chunk := file.read(64 * 1024):
-                        digest.update(chunk)
-                digest.update(b"\0")
-        return f"sha256:{digest.hexdigest()}"
+        return f"stat-v1:{digest.hexdigest()}"
 
     def _require_revision(
         self,

@@ -276,6 +276,8 @@ class BoxSpec(pydantic.BaseModel):
     read_only_rootfs: bool = True
     workspace_quota_mb: int = 0
 
+    model_config = pydantic.ConfigDict(extra="forbid")
+
     @pydantic.model_validator(mode="before")
     @classmethod
     def populate_workdir_from_mount_path(cls, data):
