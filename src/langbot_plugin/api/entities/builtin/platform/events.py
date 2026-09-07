@@ -3,6 +3,7 @@
 Platform event models.
 """
 
+import copy
 import typing
 
 import pydantic
@@ -618,13 +619,22 @@ def parse_eba_event(data: dict) -> EBAEvent:
         raise ValueError("An EBA event requires a type")
     for event_class in EBAEvent.__subclasses__():
         if event_class.model_fields["type"].default == data["type"]:
-            return event_class.model_validate(
-                {
-                    key: value
-                    for key, value in data.items()
-                    if key not in {"legacy_event", "source_platform_object"}
-                }
-            )
+            payload = {
+                key: value
+                for key, value in data.items()
+                if key not in {"legacy_event", "source_platform_object"}
+            }
+            # Nested Pydantic validation bypasses MessageChain.model_validate,
+            # which would erase subtype fields such as Plain.text and Image.url.
+            for name, field in event_class.model_fields.items():
+                if (
+                    field.annotation is platform_message.MessageChain
+                    and name in payload
+                ):
+                    payload[name] = platform_message.MessageChain.model_validate(
+                        copy.deepcopy(payload[name])
+                    )
+            return event_class.model_validate(payload)
     raise ValueError(f"Unknown EBA event type: {data['type']}")
 
 

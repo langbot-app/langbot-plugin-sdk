@@ -193,3 +193,24 @@ async def test_tool_failure_is_logged_before_run_failure():
         "tool.call.completed",
     ]
     assert results[-1].data["error"] == "delivery failed"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "field"),
+    [("message.received", "message_chain"), ("message.edited", "new_content")],
+)
+def test_eba_message_payload_preserves_component_fields_across_json_roundtrip(
+    event_type, field
+):
+    payload = {
+        "type": event_type,
+        field: [
+            {"type": "Plain", "text": "Hello from the debug editor"},
+            {"type": "Image", "url": "https://example.com/image.png"},
+        ],
+    }
+    event = events.parse_eba_event(payload)
+    restored = events.parse_eba_event(event.model_dump(mode="json"))
+    assert getattr(restored, field)[0].text == "Hello from the debug editor"
+    assert getattr(restored, field)[1].url == "https://example.com/image.png"
+    assert payload[field][0] == {"type": "Plain", "text": "Hello from the debug editor"}
