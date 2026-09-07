@@ -79,8 +79,8 @@ class AgentRunnerPermissions(pydantic.BaseModel):
     They do not constrain native capabilities of an external harness.
     """
 
-    models: list[typing.Literal["invoke", "stream", "rerank", "count_tokens"]] = pydantic.Field(
-        default_factory=list
+    models: list[typing.Literal["invoke", "stream", "rerank", "count_tokens"]] = (
+        pydantic.Field(default_factory=list)
     )
     """Model operations allowed."""
 
@@ -121,6 +121,9 @@ class AgentRunnerManifest(pydantic.BaseModel):
     """Runner name within the plugin (e.g., 'default')."""
 
     label: I18nObject
+
+    component_kind: typing.Literal["AgentRunner", "EventProcessor"] = "AgentRunner"
+    supported_event_patterns: list[str] = pydantic.Field(default_factory=lambda: ["*"])
     """Localized display name."""
 
     description: I18nObject | None = None

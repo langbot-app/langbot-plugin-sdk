@@ -1001,3 +1001,51 @@ async def test_plugin_runtime_uninitialized_runner_returns_structured_run_failed
     assert responses[0].data["run_id"] == "test_run"
     assert responses[0].data["data"]["code"] == "runner.not_initialized"
     assert responses[0].data["sequence"] == 1
+
+
+@pytest.mark.anyio
+async def test_event_processor_discovery_and_dispatch_are_kind_scoped():
+    from langbot_plugin.runtime.plugin.agent_runner_service import (
+        AgentRunnerRuntimeService,
+    )
+    from langbot_plugin.api.definition.components.event_processor import EventProcessor
+
+    plugin = create_mock_plugin(
+        "test", "both", [("default", MockAgentRunner()), ("default", EventProcessor())]
+    )
+    plugin.components[1].manifest.kind = "EventProcessor"
+    plugin.components[1].manifest.spec["events"] = ["group.member_joined"]
+    plugin._runtime_plugin_handler = RecordingRuntimeHandler()
+    service = AgentRunnerRuntimeService(
+        plugins=lambda: [plugin], find_plugin=lambda author, name: plugin
+    )
+    entries = await service.list_agent_runners()
+    assert {entry["manifest"]["id"] for entry in entries} == {
+        "plugin:test/both/default",
+        "event_processor:test/both/default",
+    }
+    processor_entry = next(
+        entry
+        for entry in entries
+        if entry["manifest"]["component_kind"] == "EventProcessor"
+    )
+    assert processor_entry["manifest"]["supported_event_patterns"] == [
+        "group.member_joined"
+    ]
+    assert (
+        service._find_runner_component(plugin, "default", "EventProcessor")
+        is plugin.components[1]
+    )
+    ctx = create_run_context().model_dump(mode="json")
+    ctx["runtime"]["metadata"] = {"component_kind": "EventProcessor"}
+    results = [
+        result async for result in service.run_agent("test", "both", "default", ctx)
+    ]
+    assert results[-1]["type"] == "run.completed"
+    assert len(plugin._runtime_plugin_handler.calls) == 1
+    assert (
+        plugin._runtime_plugin_handler.calls[0][1]["context"]["runtime"]["metadata"][
+            "component_kind"
+        ]
+        == "EventProcessor"
+    )

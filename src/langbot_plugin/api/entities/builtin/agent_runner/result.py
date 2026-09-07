@@ -32,6 +32,16 @@ class AgentRunResultType(str, enum.Enum):
     ACTION_REQUESTED = "action.requested"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
+    PROCESSOR_LOG = "processor.log"
+
+
+class ProcessorLogPayload(pydantic.BaseModel):
+    """A processor log entry; never a platform message."""
+
+    text: str = pydantic.Field(max_length=65536)
+    level: typing.Literal["debug", "info", "warning", "error"] = "info"
+
+    model_config = pydantic.ConfigDict(extra="forbid")
 
 
 class MessageDeltaPayload(pydantic.BaseModel):

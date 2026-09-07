@@ -77,7 +77,7 @@ class AgentRunnerRuntimeService:
                 continue
 
             for component in plugin.components:
-                if component.manifest.kind != AgentRunner.__kind__:
+                if component.manifest.kind not in {"AgentRunner", "EventProcessor"}:
                     continue
 
                 runner_entry = self._build_runner_entry(plugin, component)
@@ -124,7 +124,17 @@ class AgentRunnerRuntimeService:
             )
             return
 
-        if self._find_runner_component(target_plugin, runner_name) is None:
+        component_kind = (
+            (context.get("runtime") or {})
+            .get("metadata", {})
+            .get("component_kind", "AgentRunner")
+        )
+        if component_kind not in {"AgentRunner", "EventProcessor"}:
+            raise ValueError("Unsupported processor component kind")
+        if (
+            self._find_runner_component(target_plugin, runner_name, component_kind)
+            is None
+        ):
             yield self._run_failed(
                 run_id=run_id,
                 error=f"AgentRunner {runner_name} not found in plugin {plugin_author}/{plugin_name}",
@@ -198,8 +208,12 @@ class AgentRunnerRuntimeService:
         config_schema = spec.get("config") or runner_cls.get_config_schema()
         runner_name = component.manifest.metadata.name
         runner_id = (
-            "plugin:"
-            f"{plugin.manifest.metadata.author}/"
+            (
+                "event_processor:"
+                if component.manifest.kind == "EventProcessor"
+                else "plugin:"
+            )
+            + f"{plugin.manifest.metadata.author}/"
             f"{plugin.manifest.metadata.name}/"
             f"{runner_name}"
         )
@@ -207,6 +221,9 @@ class AgentRunnerRuntimeService:
         try:
             runner_manifest = AgentRunnerManifest(
                 id=runner_id,
+                component_kind=component.manifest.kind,
+                supported_event_patterns=spec.get("events")
+                or (["*"] if component.manifest.kind == "AgentRunner" else []),
                 name=runner_name,
                 label=component.manifest.metadata.label.to_dict(),
                 description=component.manifest.metadata.description.to_dict()
@@ -247,10 +264,11 @@ class AgentRunnerRuntimeService:
         self,
         plugin: runtime_plugin_container.PluginContainer,
         runner_name: str,
+        component_kind: str = "AgentRunner",
     ) -> runtime_plugin_container.ComponentContainer | None:
         for component in plugin.components:
             if (
-                component.manifest.kind == AgentRunner.__kind__
+                component.manifest.kind == component_kind
                 and component.manifest.metadata.name == runner_name
             ):
                 return component

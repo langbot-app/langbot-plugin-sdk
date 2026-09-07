@@ -31,6 +31,7 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
 from langbot_plugin.api.definition.components.page import Page
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
+from langbot_plugin.api.definition.components.event_processor import EventProcessor
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 from langbot_plugin.runtime.security import (
@@ -325,6 +326,7 @@ class PluginRuntimeController:
             Parser,
             Page,
             AgentRunner,
+            EventProcessor,
         ]
 
         for component_cls in preinitialize_component_classes:

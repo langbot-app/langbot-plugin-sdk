@@ -130,7 +130,9 @@ async def _iter_runner_results_with_deadline(
         try:
             await result_gen.aclose()
         except Exception as exc:
-            logger.debug("Failed to close AgentRunner result generator: %s", exc, exc_info=True)
+            logger.debug(
+                "Failed to close AgentRunner result generator: %s", exc, exc_info=True
+            )
 
 
 class PluginRuntimeHandler(Handler):
@@ -432,9 +434,14 @@ class PluginRuntimeHandler(Handler):
                 return
 
             # Find the AgentRunner component
+            component_kind = run_context.runtime.metadata.get(
+                "component_kind", "AgentRunner"
+            )
+            if component_kind not in {"AgentRunner", "EventProcessor"}:
+                raise ValueError("Unsupported processor component kind")
             runner_component = None
             for component in self.plugin_container.components:
-                if component.manifest.kind == AgentRunner.__kind__:
+                if component.manifest.kind == component_kind:
                     if component.manifest.metadata.name == runner_name:
                         runner_component = component
                         break

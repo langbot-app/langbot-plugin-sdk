@@ -55,6 +55,7 @@ class Event(WorkspaceExecutionScope):
 # Legacy Message Events (unchanged)
 ###############################
 
+
 class MessageEvent(Event):
     """Message event.
 
@@ -137,6 +138,7 @@ class GroupMessage(MessageEvent):
 # Feedback Event
 ###############################
 
+
 class FeedbackEvent(Event):
     """User feedback event (like/dislike).
 
@@ -194,6 +196,7 @@ class FeedbackEvent(Event):
 # EBA Unified Event System (new)
 ###############################
 
+
 class EBAEvent(Event):
     """EBA event base class.
 
@@ -219,6 +222,7 @@ class EBAEvent(Event):
 
 # ---- Message Events ----
 
+
 class MessageReceivedEvent(EBAEvent):
     """New message received. Replaces legacy FriendMessage / GroupMessage."""
 
@@ -230,7 +234,9 @@ class MessageReceivedEvent(EBAEvent):
     message_chain: platform_message.MessageChain = platform_message.MessageChain([])
     """Message content."""
 
-    sender: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    sender: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     """Message sender."""
 
     chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
@@ -242,8 +248,33 @@ class MessageReceivedEvent(EBAEvent):
     group: typing.Optional[platform_entities.UserGroup] = None
     """Group info (only present in group chats)."""
 
+    legacy_event: typing.Optional[typing.Union[FriendMessage, GroupMessage]] = (
+        pydantic.Field(default=None, exclude=True)
+    )
+    """Host-only original event retained for lossless legacy adapter round trips."""
+
+    sender_member: typing.Optional[platform_entities.UserGroupMember] = None
+    """Group membership details when supplied by the platform."""
+
+    bot_role: typing.Optional[platform_entities.MemberRole] = None
+    """Bot role in the current group when supplied by the platform."""
+
     def to_legacy_event(self) -> typing.Union[FriendMessage, GroupMessage]:
         """Convert this EBA event to a legacy-format event (compatibility layer)."""
+        if self.legacy_event is not None:
+            return self.legacy_event.model_copy(
+                update={
+                    "message_chain": self.message_chain,
+                    "time": self.timestamp,
+                    "source_platform_object": self.source_platform_object,
+                }
+            )
+
+        permissions = {
+            platform_entities.MemberRole.MEMBER: platform_entities.Permission.Member,
+            platform_entities.MemberRole.ADMIN: platform_entities.Permission.Administrator,
+            platform_entities.MemberRole.OWNER: platform_entities.Permission.Owner,
+        }
         if self.chat_type == platform_entities.ChatType.PRIVATE:
             return FriendMessage(
                 sender=platform_entities.Friend(
@@ -259,13 +290,25 @@ class MessageReceivedEvent(EBAEvent):
             group = platform_entities.Group(
                 id=self.group.id if self.group else self.chat_id,
                 name=self.group.name if self.group else "",
-                permission=platform_entities.Permission.Member,
+                permission=permissions.get(
+                    self.bot_role, platform_entities.Permission.Member
+                ),
             )
             return GroupMessage(
                 sender=platform_entities.GroupMember(
                     id=self.sender.id,
-                    member_name=self.sender.nickname,
-                    permission=platform_entities.Permission.Member,
+                    member_name=(
+                        self.sender_member.display_name if self.sender_member else None
+                    )
+                    or self.sender.nickname,
+                    permission=permissions.get(
+                        self.sender_member.role if self.sender_member else None,
+                        platform_entities.Permission.Member,
+                    ),
+                    special_title=(
+                        self.sender_member.title if self.sender_member else None
+                    )
+                    or "",
                     group=group,
                 ),
                 message_chain=self.message_chain,
@@ -285,7 +328,9 @@ class MessageEditedEvent(EBAEvent):
     new_content: platform_message.MessageChain = platform_message.MessageChain([])
     """New content after editing."""
 
-    editor: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    editor: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     """User who edited the message."""
 
     chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
@@ -317,7 +362,9 @@ class MessageReactionEvent(EBAEvent):
     message_id: typing.Union[int, str] = ""
     """ID of the reacted message."""
 
-    user: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    user: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     """User who reacted."""
 
     reaction: str = ""
@@ -332,6 +379,7 @@ class MessageReactionEvent(EBAEvent):
 
 
 # ---- Feedback Events ----
+
 
 class FeedbackReceivedEvent(EBAEvent):
     """User feedback received for a bot response."""
@@ -379,15 +427,20 @@ class FeedbackReceivedEvent(EBAEvent):
 
 # ---- Group Events ----
 
+
 class MemberJoinedEvent(EBAEvent):
     """New member joined a group."""
 
     type: str = "group.member_joined"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     """The group."""
 
-    member: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    member: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     """The member who joined."""
 
     inviter: typing.Optional[platform_entities.User] = None
@@ -402,8 +455,12 @@ class MemberLeftEvent(EBAEvent):
 
     type: str = "group.member_left"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
-    member: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
+    member: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
 
     is_kicked: bool = False
     """Whether the member was kicked."""
@@ -417,8 +474,12 @@ class MemberBannedEvent(EBAEvent):
 
     type: str = "group.member_banned"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
-    member: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
+    member: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
     duration: typing.Optional[int] = None
     """Mute duration in seconds. None means permanent."""
@@ -429,7 +490,9 @@ class GroupInfoUpdatedEvent(EBAEvent):
 
     type: str = "group.info_updated"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     """Updated group info."""
 
     operator: typing.Optional[platform_entities.User] = None
@@ -439,6 +502,7 @@ class GroupInfoUpdatedEvent(EBAEvent):
 
 # ---- Friend Events ----
 
+
 class FriendRequestReceivedEvent(EBAEvent):
     """Friend request received."""
 
@@ -447,7 +511,9 @@ class FriendRequestReceivedEvent(EBAEvent):
     request_id: typing.Union[int, str] = ""
     """Request ID."""
 
-    user: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    user: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     """The user who sent the request."""
 
     message: typing.Optional[str] = None
@@ -459,7 +525,9 @@ class FriendAddedEvent(EBAEvent):
 
     type: str = "friend.added"
 
-    user: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    user: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
 
 
 class FriendRemovedEvent(EBAEvent):
@@ -467,17 +535,22 @@ class FriendRemovedEvent(EBAEvent):
 
     type: str = "friend.removed"
 
-    user: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    user: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
 
 
 # ---- Bot Status Events ----
+
 
 class BotInvitedToGroupEvent(EBAEvent):
     """Bot was invited to join a group."""
 
     type: str = "bot.invited_to_group"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     inviter: typing.Optional[platform_entities.User] = None
 
     request_id: typing.Optional[typing.Union[int, str]] = None
@@ -489,7 +562,9 @@ class BotRemovedFromGroupEvent(EBAEvent):
 
     type: str = "bot.removed_from_group"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
 
 
@@ -498,7 +573,9 @@ class BotMutedEvent(EBAEvent):
 
     type: str = "bot.muted"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
     duration: typing.Optional[int] = None
 
@@ -508,11 +585,14 @@ class BotUnmutedEvent(EBAEvent):
 
     type: str = "bot.unmuted"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
 
 
 # ---- Platform-Specific Events ----
+
 
 class PlatformSpecificEvent(EBAEvent):
     """Platform-specific event.
@@ -530,6 +610,23 @@ class PlatformSpecificEvent(EBAEvent):
 
 
 # ---- Message Send Result ----
+
+
+def parse_eba_event(data: dict) -> EBAEvent:
+    """Deserialize public EBA event fields without creating plugin-only wrappers."""
+    if not isinstance(data, dict) or not isinstance(data.get("type"), str):
+        raise ValueError("An EBA event requires a type")
+    for event_class in EBAEvent.__subclasses__():
+        if event_class.model_fields["type"].default == data["type"]:
+            return event_class.model_validate(
+                {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"legacy_event", "source_platform_object"}
+                }
+            )
+    raise ValueError(f"Unknown EBA event type: {data['type']}")
+
 
 class MessageResult(pydantic.BaseModel):
     """Result of a message send operation."""

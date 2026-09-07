@@ -166,6 +166,31 @@ def agent_runner_component_input_post_process(values: dict[str, Any]) -> dict[st
 
 component_types = [
     ComponentType(
+        type_name="EventProcessor",
+        target_dir="components/event_processor",
+        template_files=["{runner_name}.yaml", "{runner_name}.py"],
+        form_fields=[
+            {
+                "name": "runner_name",
+                "label": {"en_US": "Event processor name", "zh_Hans": "事件处理器名称"},
+                "required": True,
+                "format": {
+                    "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
+                    "error": {
+                        "en_US": "Use a lowercase component name",
+                        "zh_Hans": "请输入小写组件名称",
+                    },
+                },
+            },
+            {
+                "name": "runner_description",
+                "label": {"en_US": "Description", "zh_Hans": "描述"},
+                "required": True,
+            },
+        ],
+        input_post_process=agent_runner_component_input_post_process,
+    ),
+    ComponentType(
         type_name="EventListener",
         target_dir="components/event_listener",
         template_files=[
