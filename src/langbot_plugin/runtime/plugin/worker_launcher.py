@@ -148,6 +148,7 @@ class PluginWorkerLauncher:
         platform: str | None = None,
         python_executable: str | None = None,
         python_prefix: str | None = None,
+        runtime_import_root: str | None = None,
     ):
         self.nsjail_path = (
             nsjail_path if nsjail_path is not None else shutil.which("nsjail")
@@ -158,6 +159,9 @@ class PluginWorkerLauncher:
             python_executable or sys.executable
         ).absolute()
         self.python_prefix = pathlib.Path(python_prefix or sys.prefix).absolute()
+        self.runtime_import_root = pathlib.Path(
+            runtime_import_root or pathlib.Path(__file__).resolve().parents[3]
+        ).absolute()
         self.policy: PluginWorkerPolicy | None = None
         self.runtime_profile: Literal["oss_dev", "shared"] | None = None
 
@@ -220,7 +224,7 @@ class PluginWorkerLauncher:
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONPATH": os.pathsep.join(
                     (
-                        str(self._runtime_site_packages_path()),
+                        str(self.runtime_import_root),
                         str(dependency_environment.site_packages_path.resolve()),
                     )
                 ),
@@ -555,11 +559,7 @@ class PluginWorkerLauncher:
                 "--env",
                 "PYTHONDONTWRITEBYTECODE=1",
                 "--env",
-                (
-                    "PYTHONPATH="
-                    f"{self._runtime_site_packages_path()}:"
-                    "/plugin-dependencies"
-                ),
+                (f"PYTHONPATH={self.runtime_import_root}:/plugin-dependencies"),
                 "--env",
                 f"{PLUGIN_RUNTIME_PROFILE_ENV}=shared",
                 "--env",

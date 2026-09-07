@@ -1,0 +1,12 @@
+from langbot_plugin.api.definition.components.event_processor import EventProcessor, EventProcessorContext
+from langbot_plugin.api.entities.builtin.platform.events import MemberJoinedEvent
+
+
+class {{ runner_attr }}(EventProcessor):
+    async def initialize(self):
+        await super().initialize()
+
+        @self.handler(MemberJoinedEvent)
+        async def on_join(ctx: EventProcessorContext):
+            await ctx.log("Handling member join")
+            await ctx.reply(f"Hello, {ctx.event.member.nickname}")

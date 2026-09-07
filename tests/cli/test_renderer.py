@@ -39,6 +39,12 @@ def test_component_input_post_processors_create_python_class_names():
         "page_name": "settings_page",
         "page_label": "SettingsPage",
     }
+    assert (
+        renderer.agent_runner_component_input_post_process(
+            {"runner_name": "local_agent", "runner_description": "Run local agents"}
+        )["runner_attr"]
+        == "LocalAgent"
+    )
 
 
 def test_component_type_registry_contains_expected_public_component_kinds():
@@ -46,15 +52,18 @@ def test_component_type_registry_contains_expected_public_component_kinds():
 
     assert set(by_name) == {
         "EventListener",
+        "EventProcessor",
         "Tool",
         "Command",
         "KnowledgeEngine",
+        "AgentRunner",
         "Parser",
         "Page",
     }
     assert by_name["Tool"].target_dir == "components/tools"
     assert "{tool_name}.py" in by_name["Tool"].template_files
     assert by_name["Page"].target_dir == "components/pages"
+    assert by_name["AgentRunner"].target_dir == "components/agent_runner"
 
 
 def test_simple_render_uses_python_format_context():
@@ -73,3 +82,15 @@ def test_render_template_loads_packaged_templates():
     assert "name: weather" in rendered
     assert "Weather" in rendered
     assert "Lookup weather" in rendered
+
+
+def test_event_processor_template_renders_executable_component():
+    context = renderer.agent_runner_component_input_post_process(
+        {"runner_name": "welcome", "runner_description": "Welcome members"}
+    )
+    rendered = renderer.render_template(
+        "components/event_processor/{runner_name}.py.example", **context
+    )
+    compile(rendered, "welcome.py", "exec")
+    assert "class Welcome(EventProcessor)" in rendered
+    assert "@self.handler(MemberJoinedEvent)" in rendered

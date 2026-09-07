@@ -48,6 +48,15 @@ async def test_python_file_change_handler_debounces_python_file_events():
     handler.on_modified(
         SimpleNamespace(is_directory=False, src_path="__pycache__/plugin.py")
     )
+    handler.on_modified(
+        SimpleNamespace(
+            is_directory=False,
+            src_path=".langbot-codex-home/run/skills/tool.py",
+        )
+    )
+    handler.on_modified(
+        SimpleNamespace(is_directory=False, src_path="node_modules/pkg/plugin.py")
+    )
     handler.on_modified(SimpleNamespace(is_directory=False, src_path="plugin.pyc"))
 
     assert handler._pending_reload is None

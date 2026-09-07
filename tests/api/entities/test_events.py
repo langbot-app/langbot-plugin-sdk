@@ -1,6 +1,16 @@
 import pytest
+import asyncio
 from langbot_plugin.api.entities.events import (
     BaseEventModel,
+    BotInvitedToGroup,
+    FeedbackReceived,
+    GroupMemberBanned,
+    GroupMemberJoined,
+    GroupMemberLeft,
+    MessageEdited,
+    MessageReactionReceived,
+    MessageReceived,
+    PlatformSpecificEventReceived,
     PersonMessageReceived,
     GroupMessageReceived,
     PersonNormalMessageReceived,
@@ -19,15 +29,30 @@ from langbot_plugin.api.entities.builtin.provider.session import Session, Launch
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.pipeline.query import Query
 from langbot_plugin.api.entities.builtin.platform.events import (
+    BotInvitedToGroupEvent,
+    FeedbackEvent,
+    FeedbackReceivedEvent,
     FriendMessage,
     GroupMessage,
+    MemberBannedEvent,
+    MemberJoinedEvent,
+    MemberLeftEvent,
+    MessageEditedEvent,
+    MessageReactionEvent,
+    MessageReceivedEvent,
+    PlatformSpecificEvent,
 )
 from langbot_plugin.api.entities.builtin.platform.entities import (
+    ChatType,
     Friend,
     Group,
     GroupMember,
     Permission,
+    User,
+    UserGroup,
 )
+from langbot_plugin.api.entities.context import EventContext
+from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.definition.abstract.platform.adapter import (
     AbstractMessagePlatformAdapter,
 )
@@ -316,3 +341,151 @@ def test_validation_errors():
             sender_id="789012",
             message_chain=MessageChain([Plain(text="Hello")]).model_dump(),
         )
+
+
+def test_feedback_received_event_serialization_and_legacy_mapping():
+    event = FeedbackReceivedEvent(
+        feedback_id="feedback-1",
+        feedback_type=2,
+        feedback_content="not accurate",
+        inaccurate_reasons=["wrong_answer"],
+        user_id="user-1",
+        session_id="person_user-1",
+        message_id="msg-1",
+        stream_id="stream-1",
+        timestamp=123.0,
+        bot_uuid="bot-1",
+        adapter_name="wecom",
+    )
+
+    serialized = event.model_dump()
+    assert serialized["type"] == "feedback.received"
+    assert serialized["feedback_type"] == 2
+    assert serialized["inaccurate_reasons"] == ["wrong_answer"]
+
+    legacy_event = event.to_legacy_event()
+    assert isinstance(legacy_event, FeedbackEvent)
+    assert legacy_event.type == "FeedbackEvent"
+    assert legacy_event.feedback_id == event.feedback_id
+    assert legacy_event.feedback_type == event.feedback_type
+    assert legacy_event.feedback_content == event.feedback_content
+    assert legacy_event.inaccurate_reasons == event.inaccurate_reasons
+    assert legacy_event.user_id == event.user_id
+    assert legacy_event.session_id == event.session_id
+    assert legacy_event.message_id == event.message_id
+    assert legacy_event.stream_id == event.stream_id
+
+
+def test_eba_plugin_event_models_convert_from_platform_events():
+    group = UserGroup(id="group-1", name="Test Group")
+    user = User(id="user-1", nickname="Tester")
+    message_chain = MessageChain([Plain(text="hello eba")])
+
+    cases = [
+        (
+            MessageReceived,
+            MessageReceivedEvent(
+                bot_uuid="bot-1",
+                adapter_name="discord",
+                message_id="msg-1",
+                message_chain=message_chain,
+                sender=user,
+                chat_type=ChatType.GROUP,
+                chat_id="group-1",
+                group=group,
+            ),
+            {"message_id": "msg-1", "chat_id": "group-1", "bot_uuid": "bot-1", "adapter_name": "discord"},
+        ),
+        (
+            MessageEdited,
+            MessageEditedEvent(
+                message_id="msg-2",
+                new_content=message_chain,
+                editor=user,
+                chat_type=ChatType.PRIVATE,
+                chat_id="user-1",
+            ),
+            {"message_id": "msg-2", "chat_id": "user-1"},
+        ),
+        (
+            MessageReactionReceived,
+            MessageReactionEvent(message_id="msg-3", user=user, reaction="👍", chat_id="group-1", group=group),
+            {"message_id": "msg-3", "reaction": "👍"},
+        ),
+        (
+            FeedbackReceived,
+            FeedbackReceivedEvent(feedback_id="fb-1", feedback_type=2, feedback_content="bad"),
+            {"feedback_id": "fb-1", "feedback_type": 2},
+        ),
+        (
+            GroupMemberJoined,
+            MemberJoinedEvent(group=group, member=user, inviter=user, join_type="invite"),
+            {"join_type": "invite"},
+        ),
+        (
+            GroupMemberLeft,
+            MemberLeftEvent(group=group, member=user, is_kicked=True, operator=user),
+            {"is_kicked": True},
+        ),
+        (
+            GroupMemberBanned,
+            MemberBannedEvent(group=group, member=user, operator=user, duration=60),
+            {"duration": 60},
+        ),
+        (
+            BotInvitedToGroup,
+            BotInvitedToGroupEvent(group=group, inviter=user, request_id="req-1"),
+            {"request_id": "req-1"},
+        ),
+        (
+            PlatformSpecificEventReceived,
+            PlatformSpecificEvent(adapter_name="telegram", action="callback_query", data={"data": "ok"}),
+            {"adapter_name": "telegram", "action": "callback_query"},
+        ),
+    ]
+
+    for plugin_event_type, platform_event, expected_fields in cases:
+        plugin_event = plugin_event_type.from_platform_event(platform_event)
+        serialized = plugin_event.model_dump()
+        assert serialized["event_name"] == plugin_event_type.__name__
+        assert "query" not in serialized
+        assert "platform_event" not in serialized
+        for field, value in expected_fields.items():
+            assert serialized[field] == value
+
+        event_context = EventContext.from_event(plugin_event)
+        assert event_context.query_id == 0
+        assert event_context.event_name == plugin_event_type.__name__
+
+
+def test_event_listener_can_handle_eba_plugin_events():
+    listener = EventListener()
+    calls: list[tuple[str, str]] = []
+
+    @listener.handler(MessageReactionReceived)
+    async def on_reaction(ctx: EventContext):
+        calls.append((ctx.event_name, ctx.event.reaction))
+
+    @listener.handler(PlatformSpecificEventReceived)
+    async def on_platform_specific(ctx: EventContext):
+        calls.append((ctx.event_name, ctx.event.action))
+
+    reaction_ctx = EventContext.from_event(
+        MessageReactionReceived.from_platform_event(
+            MessageReactionEvent(message_id="msg-1", user=User(id="u1"), reaction="👍")
+        )
+    )
+    platform_ctx = EventContext.from_event(
+        PlatformSpecificEventReceived.from_platform_event(
+            PlatformSpecificEvent(adapter_name="telegram", action="callback_query", data={"data": "button"})
+        )
+    )
+
+    for ctx in (reaction_ctx, platform_ctx):
+        for handler in listener.registered_handlers[ctx.event.__class__]:
+            asyncio.run(handler(ctx))
+
+    assert calls == [
+        ("MessageReactionReceived", "👍"),
+        ("PlatformSpecificEventReceived", "callback_query"),
+    ]
