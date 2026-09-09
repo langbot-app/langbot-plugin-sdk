@@ -355,3 +355,68 @@ def test_installed_lbp_run_stdio_runtime_protocol(
             process.stdout.close()
         if process.stderr is not None:
             process.stderr.close()
+
+
+@pytest.mark.parametrize(
+    ("component_type", "directory", "component_name", "class_name"),
+    [
+        ("EventProcessor", "event_processor", "welcome", "Welcome"),
+        ("AgentRunner", "agent_runner", "echo_runner", "EchoRunner"),
+    ],
+)
+def test_installed_processor_scaffold_builds_and_executes(
+    installed_wheel, tmp_path, component_type, directory, component_name, class_name
+):
+    plugin = init_demo_plugin(installed_wheel, tmp_path, "ProcessorTutorial")
+    generated = run_installed_lbp(
+        installed_wheel,
+        "comp",
+        component_type,
+        cwd=plugin,
+        stdin=f"{component_name}\nTutorial processor\n",
+    )
+    assert generated.returncode == 0, generated.stderr
+    manifest = yaml.safe_load((plugin / "manifest.yaml").read_text())
+    assert manifest["spec"]["components"][component_type] == {
+        "fromDirs": [{"path": f"components/{directory}/"}]
+    }
+    built = run_installed_lbp(installed_wheel, "build", cwd=plugin)
+    assert built.returncode == 0, built.stderr
+    packages = list((plugin / "dist").glob("*.lbpkg"))
+    assert len(packages) == 1
+    with zipfile.ZipFile(packages[0]) as archive:
+        assert f"components/{directory}/{component_name}.py" in archive.namelist()
+        assert f"components/{directory}/{component_name}.yaml" in archive.namelist()
+    script = f'''
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+from components.{directory}.{component_name} import {class_name}
+
+async def main():
+    component = {class_name}()
+    await component.initialize()
+    api = SimpleNamespace(call_tool=AsyncMock(return_value={{"ok": True, "mock": True}}))
+    component.get_run_api = Mock(return_value=api)
+    ctx = SimpleNamespace(
+        run_id="tutorial", config={{}},
+        input=SimpleNamespace(to_text=lambda: "你好"),
+        event=SimpleNamespace(data={{"type": "group.member_joined", "member": {{"id": "one", "nickname": "Alice"}}}}),
+    )
+    results = [item async for item in component.run(ctx)]
+    assert sum(item.type == "run.completed" for item in results) == 1
+    if "{component_type}" == "EventProcessor":
+        api.call_tool.assert_awaited_once_with("event_reply", {{"text": "Hello, Alice"}})
+        assert [item.type for item in results] == ["processor.log", "tool.call.started", "tool.call.completed", "run.completed"]
+    else:
+        assert results[-1].data["message"]["content"] == "Received: 你好"
+asyncio.run(main())
+'''
+    result = subprocess.run(
+        [str(installed_wheel.python), "-c", script],
+        cwd=plugin,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
