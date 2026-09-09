@@ -596,6 +596,11 @@ class ControlConnectionHandler(handler.Handler):
     def runtime_configured(self) -> bool:
         return self._runtime_configured
 
+    def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
+        # Admission only: _handle_action still validates the full request and
+        # enforces active-handler fencing and the tenant-context prohibition.
+        return req_data.get("action") == CommonAction.PING.value
+
     def invalidate(self) -> None:
         """Fence this handler synchronously before its transport is closed."""
 

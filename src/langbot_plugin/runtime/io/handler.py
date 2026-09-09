@@ -47,6 +47,7 @@ FILE_STORAGE_DIR = "data/temp/lbp"
 SHARED_WORKER_FILE_STORAGE_DIR = "/tmp/lbp-rpc"
 FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
 MAX_INFLIGHT_ACTIONS = 128
+MAX_RESERVED_ACTIONS = 4
 MAX_STREAM_QUEUE_SIZE = 128
 MAX_ACTIVE_FILE_TRANSFERS = 128
 MAX_PROTOCOL_ERROR_CHARS = 4096
@@ -117,6 +118,8 @@ class Handler(abc.ABC):
         self.resp_waiters = {}
         self.resp_queues = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        # Reserved tasks remain in the common set for cancellation and accounting.
+        self._reserved_action_tasks: set[asyncio.Task[None]] = set()
         self._closed = False
         self._close_error: ConnectionClosedError | None = None
         self._bound_action_context = None
@@ -302,6 +305,8 @@ class Handler(abc.ABC):
                     # a replacement connection, even when the handler itself is
                     # reused by a reconnect callback.
                     self._fail_pending(exc)
+                    # Do not let old inbound work reply on a replacement transport.
+                    await self._cancel_action_tasks()
                     if self._disconnect_callback is not None:
                         reconnected = await self._disconnect_callback(self)
                         if reconnected:
@@ -328,12 +333,23 @@ class Handler(abc.ABC):
                     logger.warning("Ignored runtime message without action or code")
                     continue
 
-                if len(self._action_tasks) >= MAX_INFLIGHT_ACTIONS:
-                    await self._send_overloaded_response(seq_id)
+                reserved = self._uses_reserved_admission(req_data)
+                if reserved:
+                    inflight = len(self._reserved_action_tasks)
+                    limit = MAX_RESERVED_ACTIONS
+                else:
+                    inflight = len(self._action_tasks) - len(
+                        self._reserved_action_tasks
+                    )
+                    limit = MAX_INFLIGHT_ACTIONS
+                if inflight >= limit:
+                    await self._send_overloaded_response(seq_id, limit=limit)
                     continue
 
                 task = asyncio.create_task(self._handle_action(req_data))
                 self._action_tasks.add(task)
+                if reserved:
+                    self._reserved_action_tasks.add(task)
                 task.add_done_callback(self._action_task_done)
         finally:
             self._closed = True
@@ -446,9 +462,15 @@ class Handler(abc.ABC):
             if action_name and not action_name.startswith("__"):
                 logger.debug("[Action] %s", action_name)
 
-    async def _send_overloaded_response(self, seq_id: int) -> None:
+    def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
+        """Opt in to bounded control capacity, not validation or authorization."""
+        return False
+
+    async def _send_overloaded_response(
+        self, seq_id: int, *, limit: int = MAX_INFLIGHT_ACTIONS
+    ) -> None:
         response = ActionResponse.error(
-            f"Runtime connection is busy (max {MAX_INFLIGHT_ACTIONS} concurrent actions)"
+            f"Runtime connection is busy (max {limit} concurrent actions)"
         )
         response.seq_id = seq_id
         with contextlib.suppress(ConnectionClosedError):
@@ -456,6 +478,7 @@ class Handler(abc.ABC):
 
     def _action_task_done(self, task: asyncio.Task[None]) -> None:
         self._action_tasks.discard(task)
+        self._reserved_action_tasks.discard(task)
         if task.cancelled():
             return
         exc = task.exception()
@@ -483,6 +506,7 @@ class Handler(abc.ABC):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._action_tasks.clear()
+        self._reserved_action_tasks.clear()
 
     def cancel_inflight_messages(self) -> None:
         """Cancel peer requests already accepted by this handler."""
