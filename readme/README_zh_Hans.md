@@ -1,8 +1,8 @@
 # Local Agent
 
-Local Agent 是 LangBot 官方的进程内 Runner。它在 LangBot 插件进程中完成提示词组装、模型调用、工具循环、知识库检索、上下文压缩和技能调用，适合使用 LangBot 托管模型与工具的通用 Agent 场景。
+Local Agent 是 LangBot 官方的进程内运行器。它在 LangBot 插件进程中完成提示词组装、模型调用、工具循环、知识库检索、上下文压缩和技能调用，适合使用 LangBot 托管模型与工具的通用 Agent 场景。
 
-## Runner ID
+## 运行器 ID
 
 `plugin:langbot-team/LocalAgent/default`
 

@@ -38,11 +38,19 @@ def test_local_agent_has_publishable_marketplace_layout() -> None:
     root_readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert len(root_readme.encode("utf-8")) >= 2_000
     assert any("\u4e00" <= char <= "\u9fff" for char in root_readme)
+    assert "运行器 ID" in root_readme
+    assert "Runner ID" not in root_readme
     assert all(field in root_readme for field in config_fields)
     assert runner_id in root_readme
 
     expected_readmes = {f"README_{locale}.md" for locale in MARKETPLACE_LOCALES}
     assert {path.name for path in (ROOT / "readme").glob("README_*.md")} == expected_readmes
+    zh_hans_readme = (ROOT / "readme" / "README_zh_Hans.md").read_text(encoding="utf-8")
+    zh_hant_readme = (ROOT / "readme" / "README_zh_Hant.md").read_text(encoding="utf-8")
+    assert "运行器 ID" in zh_hans_readme
+    assert "Runner ID" not in zh_hans_readme
+    assert "運行器 ID" in zh_hant_readme
+    assert "Runner ID" not in zh_hant_readme
     for readme_name in expected_readmes:
         localized_readme = (ROOT / "readme" / readme_name).read_text(encoding="utf-8")
         assert len(localized_readme.encode("utf-8")) >= 1_000
