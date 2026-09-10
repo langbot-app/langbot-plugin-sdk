@@ -489,9 +489,9 @@ async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
         (
             PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
             {"query": "hello"},
-                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
-                {"query": "hello"},
-                120.0,
+            PluginToRuntimeAction.RETRIEVE_KNOWLEDGE,
+            {"query": "hello"},
+            120.0,
         ),
         (
             PluginToRuntimeAction.LIST_PIPELINE_KNOWLEDGE_BASES,
@@ -503,9 +503,9 @@ async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
         (
             PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
             {"query_id": 5, "query": "hello"},
-                PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
-                {"query_id": 5, "query": "hello"},
-                120.0,
+            PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE,
+            {"query_id": 5, "query": "hello"},
+            120.0,
         ),
         (
             PluginToRuntimeAction.LIST_PARSERS,
@@ -1134,3 +1134,31 @@ async def test_plugin_connection_handler_execute_command_and_parse_document_help
             300,
         ),
     ]
+
+
+async def test_reply_stream_forwarder_uses_trusted_plugin_identity():
+    handler, manager, control = _handler()
+    manager.plugins = [FakePluginContainer(runtime_handler=handler)]
+    control.results[PluginToRuntimeAction.REPLY_STREAM] = {"result": {"status": "open"}}
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            PluginToRuntimeAction.REPLY_STREAM.value,
+            {
+                "run_id": "run-1",
+                "stream_id": "stream-1",
+                "operation": "update",
+                "text": "hello",
+                "caller_plugin_identity": "spoofed/plugin",
+            },
+        )
+        missing_run = await session.request(
+            PluginToRuntimeAction.REPLY_STREAM.value, {"text": "hello"}
+        )
+    assert response["code"] == 0
+    assert missing_run["code"] != 0
+    assert len(control.calls) == 1
+    action, payload, timeout = control.calls[0]
+    assert action == PluginToRuntimeAction.REPLY_STREAM
+    assert payload["caller_plugin_identity"] == "tester/demo"
+    assert payload["text"] == "hello"
+    assert timeout == 30

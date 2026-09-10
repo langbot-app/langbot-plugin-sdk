@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from contextlib import suppress
+from contextlib import suppress, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Awaitable, Callable
 
@@ -80,6 +80,36 @@ class EventProcessorContext:
     async def reply(self, text: str) -> dict[str, Any]:
         """Reply to the current event through the authorized Host action API."""
         return await self.api.call_tool("event_reply", {"text": text})
+
+    @asynccontextmanager
+    async def reply_stream(self):
+        """Stream one explicit reply; update() accepts the full text so far."""
+        call_id = str(uuid.uuid4())
+        await self._results.put(
+            AgentRunResult.tool_call_started(
+                self.run_id, call_id, "event_reply", {"stream": True}
+            )
+        )
+        try:
+            async with self.api.reply_stream() as stream:
+                yield stream
+        except BaseException as exc:
+            with suppress(asyncio.QueueFull):
+                self._results.put_nowait(
+                    AgentRunResult.tool_call_completed(
+                        self.run_id,
+                        call_id,
+                        "event_reply",
+                        error=str(exc) or type(exc).__name__,
+                    )
+                )
+            raise
+        else:
+            await self._results.put(
+                AgentRunResult.tool_call_completed(
+                    self.run_id, call_id, "event_reply", result=stream.result
+                )
+            )
 
     async def log(self, text: str, level: str = "info") -> None:
         """Record an invocation log without sending a platform message."""

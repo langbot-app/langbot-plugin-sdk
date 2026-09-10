@@ -36,6 +36,7 @@ class PluginToRuntimeAction(ActionType):
     GET_BOTS = "get_bots"
     GET_BOT_INFO = "get_bot_info"
     SEND_MESSAGE = "send_message"
+    REPLY_STREAM = "reply_stream"
     CALL_PLATFORM_API = "call_platform_api"
 
     GET_LLM_MODELS = "get_llm_models"

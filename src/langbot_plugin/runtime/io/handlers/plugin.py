@@ -754,6 +754,16 @@ class PluginConnectionHandler(handler.Handler):
                 30,
             )
 
+        @self.action(PluginToRuntimeAction.REPLY_STREAM)
+        async def reply_stream(data: dict[str, Any]) -> handler.ActionResponse:
+            if not data.get("run_id"):
+                return handler.ActionResponse.error(
+                    "run_id is required for streaming replies"
+                )
+            return await forward_agent_action(
+                PluginToRuntimeAction.REPLY_STREAM, data, 30
+            )
+
         @self.action(PluginToRuntimeAction.CALL_TOOL)
         async def call_tool_from_plugin(data: dict[str, Any]) -> handler.ActionResponse:
             if data.get("run_id") is not None:

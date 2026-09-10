@@ -1816,3 +1816,43 @@ class TestAgentRunAPIProxyStateAPI:
         await proxy.state_list("conversation")
         call_args = mock_handler.call_action_mock.call_args
         assert call_args[0][0] == PluginToRuntimeAction.STATE_LIST
+
+
+@pytest.mark.asyncio
+async def test_reply_stream_is_explicit_and_finishes_one_message():
+    ctx = create_mock_context(
+        tools=[
+            {
+                "tool_name": "event_reply",
+                "tool_type": "platform",
+                "operations": ["call"],
+            }
+        ],
+        available_apis=ContextAPICapabilities(reply_stream=True),
+    )
+    handler = MockHandler()
+    handler.call_action_mock.return_value = {"result": {"status": "completed"}}
+    api = AgentRunAPIProxy(ctx, handler)
+    async with api.reply_stream() as stream:
+        handler.call_action_mock.assert_not_awaited()
+        await stream.update("Hello")
+        await stream.update("Hello world")
+    calls = handler.call_action_mock.await_args_list
+    assert [c.args[1]["operation"] for c in calls] == ["update", "update", "finish"]
+    assert {c.args[1]["stream_id"] for c in calls} == {calls[0].args[1]["stream_id"]}
+    assert calls[-1].args[1]["text"] == "Hello world"
+    with pytest.raises(ValueError, match="closed"):
+        await stream.update("late")
+
+
+@pytest.mark.asyncio
+async def test_reply_stream_rejects_old_host_without_sending():
+    ctx = create_mock_context(
+        tools=[{"tool_name": "event_reply", "tool_type": "platform"}]
+    )
+    handler = MockHandler()
+    api = AgentRunAPIProxy(ctx, handler)
+    with pytest.raises(PermissionDeniedError, match="reply_stream"):
+        async with api.reply_stream():
+            pass
+    handler.call_action_mock.assert_not_awaited()

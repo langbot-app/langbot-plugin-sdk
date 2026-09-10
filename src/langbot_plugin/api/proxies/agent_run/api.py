@@ -6,10 +6,14 @@ from langbot_plugin.api.proxies.agent_run.common import AgentRunProxyBase
 from langbot_plugin.api.proxies.agent_run.context import AgentRunContextAPIMixin
 from langbot_plugin.api.proxies.agent_run.ledger import AgentRunLedgerAPIMixin
 from langbot_plugin.api.proxies.agent_run.resources import AgentRunResourceAPIMixin
+from langbot_plugin.api.proxies.agent_run.reply_stream import (
+    AgentRunReplyStreamAPIMixin,
+)
 from langbot_plugin.api.proxies.agent_run.state import AgentRunStateAPIMixin
 
 
 class AgentRunAPIProxy(
+    AgentRunReplyStreamAPIMixin,
     AgentRunResourceAPIMixin,
     AgentRunContextAPIMixin,
     AgentRunLedgerAPIMixin,
