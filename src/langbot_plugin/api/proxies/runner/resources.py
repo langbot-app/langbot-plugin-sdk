@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 from typing import Any
 
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
@@ -13,15 +14,41 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 class AgentRunResourceAPIMixin:
     def get_allowed_models(self) -> list[Any]:
         """Get the list of models authorized for this run."""
-        return self.ctx.resources.models
+        return deepcopy(self._granted_resources.models)
 
     def get_allowed_tools(self) -> list[Any]:
         """Get the list of tools authorized for this run."""
-        return self.ctx.resources.tools
+        return deepcopy(self._granted_resources.tools)
 
     def get_allowed_knowledge_bases(self) -> list[Any]:
         """Get the list of knowledge bases authorized for this run."""
-        return self.ctx.resources.knowledge_bases
+        return deepcopy(self._granted_resources.knowledge_bases)
+
+    async def get_llm_models(self) -> list[str]:
+        """List model IDs granted to this invocation."""
+        return [model.model_id for model in self.get_allowed_models()]
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """List callable tools, including event and platform APIs, from frozen grants."""
+        return [
+            {
+                "name": tool.tool_name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "type": tool.tool_type,
+                "operations": sorted(self._allowed_tool_operations[tool.tool_name]),
+            }
+            for tool in self.get_allowed_tools()
+            if "call" in self._allowed_tool_operations[tool.tool_name]
+        ]
+
+    async def list_knowledge_bases(self) -> list[dict[str, Any]]:
+        """List knowledge bases granted to this invocation."""
+        return [
+            {"uuid": kb.kb_id, "name": kb.kb_name, "type": kb.kb_type}
+            for kb in self.get_allowed_knowledge_bases()
+            if "list" in self._allowed_kb_operations[kb.kb_id]
+        ]
 
     # ================= Permission Validation =================
 
@@ -381,6 +408,24 @@ class AgentRunResourceAPIMixin:
         return await self._api.get_langbot_version()
 
     # ================= Rerank API (Runner-specific, not in LangBotAPIProxy) =================
+
+    async def invoke_embedding(
+        self, embedding_model_uuid: str, texts: list[str]
+    ) -> list[list[float]]:
+        """Invoke only an embedding model explicitly granted to this run."""
+        self._validate_model_access(embedding_model_uuid, "invoke")
+        response = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.INVOKE_EMBEDDING,
+            {
+                "run_id": self.run_id,
+                "embedding_model_uuid": embedding_model_uuid,
+                "texts": texts,
+            },
+            self._bounded_timeout(default=60.0),
+        )
+        return self._expect_key(
+            response, "vectors", PluginToRuntimeAction.INVOKE_EMBEDDING
+        )
 
     async def invoke_rerank(
         self,

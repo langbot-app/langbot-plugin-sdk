@@ -69,8 +69,9 @@ class WelcomeProcessor(Runner):
   objects and the Host's legacy-event backup are excluded from transport.
 - `ctx.config` contains parameters for the selected processor instance. It is
   separate from plugin installation configuration.
-- `ctx.run_id` identifies the invocation; `ctx.api` provides the existing
-  run-scoped, authorized Host APIs. There is no fabricated Pipeline Query.
+- `ctx.run_id` identifies the invocation. Context operations use `ctx`; platform
+  and LangBot operations use `self.plugin`, as in other components. The current
+  invocation and its grants are attached automatically.
 - `await ctx.log(text, level='info')` records a log entry. Levels are `debug`,
   `info`, `warning` and `error`; a single entry is limited to 65,536 characters.
   Logs never send platform messages.
@@ -95,5 +96,14 @@ objects; the runtime supplies completion when execution returns without a termin
 result. `ctx.event` remains the event envelope and `ctx.platform_event` exposes
 typed platform fields.
 
-`ctx.api` is invocation-scoped; `self.plugin` retains the ordinary plugin APIs.
-Do not store a current run ID or context on the shared component instance.
+`await ctx.get_available_tools()` returns callable tools with `name`,
+`description`, `parameters` (JSON Schema), `type`, and `operations`. It includes
+only tools granted for this invocation. Changing the returned copy does not grant
+access. Use `ctx.call_tool(name, parameters)` for context actions, or
+`self.plugin.call_tool(name, parameters)` from component code. Models, storage,
+knowledge bases, and platform APIs use the same `self.plugin` entrypoint as other
+components while retaining run authorization. Event-target grants cannot access
+another target, and debug platform calls remain simulated.
+
+Do not store a current run ID or context on the shared component instance, or
+continue run-bound calls from background tasks after the handler has returned.

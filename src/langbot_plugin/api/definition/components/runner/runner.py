@@ -13,6 +13,7 @@ from langbot_plugin.api.entities.builtin.runner.result import RunnerResult
 from langbot_plugin.api.entities.builtin.platform.events import EBAEvent
 from langbot_plugin.api.proxies.runner.api import RunnerAPIProxy
 from langbot_plugin.api.proxies.runner.tracing import _TracedRunAPI
+from langbot_plugin.api.proxies.invocation import bind_invocation
 
 
 class Runner(BaseComponent):
@@ -116,7 +117,11 @@ class Runner(BaseComponent):
             if not terminal:
                 await results.put(RunnerResult.run_completed(ctx.run_id))
 
-        task = asyncio.create_task(execute())
+        async def execute_bound():
+            with bind_invocation(self._plugin_runtime_handler, ctx.api):
+                await execute()
+
+        task = asyncio.create_task(execute_bound())
         next_result = None
         try:
             while not task.done():

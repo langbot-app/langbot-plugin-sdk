@@ -12,7 +12,11 @@ from langbot_plugin.api.proxies.runner.reply_stream import (
 from langbot_plugin.api.proxies.runner.state import AgentRunStateAPIMixin
 
 
+from langbot_plugin.api.proxies.runner.platform import RunnerPlatformAPIMixin
+
+
 class RunnerAPIProxy(
+    RunnerPlatformAPIMixin,
     AgentRunReplyStreamAPIMixin,
     AgentRunResourceAPIMixin,
     RunnerContextAPIMixin,

@@ -56,7 +56,7 @@ Plugin-facing APIs live under `src/langbot_plugin/api/`.
 - `entities/` defines event/context/message/provider data models passed across LangBot, runtime, and plugin code.
 - `proxies/` defines methods plugins can call back into LangBot, such as messaging, storage, model invocation, tools, RAG, parser, and query-scoped APIs.
 
-Plugins extend LangBot through six component types:
+Plugins extend LangBot through seven component types:
 
 - `Command`
 - `Tool`
@@ -64,6 +64,7 @@ Plugins extend LangBot through six component types:
 - `KnowledgeEngine`
 - `Parser`
 - `Page`
+- `Runner` (Agent execution and event processing)
 
 The CLI scaffolds components via `lbp comp <Type>`. Component templates live under `src/langbot_plugin/assets/templates/`; generation logic lives under `src/langbot_plugin/cli/gen/`.
 

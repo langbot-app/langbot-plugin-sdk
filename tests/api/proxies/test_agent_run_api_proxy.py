@@ -128,23 +128,27 @@ class TestRunnerAPIProxyRestrictedAPISurface:
             "RunnerAPIProxy should not expose get_bots (use RunnerResult.action_requested)"
         )
 
-    def test_does_not_expose_send_message(self):
-        """RunnerAPIProxy should NOT have send_message method."""
-        ctx = create_mock_context()
-        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
-
-        assert not hasattr(proxy, "send_message"), (
-            "RunnerAPIProxy should not expose send_message (use RunnerResult.action_requested)"
+    async def test_send_message_retains_run_authorization(self):
+        from langbot_plugin.api.entities.builtin.platform.message import (
+            MessageChain,
+            Plain,
         )
 
-    def test_does_not_expose_list_tools(self):
-        """RunnerAPIProxy should NOT have list_tools method."""
         ctx = create_mock_context()
-        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
-
-        assert not hasattr(proxy, "list_tools"), (
-            "RunnerAPIProxy should not expose list_tools (use get_allowed_tools() instead)"
+        handler = MagicMock()
+        handler.call_action = AsyncMock(return_value={"result": None})
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+        await proxy.send_message(
+            "bot", "group", "group", MessageChain([Plain(text="hi")])
         )
+        assert handler.call_action.await_args.args[1]["run_id"] == ctx.run_id
+
+    async def test_list_tools_does_not_list_ungranted_resources(self):
+        ctx = create_mock_context()
+        handler = MagicMock()
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+        assert await proxy.list_tools() == []
+        handler.call_action.assert_not_called()
 
     def test_exposes_get_tool_detail_with_validation(self):
         """RunnerAPIProxy exposes get_tool_detail() for authorized tool schemas."""
@@ -173,32 +177,27 @@ class TestRunnerAPIProxyRestrictedAPISurface:
             "RunnerAPIProxy should not expose vector_search (no vector resources defined)"
         )
 
-    def test_does_not_expose_invoke_embedding(self):
-        """RunnerAPIProxy should NOT have invoke_embedding method."""
+    async def test_invoke_embedding_rejects_ungranted_model(self):
         ctx = create_mock_context()
-        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        handler = MagicMock()
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+        with pytest.raises(PermissionDeniedError):
+            await proxy.invoke_embedding("ungranted", ["text"])
+        handler.call_action.assert_not_called()
 
-        assert not hasattr(proxy, "invoke_embedding"), (
-            "RunnerAPIProxy should not expose invoke_embedding (no embedding model resources defined)"
-        )
-
-    def test_does_not_expose_get_llm_models(self):
-        """RunnerAPIProxy should NOT have get_llm_models method."""
+    async def test_get_llm_models_does_not_list_ungranted_resources(self):
         ctx = create_mock_context()
-        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        handler = MagicMock()
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+        assert await proxy.get_llm_models() == []
+        handler.call_action.assert_not_called()
 
-        assert not hasattr(proxy, "get_llm_models"), (
-            "RunnerAPIProxy should not expose get_llm_models (use get_allowed_models() instead)"
-        )
-
-    def test_does_not_expose_list_knowledge_bases(self):
-        """RunnerAPIProxy should NOT have list_knowledge_bases method."""
+    async def test_list_knowledge_bases_does_not_list_ungranted_resources(self):
         ctx = create_mock_context()
-        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
-
-        assert not hasattr(proxy, "list_knowledge_bases"), (
-            "RunnerAPIProxy should not expose list_knowledge_bases (use get_allowed_knowledge_bases() instead)"
-        )
+        handler = MagicMock()
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+        assert await proxy.list_knowledge_bases() == []
+        handler.call_action.assert_not_called()
 
     def test_does_not_expose_get_config_file(self):
         """RunnerAPIProxy should NOT have get_config_file method."""

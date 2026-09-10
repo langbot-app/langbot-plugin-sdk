@@ -410,9 +410,7 @@ class PluginConnectionHandler(handler.Handler):
         async def invoke_embedding(data: dict[str, Any]) -> handler.ActionResponse:
             result = await call_host_action(
                 PluginToRuntimeAction.INVOKE_EMBEDDING,
-                {
-                    **data,
-                },
+                trusted_plugin_payload(data),
                 timeout=60,
             )
             return handler.ActionResponse.success(result)

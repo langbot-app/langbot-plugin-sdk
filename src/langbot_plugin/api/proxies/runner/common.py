@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from copy import deepcopy
 
 from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
 from langbot_plugin.api.entities.builtin.runner.errors import (
@@ -149,6 +150,7 @@ class AgentRunProxyBase:
 
     def __init__(self, ctx: RunnerContext, plugin_runtime_handler: Handler):
         self.ctx = ctx
+        self._granted_resources = deepcopy(ctx.resources)
         self._api = LangBotAPIProxy(_AgentRunHandlerAdapter(plugin_runtime_handler))
         # Pre-compute allowed IDs for efficient validation
         self._allowed_model_ids = frozenset(m.model_id for m in ctx.resources.models)
@@ -288,11 +290,11 @@ class AgentRunProxyBase:
         )
 
     def _validate_plugin_storage_access(self) -> None:
-        if not self.ctx.resources.storage.plugin_storage:
+        if not self._granted_resources.storage.plugin_storage:
             raise PermissionDeniedError("Plugin storage is not authorized.")
 
     def _validate_workspace_storage_access(self) -> None:
-        if not self.ctx.resources.storage.workspace_storage:
+        if not self._granted_resources.storage.workspace_storage:
             raise PermissionDeniedError("Workspace storage is not authorized.")
 
     # ================= LLM APIs (delegated with validation) =================

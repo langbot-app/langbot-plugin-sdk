@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from langbot_plugin.api.proxies.invocation import run_scoped
+
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
@@ -18,6 +20,7 @@ class LangBotAPIProxy:
     def __init__(self, plugin_runtime_handler: Handler):
         self.plugin_runtime_handler = plugin_runtime_handler
 
+    @run_scoped
     async def get_langbot_version(self) -> str:
         """Get the langbot version"""
         return (
@@ -42,6 +45,7 @@ class LangBotAPIProxy:
             )
         )["bot"]
 
+    @run_scoped
     async def send_message(
         self,
         bot_uuid: str,
@@ -69,6 +73,7 @@ class LangBotAPIProxy:
             )
         ).get("result")
 
+    @run_scoped
     async def call_platform_api(
         self,
         bot_uuid: str,
@@ -93,6 +98,7 @@ class LangBotAPIProxy:
             )
         )["result"]
 
+    @run_scoped
     async def get_llm_models(self) -> list[str]:
         """Get all LLM models"""
         return (
@@ -101,6 +107,7 @@ class LangBotAPIProxy:
             )
         )["llm_models"]
 
+    @run_scoped
     async def invoke_llm(
         self,
         llm_model_uuid: str,
@@ -119,6 +126,7 @@ class LangBotAPIProxy:
         )
         return result.message
 
+    @run_scoped
     async def invoke_llm_with_usage(
         self,
         llm_model_uuid: str,
@@ -148,6 +156,7 @@ class LangBotAPIProxy:
             }
         )
 
+    @run_scoped
     async def invoke_llm_stream(
         self,
         llm_model_uuid: str,
@@ -165,6 +174,7 @@ class LangBotAPIProxy:
             if event.chunk is not None:
                 yield event.chunk
 
+    @run_scoped
     async def invoke_llm_stream_events(
         self,
         llm_model_uuid: str,
@@ -191,6 +201,7 @@ class LangBotAPIProxy:
                 event_data["chunk"] = chunk_data["chunk"]
             yield provider_message.LLMStreamEvent.model_validate(event_data)
 
+    @run_scoped
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
         encoded = base64.b64encode(value).decode("utf-8")
@@ -199,6 +210,7 @@ class LangBotAPIProxy:
             {"key": key, "value_base64": encoded},
         )
 
+    @run_scoped
     async def get_plugin_storage(self, key: str) -> bytes:
         """Get a plugin storage value"""
         resp = (
@@ -209,6 +221,7 @@ class LangBotAPIProxy:
 
         return base64.b64decode(resp)
 
+    @run_scoped
     async def get_plugin_storage_keys(self) -> list[str]:
         """Get all plugin storage keys"""
         return (
@@ -217,12 +230,14 @@ class LangBotAPIProxy:
             )
         )["keys"]
 
+    @run_scoped
     async def delete_plugin_storage(self, key: str) -> None:
         """Delete a plugin storage value"""
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.DELETE_PLUGIN_STORAGE, {"key": key}
         )
 
+    @run_scoped
     async def set_workspace_storage(self, key: str, value: bytes) -> None:
         """Set a workspace storage value"""
         encoded = base64.b64encode(value).decode("utf-8")
@@ -231,6 +246,7 @@ class LangBotAPIProxy:
             {"key": key, "value_base64": encoded},
         )
 
+    @run_scoped
     async def get_workspace_storage(self, key: str) -> bytes:
         """Get a workspace storage value"""
         resp = (
@@ -241,6 +257,7 @@ class LangBotAPIProxy:
 
         return base64.b64decode(resp)
 
+    @run_scoped
     async def get_workspace_storage_keys(self) -> list[str]:
         """Get all workspace storage keys"""
         return (
@@ -249,6 +266,7 @@ class LangBotAPIProxy:
             )
         )["keys"]
 
+    @run_scoped
     async def delete_workspace_storage(self, key: str) -> None:
         """Delete a workspace storage value"""
         await self.plugin_runtime_handler.call_action(
@@ -288,6 +306,7 @@ class LangBotAPIProxy:
             )
         )["commands"]
 
+    @run_scoped
     async def list_tools(self) -> list[dict[str, Any]]:
         """List all available tools.
 
@@ -305,6 +324,7 @@ class LangBotAPIProxy:
             )
         )["tools"]
 
+    @run_scoped
     async def get_tool_detail(self, tool_name: str) -> dict[str, Any]:
         """Get detailed information about a specific tool.
 
@@ -323,12 +343,13 @@ class LangBotAPIProxy:
             )
         )["tool"]
 
+    @run_scoped
     async def call_tool(
         self,
         tool_name: str,
         parameters: dict[str, Any],
-        session: dict[str, Any],
-        query_id: int,
+        session: dict[str, Any] | None = None,
+        query_id: int | None = None,
     ) -> dict[str, Any]:
         """Call a specific tool.
 
@@ -341,6 +362,10 @@ class LangBotAPIProxy:
         Returns:
             Tool response dict.
         """
+        if session is None or query_id is None:
+            raise ValueError(
+                "session and query_id are required outside a Runner invocation"
+            )
         return (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.CALL_TOOL,
@@ -356,6 +381,7 @@ class LangBotAPIProxy:
 
     # ================= RAG Capability APIs =================
 
+    @run_scoped
     async def invoke_embedding(
         self, embedding_model_uuid: str, texts: list[str]
     ) -> list[list[float]]:
@@ -376,6 +402,7 @@ class LangBotAPIProxy:
             )
         )["vectors"]
 
+    @run_scoped
     async def invoke_rerank(
         self,
         rerank_model_uuid: str,
@@ -568,6 +595,7 @@ class LangBotAPIProxy:
 
     # ================= Knowledge Base APIs =================
 
+    @run_scoped
     async def list_knowledge_bases(self) -> list[dict[str, Any]]:
         """List all knowledge bases available in the LangBot instance.
 
@@ -587,6 +615,7 @@ class LangBotAPIProxy:
             )
         )["knowledge_bases"]
 
+    @run_scoped
     async def retrieve_knowledge(
         self,
         kb_id: str,

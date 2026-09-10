@@ -53,6 +53,53 @@ class _TracedRunAPI:
         )
         return result
 
+    async def _platform_call(self, name, parameters, invoke):
+        call_id = str(uuid.uuid4())
+        await self._results.put(
+            RunnerResult.tool_call_started(self._run_id, call_id, name, parameters)
+        )
+        try:
+            result = await invoke()
+        except Exception as exc:
+            await self._results.put(
+                RunnerResult.tool_call_completed(
+                    self._run_id, call_id, name, error=str(exc)
+                )
+            )
+            raise
+        await self._results.put(
+            RunnerResult.tool_call_completed(self._run_id, call_id, name, result=result)
+        )
+        return result
+
+    async def call_platform_api(self, bot_uuid, action, params=None):
+        return await self._platform_call(
+            "platform_" + action,
+            {"bot_uuid": bot_uuid, **(params or {})},
+            lambda: self._api.call_platform_api(bot_uuid, action, params),
+        )
+
+    async def send_message(self, bot_uuid, target_type, target_id, message_chain):
+        return await self.call_platform_api(
+            bot_uuid,
+            "send_message",
+            {
+                "target_type": target_type,
+                "target_id": target_id,
+                "message": message_chain.model_dump(mode="json"),
+            },
+        )
+
+    async def reply_message(self, message_chain, quote_origin=False):
+        return await self._platform_call(
+            "event_reply",
+            {
+                "message": message_chain.model_dump(mode="json"),
+                "quote_origin": quote_origin,
+            },
+            lambda: self._api.reply_message(message_chain, quote_origin),
+        )
+
     @asynccontextmanager
     async def reply_stream(self):
         """Stream one explicit reply; update() accepts the full text so far."""
