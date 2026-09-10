@@ -223,7 +223,7 @@ class AcpStdioClient:
                 },
                 "clientInfo": {
                     "name": "langbot-acp-agent-runner",
-                    "title": "LangBot ACP Agent Runner",
+                    "title": "LangBot ACP Runner",
                     "version": "0.1.0",
                 },
             },
@@ -309,9 +309,7 @@ class AcpStdioClient:
             try:
                 message = json.loads(line)
             except json.JSONDecodeError as exc:
-                self._fail_pending(
-                    AcpProtocolError(f"ACP agent wrote invalid JSON to stdout: {exc}")
-                )
+                self._fail_pending(AcpProtocolError(f"ACP agent wrote invalid JSON to stdout: {exc}"))
                 return
             if not isinstance(message, dict):
                 self._fail_pending(AcpProtocolError("ACP stdout message must be an object"))

@@ -2,7 +2,7 @@
 
 ## 概覽
 
-將阿里雲 DashScope 應用程式作為 LangBot AgentRunner 執行。
+將阿里雲 DashScope 應用程式作為 LangBot Runner 執行。
 
 ## 套件資訊
 
@@ -41,7 +41,7 @@
 ## 安裝與使用
 
 1. 從 LangBot 外掛市場安裝此外掛。
-2. 在 Pipeline 的 AgentRunner 選擇器中選取下方 Runner ID。
+2. 在 Pipeline 的 Runner 選擇器中選取下方 Runner ID。
 3. 依照設定表填入連線資訊；密鑰欄位請使用管理介面保存。
 
 ## 安全與限制

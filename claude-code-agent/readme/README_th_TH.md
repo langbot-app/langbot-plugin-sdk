@@ -2,7 +2,7 @@
 
 ## ภาพรวม
 
-เรียกใช้ Claude Code CLI เป็น LangBot AgentRunner
+เรียกใช้ Claude Code CLI เป็น LangBot Runner
 
 ## ข้อมูลแพ็กเกจ
 
@@ -49,7 +49,7 @@
 ## การติดตั้งและใช้งาน
 
 1. ติดตั้งปลั๊กอินจากตลาดปลั๊กอิน LangBot
-2. เลือก Runner ID ด้านล่างในตัวเลือก AgentRunner ของ Pipeline
+2. เลือก Runner ID ด้านล่างในตัวเลือก Runner ของ Pipeline
 3. กรอกข้อมูลการเชื่อมต่อตามตาราง และเก็บค่าลับด้วยฟิลด์ secret ในหน้าจัดการ
 
 ## ความปลอดภัยและข้อจำกัด

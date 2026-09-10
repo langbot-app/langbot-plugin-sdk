@@ -1,4 +1,4 @@
-"""DeerFlow AgentRunner errors."""
+"""DeerFlow Runner errors."""
 
 from __future__ import annotations
 

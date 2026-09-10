@@ -15,21 +15,21 @@ metadata:
     es_ES: Agente Dify
     ru_RU: Агент Dify
   description:
-    en_US: Run a Dify application as a LangBot AgentRunner.
-    zh_Hans: 将 Dify 应用作为 LangBot AgentRunner 运行。
-    zh_Hant: 將 Dify 應用程式作為 LangBot AgentRunner 執行。
-    ja_JP: Dify アプリを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้แอป Dify เป็น LangBot AgentRunner
-    vi_VN: Chạy ứng dụng Dify dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta una aplicación de Dify como LangBot AgentRunner.
-    ru_RU: Запускает приложение Dify как LangBot AgentRunner.
+    en_US: Run a Dify application as a LangBot Runner.
+    zh_Hans: 将 Dify 应用作为 LangBot Runner 运行。
+    zh_Hant: 將 Dify 應用程式作為 LangBot Runner 執行。
+    ja_JP: Dify アプリを LangBot Runner として実行します。
+    th_TH: เรียกใช้แอป Dify เป็น LangBot Runner
+    vi_VN: Chạy ứng dụng Dify dưới dạng LangBot Runner.
+    es_ES: Ejecuta una aplicación de Dify como LangBot Runner.
+    ru_RU: Запускает приложение Dify как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config: []
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

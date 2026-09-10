@@ -2,7 +2,7 @@
 
 ## Descripción general
 
-Ejecuta un webhook de flujo de n8n como LangBot AgentRunner.
+Ejecuta un webhook de flujo de n8n como LangBot Runner.
 
 ## Información del paquete
 
@@ -46,7 +46,7 @@ Ejecuta un webhook de flujo de n8n como LangBot AgentRunner.
 ## Instalación y uso
 
 1. Instala el plugin desde el mercado de plugins de LangBot.
-2. Selecciona el Runner ID indicado en el selector AgentRunner del Pipeline.
+2. Selecciona el Runner ID indicado en el selector Runner del Pipeline.
 3. Completa la conexión según la tabla y guarda los valores sensibles en campos secret del panel de administración.
 
 ## Seguridad y limitaciones

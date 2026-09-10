@@ -1,0 +1,46 @@
+apiVersion: langbot/v1
+kind: Runner
+metadata:
+  name: default
+  label:
+    en_US: Tbox
+    zh_Hans: 百宝箱
+  description:
+    en_US: Run an Ant Tbox application as a LangBot Runner.
+    zh_Hans: 将蚂蚁百宝箱应用作为 LangBot Runner 运行。
+spec:
+  config:
+    - name: api-key
+      label:
+        en_US: API Key
+        zh_Hans: API 密钥
+      type: secret
+      required: true
+      default: ''
+    - name: app-id
+      label:
+        en_US: App ID
+        zh_Hans: 应用 ID
+      type: string
+      required: true
+      default: ''
+    - name: timeout
+      label:
+        en_US: Timeout
+        zh_Hans: 超时时间
+      type: number
+      required: false
+      default: 120
+  capabilities:
+    streaming: true
+    tool_calling: false
+    knowledge_retrieval: false
+    multimodal_input: true
+    interrupt: false
+  permissions:
+    storage:
+      - plugin
+execution:
+  python:
+    path: default.py
+    attr: DefaultRunner

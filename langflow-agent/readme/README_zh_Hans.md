@@ -1,6 +1,6 @@
 # Langflow Agent
 
-Langflow Agent 将 Langflow flow 接入 LangBot AgentRunner。插件调用 Langflow Run API，把 LangBot 输入映射到 flow，并从 Langflow 响应中提取最终消息。启用 Asset Gateway 后，还可以向 flow 注入当前运行的短期 LangBot 资产 token。
+Langflow Agent 将 Langflow flow 接入 LangBot Runner。插件调用 Langflow Run API，把 LangBot 输入映射到 flow，并从 Langflow 响应中提取最终消息。启用 Asset Gateway 后，还可以向 flow 注入当前运行的短期 LangBot 资产 token。
 
 ## Runner ID
 

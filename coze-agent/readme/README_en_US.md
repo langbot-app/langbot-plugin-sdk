@@ -1,6 +1,6 @@
 # Coze Agent
 
-Run a Coze bot as a LangBot AgentRunner.
+Run a Coze bot as a LangBot Runner.
 
 ## Runner ID
 

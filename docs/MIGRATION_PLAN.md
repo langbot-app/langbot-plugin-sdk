@@ -1,7 +1,7 @@
 # Historical Migration Plan
 
 This document is archived. The official runner plugins are developed directly
-against AgentRunner Protocol v1; there is no supported intermediate protocol or
+against Runner Protocol v1; there is no supported intermediate protocol or
 compatibility layer for earlier unpublished designs.
 
 Current implementation guidance lives in:
@@ -18,5 +18,5 @@ Current Protocol v1 rules for this repository:
 - Do not read `ctx.bootstrap`; Protocol v1 does not inline bootstrap/history
   windows. Use authorized history pull APIs when more context is needed.
 - Use `ctx.input` for the current event input.
-- Include `ctx.run_id` in every `AgentRunResult` factory call.
-- Use explicit state scopes in `AgentRunResult.state_updated(...)`.
+- Include `ctx.run_id` in every `RunnerResult` factory call.
+- Use explicit state scopes in `RunnerResult.state_updated(...)`.

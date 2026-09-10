@@ -1,7 +1,7 @@
 [project]
 name = "langbot-agent-runner"
 version = "0.1.0"
-description = "Official AgentRunner plugins for LangBot"
+description = "Official Runner plugins for LangBot"
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
 license = { text = "MIT" }

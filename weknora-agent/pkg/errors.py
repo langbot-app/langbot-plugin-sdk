@@ -1,4 +1,4 @@
-"""WeKnora AgentRunner errors."""
+"""WeKnora Runner errors."""
 
 from __future__ import annotations
 

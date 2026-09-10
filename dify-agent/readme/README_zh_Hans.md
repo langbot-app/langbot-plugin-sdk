@@ -1,6 +1,6 @@
 # Dify Agent
 
-Dify Agent 将 Dify 的 Chat、Agent、Chatflow 或 Workflow 应用接入 LangBot AgentRunner。插件负责组装输入、管理 Dify conversation ID、解析阻塞或流式响应，并可通过 SDK Asset Gateway 让 Dify Agent 在当前运行范围内调用 LangBot 工具、知识库和历史。
+Dify Agent 将 Dify 的 Chat、Agent、Chatflow 或 Workflow 应用接入 LangBot Runner。插件负责组装输入、管理 Dify conversation ID、解析阻塞或流式响应，并可通过 SDK Asset Gateway 让 Dify Agent 在当前运行范围内调用 LangBot 工具、知识库和历史。
 
 ## Runner ID
 

@@ -15,14 +15,14 @@ metadata:
     es_ES: Claude Code Agent
     ru_RU: Claude Code Agent
   description:
-    en_US: Run Claude Code CLI as a LangBot AgentRunner.
-    zh_Hans: 将 Claude Code CLI 作为 LangBot AgentRunner 运行。
-    zh_Hant: 將 Claude Code CLI 作為 LangBot AgentRunner 執行。
-    ja_JP: Claude Code CLI を LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้ Claude Code CLI เป็น LangBot AgentRunner
-    vi_VN: Chạy Claude Code CLI dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta Claude Code CLI como LangBot AgentRunner.
-    ru_RU: Запускает Claude Code CLI как LangBot AgentRunner.
+    en_US: Run Claude Code CLI as a LangBot Runner.
+    zh_Hans: 将 Claude Code CLI 作为 LangBot Runner 运行。
+    zh_Hant: 將 Claude Code CLI 作為 LangBot Runner 執行。
+    ja_JP: Claude Code CLI を LangBot Runner として実行します。
+    th_TH: เรียกใช้ Claude Code CLI เป็น LangBot Runner
+    vi_VN: Chạy Claude Code CLI dưới dạng LangBot Runner.
+    es_ES: Ejecuta Claude Code CLI como LangBot Runner.
+    ru_RU: Запускает Claude Code CLI как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config:
@@ -55,9 +55,9 @@ spec:
       required: false
       default: ''
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

@@ -1,12 +1,12 @@
-# ACP Agent Runner
+# ACP Runner
 
 ## Обзор
 
-Запускает совместимый с Agent Client Protocol агент программирования как LangBot AgentRunner.
+Запускает совместимый с Agent Client Protocol агент программирования как LangBot Runner.
 
 ## Информация о пакете
 
-- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
 - **Версия**: `0.1.4`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
@@ -61,7 +61,7 @@
 ## Установка и использование
 
 1. Установите плагин из магазина плагинов LangBot.
-2. Выберите указанный Runner ID в селекторе AgentRunner вашего Pipeline.
+2. Выберите указанный Runner ID в селекторе Runner вашего Pipeline.
 3. Заполните параметры подключения по таблице и храните секреты в полях secret панели управления.
 
 ## Безопасность и ограничения

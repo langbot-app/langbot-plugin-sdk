@@ -15,21 +15,21 @@ metadata:
     es_ES: Agente Langflow
     ru_RU: Агент Langflow
   description:
-    en_US: Run a Langflow flow as a LangBot AgentRunner.
-    zh_Hans: 将 Langflow 流程作为 LangBot AgentRunner 运行。
-    zh_Hant: 將 Langflow 流程作為 LangBot AgentRunner 執行。
-    ja_JP: Langflow フローを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้โฟลว์ Langflow เป็น LangBot AgentRunner
-    vi_VN: Chạy luồng Langflow dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta un flujo de Langflow como LangBot AgentRunner.
-    ru_RU: Запускает поток Langflow как LangBot AgentRunner.
+    en_US: Run a Langflow flow as a LangBot Runner.
+    zh_Hans: 将 Langflow 流程作为 LangBot Runner 运行。
+    zh_Hant: 將 Langflow 流程作為 LangBot Runner 執行。
+    ja_JP: Langflow フローを LangBot Runner として実行します。
+    th_TH: เรียกใช้โฟลว์ Langflow เป็น LangBot Runner
+    vi_VN: Chạy luồng Langflow dưới dạng LangBot Runner.
+    es_ES: Ejecuta un flujo de Langflow como LangBot Runner.
+    ru_RU: Запускает поток Langflow как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config: []
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

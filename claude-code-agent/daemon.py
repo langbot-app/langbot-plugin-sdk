@@ -1,4 +1,4 @@
-"""User-side daemon for Claude Code AgentRunner."""
+"""User-side daemon for Claude Code Runner."""
 
 from __future__ import annotations
 

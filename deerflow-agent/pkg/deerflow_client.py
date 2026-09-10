@@ -1,4 +1,4 @@
-"""DeerFlow LangGraph HTTP API client for AgentRunner.
+"""DeerFlow LangGraph HTTP API client for Runner.
 
 Ported from LangBot's legacy core DeerFlow client and kept plugin-local so the
 runner can be distributed without importing LangBot core modules.

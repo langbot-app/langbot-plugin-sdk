@@ -1,6 +1,6 @@
 # n8n Workflow Agent
 
-Run an n8n workflow webhook as a LangBot AgentRunner.
+Run an n8n workflow webhook as a LangBot Runner.
 
 ## Runner ID
 

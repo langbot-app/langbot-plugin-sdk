@@ -2,7 +2,7 @@
 
 ## Overview
 
-Run a DeerFlow LangGraph agent as a LangBot AgentRunner.
+Run a DeerFlow LangGraph agent as a LangBot Runner.
 
 ## Package information
 
@@ -38,7 +38,7 @@ Run a DeerFlow LangGraph agent as a LangBot AgentRunner.
 ## Installation and usage
 
 1. Install the plugin from the LangBot plugin marketplace.
-2. Select the Runner ID below in the Pipeline AgentRunner selector.
+2. Select the Runner ID below in the Pipeline Runner selector.
 3. Fill in connection settings from the table and store credentials in secret fields in the admin UI.
 
 ## Security and limitations

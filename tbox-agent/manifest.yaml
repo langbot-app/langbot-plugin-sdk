@@ -15,21 +15,21 @@ metadata:
     es_ES: Agente Tbox
     ru_RU: Агент Tbox
   description:
-    en_US: Run an Ant Tbox application as a LangBot AgentRunner.
-    zh_Hans: 将蚂蚁百宝箱应用作为 LangBot AgentRunner 运行。
-    zh_Hant: 將螞蟻 Tbox 應用程式作為 LangBot AgentRunner 執行。
-    ja_JP: Ant Tbox アプリを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้แอป Ant Tbox เป็น LangBot AgentRunner
-    vi_VN: Chạy ứng dụng Ant Tbox dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta una aplicación Ant Tbox como LangBot AgentRunner.
-    ru_RU: Запускает приложение Ant Tbox как LangBot AgentRunner.
+    en_US: Run an Ant Tbox application as a LangBot Runner.
+    zh_Hans: 将蚂蚁百宝箱应用作为 LangBot Runner 运行。
+    zh_Hant: 將螞蟻 Tbox 應用程式作為 LangBot Runner 執行。
+    ja_JP: Ant Tbox アプリを LangBot Runner として実行します。
+    th_TH: เรียกใช้แอป Ant Tbox เป็น LangBot Runner
+    vi_VN: Chạy ứng dụng Ant Tbox dưới dạng LangBot Runner.
+    es_ES: Ejecuta una aplicación Ant Tbox como LangBot Runner.
+    ru_RU: Запускает приложение Ant Tbox как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config: []
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

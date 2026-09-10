@@ -12,21 +12,21 @@ import types
 from pathlib import Path
 
 import yaml
-from langbot_plugin.api.entities.builtin.agent_runner import (
+from langbot_plugin.api.entities.builtin.runner import (
     AgentEventContext,
     AgentInput,
     AgentResources,
-    AgentRunContext,
     AgentRunState,
     AgentRuntimeContext,
     AgentTrigger,
     DeliveryContext,
     InteractionSubmission,
+    RunnerContext,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_NAMES = {
-    "acp-agent-runner": "ACPAgentRunner",
+    "acp-agent-runner": "ACPRunner",
     "claude-code-agent": "ClaudeCodeAgent",
     "codex-agent": "CodexAgent",
     "coze-agent": "CozeAgent",
@@ -77,7 +77,7 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _load_runner_module(plugin_dir: str):
-    return _load_plugin_module(plugin_dir, "components/agent_runner/default.py", "runner")
+    return _load_plugin_module(plugin_dir, "components/runner/default.py", "runner")
 
 
 def _load_plugin_module(plugin_dir: str, relative_path: str, suffix: str):
@@ -101,19 +101,19 @@ def _load_plugin_module(plugin_dir: str, relative_path: str, suffix: str):
 def test_official_external_runner_plugins_have_protocol_v1_manifests() -> None:
     for plugin_dir in PLUGIN_DIRS:
         manifest = _load_yaml(ROOT / plugin_dir / "manifest.yaml")
-        runner = _load_yaml(ROOT / plugin_dir / "components" / "agent_runner" / "default.yaml")
+        runner = _load_yaml(ROOT / plugin_dir / "components" / "runner" / "default.yaml")
 
         assert manifest["metadata"]["author"] == "langbot-team"
         assert manifest["metadata"]["name"] == PLUGIN_NAMES[plugin_dir]
         assert re.fullmatch(r"[A-Z][A-Za-z0-9]*", manifest["metadata"]["name"])
         assert runner["apiVersion"] == "langbot/v1"
-        assert runner["kind"] == "AgentRunner"
+        assert runner["kind"] == "Runner"
         assert runner["metadata"]["name"] == "default"
         assert runner["metadata"]["label"]["en_US"] != "Default"
         assert runner["metadata"]["label"]["zh_Hans"] != "默认"
         assert "protocol_version" not in runner["spec"]
         assert runner["execution"]["python"]["path"] == "default.py"
-        assert runner["execution"]["python"]["attr"] == "DefaultAgentRunner"
+        assert runner["execution"]["python"]["attr"] == "DefaultRunner"
 
 
 def test_plugins_have_publishable_marketplace_metadata() -> None:
@@ -122,13 +122,10 @@ def test_plugins_have_publishable_marketplace_metadata() -> None:
     for plugin_dir in PLUGIN_DIRS:
         plugin_root = ROOT / plugin_dir
         manifest = _load_yaml(plugin_root / "manifest.yaml")
-        runner = _load_yaml(plugin_root / "components" / "agent_runner" / "default.yaml")
+        runner = _load_yaml(plugin_root / "components" / "runner" / "default.yaml")
         metadata = manifest["metadata"]
         runner_id = f"plugin:{metadata['author']}/{metadata['name']}/{runner['metadata']['name']}"
-        config_fields = [
-            item["name"]
-            for item in manifest["spec"].get("config", []) + runner["spec"].get("config", [])
-        ]
+        config_fields = [item["name"] for item in manifest["spec"].get("config", []) + runner["spec"].get("config", [])]
 
         assert manifest["apiVersion"] == "v1"
         assert "version" not in manifest["spec"]
@@ -156,7 +153,7 @@ def test_plugin_forms_use_supported_types_and_mask_sensitive_values() -> None:
     for plugin_dir in PLUGIN_DIRS:
         plugin_root = ROOT / plugin_dir
         plugin_manifest = _load_yaml(plugin_root / "manifest.yaml")
-        runner_manifest = _load_yaml(plugin_root / "components" / "agent_runner" / "default.yaml")
+        runner_manifest = _load_yaml(plugin_root / "components" / "runner" / "default.yaml")
         fields = plugin_manifest["spec"].get("config", []) + runner_manifest["spec"].get("config", [])
 
         for field in fields:
@@ -169,12 +166,12 @@ def test_repository_builds_as_plugin_collection_not_import_package() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     wheel_target = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]
 
-    assert not (ROOT / "langbot_agent_runner").exists()
+    assert not (ROOT / "langbot_runner").exists()
     assert set(wheel_target["only-include"]) == PLUGIN_DIRS | {"docs"}
 
 
 def test_bridge_runners_declare_bridge_related_capabilities() -> None:
-    acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "agent_runner" / "default.yaml")
+    acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "runner" / "default.yaml")
     assert acp_runner["spec"]["permissions"] == {
         "tools": ["detail", "call"],
         "knowledge_bases": ["retrieve"],
@@ -186,7 +183,7 @@ def test_bridge_runners_declare_bridge_related_capabilities() -> None:
     assert acp_runner["spec"]["capabilities"]["multimodal_input"] is True
 
     for plugin_dir in ("acp-agent-runner", "claude-code-agent", "codex-agent"):
-        runner = _load_yaml(ROOT / plugin_dir / "components" / "agent_runner" / "default.yaml")
+        runner = _load_yaml(ROOT / plugin_dir / "components" / "runner" / "default.yaml")
         config = {item["name"]: item for item in runner["spec"]["config"]}
         assert runner["spec"]["capabilities"]["knowledge_retrieval"] is True
         assert runner["spec"]["permissions"]["knowledge_bases"] == ["retrieve"]
@@ -198,7 +195,7 @@ def test_bridge_runners_declare_bridge_related_capabilities() -> None:
             "default": [],
         }
 
-    dify_runner = _load_yaml(ROOT / "dify-agent" / "components" / "agent_runner" / "default.yaml")
+    dify_runner = _load_yaml(ROOT / "dify-agent" / "components" / "runner" / "default.yaml")
     assert dify_runner["spec"]["permissions"] == {
         "tools": ["detail", "call"],
         "knowledge_bases": ["retrieve"],
@@ -212,7 +209,7 @@ def test_bridge_runners_declare_bridge_related_capabilities() -> None:
 
 
 def test_dify_runner_exposes_guided_and_masked_secret_config() -> None:
-    runner = _load_yaml(ROOT / "dify-agent" / "components" / "agent_runner" / "default.yaml")
+    runner = _load_yaml(ROOT / "dify-agent" / "components" / "runner" / "default.yaml")
     config = {item["name"]: item for item in runner["spec"]["config"]}
 
     assert config["api-key"]["type"] == "secret"
@@ -237,14 +234,12 @@ def test_dify_runner_exposes_guided_and_masked_secret_config() -> None:
 
 def test_acp_provider_presets_match_runner_config() -> None:
     module = _load_runner_module("acp-agent-runner")
-    acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "agent_runner" / "default.yaml")
+    acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "runner" / "default.yaml")
     provider_config = next(item for item in acp_runner["spec"]["config"] if item["name"] == "provider")
     option_names = {option["name"] for option in provider_config["options"]}
 
     assert option_names == set(module.DEFAULT_PROVIDER_COMMANDS) | {"custom"}
-    assert module.DEFAULT_PROVIDER_COMMANDS["claude-code"] == (
-        "npx -y @agentclientprotocol/claude-agent-acp@0.62.0"
-    )
+    assert module.DEFAULT_PROVIDER_COMMANDS["claude-code"] == ("npx -y @agentclientprotocol/claude-agent-acp@0.62.0")
     assert module.DEFAULT_PROVIDER_COMMANDS["codex"] == "npx -y @zed-industries/codex-acp"
     assert module.DEFAULT_PROVIDER_COMMANDS["qwen-code"] == "npx -y @qwen-code/qwen-code --acp --experimental-skills"
     assert module.DEFAULT_PROVIDER_COMMANDS["opencode"] == "opencode acp"
@@ -363,7 +358,7 @@ def test_acp_runner_declares_daemon_location() -> None:
     plugin_config_names = {item["name"] for item in acp_manifest["spec"]["config"]}
     assert {"daemon-enabled", "daemon-host", "daemon-port", "daemon-token"} <= plugin_config_names
 
-    acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "agent_runner" / "default.yaml")
+    acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "runner" / "default.yaml")
     location_config = next(item for item in acp_runner["spec"]["config"] if item["name"] == "location")
     assert {option["name"] for option in location_config["options"]} == {"local", "remote-ssh", "daemon"}
     assert any(item["name"] == "daemon-id" for item in acp_runner["spec"]["config"])
@@ -371,7 +366,7 @@ def test_acp_runner_declares_daemon_location() -> None:
 
 def test_acp_runner_validates_daemon_location_config() -> None:
     module = _load_runner_module("acp-agent-runner")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {
         "daemon-host": "0.0.0.0",
         "daemon-port": 18766,
@@ -409,7 +404,7 @@ def test_acp_runner_validates_daemon_location_config() -> None:
 
 def test_acp_claude_sessions_only_load_explicit_mcp_servers() -> None:
     module = _load_runner_module("acp-agent-runner")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     mcp_servers = [
         {
             "name": "langbot_agent",
@@ -645,7 +640,7 @@ def _acp_message_update(message_id: str, text: str) -> dict:
 
 def test_acp_runner_uses_latest_agent_message_as_final_answer() -> None:
     module = _load_runner_module("acp-agent-runner")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     client = _QueuedAcpClient(
         [
             _acp_message_update("message-1", "Working"),
@@ -714,7 +709,7 @@ def test_acp_daemon_uses_latest_agent_message_as_final_answer() -> None:
 def test_acp_daemon_tool_events_match_agent_run_result_schema() -> None:
     import asyncio
 
-    from langbot_plugin.api.entities.builtin.agent_runner import AgentRunResult
+    from langbot_plugin.api.entities.builtin.runner import RunnerResult
 
     module = _load_plugin_module("acp-agent-runner", "daemon.py", "daemon")
     daemon = object.__new__(module.RunnerDaemon)
@@ -749,7 +744,7 @@ def test_acp_daemon_tool_events_match_agent_run_result_schema() -> None:
 
     event = dict(events[0][1])
     event["run_id"] = "run-1"
-    AgentRunResult.model_validate(event)
+    RunnerResult.model_validate(event)
 
 
 def test_acp_daemon_tool_events_keep_stable_name_across_updates() -> None:
@@ -845,7 +840,7 @@ def test_acp_runner_uses_sdk_mcp_bridge_helper(monkeypatch) -> None:
         def start(self):
             calls["started"] = True
 
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_run_api = lambda ctx: "run-api"
     ctx = object()
 
@@ -949,7 +944,7 @@ def test_acp_runner_can_use_sdk_asset_gateway(monkeypatch) -> None:
         def start(self):
             calls["started"] = True
 
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_run_api = lambda ctx: "run-api"
     ctx = object()
 
@@ -1009,8 +1004,8 @@ def _native_ctx(
     text: str = "hello native",
     conversation_state: dict | None = None,
     interaction: InteractionSubmission | None = None,
-) -> AgentRunContext:
-    return AgentRunContext(
+) -> RunnerContext:
+    return RunnerContext(
         run_id="run_native",
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(event_id="evt_1", event_type="message.received", source="test"),
@@ -1138,7 +1133,7 @@ def test_claude_code_runner_executes_fake_native_cli(tmp_path: Path) -> None:
     fake_cli = tmp_path / "fake_native_cli.py"
     _write_fake_native_cli(fake_cli)
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
 
@@ -1168,7 +1163,7 @@ def test_claude_code_runner_executes_fake_native_cli(tmp_path: Path) -> None:
 
 def test_claude_code_runner_defaults_to_non_interactive_permissions(tmp_path: Path) -> None:
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
 
     config = runner._validate_config(
@@ -1193,7 +1188,7 @@ def test_claude_code_runner_defaults_to_non_interactive_permissions(tmp_path: Pa
 
 def test_claude_code_runner_can_restore_interactive_permissions(tmp_path: Path) -> None:
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
 
     config = runner._validate_config(
@@ -1214,7 +1209,7 @@ def test_claude_code_runner_can_restore_interactive_permissions(tmp_path: Path) 
 
 def test_claude_code_runner_resumes_an_existing_session(tmp_path: Path) -> None:
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     config = runner._validate_config(
         _native_ctx(
@@ -1236,7 +1231,7 @@ def test_claude_code_runner_passes_mcp_config_by_temp_file(tmp_path: Path) -> No
     fake_cli = tmp_path / "fake_native_cli.py"
     _write_fake_native_cli(fake_cli)
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
 
@@ -1284,7 +1279,7 @@ def test_claude_code_runner_uses_terminal_result_as_clean_final_text(tmp_path: P
         encoding="utf-8",
     )
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
     ctx = _native_ctx(
@@ -1310,7 +1305,7 @@ def test_claude_code_runner_non_streaming_emits_one_message(tmp_path: Path) -> N
     fake_cli = tmp_path / "fake_native_cli.py"
     _write_fake_native_cli(fake_cli)
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
 
@@ -1340,7 +1335,7 @@ def test_claude_code_runner_pauses_for_question_and_resumes_with_tool_result(tmp
     _write_fake_native_cli(fake_cli)
     module = _load_runner_module("claude-code-agent")
     native = sys.modules["pkg.native_cli"]
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
     config = {
@@ -1386,9 +1381,7 @@ def test_claude_code_runner_pauses_for_question_and_resumes_with_tool_result(tmp
     }
     assert resumed[-1].type == "run.completed"
     message_text = "".join(
-        str(item.data.get("chunk", {}).get("content") or "")
-        for item in resumed
-        if item.type == "message.delta"
+        str(item.data.get("chunk", {}).get("content") or "") for item in resumed if item.type == "message.delta"
     )
     assert "authoritative response" in message_text
     assert '"answer": "staging"' in message_text
@@ -1398,7 +1391,7 @@ def test_codex_runner_executes_fake_native_cli(tmp_path: Path) -> None:
     fake_cli = tmp_path / "fake_codex_app_server.py"
     _write_fake_codex_app_server(fake_cli)
     module = _load_runner_module("codex-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
 
@@ -1429,7 +1422,7 @@ def test_codex_runner_final_answer_replaces_intermediate_text(tmp_path: Path) ->
     fake_cli = tmp_path / "fake_codex_app_server.py"
     _write_fake_codex_app_server(fake_cli)
     module = _load_runner_module("codex-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
     ctx = _native_ctx(
@@ -1453,7 +1446,7 @@ def test_codex_runner_final_answer_replaces_intermediate_text(tmp_path: Path) ->
 
 def test_codex_runner_defaults_to_non_interactive_full_access(tmp_path: Path) -> None:
     module = _load_runner_module("codex-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
 
     config = runner._validate_config(
@@ -1475,7 +1468,7 @@ def test_codex_runner_pauses_for_dynamic_question_and_resumes_thread(tmp_path: P
     _write_fake_codex_app_server(fake_cli)
     module = _load_runner_module("codex-agent")
     native = sys.modules["pkg.native_cli"]
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
     config = {
@@ -1530,7 +1523,7 @@ def test_codex_runner_pauses_for_native_approval_and_approves_exact_retry(tmp_pa
     _write_fake_codex_app_server(fake_cli)
     module = _load_runner_module("codex-agent")
     native = sys.modules["pkg.native_cli"]
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
     config = {
@@ -1587,7 +1580,7 @@ def test_codex_runner_resumes_after_native_approval_rejection(tmp_path: Path) ->
     _write_fake_codex_app_server(fake_cli)
     module = _load_runner_module("codex-agent")
     native = sys.modules["pkg.native_cli"]
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
     config = {
@@ -1707,7 +1700,7 @@ def test_codex_runner_non_streaming_emits_one_message(tmp_path: Path) -> None:
     fake_cli = tmp_path / "fake_codex_app_server.py"
     _write_fake_codex_app_server(fake_cli)
     module = _load_runner_module("codex-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
 
@@ -1957,7 +1950,7 @@ def test_codex_remote_mcp_config_is_not_embedded_in_ssh_command() -> None:
 
 def test_native_cli_startup_failures_are_run_failed(tmp_path: Path) -> None:
     claude_module = _load_runner_module("claude-code-agent")
-    claude_runner = object.__new__(claude_module.DefaultAgentRunner)
+    claude_runner = object.__new__(claude_module.DefaultRunner)
     claude_runner.get_plugin_config = lambda: {}
     claude_runner.get_run_api = lambda ctx: None
     claude_results = asyncio.run(
@@ -1979,7 +1972,7 @@ def test_native_cli_startup_failures_are_run_failed(tmp_path: Path) -> None:
     assert claude_results[-1].data["code"] == "claude_code.command_not_found"
 
     codex_module = _load_runner_module("codex-agent")
-    codex_runner = object.__new__(codex_module.DefaultAgentRunner)
+    codex_runner = object.__new__(codex_module.DefaultRunner)
     codex_runner.get_plugin_config = lambda: {}
     codex_runner.get_run_api = lambda ctx: None
     codex_results = asyncio.run(
@@ -2016,7 +2009,7 @@ def test_claude_code_runner_redacts_stderr_secrets(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     module = _load_runner_module("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_plugin_config = lambda: {}
     runner.get_run_api = lambda ctx: None
 
@@ -2070,7 +2063,7 @@ def test_dify_runner_injects_langbot_asset_run_token(monkeypatch) -> None:
         calls["request_timeout"] = request_timeout
         return FakeGateway()
 
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner.get_run_api = lambda ctx: "run-api"
     ctx = types.SimpleNamespace(adapter=types.SimpleNamespace(extra={"params": {"existing": "value"}}))
 
@@ -2105,7 +2098,7 @@ def test_dify_runner_injects_langbot_asset_run_token(monkeypatch) -> None:
 
 def test_dify_runner_only_reuses_dify_uuid_conversation_id() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
 
     ctx = types.SimpleNamespace(
         state=types.SimpleNamespace(
@@ -2125,20 +2118,20 @@ def test_dify_runner_only_reuses_dify_uuid_conversation_id() -> None:
 
 
 def test_acp_resource_summary_includes_run_scoped_bridge_tools() -> None:
-    from langbot_plugin.api.entities.builtin.agent_runner import (
+    from langbot_plugin.api.entities.builtin.runner import (
         AgentEventContext,
         AgentInput,
         AgentResources,
-        AgentRunContext,
         AgentRuntimeContext,
         AgentTrigger,
         ContextAccess,
         ContextAPICapabilities,
         DeliveryContext,
+        RunnerContext,
     )
 
     module = _load_runner_module("acp-agent-runner")
-    ctx = AgentRunContext(
+    ctx = RunnerContext(
         run_id="run_1",
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(
@@ -2167,7 +2160,7 @@ def test_acp_resource_summary_includes_run_scoped_bridge_tools() -> None:
         {"tool_name": "langbot_call_tool"},
     ]
 
-    prompt = object.__new__(module.DefaultAgentRunner)._with_run_scope_prompt(ctx, "call langbot_get_current_event")
+    prompt = object.__new__(module.DefaultRunner)._with_run_scope_prompt(ctx, "call langbot_get_current_event")
     assert "Call LangBot MCP tools directly in this ACP session" in prompt
     assert "Do not launch background agents, workflows, or tasks" in prompt
     assert "launch at most one Agent with run_in_background=false and wait for it to finish" in prompt
@@ -2189,18 +2182,18 @@ def test_external_service_runners_declare_minimal_plugin_storage_permission() ->
         "langflow-agent",
     }
     for plugin_dir in PLUGIN_DIRS - asset_callback_runners:
-        runner = _load_yaml(ROOT / plugin_dir / "components" / "agent_runner" / "default.yaml")
+        runner = _load_yaml(ROOT / plugin_dir / "components" / "runner" / "default.yaml")
         assert runner["spec"]["permissions"] == {"storage": ["plugin"]}
 
 
 def test_runner_sources_do_not_read_capabilities_from_context() -> None:
     for plugin_dir in PLUGIN_DIRS:
-        source = (ROOT / plugin_dir / "components" / "agent_runner" / "default.py").read_text(encoding="utf-8")
+        source = (ROOT / plugin_dir / "components" / "runner" / "default.py").read_text(encoding="utf-8")
         assert "ctx.capabilities" not in source
 
 
 def test_tbox_manifest_matches_runner_capabilities() -> None:
-    runner = _load_yaml(ROOT / "tbox-agent" / "components" / "agent_runner" / "default.yaml")
+    runner = _load_yaml(ROOT / "tbox-agent" / "components" / "runner" / "default.yaml")
     capabilities = runner["spec"]["capabilities"]
 
     assert capabilities["streaming"] is True
@@ -2288,18 +2281,18 @@ def test_external_runner_usage_normalizers_preserve_provider_usage() -> None:
 
 
 def test_runners_use_protocol_v1_actor_fields_for_user_identity() -> None:
-    from langbot_plugin.api.entities.builtin.agent_runner import (
+    from langbot_plugin.api.entities.builtin.runner import (
         ActorContext,
         AgentEventContext,
         AgentInput,
         AgentResources,
-        AgentRunContext,
         AgentRuntimeContext,
         AgentTrigger,
         DeliveryContext,
+        RunnerContext,
     )
 
-    ctx = AgentRunContext(
+    ctx = RunnerContext(
         run_id="run_1",
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(
@@ -2324,25 +2317,25 @@ def test_runners_use_protocol_v1_actor_fields_for_user_identity() -> None:
         "weknora-agent": "_get_user_tag",
     }.items():
         module = _load_runner_module(plugin_dir)
-        runner = object.__new__(module.DefaultAgentRunner)
+        runner = object.__new__(module.DefaultRunner)
         assert getattr(runner, method_name)(ctx) == "user_user_1"
 
 
 def test_non_streaming_capability_metadata_is_honored_when_supported() -> None:
-    from langbot_plugin.api.entities.builtin.agent_runner import (
+    from langbot_plugin.api.entities.builtin.runner import (
         AgentEventContext,
         AgentInput,
         AgentResources,
-        AgentRunContext,
         AgentRuntimeContext,
         AgentTrigger,
         DeliveryContext,
+        RunnerContext,
     )
 
     for plugin_dir in {"langflow-agent", "tbox-agent"}:
         module = _load_runner_module(plugin_dir)
-        runner = object.__new__(module.DefaultAgentRunner)
-        ctx = AgentRunContext(
+        runner = object.__new__(module.DefaultRunner)
+        ctx = RunnerContext(
             run_id="run_1",
             trigger=AgentTrigger(type="message.received"),
             event=AgentEventContext(

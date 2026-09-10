@@ -16,23 +16,23 @@ from types import SimpleNamespace
 from typing import Any
 
 import yaml
-from langbot_plugin.api.entities.builtin.agent_runner import (
+from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
+from langbot_plugin.api.entities.builtin.runner import (
     AgentEventContext,
     AgentInput,
     AgentResources,
-    AgentRunContext,
-    AgentRunResult,
     AgentRunState,
     AgentRuntimeContext,
     AgentTrigger,
     ConversationContext,
     DeliveryContext,
+    RunnerContext,
+    RunnerResult,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+from langbot_plugin.api.entities.builtin.runner.context_access import (
     ContextAccess,
     ContextAPICapabilities,
 )
-from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE_RUNNERS = ("acp-agent-runner", "claude-code-agent", "codex-agent")
@@ -51,7 +51,7 @@ def _load_plugin(plugin_dir: str):
     plugin_root = ROOT / plugin_dir
     sys.path.insert(0, str(plugin_root))
     try:
-        module_path = plugin_root / "components" / "agent_runner" / "default.py"
+        module_path = plugin_root / "components" / "runner" / "default.py"
         spec = importlib.util.spec_from_file_location(
             f"test_steering_{plugin_dir.replace('-', '_')}_runner", module_path
         )
@@ -63,16 +63,16 @@ def _load_plugin(plugin_dir: str):
         sys.path.remove(str(plugin_root))
 
 
-async def _collect(generator) -> list[AgentRunResult]:
+async def _collect(generator) -> list[RunnerResult]:
     return [item async for item in generator]
 
 
-def _type(result: AgentRunResult) -> str:
+def _type(result: RunnerResult) -> str:
     return getattr(result.type, "value", str(result.type))
 
 
-def _ctx(*, steering: bool, config: dict[str, Any] | None = None, text: str = "hello") -> AgentRunContext:
-    return AgentRunContext(
+def _ctx(*, steering: bool, config: dict[str, Any] | None = None, text: str = "hello") -> RunnerContext:
+    return RunnerContext(
         run_id="run_steering",
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(event_id="evt_1", event_type="message.received", source="test"),
@@ -119,13 +119,9 @@ def _make_turn_recorder(steering, session_key: str):
         calls.append((prompt, resume_session_id))
         if len(calls) == 1:
             # First turn reports a freshly created session id.
-            yield AgentRunResult.state_updated(
-                "run_steering", session_key, "session-xyz", scope="conversation"
-            )
-        yield AgentRunResult.message_delta(
-            "run_steering", MessageChunk(role="assistant", content=f"reply:{prompt}")
-        )
-        yield AgentRunResult.run_completed("run_steering", finish_reason="stop")
+            yield RunnerResult.state_updated("run_steering", session_key, "session-xyz", scope="conversation")
+        yield RunnerResult.message_delta("run_steering", MessageChunk(role="assistant", content=f"reply:{prompt}"))
+        yield RunnerResult.run_completed("run_steering", finish_reason="stop")
 
     return run_turn, calls
 
@@ -195,10 +191,8 @@ def test_steering_loop_stops_on_failed_turn_without_draining() -> None:
     ctx = _ctx(steering=True)
 
     async def failing_turn(prompt: str, resume_session_id: str):
-        yield AgentRunResult.message_delta(
-            "run_steering", MessageChunk(role="assistant", content="partial")
-        )
-        yield AgentRunResult.run_failed("run_steering", error="boom", code="x.fail")
+        yield RunnerResult.message_delta("run_steering", MessageChunk(role="assistant", content="partial"))
+        yield RunnerResult.run_failed("run_steering", error="boom", code="x.fail")
 
     results = asyncio.run(
         _collect(
@@ -223,13 +217,13 @@ def test_steering_loop_stops_on_action_request_without_completing() -> None:
     ctx = _ctx(steering=True)
 
     async def pausing_turn(prompt: str, resume_session_id: str):
-        yield AgentRunResult.state_updated(
+        yield RunnerResult.state_updated(
             "run_steering",
             "external.pending_interaction",
             {"interaction_id": "question-1"},
             scope="conversation",
         )
-        yield AgentRunResult.action_requested(
+        yield RunnerResult.action_requested(
             "run_steering",
             "interaction.requested",
             {"interaction_id": "question-1"},
@@ -288,7 +282,7 @@ def test_steering_loop_survives_pull_errors() -> None:
 
 def test_native_runners_declare_steering_capability() -> None:
     for plugin_dir in NATIVE_RUNNERS:
-        manifest = _load_yaml(ROOT / plugin_dir / "components" / "agent_runner" / "default.yaml")
+        manifest = _load_yaml(ROOT / plugin_dir / "components" / "runner" / "default.yaml")
         assert manifest["spec"]["capabilities"].get("steering") is True
 
 
@@ -297,7 +291,7 @@ def test_claude_argv_uses_resume_to_continue_session() -> None:
     # use"); continuing a session requires `--resume`. New sessions still use
     # `--session-id` so the runner controls the id.
     module = _load_plugin("claude-code-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     config = {"command": "claude", "args": []}
 
     create = runner._argv(config, session_id="sid-1", mcp_config_path="", resume=False)
@@ -319,11 +313,9 @@ def _patch_turn(runner, attr: str, session_key: str, *, emit_session: bool = Tru
     async def fake_turn(ctx, config, prompt, resume_session_id, *args):
         calls.append((prompt, resume_session_id))
         if emit_session and len(calls) == 1:
-            yield AgentRunResult.state_updated(ctx.run_id, session_key, "session-xyz", scope="conversation")
-        yield AgentRunResult.message_delta(
-            ctx.run_id, MessageChunk(role="assistant", content=f"reply:{prompt}")
-        )
-        yield AgentRunResult.run_completed(ctx.run_id, finish_reason="stop")
+            yield RunnerResult.state_updated(ctx.run_id, session_key, "session-xyz", scope="conversation")
+        yield RunnerResult.message_delta(ctx.run_id, MessageChunk(role="assistant", content=f"reply:{prompt}"))
+        yield RunnerResult.run_completed(ctx.run_id, finish_reason="stop")
 
     setattr(runner, attr, fake_turn)
     return calls
@@ -332,7 +324,7 @@ def _patch_turn(runner, attr: str, session_key: str, *, emit_session: bool = Tru
 def test_codex_run_drains_steering() -> None:
     module = _load_plugin("codex-agent")
     native = sys.modules["pkg.native_cli"]
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner._plugin_config = {}
     calls = _patch_turn(runner, "_run_local_or_ssh", native.SESSION_STATE_KEY)
     api = _FakeRunApi([["second message"], []])
@@ -348,7 +340,7 @@ def test_codex_run_drains_steering() -> None:
 def test_claude_run_drains_steering() -> None:
     module = _load_plugin("claude-code-agent")
     native = sys.modules["pkg.native_cli"]
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner._plugin_config = {}
     calls = _patch_turn(runner, "_run_local_or_ssh", native.SESSION_STATE_KEY, emit_session=False)
     api = _FakeRunApi([["second message"], []])
@@ -367,7 +359,7 @@ def test_claude_run_drains_steering() -> None:
 
 def test_acp_run_drains_steering() -> None:
     module = _load_plugin("acp-agent-runner")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner._plugin_config = {}
     calls = _patch_turn(runner, "_run_acp_turn", module.ACP_SESSION_STATE_KEY)
     api = _FakeRunApi([["second message"], []])

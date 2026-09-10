@@ -1,4 +1,4 @@
-"""DashScope API client for AgentRunner.
+"""DashScope API client for Runner.
 
 This module provides a minimal DashScope API client using the official dashscope SDK.
 """
@@ -84,7 +84,7 @@ def extract_references_from_chunk(
 
 
 class DashScopeClient:
-    """Minimal DashScope API client for AgentRunner.
+    """Minimal DashScope API client for Runner.
 
     Supports:
     - Agent mode with thinking/reasoning

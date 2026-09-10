@@ -15,21 +15,21 @@ metadata:
     es_ES: Agente WeKnora
     ru_RU: Агент WeKnora
   description:
-    en_US: Run a WeKnora agent or knowledge-base chat app as a LangBot AgentRunner.
-    zh_Hans: 将 WeKnora 智能体或知识库问答应用作为 LangBot AgentRunner 运行。
-    zh_Hant: 將 WeKnora 代理或知識庫聊天應用程式作為 LangBot AgentRunner 執行。
-    ja_JP: WeKnora エージェントまたはナレッジベースチャットを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้เอเจนต์ WeKnora หรือแอปแชตฐานความรู้เป็น LangBot AgentRunner
-    vi_VN: Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta un agente WeKnora o una aplicación de chat con base de conocimiento como LangBot AgentRunner.
-    ru_RU: Запускает агент WeKnora или чат с базой знаний как LangBot AgentRunner.
+    en_US: Run a WeKnora agent or knowledge-base chat app as a LangBot Runner.
+    zh_Hans: 将 WeKnora 智能体或知识库问答应用作为 LangBot Runner 运行。
+    zh_Hant: 將 WeKnora 代理或知識庫聊天應用程式作為 LangBot Runner 執行。
+    ja_JP: WeKnora エージェントまたはナレッジベースチャットを LangBot Runner として実行します。
+    th_TH: เรียกใช้เอเจนต์ WeKnora หรือแอปแชตฐานความรู้เป็น LangBot Runner
+    vi_VN: Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dưới dạng LangBot Runner.
+    es_ES: Ejecuta un agente WeKnora o una aplicación de chat con base de conocimiento como LangBot Runner.
+    ru_RU: Запускает агент WeKnora или чат с базой знаний как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config: []
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

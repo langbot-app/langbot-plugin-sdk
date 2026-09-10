@@ -4,7 +4,7 @@ Steering lets a runner absorb follow-up user messages that arrive while a run is
 still active. When the runner declares ``capabilities.steering: true`` in its
 manifest, the Host queues those messages against the active run (keyed by
 ``run_id``) instead of starting a new run. The runner drains them at turn
-boundaries via ``AgentRunAPIProxy.steering_pull``.
+boundaries via ``RunnerAPIProxy.steering_pull``.
 
 ``run_with_steering`` wraps a single-turn executor and re-invokes it once per
 pulled follow-up input, reusing the runner's own session-resume mechanism so
@@ -22,19 +22,19 @@ from __future__ import annotations
 import collections
 import typing
 
-from langbot_plugin.api.entities.builtin.agent_runner import (
-    AgentRunContext,
-    AgentRunResult,
+from langbot_plugin.api.entities.builtin.runner import (
+    RunnerContext,
+    RunnerResult,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResultType
-from langbot_plugin.api.proxies.agent_run import (
-    AgentRunAPIProxy,
+from langbot_plugin.api.entities.builtin.runner.result import RunnerResultType
+from langbot_plugin.api.proxies.runner import (
     PermissionDeniedError,
+    RunnerAPIProxy,
 )
 
-# run_turn(prompt, resume_session_id) -> async generator of AgentRunResult for one turn.
-RunTurn = typing.Callable[[str, str], typing.AsyncGenerator[AgentRunResult, None]]
-GetRunApi = typing.Callable[[], AgentRunAPIProxy]
+# run_turn(prompt, resume_session_id) -> async generator of RunnerResult for one turn.
+RunTurn = typing.Callable[[str, str], typing.AsyncGenerator[RunnerResult, None]]
+GetRunApi = typing.Callable[[], RunnerAPIProxy]
 
 # Upper bound on follow-up turns per run. Far above any realistic interactive
 # session; the Host steering queue is itself capped (100 items), so this only
@@ -42,7 +42,7 @@ GetRunApi = typing.Callable[[], AgentRunAPIProxy]
 DEFAULT_MAX_FOLLOWUPS = 256
 
 
-def steering_enabled(ctx: AgentRunContext) -> bool:
+def steering_enabled(ctx: RunnerContext) -> bool:
     """Return whether the Host authorized ``steering_pull`` for this run."""
     try:
         return bool(ctx.context.available_apis.steering_pull)
@@ -50,7 +50,7 @@ def steering_enabled(ctx: AgentRunContext) -> bool:
         return False
 
 
-async def _pull_followup_prompts(api: AgentRunAPIProxy, mode: str) -> list[str]:
+async def _pull_followup_prompts(api: RunnerAPIProxy, mode: str) -> list[str]:
     result = await api.steering_pull(mode=mode)
     prompts: list[str] = []
     for item in result.items:
@@ -64,7 +64,7 @@ async def _pull_followup_prompts(api: AgentRunAPIProxy, mode: str) -> list[str]:
 
 
 async def run_with_steering(
-    ctx: AgentRunContext,
+    ctx: RunnerContext,
     get_run_api: GetRunApi,
     run_turn: RunTurn,
     *,
@@ -73,7 +73,7 @@ async def run_with_steering(
     session_state_key: str,
     steering_mode: str = "all",
     max_followups: int = DEFAULT_MAX_FOLLOWUPS,
-) -> typing.AsyncGenerator[AgentRunResult, None]:
+) -> typing.AsyncGenerator[RunnerResult, None]:
     """Drive ``run_turn`` once per turn, injecting steering follow-ups between turns.
 
     Args:
@@ -82,7 +82,7 @@ async def run_with_steering(
             steering is authorized, so runners that disable Host assets in tests
             are unaffected.
         run_turn: Executes one agent turn for ``(prompt, resume_session_id)`` and
-            yields its ``AgentRunResult`` stream, terminated by ``run.completed``
+            yields its ``RunnerResult`` stream, terminated by ``run.completed``
             or ``run.failed``.
         initial_prompt: Prompt text for the first turn.
         initial_resume_session_id: Session id to resume for the first turn (may be
@@ -97,33 +97,29 @@ async def run_with_steering(
     pending: collections.deque[str] = collections.deque()
     prompt = initial_prompt
     resume_session_id = initial_resume_session_id
-    terminal: AgentRunResult | None = None
+    terminal: RunnerResult | None = None
     followups = 0
 
     while True:
         async for result in run_turn(prompt, resume_session_id):
-            result_type = (
-                result.type.value
-                if isinstance(result.type, AgentRunResultType)
-                else str(result.type)
-            )
-            if result_type == AgentRunResultType.STATE_UPDATED.value:
+            result_type = result.type.value if isinstance(result.type, RunnerResultType) else str(result.type)
+            if result_type == RunnerResultType.STATE_UPDATED.value:
                 if result.data.get("key") == session_state_key:
                     new_session_id = str(result.data.get("value") or "").strip()
                     if new_session_id:
                         resume_session_id = new_session_id
                 yield result
                 continue
-            if result_type == AgentRunResultType.RUN_FAILED.value:
+            if result_type == RunnerResultType.RUN_FAILED.value:
                 # A failed turn ends the run immediately; do not drain steering.
                 yield result
                 return
-            if result_type == AgentRunResultType.ACTION_REQUESTED.value:
+            if result_type == RunnerResultType.ACTION_REQUESTED.value:
                 # An action pauses or hands control back to the Host. Do not
                 # pull steering or synthesize a terminal completion event.
                 yield result
                 return
-            if result_type == AgentRunResultType.RUN_COMPLETED.value:
+            if result_type == RunnerResultType.RUN_COMPLETED.value:
                 # Hold back: only the final turn's completion terminates the run.
                 terminal = result
                 continue
@@ -135,9 +131,7 @@ async def run_with_steering(
             if not enabled or followups >= max_followups:
                 break
             try:
-                pending.extend(
-                    await _pull_followup_prompts(get_run_api(), steering_mode)
-                )
+                pending.extend(await _pull_followup_prompts(get_run_api(), steering_mode))
             except PermissionDeniedError:
                 enabled = False
             except Exception:
@@ -151,4 +145,4 @@ async def run_with_steering(
     if terminal is not None:
         yield terminal
     else:
-        yield AgentRunResult.run_completed(ctx.run_id, finish_reason="stop")
+        yield RunnerResult.run_completed(ctx.run_id, finish_reason="stop")

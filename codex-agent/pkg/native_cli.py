@@ -25,15 +25,15 @@ from langbot_plugin.api.agent_tools.daemon import (
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_access import AgentRunMCPAccess
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
-from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-from langbot_plugin.api.entities.builtin.agent_runner import (
-    AgentRunContext,
-    AgentRunResult,
+from langbot_plugin.api.definition.components.runner.runner import Runner
+from langbot_plugin.api.entities.builtin.runner import (
     InteractionAction,
     InteractionField,
     InteractionOption,
     InteractionRequest,
     InteractionSubmission,
+    RunnerContext,
+    RunnerResult,
 )
 
 from pkg.steering import run_with_steering
@@ -135,7 +135,7 @@ def _to_bool(value: typing.Any, default: bool = False) -> bool:
         return default
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return bool(value)
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -166,7 +166,9 @@ def _parse_args(value: typing.Any) -> list[str]:
         return []
     if os.name != "nt":
         return shlex.split(text)
-    return [part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part for part in shlex.split(text, posix=False)]
+    return [
+        part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part for part in shlex.split(text, posix=False)
+    ]
 
 
 def _parse_json_object(value: typing.Any, *, label: str) -> dict[str, typing.Any]:
@@ -265,7 +267,7 @@ def _toml_value(value: typing.Any) -> str:
         raise NativeCliError("mcp server config cannot contain null values", code="codex.config_invalid")
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return str(value)
     if isinstance(value, str):
         return _toml_string(value)
@@ -432,7 +434,9 @@ def _remote_codex_home_lines(home_key: str, *, read_mcp_from_stdin: bool) -> lis
     ]
     if read_mcp_from_stdin:
         lines.append('IFS= read -r langbot_mcp_config_b64 || langbot_mcp_config_b64=""')
-        lines.append('[ -n "$langbot_mcp_config_b64" ] && printf %s "$langbot_mcp_config_b64" | base64 -d >> "$run_home/config.toml" || :')
+        lines.append(
+            '[ -n "$langbot_mcp_config_b64" ] && printf %s "$langbot_mcp_config_b64" | base64 -d >> "$run_home/config.toml" || :'
+        )
         lines.append('chmod 600 "$run_home/config.toml"')
     lines.append('export CODEX_HOME="$PWD/$run_home"')
     return lines
@@ -457,7 +461,7 @@ def _remote_shell_command(
     return f"bash -lc {shlex.quote(chr(10).join(lines))}"
 
 
-def _input_text(ctx: AgentRunContext) -> str:
+def _input_text(ctx: RunnerContext) -> str:
     return ctx.input.to_text().strip()
 
 
@@ -563,7 +567,7 @@ def _interaction_from_codex_request(
     return request, continuation
 
 
-def _pending_interaction(ctx: AgentRunContext) -> dict[str, typing.Any] | None:
+def _pending_interaction(ctx: RunnerContext) -> dict[str, typing.Any] | None:
     value = ctx.state.conversation.get(PENDING_INTERACTION_STATE_KEY)
     return dict(value) if isinstance(value, dict) else None
 
@@ -695,7 +699,9 @@ def _interaction_resume_prompt(
     continuation: dict[str, typing.Any],
 ) -> str:
     if submission.interaction_id != continuation.get("interaction_id"):
-        raise NativeCliError("interaction submission does not match the pending Codex request", code="codex.interaction_mismatch")
+        raise NativeCliError(
+            "interaction submission does not match the pending Codex request", code="codex.interaction_mismatch"
+        )
     question_by_id = {
         str(item.get("id")): str(item.get("question") or item.get("id"))
         for item in continuation.get("questions", [])
@@ -718,7 +724,9 @@ def _approval_resume(
     continuation: dict[str, typing.Any],
 ) -> tuple[str, dict[str, str] | None]:
     if submission.interaction_id != continuation.get("interaction_id"):
-        raise NativeCliError("interaction submission does not match the pending Codex approval", code="codex.interaction_mismatch")
+        raise NativeCliError(
+            "interaction submission does not match the pending Codex approval", code="codex.interaction_mismatch"
+        )
     action_id = str(submission.action_id or "")
     summary = str(continuation.get("approval_summary") or "")
     if action_id == APPROVE_ONCE_ACTION:
@@ -735,15 +743,14 @@ def _approval_resume(
     if action_id == REJECT_ACTION:
         prompt = (
             "The user rejected the previously paused Codex operation. Do not retry that exact operation. "
-            "Continue with a safe alternative or explain why the task cannot proceed.\n"
-            + summary
+            "Continue with a safe alternative or explain why the task cannot proceed.\n" + summary
         )
         return prompt, None
     raise NativeCliError(f"unsupported Codex approval action: {action_id}", code="codex.approval_invalid")
 
 
-class NativeCodexRunner(AgentRunner):
-    def _validate_config(self, ctx: AgentRunContext) -> dict[str, typing.Any]:
+class NativeCodexRunner(Runner):
+    def _validate_config(self, ctx: RunnerContext) -> dict[str, typing.Any]:
         data = ctx.config or {}
         location = str(data.get("location", "local") or "local").strip()
         if location not in SUPPORTED_LOCATIONS:
@@ -792,10 +799,10 @@ class NativeCodexRunner(AgentRunner):
             ),
         }
 
-    def _stored_session_id(self, ctx: AgentRunContext) -> str:
+    def _stored_session_id(self, ctx: RunnerContext) -> str:
         return str(ctx.state.conversation.get(SESSION_STATE_KEY) or "").strip()
 
-    def _resume_session_id(self, ctx: AgentRunContext, config: dict[str, typing.Any]) -> str:
+    def _resume_session_id(self, ctx: RunnerContext, config: dict[str, typing.Any]) -> str:
         stored = self._stored_session_id(ctx)
         if not stored or not config["reuse_session"]:
             return ""
@@ -818,7 +825,7 @@ class NativeCodexRunner(AgentRunner):
     def _argv(self, config: dict[str, typing.Any]) -> list[str]:
         return [*_parse_args(config["command"]), "app-server", "--listen", "stdio://", *config["args"]]
 
-    def _mcp_access(self, ctx: AgentRunContext, config: dict[str, typing.Any]) -> AgentRunMCPAccess | None:
+    def _mcp_access(self, ctx: RunnerContext, config: dict[str, typing.Any]) -> AgentRunMCPAccess | None:
         if not config["langbot_assets_enabled"]:
             return None
         access = AgentRunMCPAccess(
@@ -833,7 +840,7 @@ class NativeCodexRunner(AgentRunner):
         access.start()
         return access
 
-    async def run(self, ctx: AgentRunContext) -> typing.AsyncGenerator[AgentRunResult, None]:
+    async def run(self, ctx: RunnerContext) -> typing.AsyncGenerator[RunnerResult, None]:
         try:
             config = self._validate_config(ctx)
             submission = ctx.input.interaction
@@ -841,12 +848,14 @@ class NativeCodexRunner(AgentRunner):
             if submission is not None:
                 continuation = _pending_interaction(ctx)
                 if continuation is None:
-                    raise NativeCliError("pending Codex interaction state was not found", code="codex.interaction_not_found")
+                    raise NativeCliError(
+                        "pending Codex interaction state was not found", code="codex.interaction_not_found"
+                    )
                 if continuation.get("kind") == "approval":
                     prompt, approval_grant = _approval_resume(submission, continuation)
                 else:
                     prompt = _interaction_resume_prompt(submission, continuation)
-                yield AgentRunResult.state_updated(
+                yield RunnerResult.state_updated(
                     ctx.run_id,
                     PENDING_INTERACTION_STATE_KEY,
                     None,
@@ -859,9 +868,7 @@ class NativeCodexRunner(AgentRunner):
 
             approval_grant_holder = {"value": approval_grant}
 
-            def run_turn(
-                turn_prompt: str, resume_session_id: str
-            ) -> typing.AsyncGenerator[AgentRunResult, None]:
+            def run_turn(turn_prompt: str, resume_session_id: str) -> typing.AsyncGenerator[RunnerResult, None]:
                 turn_approval_grant = approval_grant_holder["value"]
                 approval_grant_holder["value"] = None
                 if config["location"] == "daemon":
@@ -894,22 +901,24 @@ class NativeCodexRunner(AgentRunner):
             ):
                 yield result
         except NativeCliError as exc:
-            yield AgentRunResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
+            yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
         except AgentRuntimeDaemonError as exc:
-            yield AgentRunResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
+            yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
 
     async def _run_local_or_ssh(
         self,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         config: dict[str, typing.Any],
         prompt: str,
         session_id: str,
         *,
         approval_grant: dict[str, str] | None = None,
-    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+    ) -> typing.AsyncGenerator[RunnerResult, None]:
         access = self._mcp_access(ctx, config)
         try:
-            mcp_servers = _mcp_servers_config([access.server_config] if access and access.server_config else [], config["mcp_servers"])
+            mcp_servers = _mcp_servers_config(
+                [access.server_config] if access and access.server_config else [], config["mcp_servers"]
+            )
             mcp_toml = _mcp_config_toml(mcp_servers)
             argv = self._argv(config)
             env = {**os.environ, **config["env"]}
@@ -963,13 +972,13 @@ class NativeCodexRunner(AgentRunner):
 
     async def _run_daemon(
         self,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         config: dict[str, typing.Any],
         prompt: str,
         session_id: str,
         *,
         approval_grant: dict[str, str] | None = None,
-    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+    ) -> typing.AsyncGenerator[RunnerResult, None]:
         hub = get_agent_runtime_daemon_hub("codex", error_code_prefix="codex")
         if not hub.is_running:
             await hub.start(
@@ -1004,7 +1013,7 @@ class NativeCodexRunner(AgentRunner):
             timeout=config["timeout"],
         ):
             event.setdefault("run_id", ctx.run_id)
-            yield AgentRunResult.model_validate(event)
+            yield RunnerResult.model_validate(event)
 
 
 class NativeCodexDaemon(AgentRuntimeDaemonClient):
@@ -1021,7 +1030,13 @@ class NativeCodexDaemon(AgentRuntimeDaemonClient):
                 proxy.start()
                 mcp_servers.append(proxy.mcp_server())
             mcp_toml = _mcp_config_toml(_mcp_servers_config(mcp_servers, list(config.get("mcp_servers") or [])))
-            argv = [*_parse_args(config.get("command") or "codex"), "app-server", "--listen", "stdio://", *list(config.get("args") or [])]
+            argv = [
+                *_parse_args(config.get("command") or "codex"),
+                "app-server",
+                "--listen",
+                "stdio://",
+                *list(config.get("args") or []),
+            ]
             session_id = str(payload.get("session_id") or "")
             env = {**os.environ, **{str(k): str(v) for k, v in dict(config.get("env") or {}).items()}}
             argv = _resolve_local_codex_argv(argv, env)
@@ -1045,9 +1060,7 @@ class NativeCodexDaemon(AgentRuntimeDaemonClient):
                     approval_policy=config.get("approval_policy"),
                     sandbox_mode=config.get("sandbox_mode"),
                     approval_grant=(
-                        dict(payload["approval_grant"])
-                        if isinstance(payload.get("approval_grant"), dict)
-                        else None
+                        dict(payload["approval_grant"]) if isinstance(payload.get("approval_grant"), dict) else None
                     ),
                     initial_stdin=b"",
                 ):
@@ -1066,7 +1079,7 @@ class NativeCodexDaemon(AgentRuntimeDaemonClient):
 
 
 async def _run_cli_process(
-    ctx: AgentRunContext,
+    ctx: RunnerContext,
     command: str,
     args: list[str],
     *,
@@ -1081,7 +1094,7 @@ async def _run_cli_process(
     sandbox_mode: str | None = None,
     approval_grant: dict[str, str] | None = None,
     initial_stdin: bytes = b"",
-) -> typing.AsyncGenerator[AgentRunResult, None]:
+) -> typing.AsyncGenerator[RunnerResult, None]:
     try:
         async for event in _run_cli_process_events(
             command,
@@ -1099,9 +1112,9 @@ async def _run_cli_process(
             initial_stdin=initial_stdin,
         ):
             event.setdefault("run_id", ctx.run_id)
-            yield AgentRunResult.model_validate(event)
+            yield RunnerResult.model_validate(event)
     except NativeCliError as exc:
-        yield AgentRunResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
+        yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
 
 
 def _extract_nested_string(data: dict[str, typing.Any], *keys: str) -> str:
@@ -1187,7 +1200,7 @@ class _CodexAppServerClient:
                 "clientInfo": {
                     "name": "langbot-codex-agent",
                     "title": "LangBot Codex Agent",
-                "version": "0.1.9",
+                    "version": "0.1.9",
                 },
                 "capabilities": {"experimentalApi": True},
             },
@@ -1369,10 +1382,7 @@ class _CodexAppServerClient:
                     },
                 )
             else:
-                empty_answers = {
-                    field.id: {"answers": []}
-                    for field in request.fields
-                }
+                empty_answers = {field.id: {"answers": []} for field in request.fields}
                 await self.respond(request_id, {"answers": empty_answers})
             await self._interrupt_turn(params)
             self.finish_turn()
@@ -1432,7 +1442,9 @@ class _CodexAppServerClient:
         if method == "turn/completed":
             status = _extract_nested_string(params, "turn", "status")
             if status == "failed":
-                self.finish_turn(error=_extract_nested_string(params, "turn", "error", "message") or "codex turn failed")
+                self.finish_turn(
+                    error=_extract_nested_string(params, "turn", "error", "message") or "codex turn failed"
+                )
             else:
                 self.finish_turn()
             return
@@ -1600,7 +1612,9 @@ async def _run_cli_process_events(
         await _shutdown_app_server(process, reader_task)
         stderr = _redact_secrets((await stderr_task).decode("utf-8", errors="replace").strip())
         if process.returncode not in (0, None):
-            raise NativeCliError(stderr or f"Codex app-server exited with status {process.returncode}", code="codex.process_failed")
+            raise NativeCliError(
+                stderr or f"Codex app-server exited with status {process.returncode}", code="codex.process_failed"
+            )
         if client.interaction_request is not None and client.interaction_continuation is not None:
             result_sequence += 1
             yield {

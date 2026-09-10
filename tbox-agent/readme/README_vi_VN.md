@@ -2,7 +2,7 @@
 
 ## Tổng quan
 
-Chạy ứng dụng Ant Tbox dưới dạng LangBot AgentRunner.
+Chạy ứng dụng Ant Tbox dưới dạng LangBot Runner.
 
 ## Thông tin gói
 
@@ -30,7 +30,7 @@ Chạy ứng dụng Ant Tbox dưới dạng LangBot AgentRunner.
 ## Cài đặt và sử dụng
 
 1. Cài đặt plugin từ chợ plugin LangBot.
-2. Chọn Runner ID bên dưới trong bộ chọn AgentRunner của Pipeline.
+2. Chọn Runner ID bên dưới trong bộ chọn Runner của Pipeline.
 3. Điền thông tin kết nối theo bảng và lưu giá trị nhạy cảm bằng trường secret trong giao diện quản trị.
 
 ## Bảo mật và giới hạn

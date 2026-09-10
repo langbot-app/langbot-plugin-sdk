@@ -1,10 +1,10 @@
-# ACP Agent Runner
+# ACP Runner
 
-ACP Agent Runner 用于把兼容 Agent Client Protocol（ACP）的编码 Agent 接入 LangBot。它支持在 LangBot 服务器本机、SSH 远端机器或用户侧 daemon 上启动 ACP 进程，并把 LangBot 本次运行授权的工具、知识库和历史能力通过 SDK MCP bridge 暴露给编码 Agent。
+ACP Runner 用于把兼容 Agent Client Protocol（ACP）的编码 Agent 接入 LangBot。它支持在 LangBot 服务器本机、SSH 远端机器或用户侧 daemon 上启动 ACP 进程，并把 LangBot 本次运行授权的工具、知识库和历史能力通过 SDK MCP bridge 暴露给编码 Agent。
 
 ## Runner ID
 
-`plugin:langbot-team/ACPAgentRunner/default`
+`plugin:langbot-team/ACPRunner/default`
 
 ## 主要能力
 
@@ -117,4 +117,4 @@ uv run --no-sync pytest -q
 uv run --no-sync ruff check .
 ```
 
-使用本地 SDK 联调时应保留 editable 安装，并避免 `uv sync` 将其替换成缺少 AgentRunner/daemon/MCP bridge API 的旧版 wheel。
+使用本地 SDK 联调时应保留 editable 安装，并避免 `uv sync` 将其替换成缺少 Runner/daemon/MCP bridge API 的旧版 wheel。

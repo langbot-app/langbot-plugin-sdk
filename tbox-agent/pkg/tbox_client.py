@@ -1,6 +1,6 @@
-"""Tbox API client wrapper for AgentRunner.
+"""Tbox API client wrapper for Runner.
 
-This module provides an async wrapper around tboxsdk for use with the AgentRunner plugin.
+This module provides an async wrapper around tboxsdk for use with the Runner plugin.
 """
 
 from __future__ import annotations

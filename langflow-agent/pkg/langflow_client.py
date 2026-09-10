@@ -1,4 +1,4 @@
-"""Langflow API client for AgentRunner.
+"""Langflow API client for Runner.
 
 This module provides a minimal Langflow API client that doesn't depend on LangBot internals.
 """
@@ -34,7 +34,7 @@ class LangflowConfigError(Exception):
 
 
 class AsyncLangflowClient:
-    """Minimal Langflow API client for AgentRunner.
+    """Minimal Langflow API client for Runner.
 
     Supports:
     - /api/v1/run/{flow_id} endpoint for flow execution

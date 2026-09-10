@@ -1,6 +1,6 @@
 # Langflow Agent
 
-Run a Langflow flow as a LangBot AgentRunner.
+Run a Langflow flow as a LangBot Runner.
 
 ## Runner ID
 

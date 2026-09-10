@@ -1,6 +1,6 @@
 # DeerFlow Agent
 
-DeerFlow Agent 将 DeerFlow LangGraph HTTP API 接入 LangBot AgentRunner。插件负责创建或恢复 LangGraph thread、发送运行请求、解析 SSE 事件，并把结果转换为 LangBot 流式消息和状态更新。
+DeerFlow Agent 将 DeerFlow LangGraph HTTP API 接入 LangBot Runner。插件负责创建或恢复 LangGraph thread、发送运行请求、解析 SSE 事件，并把结果转换为 LangBot 流式消息和状态更新。
 
 ## Runner ID
 

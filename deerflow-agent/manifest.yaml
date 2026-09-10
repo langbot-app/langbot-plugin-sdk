@@ -15,21 +15,21 @@ metadata:
     es_ES: Agente DeerFlow
     ru_RU: Агент DeerFlow
   description:
-    en_US: Run a DeerFlow LangGraph agent as a LangBot AgentRunner.
-    zh_Hans: 将 DeerFlow LangGraph 智能体作为 LangBot AgentRunner 运行。
-    zh_Hant: 將 DeerFlow LangGraph 代理作為 LangBot AgentRunner 執行。
-    ja_JP: DeerFlow LangGraph エージェントを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้เอเจนต์ DeerFlow LangGraph เป็น LangBot AgentRunner
-    vi_VN: Chạy tác nhân DeerFlow LangGraph dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta un agente DeerFlow LangGraph como LangBot AgentRunner.
-    ru_RU: Запускает агент DeerFlow LangGraph как LangBot AgentRunner.
+    en_US: Run a DeerFlow LangGraph agent as a LangBot Runner.
+    zh_Hans: 将 DeerFlow LangGraph 智能体作为 LangBot Runner 运行。
+    zh_Hant: 將 DeerFlow LangGraph 代理作為 LangBot Runner 執行。
+    ja_JP: DeerFlow LangGraph エージェントを LangBot Runner として実行します。
+    th_TH: เรียกใช้เอเจนต์ DeerFlow LangGraph เป็น LangBot Runner
+    vi_VN: Chạy tác nhân DeerFlow LangGraph dưới dạng LangBot Runner.
+    es_ES: Ejecuta un agente DeerFlow LangGraph como LangBot Runner.
+    ru_RU: Запускает агент DeerFlow LangGraph как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config: []
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

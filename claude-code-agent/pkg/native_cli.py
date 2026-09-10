@@ -25,15 +25,15 @@ from langbot_plugin.api.agent_tools.decorators import agent_tool
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_access import AgentRunMCPAccess
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
-from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-from langbot_plugin.api.entities.builtin.agent_runner import (
-    AgentRunContext,
-    AgentRunResult,
+from langbot_plugin.api.definition.components.runner.runner import Runner
+from langbot_plugin.api.entities.builtin.runner import (
     InteractionAction,
     InteractionField,
     InteractionOption,
     InteractionRequest,
     InteractionSubmission,
+    RunnerContext,
+    RunnerResult,
 )
 
 from pkg.steering import run_with_steering
@@ -72,7 +72,7 @@ def _to_bool(value: typing.Any, default: bool = False) -> bool:
         return default
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return bool(value)
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
@@ -103,7 +103,9 @@ def _parse_args(value: typing.Any) -> list[str]:
         return []
     if os.name != "nt":
         return shlex.split(text)
-    return [part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part for part in shlex.split(text, posix=False)]
+    return [
+        part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part for part in shlex.split(text, posix=False)
+    ]
 
 
 def _parse_json_object(value: typing.Any, *, label: str) -> dict[str, typing.Any]:
@@ -243,7 +245,9 @@ def _shell_join_with_mcp_placeholder(argv: list[str]) -> str:
     return " ".join('"$langbot_mcp_config"' if arg == _MCP_CONFIG_ARG_PLACEHOLDER else shlex.quote(arg) for arg in argv)
 
 
-def _remote_shell_command(workspace: str, argv: list[str], env: dict[str, str], *, read_mcp_from_stdin: bool = False) -> str:
+def _remote_shell_command(
+    workspace: str, argv: list[str], env: dict[str, str], *, read_mcp_from_stdin: bool = False
+) -> str:
     parts = ["set -e"]
     parts.extend(f"export {shlex.quote(key)}={shlex.quote(value)}" for key, value in env.items())
     if workspace:
@@ -255,7 +259,7 @@ def _remote_shell_command(workspace: str, argv: list[str], env: dict[str, str], 
             [
                 'langbot_mcp_config="$(mktemp "${TMPDIR:-/tmp}/langbot-claude-mcp.XXXXXX.json")"',
                 'chmod 600 "$langbot_mcp_config"',
-                'trap \'rm -f "$langbot_mcp_config"\' EXIT',
+                "trap 'rm -f \"$langbot_mcp_config\"' EXIT",
                 'IFS= read -r langbot_mcp_config_b64 || langbot_mcp_config_b64=""',
                 '[ -n "$langbot_mcp_config_b64" ] && printf %s "$langbot_mcp_config_b64" | base64 -d > "$langbot_mcp_config" || printf %s "{}" > "$langbot_mcp_config"',
             ]
@@ -265,7 +269,7 @@ def _remote_shell_command(workspace: str, argv: list[str], env: dict[str, str], 
     return f"bash -lc {shlex.quote(chr(10).join(parts))}"
 
 
-def _input_text(ctx: AgentRunContext) -> str:
+def _input_text(ctx: RunnerContext) -> str:
     return ctx.input.to_text().strip()
 
 
@@ -358,7 +362,7 @@ def _interaction_from_claude_tool(
     return request, continuation
 
 
-def _pending_interaction(ctx: AgentRunContext) -> dict[str, typing.Any] | None:
+def _pending_interaction(ctx: RunnerContext) -> dict[str, typing.Any] | None:
     value = ctx.state.conversation.get(PENDING_INTERACTION_STATE_KEY)
     return dict(value) if isinstance(value, dict) else None
 
@@ -423,7 +427,7 @@ class ClaudeCodeExternalTools(AgentRunExternalTools):
     def __init__(
         self,
         api: typing.Any,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         *,
         include_assets: bool,
     ) -> None:
@@ -448,8 +452,8 @@ class ClaudeCodeExternalTools(AgentRunExternalTools):
         return {"status": "paused", "question_count": len(args.questions)}
 
 
-class NativeClaudeCodeRunner(AgentRunner):
-    def _validate_config(self, ctx: AgentRunContext) -> dict[str, typing.Any]:
+class NativeClaudeCodeRunner(Runner):
+    def _validate_config(self, ctx: RunnerContext) -> dict[str, typing.Any]:
         data = ctx.config or {}
         location = str(data.get("location", "local") or "local").strip()
         if location not in SUPPORTED_LOCATIONS:
@@ -485,10 +489,10 @@ class NativeClaudeCodeRunner(AgentRunner):
             ),
         }
 
-    def _stored_session_id(self, ctx: AgentRunContext) -> str:
+    def _stored_session_id(self, ctx: RunnerContext) -> str:
         return str(ctx.state.conversation.get(SESSION_STATE_KEY) or "").strip()
 
-    def _session_id(self, ctx: AgentRunContext, config: dict[str, typing.Any]) -> tuple[str, bool]:
+    def _session_id(self, ctx: RunnerContext, config: dict[str, typing.Any]) -> tuple[str, bool]:
         stored = self._stored_session_id(ctx)
         if stored and config["reuse_session"]:
             return stored, False
@@ -517,7 +521,7 @@ class NativeClaudeCodeRunner(AgentRunner):
 
     def _mcp_access(
         self,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         config: dict[str, typing.Any],
     ) -> tuple[AgentRunMCPAccess, ClaudeCodeExternalTools]:
         run_api = self.get_run_api(ctx)
@@ -539,7 +543,7 @@ class NativeClaudeCodeRunner(AgentRunner):
         access.start()
         return access, tools
 
-    async def run(self, ctx: AgentRunContext) -> typing.AsyncGenerator[AgentRunResult, None]:
+    async def run(self, ctx: RunnerContext) -> typing.AsyncGenerator[RunnerResult, None]:
         try:
             config = self._validate_config(ctx)
             submission = ctx.input.interaction
@@ -557,7 +561,7 @@ class NativeClaudeCodeRunner(AgentRunner):
                         code="claude_code.interaction_invalid",
                     )
                 prompt = _interaction_resume_prompt(_submission_payload(submission, continuation))
-                yield AgentRunResult.state_updated(
+                yield RunnerResult.state_updated(
                     ctx.run_id,
                     PENDING_INTERACTION_STATE_KEY,
                     None,
@@ -569,15 +573,13 @@ class NativeClaudeCodeRunner(AgentRunner):
                     raise NativeCliError("input text is required", code="claude_code.empty_input")
             session_id, session_created = self._session_id(ctx, config)
             if session_created:
-                yield AgentRunResult.state_updated(ctx.run_id, SESSION_STATE_KEY, session_id, scope="conversation")
+                yield RunnerResult.state_updated(ctx.run_id, SESSION_STATE_KEY, session_id, scope="conversation")
 
             # The first turn resumes only when reusing a stored session; every
             # turn after the first continues the session created/resumed above.
             resume_state = {"resume": not session_created}
 
-            def run_turn(
-                turn_prompt: str, resume_session_id: str
-            ) -> typing.AsyncGenerator[AgentRunResult, None]:
+            def run_turn(turn_prompt: str, resume_session_id: str) -> typing.AsyncGenerator[RunnerResult, None]:
                 resume = resume_state["resume"]
                 resume_state["resume"] = True
                 if config["location"] == "daemon":
@@ -594,23 +596,25 @@ class NativeClaudeCodeRunner(AgentRunner):
             ):
                 yield result
         except NativeCliError as exc:
-            yield AgentRunResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
+            yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
         except AgentRuntimeDaemonError as exc:
-            yield AgentRunResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
+            yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
 
     async def _run_local_or_ssh(
         self,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         config: dict[str, typing.Any],
         prompt: str,
         session_id: str,
         resume: bool,
-    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+    ) -> typing.AsyncGenerator[RunnerResult, None]:
         access, tools = self._mcp_access(ctx, config)
         mcp_config_path = ""
         try:
             mcp_servers = [access.server_config] if access.server_config else []
-            mcp_config = _mcp_config_json(mcp_servers, config["mcp_servers"]) if mcp_servers or config["mcp_servers"] else ""
+            mcp_config = (
+                _mcp_config_json(mcp_servers, config["mcp_servers"]) if mcp_servers or config["mcp_servers"] else ""
+            )
             if mcp_config and config["location"] == "local":
                 mcp_config_path = _write_temp_mcp_config(mcp_config)
             elif mcp_config:
@@ -664,12 +668,12 @@ class NativeClaudeCodeRunner(AgentRunner):
 
     async def _run_daemon(
         self,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         config: dict[str, typing.Any],
         prompt: str,
         session_id: str,
         resume: bool,
-    ) -> typing.AsyncGenerator[AgentRunResult, None]:
+    ) -> typing.AsyncGenerator[RunnerResult, None]:
         hub = get_agent_runtime_daemon_hub("claude-code", error_code_prefix="claude_code")
         if not hub.is_running:
             await hub.start(
@@ -706,7 +710,7 @@ class NativeClaudeCodeRunner(AgentRunner):
             timeout=config["timeout"],
         ):
             event.setdefault("run_id", ctx.run_id)
-            yield AgentRunResult.model_validate(event)
+            yield RunnerResult.model_validate(event)
 
 
 class NativeClaudeCodeDaemon(AgentRuntimeDaemonClient):
@@ -768,7 +772,7 @@ class NativeClaudeCodeDaemon(AgentRuntimeDaemonClient):
 
 
 async def _run_cli_process(
-    ctx: AgentRunContext,
+    ctx: RunnerContext,
     command: str,
     args: list[str],
     *,
@@ -778,7 +782,7 @@ async def _run_cli_process(
     streaming: bool,
     expected_session_id: str,
     initial_stdin: bytes = b"",
-) -> typing.AsyncGenerator[AgentRunResult, None]:
+) -> typing.AsyncGenerator[RunnerResult, None]:
     try:
         async for event in _run_cli_process_events(
             command,
@@ -791,9 +795,9 @@ async def _run_cli_process(
             initial_stdin=initial_stdin,
         ):
             event.setdefault("run_id", ctx.run_id)
-            yield AgentRunResult.model_validate(event)
+            yield RunnerResult.model_validate(event)
     except NativeCliError as exc:
-        yield AgentRunResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
+        yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
 
 
 async def _run_cli_process_events(
@@ -820,7 +824,9 @@ async def _run_cli_process_events(
     except FileNotFoundError as exc:
         raise NativeCliError(f"Claude Code command not found: {command}", code="claude_code.command_not_found") from exc
     except PermissionError as exc:
-        raise NativeCliError(f"Claude Code command is not executable: {command}", code="claude_code.permission_denied") from exc
+        raise NativeCliError(
+            f"Claude Code command is not executable: {command}", code="claude_code.permission_denied"
+        ) from exc
     except OSError as exc:
         raise NativeCliError(f"Failed to start Claude Code command: {exc}", code="claude_code.start_failed") from exc
     assert process.stdout is not None
@@ -852,10 +858,15 @@ async def _run_cli_process_events(
                 continue
             parsed = _parse_cli_event(text)
             if parsed.get("type") == "error":
-                raise NativeCliError(str(parsed.get("message") or parsed), code=str(parsed.get("code") or "claude_code.cli_error"))
+                raise NativeCliError(
+                    str(parsed.get("message") or parsed), code=str(parsed.get("code") or "claude_code.cli_error")
+                )
             session_id = _event_session_id(parsed)
             if session_id and session_id != expected_session_id:
-                yield {"type": "state.updated", "data": {"key": SESSION_STATE_KEY, "value": session_id, "scope": "conversation"}}
+                yield {
+                    "type": "state.updated",
+                    "data": {"key": SESSION_STATE_KEY, "value": session_id, "scope": "conversation"},
+                }
             question_tool = _claude_question_tool_use(parsed)
             if question_tool is not None and pending_interaction is None:
                 tool_use_id, tool_input = question_tool
@@ -884,7 +895,9 @@ async def _run_cli_process_events(
         returncode = await asyncio.wait_for(process.wait(), timeout=max(0.1, deadline - time.monotonic()))
         stderr = _redact_secrets((await stderr_task).decode("utf-8", errors="replace").strip())
         if returncode != 0:
-            raise NativeCliError(stderr or f"Claude Code exited with status {returncode}", code="claude_code.process_failed")
+            raise NativeCliError(
+                stderr or f"Claude Code exited with status {returncode}", code="claude_code.process_failed"
+            )
         if pending_interaction is not None:
             request, continuation = pending_interaction
             yield {

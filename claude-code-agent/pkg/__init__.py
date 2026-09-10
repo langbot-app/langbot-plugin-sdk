@@ -1,1 +1,1 @@
-"""Claude Code AgentRunner helpers."""
+"""Claude Code Runner helpers."""

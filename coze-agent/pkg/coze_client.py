@@ -1,4 +1,4 @@
-"""Coze API client for AgentRunner.
+"""Coze API client for Runner.
 
 This module provides a minimal Coze API client that doesn't depend on LangBot internals.
 """
@@ -34,7 +34,7 @@ class CozeConfigError(Exception):
 
 
 class AsyncCozeClient:
-    """Minimal Coze API client for AgentRunner.
+    """Minimal Coze API client for Runner.
 
     Supports:
     - v3/chat (streaming chat messages)

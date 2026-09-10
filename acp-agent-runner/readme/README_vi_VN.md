@@ -1,12 +1,12 @@
-# ACP Agent Runner
+# ACP Runner
 
 ## Tổng quan
 
-Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạng LangBot AgentRunner.
+Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạng LangBot Runner.
 
 ## Thông tin gói
 
-- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
 - **Phiên bản**: `0.1.4`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
@@ -61,7 +61,7 @@ Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạ
 ## Cài đặt và sử dụng
 
 1. Cài đặt plugin từ chợ plugin LangBot.
-2. Chọn Runner ID bên dưới trong bộ chọn AgentRunner của Pipeline.
+2. Chọn Runner ID bên dưới trong bộ chọn Runner của Pipeline.
 3. Điền thông tin kết nối theo bảng và lưu giá trị nhạy cảm bằng trường secret trong giao diện quản trị.
 
 ## Bảo mật và giới hạn

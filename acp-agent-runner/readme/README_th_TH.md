@@ -1,12 +1,12 @@
-# ACP Agent Runner
+# ACP Runner
 
 ## ภาพรวม
 
-เรียกใช้เอเจนต์เขียนโค้ดที่รองรับ Agent Client Protocol เป็น LangBot AgentRunner
+เรียกใช้เอเจนต์เขียนโค้ดที่รองรับ Agent Client Protocol เป็น LangBot Runner
 
 ## ข้อมูลแพ็กเกจ
 
-- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
 - **เวอร์ชัน**: `0.1.4`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
@@ -61,7 +61,7 @@
 ## การติดตั้งและใช้งาน
 
 1. ติดตั้งปลั๊กอินจากตลาดปลั๊กอิน LangBot
-2. เลือก Runner ID ด้านล่างในตัวเลือก AgentRunner ของ Pipeline
+2. เลือก Runner ID ด้านล่างในตัวเลือก Runner ของ Pipeline
 3. กรอกข้อมูลการเชื่อมต่อตามตาราง และเก็บค่าลับด้วยฟิลด์ secret ในหน้าจัดการ
 
 ## ความปลอดภัยและข้อจำกัด

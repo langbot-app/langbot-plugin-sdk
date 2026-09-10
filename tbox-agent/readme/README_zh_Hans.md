@@ -1,6 +1,6 @@
 # Tbox Agent
 
-Tbox Agent 将蚂蚁百宝箱应用接入 LangBot AgentRunner。插件调用 Tbox SDK，把 LangBot 文本和图片输入发送给目标应用，并将流式结果转换为 AgentRunner Protocol v1 消息。
+Tbox Agent 将蚂蚁百宝箱应用接入 LangBot Runner。插件调用 Tbox SDK，把 LangBot 文本和图片输入发送给目标应用，并将流式结果转换为 Runner Protocol v1 消息。
 
 它适合已经在百宝箱中完成应用编排、希望通过 LangBot 统一接入聊天渠道的场景。
 

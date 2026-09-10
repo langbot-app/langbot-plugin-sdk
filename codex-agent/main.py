@@ -1,4 +1,4 @@
-"""Codex AgentRunner plugin entry point."""
+"""Codex Runner plugin entry point."""
 
 from __future__ import annotations
 

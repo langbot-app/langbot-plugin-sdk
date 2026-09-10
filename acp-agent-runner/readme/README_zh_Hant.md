@@ -1,12 +1,12 @@
-# ACP Agent Runner
+# ACP Runner
 
 ## 概覽
 
-將任何相容 Agent Client Protocol 的程式設計代理作為 LangBot AgentRunner 執行。
+將任何相容 Agent Client Protocol 的程式設計代理作為 LangBot Runner 執行。
 
 ## 套件資訊
 
-- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
 - **版本**: `0.1.4`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
@@ -61,7 +61,7 @@
 ## 安裝與使用
 
 1. 從 LangBot 外掛市場安裝此外掛。
-2. 在 Pipeline 的 AgentRunner 選擇器中選取下方 Runner ID。
+2. 在 Pipeline 的 Runner 選擇器中選取下方 Runner ID。
 3. 依照設定表填入連線資訊；密鑰欄位請使用管理介面保存。
 
 ## 安全與限制

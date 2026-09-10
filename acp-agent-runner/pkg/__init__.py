@@ -1,1 +1,1 @@
-"""ACP Agent Runner support package."""
+"""ACP Runner support package."""

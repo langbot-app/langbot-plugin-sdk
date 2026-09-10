@@ -1,4 +1,4 @@
-"""WeKnora API client for AgentRunner.
+"""WeKnora API client for Runner.
 
 Ported from LangBot's legacy core WeKnora client and kept plugin-local so the
 runner can be distributed without importing LangBot core modules.

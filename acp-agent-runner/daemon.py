@@ -1,4 +1,4 @@
-"""User-side daemon for ACP Agent Runner.
+"""User-side daemon for ACP Runner.
 
 The daemon connects outward to the ACP runner plugin. It is useful when the
 LangBot server cannot SSH into the user's workstation. The local ACP process
@@ -121,7 +121,9 @@ def _tool_update_name(payload: dict[str, typing.Any]) -> str:
     return str(payload.get("name") or payload.get("title") or "acp_tool")
 
 
-def _result_event(result_type: str, data: dict[str, typing.Any], *, sequence: int | None = None) -> dict[str, typing.Any]:
+def _result_event(
+    result_type: str, data: dict[str, typing.Any], *, sequence: int | None = None
+) -> dict[str, typing.Any]:
     event = {"type": result_type, "data": data}
     if sequence is not None:
         event["sequence"] = sequence
@@ -157,9 +159,7 @@ class RunnerDaemon(AgentRuntimeDaemonClient):
                 cwd=str(config.get("cwd") or config.get("workspace") or os.getcwd()),
                 env={str(k): str(v) for k, v in dict(config.get("env") or {}).items()},
                 unset_env=(
-                    CLAUDE_ENV_VARS_TO_UNSET
-                    if str(config.get("provider") or "custom") == "claude-code"
-                    else ()
+                    CLAUDE_ENV_VARS_TO_UNSET if str(config.get("provider") or "custom") == "claude-code" else ()
                 ),
                 permission_decision=str(config.get("permission_decision") or "allow_once"),
                 startup_timeout=float(config.get("startup_timeout") or 30.0),
@@ -167,7 +167,9 @@ class RunnerDaemon(AgentRuntimeDaemonClient):
 
             async with client:
                 initialize_result = await client.initialize(timeout=float(config.get("initialize_timeout") or 30.0))
-                session_id, created = await self._create_or_resume_session(client, initialize_result, config, mcp_servers)
+                session_id, created = await self._create_or_resume_session(
+                    client, initialize_result, config, mcp_servers
+                )
                 stored_session_id = str(config.get("stored_session_id") or "")
                 if created or stored_session_id != session_id:
                     await self.emit_event(
@@ -259,7 +261,9 @@ class RunnerDaemon(AgentRuntimeDaemonClient):
                 return _extract_session_id(result) or stored_session_id, False
 
         if not config.get("create_session_if_missing", True):
-            raise AcpError("no stored ACP session and create-session-if-missing is disabled", code="acp.session_missing")
+            raise AcpError(
+                "no stored ACP session and create-session-if-missing is disabled", code="acp.session_missing"
+            )
 
         result = await client.request(
             "session/new",
@@ -342,7 +346,9 @@ class RunnerDaemon(AgentRuntimeDaemonClient):
         if not final_text:
             await self.emit_event(
                 job_id,
-                _result_event("run.failed", {"error": "ACP agent returned no assistant text", "code": "acp.empty_response"}),
+                _result_event(
+                    "run.failed", {"error": "ACP agent returned no assistant text", "code": "acp.empty_response"}
+                ),
             )
             return
 
@@ -388,7 +394,7 @@ class RunnerDaemon(AgentRuntimeDaemonClient):
 
 
 def parse_cli_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Connect a local ACP runtime to LangBot ACP Agent Runner.")
+    parser = argparse.ArgumentParser(description="Connect a local ACP runtime to LangBot ACP Runner.")
     parser.add_argument("--url", required=True, help="Daemon hub WebSocket URL, for example ws://host:8766")
     parser.add_argument("--daemon-id", required=True, help="Stable daemon id configured in the LangBot runner.")
     parser.add_argument("--token", default=os.environ.get("LANGBOT_ACP_DAEMON_TOKEN", ""), help="Shared hub token.")

@@ -10,19 +10,19 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from langbot_plugin.api.entities.builtin.agent_runner import (
+from langbot_plugin.api.entities.builtin.provider.message import ContentElement
+from langbot_plugin.api.entities.builtin.runner import (
     AgentEventContext,
     AgentInput,
     AgentResources,
-    AgentRunContext,
     AgentRunState,
     AgentRuntimeContext,
     AgentTrigger,
     ConversationContext,
     DeliveryContext,
     InteractionSubmission,
+    RunnerContext,
 )
-from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,7 +46,7 @@ def _load_runner_module(plugin_dir: str, stubs: dict[str, Any] | None = None):
     plugin_root = ROOT / plugin_dir
     sys.path.insert(0, str(plugin_root))
     try:
-        module_path = plugin_root / "components" / "agent_runner" / "default.py"
+        module_path = plugin_root / "components" / "runner" / "default.py"
         spec = importlib.util.spec_from_file_location(
             f"test_traditional_{plugin_dir.replace('-', '_')}_runner",
             module_path,
@@ -77,8 +77,8 @@ def _ctx(
     conversation_state: dict[str, Any] | None = None,
     event_type: str = "message.received",
     interaction: InteractionSubmission | None = None,
-) -> AgentRunContext:
-    return AgentRunContext(
+) -> RunnerContext:
+    return RunnerContext(
         run_id="run_traditional",
         trigger=AgentTrigger(type=event_type),
         event=AgentEventContext(event_id="evt_1", event_type=event_type, source="test"),
@@ -95,7 +95,7 @@ def _ctx(
     )
 
 
-def _text_and_image_ctx(config: dict[str, Any]) -> AgentRunContext:
+def _text_and_image_ctx(config: dict[str, Any]) -> RunnerContext:
     return _ctx(
         config=config,
         text="describe this",
@@ -114,7 +114,7 @@ def test_traditional_requirements_match_direct_imports() -> None:
 
 def test_coze_does_not_reuse_langbot_conversation_id_as_external_id() -> None:
     module = _load_runner_module("coze-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
 
     assert runner._get_external_conversation_id(_ctx()) is None
 
@@ -124,7 +124,7 @@ def test_coze_does_not_reuse_langbot_conversation_id_as_external_id() -> None:
 
 def test_n8n_uses_runner_owned_conversation_and_session_ids() -> None:
     module = _load_runner_module("n8n-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _ctx()
 
     conversation_id, conversation_created = runner._get_or_create_state_id(
@@ -149,7 +149,7 @@ def test_n8n_uses_runner_owned_conversation_and_session_ids() -> None:
 
 def test_dify_workflow_uses_runner_owned_state_ids() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     captured_inputs: dict[str, Any] = {}
 
     class FakeClient:
@@ -206,7 +206,7 @@ class _FakePluginStorage:
 
 def test_dify_workflow_pause_requests_host_interaction_and_hides_provider_tokens() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     storage = _FakePluginStorage()
     runner.get_run_api = lambda ctx: storage
 
@@ -243,9 +243,7 @@ def test_dify_workflow_pause_requests_host_interaction_and_hides_provider_tokens
                 },
             }
 
-    results = asyncio.run(
-        _collect_async(runner._run_workflow(_ctx(), FakeClient(), {}, "hello", "user_1", [], False))
-    )
+    results = asyncio.run(_collect_async(runner._run_workflow(_ctx(), FakeClient(), {}, "hello", "user_1", [], False)))
 
     interaction_result = results[-1]
     assert _type(results[0]) == "tool.call.started"
@@ -268,7 +266,7 @@ def test_dify_workflow_pause_requests_host_interaction_and_hides_provider_tokens
 
 def test_dify_interaction_resume_submits_mapped_values_and_clears_continuation() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     storage = _FakePluginStorage()
     runner.get_run_api = lambda ctx: storage
     interaction_id = "dify-test"
@@ -300,9 +298,7 @@ def test_dify_interaction_resume_submits_mapped_values_and_clears_continuation()
         action_id="action_1",
         values={"field_1": "high"},
     )
-    results = asyncio.run(
-        _collect_async(runner._resume_workflow(_ctx(), FakeClient(), submission, False))
-    )
+    results = asyncio.run(_collect_async(runner._resume_workflow(_ctx(), FakeClient(), submission, False)))
 
     assert captured == {
         "form_token": "form-private",
@@ -318,7 +314,7 @@ def test_dify_interaction_resume_submits_mapped_values_and_clears_continuation()
 
 def test_dify_field_submission_advances_to_action_without_calling_provider() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     storage = _FakePluginStorage()
     runner.get_run_api = lambda ctx: storage
     interaction_id = "dify-field"
@@ -355,9 +351,7 @@ def test_dify_field_submission_advances_to_action_without_calling_provider() -> 
             raise AssertionError("provider must not resume before the action step")
 
     submission = InteractionSubmission(interaction_id=interaction_id, values={"field_1": "high"})
-    results = asyncio.run(
-        _collect_async(runner._resume_workflow(_ctx(), ProviderMustNotRun(), submission, False))
-    )
+    results = asyncio.run(_collect_async(runner._resume_workflow(_ctx(), ProviderMustNotRun(), submission, False)))
 
     assert [_type(result) for result in results] == ["action.requested"]
     request = results[0].data["payload"]
@@ -369,17 +363,14 @@ def test_dify_field_submission_advances_to_action_without_calling_provider() -> 
 
 def test_dify_form_content_is_revealed_with_its_current_field() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     storage = _FakePluginStorage()
     runner.get_run_api = lambda ctx: storage
     request, continuation = runner._build_interaction_request(
         {
             "form_token": "form-private",
             "node_title": "人工介入",
-            "form_content": (
-                "1\n请输入你的问题\n{{#$output.us_input#}}\n\n"
-                "请选择你的答案\n{{#$output.xiala#}}"
-            ),
+            "form_content": ("1\n请输入你的问题\n{{#$output.us_input#}}\n\n请选择你的答案\n{{#$output.xiala#}}"),
             "inputs": [
                 {"output_variable_name": "us_input", "type": "paragraph", "required": True},
                 {
@@ -412,9 +403,7 @@ def test_dify_form_content_is_revealed_with_its_current_field() -> None:
     assert second_request["fields"][0]["label"] == "xiala"
     assert "请输入你的问题" not in second_request["description"]
 
-    second_continuation = json.loads(
-        storage.values[module._interaction_storage_key(second_request["interaction_id"])]
-    )
+    second_continuation = json.loads(storage.values[module._interaction_storage_key(second_request["interaction_id"])])
     final_result = asyncio.run(
         runner._advance_field_interaction(
             _ctx(),
@@ -433,7 +422,7 @@ def test_dify_form_content_is_revealed_with_its_current_field() -> None:
 
 def test_dify_interaction_resume_can_pause_again() -> None:
     module = _load_runner_module("dify-agent")
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     storage = _FakePluginStorage()
     runner.get_run_api = lambda ctx: storage
     interaction_id = "dify-first"
@@ -470,9 +459,7 @@ def test_dify_interaction_resume_can_pause_again() -> None:
             }
 
     submission = InteractionSubmission(interaction_id=interaction_id, action_id="continue")
-    results = asyncio.run(
-        _collect_async(runner._resume_workflow(_ctx(), FakeClient(), submission, False))
-    )
+    results = asyncio.run(_collect_async(runner._resume_workflow(_ctx(), FakeClient(), submission, False)))
 
     assert [_type(result) for result in results] == ["action.requested"]
     new_interaction_id = results[0].data["payload"]["interaction_id"]
@@ -559,7 +546,7 @@ def test_dify_text_image_upload_failure_is_input_error() -> None:
             raise module.DifyAPIError("provider upload failed", code="dify.http_error")
 
     module.AsyncDifyClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _text_and_image_ctx(
         {
             "base-url": "https://api.dify.ai/v1",
@@ -589,7 +576,7 @@ def test_coze_text_image_upload_failure_is_input_error() -> None:
             pass
 
     module.AsyncCozeClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _text_and_image_ctx({"api-key": "key", "bot-id": "bot"})
 
     results = asyncio.run(_collect_async(runner.run(ctx)))
@@ -611,7 +598,7 @@ def test_dashscope_timeout_maps_to_retryable_run_failed() -> None:
             yield {}
 
     module.DashScopeClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _ctx(config={"api-key": "key", "app-id": "app", "app-type": "agent"})
 
     results = asyncio.run(_collect_async(runner.run(ctx)))
@@ -635,7 +622,7 @@ def test_dashscope_empty_output_fails_instead_of_completing() -> None:
                 yield {}
 
     module.DashScopeClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _ctx(config={"api-key": "key", "app-id": "app", "app-type": "agent"})
 
     results = asyncio.run(_collect_async(runner.run(ctx)))
@@ -656,7 +643,7 @@ def test_tbox_timeout_maps_to_retryable_run_failed() -> None:
             yield {}
 
     module.AsyncTboxClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _ctx(config={"api-key": "key", "app-id": "app"})
 
     results = asyncio.run(_collect_async(runner.run(ctx)))
@@ -677,7 +664,7 @@ def test_deerflow_timeout_maps_to_retryable_run_failed() -> None:
             yield {}
 
     module.AsyncDeerFlowClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     runner._ensure_thread_id = lambda ctx, client, timeout: _async_value(("thread-1", False))
     ctx = _ctx(config={"api-base": "http://127.0.0.1:2026", "streaming": True, "timeout": 1})
 
@@ -703,7 +690,7 @@ def test_weknora_timeout_maps_to_retryable_run_failed() -> None:
             raise module.WeKnoraAPIError("timeout", code="weknora.timeout", retryable=True)
 
     module.AsyncWeKnoraClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _ctx(config={"base-url": "http://weknora/api/v1", "api-key": "key"})
 
     results = asyncio.run(_collect_async(runner.run(ctx)))
@@ -723,7 +710,7 @@ def test_weknora_empty_answer_fails_instead_of_completing() -> None:
             yield {"response_type": "answer", "content": "", "done": True}
 
     module.AsyncWeKnoraClient = FakeClient
-    runner = object.__new__(module.DefaultAgentRunner)
+    runner = object.__new__(module.DefaultRunner)
     ctx = _ctx(
         config={"base-url": "http://weknora/api/v1", "api-key": "key", "app-type": "agent"},
         conversation_state={"external.session_id": "weknora-session-1"},
@@ -736,7 +723,7 @@ def test_weknora_empty_answer_fails_instead_of_completing() -> None:
 
 
 def test_weknora_manifest_does_not_advertise_host_tool_or_knowledge_capabilities() -> None:
-    runner = _load_yaml(ROOT / "weknora-agent" / "components" / "agent_runner" / "default.yaml")
+    runner = _load_yaml(ROOT / "weknora-agent" / "components" / "runner" / "default.yaml")
 
     assert runner["spec"]["capabilities"]["tool_calling"] is False
     assert runner["spec"]["capabilities"]["knowledge_retrieval"] is False

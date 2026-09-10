@@ -1,6 +1,6 @@
 # WeKnora Agent
 
-WeKnora Agent 将 WeKnora 智能体或知识库问答应用接入 LangBot AgentRunner。插件支持 Agent 智能推理模式和 Knowledge Base Chat 模式，并在 LangBot 会话状态中维护外部 WeKnora session。
+WeKnora Agent 将 WeKnora 智能体或知识库问答应用接入 LangBot Runner。插件支持 Agent 智能推理模式和 Knowledge Base Chat 模式，并在 LangBot 会话状态中维护外部 WeKnora session。
 
 ## Runner ID
 

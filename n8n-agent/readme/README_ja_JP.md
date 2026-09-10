@@ -2,7 +2,7 @@
 
 ## 概要
 
-n8n ワークフローの Webhook を LangBot AgentRunner として実行します。
+n8n ワークフローの Webhook を LangBot Runner として実行します。
 
 ## パッケージ情報
 
@@ -46,7 +46,7 @@ n8n ワークフローの Webhook を LangBot AgentRunner として実行しま�
 ## インストールと使用方法
 
 1. LangBot プラグインマーケットからこのプラグインをインストールします。
-2. Pipeline の AgentRunner セレクターで下記 Runner ID を選択します。
+2. Pipeline の Runner セレクターで下記 Runner ID を選択します。
 3. 設定表に従って接続情報を入力し、機密値は管理画面の secret フィールドに保存します。
 
 ## セキュリティと制約

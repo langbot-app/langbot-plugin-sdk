@@ -1,4 +1,4 @@
-"""Dify Service API client for AgentRunner.
+"""Dify Service API client for Runner.
 
 This module provides a minimal Dify API client that doesn't depend on LangBot internals.
 """
@@ -33,7 +33,7 @@ class DifyConfigError(Exception):
 
 
 class AsyncDifyClient:
-    """Minimal Dify Service API client for AgentRunner.
+    """Minimal Dify Service API client for Runner.
 
     Supports:
     - chat-messages (for chat and agent app types)

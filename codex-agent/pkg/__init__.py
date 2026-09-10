@@ -1,1 +1,1 @@
-"""Codex AgentRunner helpers."""
+"""Codex Runner helpers."""

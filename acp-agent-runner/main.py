@@ -1,4 +1,4 @@
-"""ACP Agent Runner plugin entry point."""
+"""ACP Runner plugin entry point."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from langbot_plugin.api.agent_tools.daemon import (
 from langbot_plugin.api.definition.plugin import BasePlugin
 
 
-class AcpAgentRunnerPlugin(BasePlugin):
+class AcpRunnerPlugin(BasePlugin):
     """Agent Client Protocol runner plugin."""
 
     def __init__(self):

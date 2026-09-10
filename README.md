@@ -1,12 +1,12 @@
-# LangBot 官方 AgentRunner 插件
+# LangBot 官方 Runner 插件
 
-本仓库包含 LangBot 官方维护的外部服务 AgentRunner 插件。每个插件负责把第三方智能体、工作流或应用平台接入 LangBot AgentRunner 协议 v1。
+本仓库包含 LangBot 官方维护的外部服务 Runner 插件。每个插件负责把第三方智能体、工作流或应用平台接入 LangBot Runner 协议 v1。
 
 这些插件是协议消费者。LangBot 宿主端负责运行封套、资源授权、事实存储、拉取接口、结果归一化和投递生命周期；插件只负责对应服务的请求/响应映射和状态交接。
 
 ## 兼容分支
 
-本仓库跟随 LangBot 4.11.x AgentRunner 集成工作。联合测试时使用：
+本仓库跟随 LangBot 4.11.x Runner 集成工作。联合测试时使用：
 
 - `langbot-app/LangBot` 分支 `dev/4.11.x`
 - `langbot-app/langbot-plugin-sdk` 分支 `dev/4.11.x`
@@ -17,7 +17,7 @@
 
 本仓库不实现 LangBot EventGateway、事件订阅、事件通知、调度器或事件分发。这些系统属于 LangBot 宿主端或独立的事件相关分支。
 
-本仓库中的插件消费 LangBot 传入的 `AgentRunContext`：
+本仓库中的插件消费 LangBot 传入的 `RunnerContext`：
 
 - `ctx.event`：事件优先的触发元数据。
 - `ctx.conversation`、`ctx.actor`、`ctx.subject`：当前运行范围的元数据。
@@ -34,7 +34,7 @@ LangBot 默认不会内联完整历史。如果运行器需要更多上下文，
 
 ## 外部执行器访问 LangBot 资产
 
-进程内运行器，例如 `local-agent`，应直接调用 `AgentRunAPIProxy`。
+进程内运行器，例如 `local-agent`，应直接调用 `RunnerAPIProxy`。
 
 进程外执行器运行器，例如 ACP 兼容的编码智能体，可以通过 SDK 提供的 run-scoped MCP bridge 回访 LangBot 资产。该 bridge 只暴露当前 LangBot 授权的工具、知识库和历史访问入口，所有请求仍会被宿主端按 `run_id`、资源授权快照和调用方插件身份校验。
 
@@ -44,7 +44,7 @@ LangBot 默认不会内联完整历史。如果运行器需要更多上下文，
 
 | 插件 | 运行器标识 | 替代对象 | 说明 |
 | --- | --- | --- | --- |
-| `acp-agent-runner` | `plugin:langbot-team/ACPAgentRunner/default` | - | Agent Client Protocol 统一编码智能体集成 |
+| `acp-agent-runner` | `plugin:langbot-team/ACPRunner/default` | - | Agent Client Protocol 统一编码智能体集成 |
 | `claude-code-agent` | `plugin:langbot-team/ClaudeCodeAgent/default` | - | Claude Code CLI 专属集成 |
 | `codex-agent` | `plugin:langbot-team/CodexAgent/default` | - | Codex CLI 专属集成 |
 | `deerflow-agent` | `plugin:langbot-team/DeerFlowAgent/default` | `deerflow-api` | DeerFlow LangGraph 集成 |
@@ -66,7 +66,7 @@ LangBot 默认不会内联完整历史。如果运行器需要更多上下文，
 - 当目标平台需要时，从 `ctx.event`、`ctx.actor` 和 `ctx.subject` 读取事件、操作者和对象元数据。
 - 从 `ctx.delivery` 和 `ctx.runtime` 读取投递和运行时决策。
 - 从 `ctx.config` 读取静态运行器绑定配置。
-- 尊重 `ctx.resources`，并通过 `AgentRunAPIProxy` 访问任何由宿主端代理的模型、工具、知识、历史、事件、状态或存储。
+- 尊重 `ctx.resources`，并通过 `RunnerAPIProxy` 访问任何由宿主端代理的模型、工具、知识、历史、事件、状态或存储。
 - 使用 `ctx.context` 判断是否可以拉取更多历史或状态。
 - 当第三方平台的完成事件或响应元数据提供 token usage 时，在 terminal `run.completed` 的 `usage` 字段上报最终聚合 usage；失败前已知的部分 usage 可随 `run.failed` 上报。不能观测 usage 时应省略该字段，表示 unknown，而不是 0。
 
@@ -87,7 +87,7 @@ Pipeline 适配字段只用于适配层：
 
 推荐模式：
 
-- 使用 `AgentRunAPIProxy.state_set(...)` 等宿主端状态接口或插件存储保存外部会话期标识。
+- 使用 `RunnerAPIProxy.state_set(...)` 等宿主端状态接口或插件存储保存外部会话期标识。
 - 只在需要时分页或搜索转录历史。
 - 大型载荷应由 sandbox 或目标平台保存为 path、URL 或平台原生引用，不应通过 LangBot 额外维护一套文件持久化接口。
 - 当运行器希望 LangBot 持久化小型 JSON 状态时，返回 `state.updated`。
@@ -99,9 +99,9 @@ Pipeline 适配字段只用于适配层：
 
 机制（宿主端已完整实现）：
 
-- 运行器在 AgentRunner 组件 manifest 中声明 `spec.capabilities.steering: true`。
+- 运行器在 Runner 组件 manifest 中声明 `spec.capabilities.steering: true`。
 - 宿主端在运行仍活跃时，将后续用户消息按 `run_id` 入队到该运行的 steering 队列（仅当本次运行有会话范围 `conversation_id`）。
-- 运行器在轮次边界通过 `AgentRunAPIProxy.steering_pull(mode="all"|"one")` 拉取这些追问，并把它们作为后续轮次喂给目标 agent。
+- 运行器在轮次边界通过 `RunnerAPIProxy.steering_pull(mode="all"|"one")` 拉取这些追问，并把它们作为后续轮次喂给目标 agent。
 - 宿主端只在 `ctx.context.available_apis.steering_pull` 为真时授权该接口；不可用时 SDK 抛出 `PermissionDeniedError`，运行器应回退为单轮行为。
 
 重要约束：**一旦声明了 `steering` 能力，运行器必须在其所有传输路径上排空 steering 队列**。否则被「吸收进当前运行」的消息会在运行结束时被宿主端标记为 `steering.dropped` 而丢失——这比不声明该能力（消息会另起一次运行）更糟。
@@ -142,9 +142,9 @@ uv run ruff check .
 ## 架构
 
 - 每个插件都是仓库根目录下的独立目录，不使用 `packages/<plugin>` 结构。
-- 本仓库作为插件集合分发，不作为可导入的 `langbot_agent_runner` Python 包使用。
-- 每个插件声明一个或多个 AgentRunner 组件。
-- 所有运行器都使用 AgentRunner 协议 v1。
+- 本仓库作为插件集合分发，不作为可导入的 `langbot_runner` Python 包使用。
+- 每个插件声明一个或多个 Runner 组件。
+- 所有运行器都使用 Runner 协议 v1。
 - 宿主端授权限定在单次运行范围内，并通过 `run_id`、`ctx.resources` 和调用方插件身份执行校验。
 - Pipeline 适配转换由 LangBot 宿主端在调用运行器前完成；本仓库不拥有 Pipeline 内部逻辑。
 
@@ -152,4 +152,4 @@ uv run ruff check .
 
 - [LangBot Plugin SDK](https://github.com/langbot-app/langbot-plugin-sdk)：插件开发 SDK 和运行时。
 - [LangBot](https://github.com/langbot-app/LangBot)：LangBot 主应用和 Host 实现。
-- AgentRunner Protocol v1：见 LangBot 仓库中的 `LangBot/docs/agent-runner-pluginization/PROTOCOL_V1.md`。
+- Runner Protocol v1：见 LangBot 仓库中的 `LangBot/docs/agent-runner-pluginization/PROTOCOL_V1.md`。

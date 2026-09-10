@@ -2,27 +2,27 @@ apiVersion: v1
 kind: Plugin
 metadata:
   author: langbot-team
-  name: ACPAgentRunner
+  name: ACPRunner
   version: 0.1.4
   repository: https://github.com/langbot-app/langbot-agent-runner
   label:
-    en_US: ACP Agent Runner
-    zh_Hans: ACP Agent Runner
-    zh_Hant: ACP Agent Runner
-    ja_JP: ACP Agent Runner
-    th_TH: ACP Agent Runner
-    vi_VN: ACP Agent Runner
-    es_ES: ACP Agent Runner
-    ru_RU: ACP Agent Runner
+    en_US: ACP Runner
+    zh_Hans: ACP Runner
+    zh_Hant: ACP Runner
+    ja_JP: ACP Runner
+    th_TH: ACP Runner
+    vi_VN: ACP Runner
+    es_ES: ACP Runner
+    ru_RU: ACP Runner
   description:
-    en_US: Run any Agent Client Protocol compatible coding agent as a LangBot AgentRunner.
-    zh_Hans: 将任意兼容 Agent Client Protocol 的编码智能体作为 LangBot AgentRunner 运行。
-    zh_Hant: 將任何相容 Agent Client Protocol 的程式設計代理作為 LangBot AgentRunner 執行。
-    ja_JP: Agent Client Protocol 対応のコーディングエージェントを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้เอเจนต์เขียนโค้ดที่รองรับ Agent Client Protocol เป็น LangBot AgentRunner
-    vi_VN: Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta cualquier agente de programación compatible con Agent Client Protocol como LangBot AgentRunner.
-    ru_RU: Запускает совместимый с Agent Client Protocol агент программирования как LangBot AgentRunner.
+    en_US: Run any Agent Client Protocol compatible coding agent as a LangBot Runner.
+    zh_Hans: 将任意兼容 Agent Client Protocol 的编码智能体作为 LangBot Runner 运行。
+    zh_Hant: 將任何相容 Agent Client Protocol 的程式設計代理作為 LangBot Runner 執行。
+    ja_JP: Agent Client Protocol 対応のコーディングエージェントを LangBot Runner として実行します。
+    th_TH: เรียกใช้เอเจนต์เขียนโค้ดที่รองรับ Agent Client Protocol เป็น LangBot Runner
+    vi_VN: Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạng LangBot Runner.
+    es_ES: Ejecuta cualquier agente de programación compatible con Agent Client Protocol como LangBot Runner.
+    ru_RU: Запускает совместимый с Agent Client Protocol агент программирования как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config:
@@ -64,11 +64,11 @@ spec:
       required: false
       default: ''
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:
     path: main.py
-    attr: AcpAgentRunnerPlugin
+    attr: AcpRunnerPlugin

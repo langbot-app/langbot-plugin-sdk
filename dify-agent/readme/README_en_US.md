@@ -1,6 +1,6 @@
 # Dify Agent
 
-Run a Dify application as a LangBot AgentRunner.
+Run a Dify application as a LangBot Runner.
 
 ## Runner ID
 
@@ -24,7 +24,7 @@ Configuration is **static** and should not contain runtime state. Only the follo
 | langbot-assets-token-ttl | integer | no | 3600 | Lifetime of each run token in seconds |
 | langbot-assets-input-name | string | no | langbot_asset_run_token | Dify input variable that receives the run token |
 
-**Note:** Do not put `conversation_id` in config. Use `AgentRunContext.state` for conversation state.
+**Note:** Do not put `conversation_id` in config. Use `RunnerContext.state` for conversation state.
 
 ## Capabilities
 
@@ -49,7 +49,7 @@ mappings in authorized plugin storage under a random LangBot `interaction_id`.
 The continuation is deleted after a successful terminal event or after it is
 replaced by a later pause.
 
-The selected AgentRunner binding must allow interactions, and the delivery
+The selected Runner binding must allow interactions, and the delivery
 adapter must support the requested field/action shape. Adapters with a smaller
 interaction subset deliver the request's plain-text fallback instead.
 The current official adapters expose buttons and single-select callbacks;
@@ -58,7 +58,7 @@ before they can be resumed from those surfaces.
 
 ## Runtime State
 
-Conversation state is managed through `AgentRunContext.state` and `AgentRunResult.state_updated`:
+Conversation state is managed through `RunnerContext.state` and `RunnerResult.state_updated`:
 
 ### Reading State
 
@@ -80,7 +80,7 @@ because Dify rejects non-UUID `conversation_id` values.
 The runner outputs `state.updated` with proper scope:
 
 ```python
-yield AgentRunResult.state_updated(
+yield RunnerResult.state_updated(
     ctx.run_id,
     "external.conversation_id",
     dify_conversation_id,
@@ -243,7 +243,7 @@ Legacy input variables are derived from context:
 LangBot host provides state snapshot:
 
 ```python
-ctx = AgentRunContext(
+ctx = RunnerContext(
     run_id="run_001",
     input=AgentInput(text="Hello"),
     config={
@@ -264,7 +264,7 @@ continuity.
 ### Workflow Mode with Custom Inputs
 
 ```python
-ctx = AgentRunContext(
+ctx = RunnerContext(
     run_id="run_002",
     input=AgentInput(text="Process this"),
     config={

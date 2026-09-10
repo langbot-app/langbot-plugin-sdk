@@ -1,6 +1,6 @@
 # DashScope Agent
 
-DashScope Agent 将阿里云百炼 Agent 或 Workflow 应用接入 LangBot AgentRunner。插件调用 DashScope Application API，并把流式文本、引用信息和错误转换为 AgentRunner Protocol v1 事件。
+DashScope Agent 将阿里云百炼 Agent 或 Workflow 应用接入 LangBot Runner。插件调用 DashScope Application API，并把流式文本、引用信息和错误转换为 Runner Protocol v1 事件。
 
 ## Runner ID
 

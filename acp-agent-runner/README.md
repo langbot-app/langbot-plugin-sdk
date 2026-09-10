@@ -1,6 +1,6 @@
-# ACP Agent Runner
+# ACP Runner
 
-`acp-agent-runner` runs an Agent Client Protocol compatible agent process as a LangBot AgentRunner.
+`acp-agent-runner` runs an Agent Client Protocol compatible agent process as a LangBot Runner.
 
 It is a thin runtime adapter:
 
@@ -14,7 +14,7 @@ It is a thin runtime adapter:
 
 ## Runner ID
 
-`plugin:langbot-team/ACPAgentRunner/default`
+`plugin:langbot-team/ACPRunner/default`
 
 ## Configuration
 
@@ -272,11 +272,11 @@ In `location=daemon`, the ACP process does not call the plugin's MCP bridge
 directly. The user-side daemon starts a localhost HTTP MCP proxy, injects that
 local URL into ACP, then forwards MCP JSON-RPC requests over the already-open
 WebSocket connection back to the plugin. The plugin handles those requests with
-the current run's `AgentRunAPIProxy`, so LangBot assets remain scoped by
+the current run's `RunnerAPIProxy`, so LangBot assets remain scoped by
 `run_id` and the Host authorization snapshot. The user's workstation does not
 need a public IP or inbound port for this path.
 Runner code should import the SDK proxy from
-`langbot_plugin.api.proxies.agent_run`.
+`langbot_plugin.api.proxies.runner`.
 
 To test the long-lived HTTP MCP gateway path with ACP, set:
 

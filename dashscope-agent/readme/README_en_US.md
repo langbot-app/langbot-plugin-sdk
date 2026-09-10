@@ -1,6 +1,6 @@
 # DashScope Agent
 
-Run an Aliyun DashScope application as a LangBot AgentRunner.
+Run an Aliyun DashScope application as a LangBot Runner.
 
 ## Runner ID
 

@@ -1,4 +1,4 @@
-"""n8n Webhook client for AgentRunner.
+"""n8n Webhook client for Runner.
 
 This module provides a minimal n8n webhook client that doesn't depend on LangBot internals.
 """
@@ -34,7 +34,7 @@ class N8nConfigError(Exception):
 
 
 class AsyncN8nClient:
-    """Minimal n8n Webhook client for AgentRunner.
+    """Minimal n8n Webhook client for Runner.
 
     Supports:
     - Webhook calls with various authentication types

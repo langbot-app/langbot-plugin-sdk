@@ -15,21 +15,21 @@ metadata:
     es_ES: Agente Coze
     ru_RU: Агент Coze
   description:
-    en_US: Run a Coze bot as a LangBot AgentRunner.
-    zh_Hans: 将扣子机器人作为 LangBot AgentRunner 运行。
-    zh_Hant: 將 Coze 機器人作為 LangBot AgentRunner 執行。
-    ja_JP: Coze ボットを LangBot AgentRunner として実行します。
-    th_TH: เรียกใช้บอต Coze เป็น LangBot AgentRunner
-    vi_VN: Chạy bot Coze dưới dạng LangBot AgentRunner.
-    es_ES: Ejecuta un bot de Coze como LangBot AgentRunner.
-    ru_RU: Запускает бота Coze как LangBot AgentRunner.
+    en_US: Run a Coze bot as a LangBot Runner.
+    zh_Hans: 将扣子机器人作为 LangBot Runner 运行。
+    zh_Hant: 將 Coze 機器人作為 LangBot Runner 執行。
+    ja_JP: Coze ボットを LangBot Runner として実行します。
+    th_TH: เรียกใช้บอต Coze เป็น LangBot Runner
+    vi_VN: Chạy bot Coze dưới dạng LangBot Runner.
+    es_ES: Ejecuta un bot de Coze como LangBot Runner.
+    ru_RU: Запускает бота Coze как LangBot Runner.
   icon: assets/icon.svg
 spec:
   config: []
   components:
-    AgentRunner:
+    Runner:
       fromDirs:
-        - path: components/agent_runner/
+        - path: components/runner/
   pages: []
 execution:
   python:

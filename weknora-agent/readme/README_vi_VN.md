@@ -2,7 +2,7 @@
 
 ## Tổng quan
 
-Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dưới dạng LangBot AgentRunner.
+Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dưới dạng LangBot Runner.
 
 ## Thông tin gói
 
@@ -35,7 +35,7 @@ Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dư�
 ## Cài đặt và sử dụng
 
 1. Cài đặt plugin từ chợ plugin LangBot.
-2. Chọn Runner ID bên dưới trong bộ chọn AgentRunner của Pipeline.
+2. Chọn Runner ID bên dưới trong bộ chọn Runner của Pipeline.
 3. Điền thông tin kết nối theo bảng và lưu giá trị nhạy cảm bằng trường secret trong giao diện quản trị.
 
 ## Bảo mật và giới hạn

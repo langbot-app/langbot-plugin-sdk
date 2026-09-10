@@ -1,4 +1,4 @@
-"""Claude Code AgentRunner plugin entry point."""
+"""Claude Code Runner plugin entry point."""
 
 from __future__ import annotations
 
