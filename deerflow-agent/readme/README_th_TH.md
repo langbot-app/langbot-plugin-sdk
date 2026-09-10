@@ -7,7 +7,7 @@
 ## ข้อมูลแพ็กเกจ
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
-- **เวอร์ชัน**: `0.1.0`
+- **เวอร์ชัน**: `0.1.2`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## ความสามารถหลัก
@@ -23,6 +23,7 @@
 | `api-key` | `secret` | ไม่ | ว่าง |
 | `auth-header` | `secret` | ไม่ | ว่าง |
 | `assistant-id` | `string` | ใช่ | `lead_agent` |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `model-name` | `string` | ไม่ | ว่าง |
 | `thinking-enabled` | `boolean` | ไม่ | false |
 | `plan-mode` | `boolean` | ไม่ | false |

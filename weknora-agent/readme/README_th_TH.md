@@ -7,7 +7,7 @@
 ## ข้อมูลแพ็กเกจ
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
-- **เวอร์ชัน**: `0.1.0`
+- **เวอร์ชัน**: `0.1.2`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## ความสามารถหลัก
@@ -25,6 +25,7 @@
 | `agent-id` | `string` | ใช่ | `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | ไม่ | `[]` |
 | `web-search-enabled` | `boolean` | ไม่ | false |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `timeout` | `integer` | ไม่ | `120` |
 | `base-prompt` | `string` | ไม่ | `请回答用户的问题。` |
 

@@ -50,6 +50,7 @@ ACP Runner 用于把兼容 Agent Client Protocol（ACP）的编码 Agent 接入 
 | `provider` | `select` | 预设值 | ACP provider 预设 |
 | `location` | `select` | `local` | `local`、`remote-ssh` 或 `daemon` |
 | `workspace` | `string` | 空 | Agent 工作目录 |
+| `advanced-settings` | `boolean` | `false` | 展开桥接、超时、会话和进程调优选项；仅影响表单显示 |
 | `ssh-target` | `string` | 空 | SSH 目标，如 `user@host` |
 | `daemon-id` | `string` | 空 | daemon 模式下的客户端 ID |
 | `acp-command` | `string` | 空 | 自定义 ACP 启动命令 |

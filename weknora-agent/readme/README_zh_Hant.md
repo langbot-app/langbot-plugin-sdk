@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -25,6 +25,7 @@
 | `agent-id` | `string` | 是 | `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | 否 | `[]` |
 | `web-search-enabled` | `boolean` | 否 | false |
+| `advanced-settings` | `boolean` | 否 | false |
 | `timeout` | `integer` | 否 | `120` |
 | `base-prompt` | `string` | 否 | `请回答用户的问题。` |
 

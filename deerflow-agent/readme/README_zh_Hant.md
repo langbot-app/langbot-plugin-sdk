@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -23,6 +23,7 @@
 | `api-key` | `secret` | 否 | 空 |
 | `auth-header` | `secret` | 否 | 空 |
 | `assistant-id` | `string` | 是 | `lead_agent` |
+| `advanced-settings` | `boolean` | 否 | false |
 | `model-name` | `string` | 否 | 空 |
 | `thinking-enabled` | `boolean` | 否 | false |
 | `plan-mode` | `boolean` | 否 | false |

@@ -21,6 +21,7 @@ Langflow Agent 将 Langflow flow 接入 LangBot Runner。插件调用 Langflow R
 | `base-url` | `string` | 是 | `http://localhost:7860` | Langflow 服务地址 |
 | `api-key` | `secret` | 是 | 空 | Langflow API key |
 | `flow-id` | `string` | 是 | 空 | 目标 flow ID |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开输入、输出和流程 tweak 调优选项 |
 | `input-type` | `string` | 否 | `chat` | Langflow input type |
 | `output-type` | `string` | 否 | `chat` | Langflow output type |
 | `tweaks` | `json` | 否 | `{}` | 发送给 flow 的 tweaks JSON |

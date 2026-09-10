@@ -37,6 +37,16 @@ spec:
       type: string
       required: false
       default: ''
+    - name: advanced-settings
+      label:
+        en_US: Advanced Settings
+        zh_Hans: 高级设置
+      description:
+        en_US: Show command, timeout, session, and LangBot bridge tuning controls.
+        zh_Hans: 显示命令、超时、会话和 LangBot 桥接调优选项。
+      type: boolean
+      required: false
+      default: false
     - name: command
       label:
         en_US: Codex Command
@@ -44,6 +54,10 @@ spec:
       type: string
       required: false
       default: codex
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: args-json
       label:
         en_US: Extra Arguments JSON
@@ -51,6 +65,10 @@ spec:
       type: string
       required: false
       default: '[]'
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: env-json
       label:
         en_US: Environment JSON
@@ -58,6 +76,10 @@ spec:
       type: string
       required: false
       default: '{}'
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: ssh-target
       label:
         en_US: SSH Target
@@ -98,6 +120,10 @@ spec:
       type: integer
       required: false
       default: 1800
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: streaming
       label:
         en_US: Streaming
@@ -105,6 +131,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: reuse-session
       label:
         en_US: Reuse Session
@@ -112,6 +142,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: approval-policy
       label:
         en_US: Approval Policy
@@ -174,6 +208,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: mcp-bridge-transport
       label:
         en_US: MCP Bridge Transport
@@ -194,6 +232,10 @@ spec:
           label:
             en_US: HTTP
             zh_Hans: HTTP
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: mcp-servers-json
       label:
         en_US: Extra MCP Servers JSON
@@ -201,6 +243,10 @@ spec:
       type: string
       required: false
       default: '[]'
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
   capabilities:
     streaming: true
     tool_calling: true

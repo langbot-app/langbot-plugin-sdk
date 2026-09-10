@@ -7,7 +7,7 @@ Ejecuta un bot de Coze como LangBot Runner.
 ## Información del paquete
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
-- **Versión**: `0.1.0`
+- **Versión**: `0.1.2`
 - **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Capacidades principales
@@ -22,6 +22,7 @@ Ejecuta un bot de Coze como LangBot Runner.
 | `api-key` | `secret` | Sí | Vacío |
 | `bot-id` | `string` | Sí | Vacío |
 | `api-base` | `select` | Sí | `https://api.coze.cn` |
+| `advanced-settings` | `boolean` | No | false |
 | `auto-save-history` | `boolean` | No | true |
 | `timeout` | `number` | No | `120` |
 | `langbot-assets-enabled` | `boolean` | No | false |

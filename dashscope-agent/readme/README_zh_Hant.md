@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/DashScopeAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -22,6 +22,7 @@
 | `app-type` | `select` | 是 | `agent` |
 | `api-key` | `secret` | 是 | 空 |
 | `app-id` | `string` | 是 | 空 |
+| `advanced-settings` | `boolean` | 否 | false |
 | `references_quote` | `string` | 否 | `参考资料来自:` |
 | `timeout` | `number` | 否 | `120` |
 | `langbot-assets-enabled` | `boolean` | 否 | false |

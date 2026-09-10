@@ -7,7 +7,7 @@ Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dư�
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -25,6 +25,7 @@ Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dư�
 | `agent-id` | `string` | Có | `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | Không | `[]` |
 | `web-search-enabled` | `boolean` | Không | false |
+| `advanced-settings` | `boolean` | Không | false |
 | `timeout` | `integer` | Không | `120` |
 | `base-prompt` | `string` | Không | `请回答用户的问题。` |
 

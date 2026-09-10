@@ -21,6 +21,7 @@ DashScope Agent 将阿里云百炼 Agent 或 Workflow 应用接入 LangBot Runne
 | `app-type` | `select` | 是 | `agent` | `agent` 或 `workflow` |
 | `api-key` | `secret` | 是 | 空 | DashScope API Key |
 | `app-id` | `string` | 是 | 空 | 百炼应用 ID |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开引用格式和超时调优选项 |
 | `references_quote` | `string` | 否 | `参考资料来自:` | 引用信息前缀 |
 | `timeout` | `number` | 否 | `120` | 请求超时秒数 |
 | `langbot-assets-enabled` | `boolean` | 否 | `false` | 是否启用 LangBot 资产回调 |

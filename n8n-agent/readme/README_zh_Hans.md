@@ -26,6 +26,7 @@ n8n 工作流 Agent 将 n8n Webhook 工作流接入 LangBot Runner。插件把�
 | `jwt-algorithm` | `string` | 否 | `HS256` | JWT 算法 |
 | `header-name` | `string` | 否 | 空 | 自定义鉴权 Header 名称 |
 | `header-value` | `secret` | 否 | 空 | 自定义鉴权 Header 值 |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开超时和响应映射调优选项 |
 | `timeout` | `integer` | 否 | `120` | Webhook 请求超时秒数 |
 | `output-key` | `string` | 否 | `response` | JSON 响应中的输出字段 |
 | `langbot-assets-enabled` | `boolean` | 否 | `false` | 是否启用 LangBot 资产回调 |

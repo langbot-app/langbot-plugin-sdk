@@ -7,7 +7,7 @@ Chạy tác nhân DeerFlow LangGraph dưới dạng LangBot Runner.
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -23,6 +23,7 @@ Chạy tác nhân DeerFlow LangGraph dưới dạng LangBot Runner.
 | `api-key` | `secret` | Không | Trống |
 | `auth-header` | `secret` | Không | Trống |
 | `assistant-id` | `string` | Có | `lead_agent` |
+| `advanced-settings` | `boolean` | Không | false |
 | `model-name` | `string` | Không | Trống |
 | `thinking-enabled` | `boolean` | Không | false |
 | `plan-mode` | `boolean` | Không | false |

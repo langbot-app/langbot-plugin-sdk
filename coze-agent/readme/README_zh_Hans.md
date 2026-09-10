@@ -22,6 +22,7 @@ Coze Agent 将 Coze（扣子）机器人接入 LangBot Runner，负责把 LangBo
 | `api-key` | `secret` | 是 | 空 | Coze Personal Access Token 或 API Token |
 | `bot-id` | `string` | 是 | 空 | Coze Bot ID |
 | `api-base` | `select` | 是 | `https://api.coze.cn` | 中国站或全球站 API 地址 |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开历史和超时调优选项 |
 | `auto-save-history` | `boolean` | 否 | `true` | 是否让 Coze 保存会话历史 |
 | `timeout` | `number` | 否 | `120` | 请求超时秒数 |
 | `langbot-assets-enabled` | `boolean` | 否 | `false` | 是否启用 LangBot 资产回调 |

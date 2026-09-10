@@ -25,6 +25,7 @@ WeKnora Agent 将 WeKnora 智能体或知识库问答应用接入 LangBot Runner
 | `agent-id` | `string` | 是 | `builtin-smart-reasoning` | Agent 模式使用的 Agent ID |
 | `knowledge-base-ids` | `array[string]` | 否 | `[]` | Chat 模式使用的知识库 ID |
 | `web-search-enabled` | `boolean` | 否 | `false` | Agent 模式是否启用网络搜索 |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开超时和回退提示词调优选项 |
 | `timeout` | `integer` | 否 | `120` | 请求超时秒数 |
 | `base-prompt` | `string` | 否 | `请回答用户的问题。` | 用户输入为空时使用的默认提示 |
 

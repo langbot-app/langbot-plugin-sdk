@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/DashScopeAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -22,6 +22,7 @@
 | `app-type` | `select` | Да | `agent` |
 | `api-key` | `secret` | Да | Пусто |
 | `app-id` | `string` | Да | Пусто |
+| `advanced-settings` | `boolean` | Нет | false |
 | `references_quote` | `string` | Нет | `参考资料来自:` |
 | `timeout` | `number` | Нет | `120` |
 | `langbot-assets-enabled` | `boolean` | Нет | false |

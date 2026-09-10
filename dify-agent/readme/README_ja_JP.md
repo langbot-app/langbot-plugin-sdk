@@ -7,7 +7,7 @@ Dify アプリを LangBot Runner として実行します。
 ## パッケージ情報
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
-- **バージョン**: `0.1.0`
+- **バージョン**: `0.1.2`
 - **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主な機能
@@ -20,6 +20,7 @@ Dify アプリを LangBot Runner として実行します。
 | フィールド | 型 | 必須 | 既定値 |
 | --- | --- | --- | --- |
 | `base-url` | `string` | はい | `https://api.dify.ai/v1` |
+| `advanced-settings` | `boolean` | いいえ | false |
 | `base-prompt` | `text` | はい | `When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image.` |
 | `app-type` | `select` | はい | `chat` |
 | `api-key` | `secret` | はい | 空 |

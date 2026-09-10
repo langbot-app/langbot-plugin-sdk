@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/N8nAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -27,6 +27,7 @@
 | `jwt-algorithm` | `string` | 否 | `HS256` |
 | `header-name` | `string` | 否 | 空 |
 | `header-value` | `secret` | 否 | 空 |
+| `advanced-settings` | `boolean` | 否 | false |
 | `timeout` | `integer` | 否 | `120` |
 | `output-key` | `string` | 否 | `response` |
 | `langbot-assets-enabled` | `boolean` | 否 | false |

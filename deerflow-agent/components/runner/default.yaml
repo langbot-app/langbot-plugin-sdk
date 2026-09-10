@@ -50,6 +50,16 @@ spec:
       type: string
       required: true
       default: 'lead_agent'
+    - name: advanced-settings
+      label:
+        en_US: Advanced Settings
+        zh_Hans: 高级设置
+      description:
+        en_US: Show model, timeout, and recursion tuning controls.
+        zh_Hans: 显示模型、超时和递归调优选项。
+      type: boolean
+      required: false
+      default: false
     - name: model-name
       label:
         en_US: Model Name
@@ -60,6 +70,10 @@ spec:
       type: string
       required: false
       default: ''
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: thinking-enabled
       label:
         en_US: Enable Thinking
@@ -100,6 +114,10 @@ spec:
       type: integer
       required: false
       default: 3
+      show_if:
+        field: subagent-enabled
+        operator: eq
+        value: true
     - name: timeout
       label:
         en_US: Timeout
@@ -110,6 +128,10 @@ spec:
       type: integer
       required: false
       default: 300
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: recursion-limit
       label:
         en_US: Recursion Limit
@@ -120,6 +142,10 @@ spec:
       type: integer
       required: false
       default: 1000
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
   capabilities:
     streaming: true
     tool_calling: false

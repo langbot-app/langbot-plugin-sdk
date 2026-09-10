@@ -7,7 +7,7 @@ Chạy luồng Langflow dưới dạng LangBot Runner.
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -22,6 +22,7 @@ Chạy luồng Langflow dưới dạng LangBot Runner.
 | `base-url` | `string` | Có | `http://localhost:7860` |
 | `api-key` | `secret` | Có | Trống |
 | `flow-id` | `string` | Có | Trống |
+| `advanced-settings` | `boolean` | Không | false |
 | `input-type` | `string` | Không | `chat` |
 | `output-type` | `string` | Không | `chat` |
 | `tweaks` | `json` | Không | `{}` |

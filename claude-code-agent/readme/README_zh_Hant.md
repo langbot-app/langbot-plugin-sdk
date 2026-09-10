@@ -25,6 +25,7 @@
 | `daemon-token` | `secret` | 否 | 空 |
 | `location` | `select` | 是 | `local` |
 | `workspace` | `string` | 否 | 空 |
+| `advanced-settings` | `boolean` | 否 | false |
 | `command` | `string` | 否 | `claude` |
 | `args-json` | `string` | 否 | `[]` |
 | `env-json` | `string` | 否 | `{}` |

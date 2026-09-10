@@ -56,6 +56,10 @@ spec:
       type: string
       required: true
       default: 'builtin-smart-reasoning'
+      show_if:
+        field: app-type
+        operator: eq
+        value: agent
     - name: knowledge-base-ids
       label:
         en_US: Knowledge Base IDs
@@ -66,6 +70,10 @@ spec:
       type: array[string]
       required: false
       default: []
+      show_if:
+        field: app-type
+        operator: eq
+        value: chat
     - name: web-search-enabled
       label:
         en_US: Enable Web Search
@@ -73,6 +81,20 @@ spec:
       description:
         en_US: Whether to enable web search in agent mode.
         zh_Hans: 是否在 Agent 模式下启用网络搜索。
+      type: boolean
+      required: false
+      default: false
+      show_if:
+        field: app-type
+        operator: eq
+        value: agent
+    - name: advanced-settings
+      label:
+        en_US: Advanced Settings
+        zh_Hans: 高级设置
+      description:
+        en_US: Show timeout and fallback prompt controls.
+        zh_Hans: 显示超时和回退提示词调优选项。
       type: boolean
       required: false
       default: false
@@ -86,6 +108,10 @@ spec:
       type: integer
       required: false
       default: 120
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: base-prompt
       label:
         en_US: Base Prompt
@@ -96,6 +122,10 @@ spec:
       type: string
       required: false
       default: '请回答用户的问题。'
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
   capabilities:
     streaming: true
     tool_calling: false

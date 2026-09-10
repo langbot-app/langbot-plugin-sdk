@@ -118,6 +118,16 @@ spec:
       type: string
       required: false
       default: ''
+    - name: advanced-settings
+      label:
+        en_US: Advanced Settings
+        zh_Hans: 高级设置
+      description:
+        en_US: Show bridge, timeout, session, and process tuning controls.
+        zh_Hans: 显示桥接、超时、会话和进程调优选项。
+      type: boolean
+      required: false
+      default: false
     - name: ssh-target
       label:
         en_US: SSH Target
@@ -209,6 +219,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: langbot-assets-mode
       label:
         en_US: LangBot Asset Bridge Mode
@@ -232,6 +246,10 @@ spec:
           label:
             en_US: Stable HTTP Gateway
             zh_Hans: 稳定 HTTP Gateway
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: langbot-assets-gateway-host
       label:
         en_US: Gateway Host
@@ -295,6 +313,10 @@ spec:
       type: integer
       required: false
       default: 300
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: reuse-session
       label:
         en_US: Reuse Session
@@ -302,6 +324,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: env-json
       label:
         en_US: Environment JSON
@@ -312,6 +338,10 @@ spec:
       type: text
       required: false
       default: ''
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: ssh-connect-timeout
       label:
         en_US: SSH Connect Timeout
@@ -344,6 +374,10 @@ spec:
       type: integer
       required: false
       default: 30
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: initialize-timeout
       label:
         en_US: Initialize Timeout
@@ -351,6 +385,10 @@ spec:
       type: integer
       required: false
       default: 120
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: create-session-if-missing
       label:
         en_US: Create Session If Missing
@@ -358,6 +396,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: streaming
       label:
         en_US: Streaming Output
@@ -365,6 +407,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: knowledge-bases
       label:
         en_US: Knowledge Bases
@@ -379,6 +425,10 @@ spec:
       type: boolean
       required: false
       default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: mcp-servers-json
       label:
         en_US: Extra MCP Servers JSON
@@ -389,6 +439,10 @@ spec:
       type: text
       required: false
       default: ''
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
   capabilities:
     streaming: true
     tool_calling: true

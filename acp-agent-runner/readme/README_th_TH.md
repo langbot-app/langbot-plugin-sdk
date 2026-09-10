@@ -26,6 +26,7 @@
 | `provider` | `select` | ใช่ | `claude-code` |
 | `location` | `select` | ใช่ | `local` |
 | `workspace` | `string` | ไม่ | ว่าง |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `ssh-target` | `string` | ไม่ | ว่าง |
 | `daemon-id` | `string` | ไม่ | ว่าง |
 | `daemon-connect-timeout` | `integer` | ไม่ | `30` |

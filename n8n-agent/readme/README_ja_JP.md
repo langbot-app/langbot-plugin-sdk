@@ -7,7 +7,7 @@ n8n ワークフローの Webhook を LangBot Runner として実行します。
 ## パッケージ情報
 
 - **Runner ID**: `plugin:langbot-team/N8nAgent/default`
-- **バージョン**: `0.1.0`
+- **バージョン**: `0.1.2`
 - **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主な機能
@@ -27,6 +27,7 @@ n8n ワークフローの Webhook を LangBot Runner として実行します。
 | `jwt-algorithm` | `string` | いいえ | `HS256` |
 | `header-name` | `string` | いいえ | 空 |
 | `header-value` | `secret` | いいえ | 空 |
+| `advanced-settings` | `boolean` | いいえ | false |
 | `timeout` | `integer` | いいえ | `120` |
 | `output-key` | `string` | いいえ | `response` |
 | `langbot-assets-enabled` | `boolean` | いいえ | false |

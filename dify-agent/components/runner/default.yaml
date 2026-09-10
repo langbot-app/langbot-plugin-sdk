@@ -20,6 +20,16 @@ spec:
         zh_Hans: Dify Service API 基础地址。Dify Cloud 和标准自托管部署请保留 /v1 后缀。
       required: true
       default: 'https://api.dify.ai/v1'
+    - name: advanced-settings
+      label:
+        en_US: Advanced Settings
+        zh_Hans: 高级设置
+      description:
+        en_US: Show prompt and timeout tuning controls.
+        zh_Hans: 显示提示词和超时调优选项。
+      type: boolean
+      required: false
+      default: false
     - name: base-prompt
       label:
         en_US: Base PROMPT
@@ -30,6 +40,10 @@ spec:
         zh_Hans: 添加到 LangBot 输入前的指令。除非 Dify 应用需要额外的文件处理说明，否则建议保持简短。
       required: true
       default: "When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image."
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: app-type
       label:
         en_US: App Type
@@ -73,6 +87,10 @@ spec:
         zh_Hans: Dify 请求的最长等待秒数。使用代理或长工作流时建议至少设置为 60 秒。
       required: false
       default: 30
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: langbot-assets-enabled
       label:
         en_US: Enable LangBot Assets

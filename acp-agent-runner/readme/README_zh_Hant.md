@@ -26,6 +26,7 @@
 | `provider` | `select` | 是 | `claude-code` |
 | `location` | `select` | 是 | `local` |
 | `workspace` | `string` | 否 | 空 |
+| `advanced-settings` | `boolean` | 否 | false |
 | `ssh-target` | `string` | 否 | 空 |
 | `daemon-id` | `string` | 否 | 空 |
 | `daemon-connect-timeout` | `integer` | 否 | `30` |

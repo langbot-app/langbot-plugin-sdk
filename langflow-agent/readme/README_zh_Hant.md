@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -22,6 +22,7 @@
 | `base-url` | `string` | 是 | `http://localhost:7860` |
 | `api-key` | `secret` | 是 | 空 |
 | `flow-id` | `string` | 是 | 空 |
+| `advanced-settings` | `boolean` | 否 | false |
 | `input-type` | `string` | 否 | `chat` |
 | `output-type` | `string` | 否 | `chat` |
 | `tweaks` | `json` | 否 | `{}` |

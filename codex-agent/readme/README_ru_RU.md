@@ -25,6 +25,7 @@
 | `daemon-token` | `secret` | Нет | Пусто |
 | `location` | `select` | Да | `local` |
 | `workspace` | `string` | Нет | Пусто |
+| `advanced-settings` | `boolean` | Нет | false |
 | `command` | `string` | Нет | `codex` |
 | `args-json` | `string` | Нет | `[]` |
 | `env-json` | `string` | Нет | `{}` |

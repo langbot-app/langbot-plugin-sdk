@@ -26,6 +26,7 @@
 | `provider` | `select` | Да | `claude-code` |
 | `location` | `select` | Да | `local` |
 | `workspace` | `string` | Нет | Пусто |
+| `advanced-settings` | `boolean` | Нет | false |
 | `ssh-target` | `string` | Нет | Пусто |
 | `daemon-id` | `string` | Нет | Пусто |
 | `daemon-connect-timeout` | `integer` | Нет | `30` |

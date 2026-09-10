@@ -7,7 +7,7 @@ Run a WeKnora agent or knowledge-base chat app as a LangBot Runner.
 ## Package information
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
-- **Version**: `0.1.0`
+- **Version**: `0.1.2`
 - **Repository**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Capabilities
@@ -25,6 +25,7 @@ Run a WeKnora agent or knowledge-base chat app as a LangBot Runner.
 | `agent-id` | `string` | Yes | `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | No | `[]` |
 | `web-search-enabled` | `boolean` | No | false |
+| `advanced-settings` | `boolean` | No | false |
 | `timeout` | `integer` | No | `120` |
 | `base-prompt` | `string` | No | `请回答用户的问题。` |
 

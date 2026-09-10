@@ -232,6 +232,132 @@ def test_dify_runner_exposes_guided_and_masked_secret_config() -> None:
         }
 
 
+def test_runner_forms_hide_inactive_dependent_fields() -> None:
+    gateway_fields = {
+        "langbot-assets-gateway-host",
+        "langbot-assets-gateway-port",
+        "langbot-assets-gateway-request-timeout",
+        "langbot-assets-token-ttl",
+        "langbot-assets-input-name",
+    }
+    for plugin_dir in ("n8n-agent", "langflow-agent", "dashscope-agent", "coze-agent"):
+        runner = _load_yaml(ROOT / plugin_dir / "components" / "runner" / "default.yaml")
+        config = {item["name"]: item for item in runner["spec"]["config"]}
+        for field_name in gateway_fields:
+            assert config[field_name]["show_if"] == {
+                "field": "langbot-assets-enabled",
+                "operator": "eq",
+                "value": True,
+            }
+
+    n8n_runner = _load_yaml(ROOT / "n8n-agent" / "components" / "runner" / "default.yaml")
+    n8n_config = {item["name"]: item for item in n8n_runner["spec"]["config"]}
+    for auth_type, fields in {
+        "basic": {"basic-username", "basic-password"},
+        "jwt": {"jwt-secret", "jwt-algorithm"},
+        "header": {"header-name", "header-value"},
+    }.items():
+        for field_name in fields:
+            assert n8n_config[field_name]["show_if"] == {
+                "field": "auth-type",
+                "operator": "eq",
+                "value": auth_type,
+            }
+
+    deerflow_runner = _load_yaml(ROOT / "deerflow-agent" / "components" / "runner" / "default.yaml")
+    deerflow_config = {item["name"]: item for item in deerflow_runner["spec"]["config"]}
+    assert deerflow_config["max-concurrent-subagents"]["show_if"] == {
+        "field": "subagent-enabled",
+        "operator": "eq",
+        "value": True,
+    }
+
+    weknora_runner = _load_yaml(ROOT / "weknora-agent" / "components" / "runner" / "default.yaml")
+    weknora_config = {item["name"]: item for item in weknora_runner["spec"]["config"]}
+    for field_name in ("agent-id", "web-search-enabled"):
+        assert weknora_config[field_name]["show_if"] == {
+            "field": "app-type",
+            "operator": "eq",
+            "value": "agent",
+        }
+    assert weknora_config["knowledge-base-ids"]["show_if"] == {
+        "field": "app-type",
+        "operator": "eq",
+        "value": "chat",
+    }
+
+
+def test_runner_forms_hide_advanced_fields_by_default() -> None:
+    advanced_condition = {
+        "field": "advanced-settings",
+        "operator": "eq",
+        "value": True,
+    }
+    advanced_fields = {
+        "acp-agent-runner": {
+            "langbot-assets-enabled",
+            "langbot-assets-mode",
+            "timeout",
+            "reuse-session",
+            "env-json",
+            "startup-timeout",
+            "initialize-timeout",
+            "create-session-if-missing",
+            "streaming",
+            "append-run-scope-prompt",
+            "mcp-servers-json",
+        },
+        "claude-code-agent": {
+            "command",
+            "args-json",
+            "env-json",
+            "timeout",
+            "streaming",
+            "reuse-session",
+            "langbot-assets-enabled",
+            "mcp-bridge-transport",
+            "mcp-servers-json",
+        },
+        "codex-agent": {
+            "command",
+            "args-json",
+            "env-json",
+            "timeout",
+            "streaming",
+            "reuse-session",
+            "langbot-assets-enabled",
+            "mcp-bridge-transport",
+            "mcp-servers-json",
+        },
+        "coze-agent": {"auto-save-history", "timeout"},
+        "dashscope-agent": {"references_quote", "timeout"},
+        "deerflow-agent": {"model-name", "timeout", "recursion-limit"},
+        "dify-agent": {"base-prompt", "timeout"},
+        "langflow-agent": {"input-type", "output-type", "tweaks"},
+        "n8n-agent": {"timeout", "output-key"},
+        "weknora-agent": {"timeout", "base-prompt"},
+    }
+
+    for plugin_dir, field_names in advanced_fields.items():
+        runner = _load_yaml(ROOT / plugin_dir / "components" / "runner" / "default.yaml")
+        config = {item["name"]: item for item in runner["spec"]["config"]}
+        assert config["advanced-settings"]["default"] is False
+        for field_name in field_names:
+            assert config[field_name]["show_if"] == advanced_condition
+
+    claude_config = {
+        item["name"]: item
+        for item in _load_yaml(ROOT / "claude-code-agent" / "components" / "runner" / "default.yaml")["spec"]["config"]
+    }
+    codex_config = {
+        item["name"]: item
+        for item in _load_yaml(ROOT / "codex-agent" / "components" / "runner" / "default.yaml")["spec"]["config"]
+    }
+    assert "show_if" not in claude_config["dangerously-skip-permissions"]
+    assert "show_if" not in codex_config["approval-policy"]
+    assert "show_if" not in codex_config["sandbox-mode"]
+
+
 def test_acp_provider_presets_match_runner_config() -> None:
     module = _load_runner_module("acp-agent-runner")
     acp_runner = _load_yaml(ROOT / "acp-agent-runner" / "components" / "runner" / "default.yaml")

@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: DashScopeAgent
-  version: 0.1.0
+  version: 0.1.3
   repository: https://github.com/langbot-app/langbot-agent-runner
   label:
     en_US: Dashscope Agent
@@ -23,7 +23,7 @@ metadata:
     vi_VN: Chạy ứng dụng Aliyun DashScope dưới dạng LangBot Runner.
     es_ES: Ejecuta una aplicación de Aliyun DashScope como LangBot Runner.
     ru_RU: Запускает приложение Aliyun DashScope как LangBot Runner.
-  icon: assets/icon.svg
+  icon: assets/icon.png
 spec:
   config: []
   components:

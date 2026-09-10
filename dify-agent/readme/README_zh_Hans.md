@@ -22,6 +22,7 @@ Dify Agent 将 Dify 的 Chat、Agent、Chatflow 或 Workflow 应用接入 LangBo
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | `base-url` | `string` | 是 | `https://api.dify.ai/v1` | Dify Service API 地址，通常保留 `/v1` |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开提示词和超时调优选项 |
 | `base-prompt` | `text` | 是 | 文件处理提示词 | 加在 LangBot 输入前的指令 |
 | `app-type` | `select` | 是 | `chat` | `chat`、`agent` 或 `workflow` |
 | `api-key` | `secret` | 是 | 空 | 目标 Dify 应用的 Service API key |

@@ -34,6 +34,7 @@ Claude Code Agent 将 Claude Code CLI 以非交互模式接入 LangBot Runner。
 | --- | --- |
 | `location` | `local`、`remote-ssh` 或 `daemon` |
 | `workspace` | Claude Code 工作目录 |
+| `advanced-settings` | 展开命令、超时、会话和 LangBot 桥接调优选项 |
 | `command` | Claude CLI 命令；不在 `PATH` 时可填写绝对路径 |
 | `args-json` | 追加的命令参数 JSON |
 | `env-json` | 追加的环境变量 JSON |

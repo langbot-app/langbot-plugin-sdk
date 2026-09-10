@@ -13,6 +13,7 @@ Run a Langflow flow as a LangBot Runner.
 | base-url | string | yes | http://localhost:7860 | Langflow server URL |
 | api-key | secret | yes | '' | Langflow API key |
 | flow-id | string | yes | '' | Flow ID |
+| advanced-settings | boolean | no | false | Show input, output, and flow tweak controls |
 | input-type | string | no | chat | Input type |
 | output-type | string | no | chat | Output type |
 | tweaks | json | no | {} | Flow tweaks |

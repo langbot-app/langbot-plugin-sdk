@@ -13,6 +13,7 @@ Run a Coze bot as a LangBot Runner.
 | api-key | secret | yes | '' | Coze API key |
 | bot-id | string | yes | '' | Bot ID |
 | api-base | select | yes | https://api.coze.cn | API base URL (CN or Global) |
+| advanced-settings | boolean | no | false | Show history and timeout tuning controls |
 | auto-save-history | boolean | no | true | Auto-save conversation history |
 | timeout | number | no | 120 | Request timeout (seconds) |
 | langbot-assets-enabled | boolean | no | false | Register a short-lived LangBot asset token for each run and pass it via custom_variables |

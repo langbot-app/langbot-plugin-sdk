@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -20,6 +20,7 @@
 | Поле | Тип | Обязательно | По умолчанию |
 | --- | --- | --- | --- |
 | `base-url` | `string` | Да | `https://api.dify.ai/v1` |
+| `advanced-settings` | `boolean` | Нет | false |
 | `base-prompt` | `text` | Да | `When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image.` |
 | `app-type` | `select` | Да | `chat` |
 | `api-key` | `secret` | Да | Пусто |

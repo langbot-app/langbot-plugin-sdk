@@ -26,6 +26,7 @@ Ejecuta cualquier agente de programación compatible con Agent Client Protocol c
 | `provider` | `select` | Sí | `claude-code` |
 | `location` | `select` | Sí | `local` |
 | `workspace` | `string` | No | Vacío |
+| `advanced-settings` | `boolean` | No | false |
 | `ssh-target` | `string` | No | Vacío |
 | `daemon-id` | `string` | No | Vacío |
 | `daemon-connect-timeout` | `integer` | No | `30` |

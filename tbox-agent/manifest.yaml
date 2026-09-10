@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: TboxAgent
-  version: 0.1.0
+  version: 0.1.1
   repository: https://github.com/langbot-app/langbot-agent-runner
   label:
     en_US: Tbox Agent
@@ -23,7 +23,7 @@ metadata:
     vi_VN: Chạy ứng dụng Ant Tbox dưới dạng LangBot Runner.
     es_ES: Ejecuta una aplicación Ant Tbox como LangBot Runner.
     ru_RU: Запускает приложение Ant Tbox как LangBot Runner.
-  icon: assets/icon.svg
+  icon: assets/icon.png
 spec:
   config: []
   components:

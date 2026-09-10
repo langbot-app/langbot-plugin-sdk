@@ -34,6 +34,7 @@ Codex Agent 通过 Codex app-server JSON-RPC 协议把 Codex CLI 接入 LangBot 
 | --- | --- |
 | `location` | `local`、`remote-ssh` 或 `daemon` |
 | `workspace` | Codex 工作目录 |
+| `advanced-settings` | 展开命令、超时、会话和 LangBot 桥接调优选项 |
 | `command` | Codex CLI 命令 |
 | `args-json` | 追加的 app-server 参数 JSON |
 | `env-json` | 追加的环境变量 JSON |

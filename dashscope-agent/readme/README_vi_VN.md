@@ -7,7 +7,7 @@ Chạy ứng dụng Aliyun DashScope dưới dạng LangBot Runner.
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/DashScopeAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -22,6 +22,7 @@ Chạy ứng dụng Aliyun DashScope dưới dạng LangBot Runner.
 | `app-type` | `select` | Có | `agent` |
 | `api-key` | `secret` | Có | Trống |
 | `app-id` | `string` | Có | Trống |
+| `advanced-settings` | `boolean` | Không | false |
 | `references_quote` | `string` | Không | `参考资料来自:` |
 | `timeout` | `number` | Không | `120` |
 | `langbot-assets-enabled` | `boolean` | Không | false |

@@ -22,6 +22,7 @@ DeerFlow Agent 将 DeerFlow LangGraph HTTP API 接入 LangBot Runner。插件负
 | `api-key` | `secret` | 否 | 空 | 可选 API key |
 | `auth-header` | `secret` | 否 | 空 | 完整 Authorization 头，设置后优先于 `api-key` |
 | `assistant-id` | `string` | 是 | `lead_agent` | Assistant 或 graph ID |
+| `advanced-settings` | `boolean` | 否 | `false` | 展开模型、超时和递归调优选项 |
 | `model-name` | `string` | 否 | 空 | 可选模型覆盖 |
 | `thinking-enabled` | `boolean` | 否 | `false` | 是否启用 thinking |
 | `plan-mode` | `boolean` | 否 | `false` | 是否启用 plan mode |

@@ -25,6 +25,7 @@ Ejecuta Codex CLI como LangBot Runner.
 | `daemon-token` | `secret` | No | Vacío |
 | `location` | `select` | Sí | `local` |
 | `workspace` | `string` | No | Vacío |
+| `advanced-settings` | `boolean` | No | false |
 | `command` | `string` | No | `codex` |
 | `args-json` | `string` | No | `[]` |
 | `env-json` | `string` | No | `{}` |

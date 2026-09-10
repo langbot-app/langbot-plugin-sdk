@@ -7,7 +7,7 @@ Ejecuta un agente DeerFlow LangGraph como LangBot Runner.
 ## Información del paquete
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
-- **Versión**: `0.1.0`
+- **Versión**: `0.1.2`
 - **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Capacidades principales
@@ -23,6 +23,7 @@ Ejecuta un agente DeerFlow LangGraph como LangBot Runner.
 | `api-key` | `secret` | No | Vacío |
 | `auth-header` | `secret` | No | Vacío |
 | `assistant-id` | `string` | Sí | `lead_agent` |
+| `advanced-settings` | `boolean` | No | false |
 | `model-name` | `string` | No | Vacío |
 | `thinking-enabled` | `boolean` | No | false |
 | `plan-mode` | `boolean` | No | false |

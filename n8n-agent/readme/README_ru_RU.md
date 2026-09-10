@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/N8nAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -27,6 +27,7 @@
 | `jwt-algorithm` | `string` | Нет | `HS256` |
 | `header-name` | `string` | Нет | Пусто |
 | `header-value` | `secret` | Нет | Пусто |
+| `advanced-settings` | `boolean` | Нет | false |
 | `timeout` | `integer` | Нет | `120` |
 | `output-key` | `string` | Нет | `response` |
 | `langbot-assets-enabled` | `boolean` | Нет | false |

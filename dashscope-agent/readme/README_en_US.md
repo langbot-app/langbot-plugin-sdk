@@ -13,6 +13,7 @@ Run an Aliyun DashScope application as a LangBot Runner.
 | app-type | select | yes | agent | Application type (agent/workflow) |
 | api-key | secret | yes | '' | DashScope API key |
 | app-id | string | yes | '' | Application ID |
+| advanced-settings | boolean | no | false | Show reference formatting and timeout tuning controls |
 | references_quote | string | no | 参考资料来自: | Quote text for references |
 | timeout | number | no | 120 | Request timeout in seconds |
 | langbot-assets-enabled | boolean | no | false | Register a short-lived LangBot asset token for each run and pass it via biz_params |

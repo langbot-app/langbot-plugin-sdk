@@ -7,7 +7,7 @@ WeKnora エージェントまたはナレッジベースチャットを LangBot 
 ## パッケージ情報
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
-- **バージョン**: `0.1.0`
+- **バージョン**: `0.1.2`
 - **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主な機能
@@ -25,6 +25,7 @@ WeKnora エージェントまたはナレッジベースチャットを LangBot 
 | `agent-id` | `string` | はい | `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | いいえ | `[]` |
 | `web-search-enabled` | `boolean` | いいえ | false |
+| `advanced-settings` | `boolean` | いいえ | false |
 | `timeout` | `integer` | いいえ | `120` |
 | `base-prompt` | `string` | いいえ | `请回答用户的问题。` |
 

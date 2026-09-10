@@ -7,7 +7,7 @@ Chạy ứng dụng Dify dưới dạng LangBot Runner.
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -20,6 +20,7 @@ Chạy ứng dụng Dify dưới dạng LangBot Runner.
 | Trường | Kiểu | Bắt buộc | Mặc định |
 | --- | --- | --- | --- |
 | `base-url` | `string` | Có | `https://api.dify.ai/v1` |
+| `advanced-settings` | `boolean` | Không | false |
 | `base-prompt` | `text` | Có | `When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image.` |
 | `app-type` | `select` | Có | `chat` |
 | `api-key` | `secret` | Có | Trống |

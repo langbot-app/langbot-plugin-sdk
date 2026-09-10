@@ -111,6 +111,7 @@ Useful options:
 - `provider`: built-in ACP launch preset. Current presets are limited to ACP runtimes that advertise `loadSession` or `sessionCapabilities.resume` and have no known public cross-process resume blocker. Use `custom` for anything else.
 - `location`: `local`, `remote-ssh`, or `daemon`.
 - `workspace`: agent workspace directory. In `remote-ssh` and `daemon` modes this path is on the remote/user machine.
+- `advanced-settings`: reveals bridge, timeout, session, and process tuning controls. It only changes form visibility.
 - `ssh-target`: SSH target for `remote-ssh`, for example `yhh@101.34.71.12`.
 - `ssh-port`: SSH port. Defaults to `22`.
 - `ssh-identity-file`: optional private key path on the LangBot host.

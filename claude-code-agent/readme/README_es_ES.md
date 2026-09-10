@@ -25,6 +25,7 @@ Ejecuta Claude Code CLI como LangBot Runner.
 | `daemon-token` | `secret` | No | Vacío |
 | `location` | `select` | Sí | `local` |
 | `workspace` | `string` | No | Vacío |
+| `advanced-settings` | `boolean` | No | false |
 | `command` | `string` | No | `claude` |
 | `args-json` | `string` | No | `[]` |
 | `env-json` | `string` | No | `{}` |

@@ -25,6 +25,7 @@
 | `daemon-token` | `secret` | ไม่ | ว่าง |
 | `location` | `select` | ใช่ | `local` |
 | `workspace` | `string` | ไม่ | ว่าง |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `command` | `string` | ไม่ | `claude` |
 | `args-json` | `string` | ไม่ | `[]` |
 | `env-json` | `string` | ไม่ | `{}` |

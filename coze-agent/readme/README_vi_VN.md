@@ -7,7 +7,7 @@ Chạy bot Coze dưới dạng LangBot Runner.
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -22,6 +22,7 @@ Chạy bot Coze dưới dạng LangBot Runner.
 | `api-key` | `secret` | Có | Trống |
 | `bot-id` | `string` | Có | Trống |
 | `api-base` | `select` | Có | `https://api.coze.cn` |
+| `advanced-settings` | `boolean` | Không | false |
 | `auto-save-history` | `boolean` | Không | true |
 | `timeout` | `number` | Không | `120` |
 | `langbot-assets-enabled` | `boolean` | Không | false |

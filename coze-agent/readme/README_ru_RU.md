@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -22,6 +22,7 @@
 | `api-key` | `secret` | Да | Пусто |
 | `bot-id` | `string` | Да | Пусто |
 | `api-base` | `select` | Да | `https://api.coze.cn` |
+| `advanced-settings` | `boolean` | Нет | false |
 | `auto-save-history` | `boolean` | Нет | true |
 | `timeout` | `number` | Нет | `120` |
 | `langbot-assets-enabled` | `boolean` | Нет | false |

@@ -7,7 +7,7 @@ Chạy webhook quy trình n8n dưới dạng LangBot Runner.
 ## Thông tin gói
 
 - **Runner ID**: `plugin:langbot-team/N8nAgent/default`
-- **Phiên bản**: `0.1.0`
+- **Phiên bản**: `0.1.2`
 - **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Khả năng chính
@@ -27,6 +27,7 @@ Chạy webhook quy trình n8n dưới dạng LangBot Runner.
 | `jwt-algorithm` | `string` | Không | `HS256` |
 | `header-name` | `string` | Không | Trống |
 | `header-value` | `secret` | Không | Trống |
+| `advanced-settings` | `boolean` | Không | false |
 | `timeout` | `integer` | Không | `120` |
 | `output-key` | `string` | Không | `response` |
 | `langbot-assets-enabled` | `boolean` | Không | false |

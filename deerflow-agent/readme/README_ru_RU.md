@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -23,6 +23,7 @@
 | `api-key` | `secret` | Нет | Пусто |
 | `auth-header` | `secret` | Нет | Пусто |
 | `assistant-id` | `string` | Да | `lead_agent` |
+| `advanced-settings` | `boolean` | Нет | false |
 | `model-name` | `string` | Нет | Пусто |
 | `thinking-enabled` | `boolean` | Нет | false |
 | `plan-mode` | `boolean` | Нет | false |

@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -22,6 +22,7 @@
 | `api-key` | `secret` | 是 | 空 |
 | `bot-id` | `string` | 是 | 空 |
 | `api-base` | `select` | 是 | `https://api.coze.cn` |
+| `advanced-settings` | `boolean` | 否 | false |
 | `auto-save-history` | `boolean` | 否 | true |
 | `timeout` | `number` | 否 | `120` |
 | `langbot-assets-enabled` | `boolean` | 否 | false |

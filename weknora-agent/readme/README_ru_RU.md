@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -25,6 +25,7 @@
 | `agent-id` | `string` | Да | `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | Нет | `[]` |
 | `web-search-enabled` | `boolean` | Нет | false |
+| `advanced-settings` | `boolean` | Нет | false |
 | `timeout` | `integer` | Нет | `120` |
 | `base-prompt` | `string` | Нет | `请回答用户的问题。` |
 

@@ -13,6 +13,7 @@ Configuration is **static** and should not contain runtime state. Only the follo
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | base-url | string | yes | https://api.dify.ai/v1 | Dify API base URL |
+| advanced-settings | boolean | no | false | Show prompt and timeout tuning controls |
 | api-key | secret | yes | '' | Dify Service API key |
 | app-type | select | yes | chat | Application type (chat/agent/workflow) |
 | base-prompt | text | yes | File-handling instruction | Instruction prepended to LangBot input |

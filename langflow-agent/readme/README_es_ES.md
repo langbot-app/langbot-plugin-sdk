@@ -7,7 +7,7 @@ Ejecuta un flujo de Langflow como LangBot Runner.
 ## Información del paquete
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
-- **Versión**: `0.1.0`
+- **Versión**: `0.1.2`
 - **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Capacidades principales
@@ -22,6 +22,7 @@ Ejecuta un flujo de Langflow como LangBot Runner.
 | `base-url` | `string` | Sí | `http://localhost:7860` |
 | `api-key` | `secret` | Sí | Vacío |
 | `flow-id` | `string` | Sí | Vacío |
+| `advanced-settings` | `boolean` | No | false |
 | `input-type` | `string` | No | `chat` |
 | `output-type` | `string` | No | `chat` |
 | `tweaks` | `json` | No | `{}` |

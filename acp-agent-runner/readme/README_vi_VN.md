@@ -26,6 +26,7 @@ Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạ
 | `provider` | `select` | Có | `claude-code` |
 | `location` | `select` | Có | `local` |
 | `workspace` | `string` | Không | Trống |
+| `advanced-settings` | `boolean` | Không | false |
 | `ssh-target` | `string` | Không | Trống |
 | `daemon-id` | `string` | Không | Trống |
 | `daemon-connect-timeout` | `integer` | Không | `30` |

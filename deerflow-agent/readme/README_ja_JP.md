@@ -7,7 +7,7 @@ DeerFlow LangGraph エージェントを LangBot Runner として実行します
 ## パッケージ情報
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
-- **バージョン**: `0.1.0`
+- **バージョン**: `0.1.2`
 - **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主な機能
@@ -23,6 +23,7 @@ DeerFlow LangGraph エージェントを LangBot Runner として実行します
 | `api-key` | `secret` | いいえ | 空 |
 | `auth-header` | `secret` | いいえ | 空 |
 | `assistant-id` | `string` | はい | `lead_agent` |
+| `advanced-settings` | `boolean` | いいえ | false |
 | `model-name` | `string` | いいえ | 空 |
 | `thinking-enabled` | `boolean` | いいえ | false |
 | `plan-mode` | `boolean` | いいえ | false |

@@ -7,7 +7,7 @@
 ## Информация о пакете
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
-- **Версия**: `0.1.0`
+- **Версия**: `0.1.2`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Основные возможности
@@ -22,6 +22,7 @@
 | `base-url` | `string` | Да | `http://localhost:7860` |
 | `api-key` | `secret` | Да | Пусто |
 | `flow-id` | `string` | Да | Пусто |
+| `advanced-settings` | `boolean` | Нет | false |
 | `input-type` | `string` | Нет | `chat` |
 | `output-type` | `string` | Нет | `chat` |
 | `tweaks` | `json` | Нет | `{}` |

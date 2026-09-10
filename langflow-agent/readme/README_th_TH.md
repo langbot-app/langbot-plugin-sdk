@@ -7,7 +7,7 @@
 ## ข้อมูลแพ็กเกจ
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
-- **เวอร์ชัน**: `0.1.0`
+- **เวอร์ชัน**: `0.1.2`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## ความสามารถหลัก
@@ -22,6 +22,7 @@
 | `base-url` | `string` | ใช่ | `http://localhost:7860` |
 | `api-key` | `secret` | ใช่ | ว่าง |
 | `flow-id` | `string` | ใช่ | ว่าง |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `input-type` | `string` | ไม่ | `chat` |
 | `output-type` | `string` | ไม่ | `chat` |
 | `tweaks` | `json` | ไม่ | `{}` |

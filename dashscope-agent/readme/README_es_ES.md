@@ -7,7 +7,7 @@ Ejecuta una aplicación de Aliyun DashScope como LangBot Runner.
 ## Información del paquete
 
 - **Runner ID**: `plugin:langbot-team/DashScopeAgent/default`
-- **Versión**: `0.1.0`
+- **Versión**: `0.1.2`
 - **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## Capacidades principales
@@ -22,6 +22,7 @@ Ejecuta una aplicación de Aliyun DashScope como LangBot Runner.
 | `app-type` | `select` | Sí | `agent` |
 | `api-key` | `secret` | Sí | Vacío |
 | `app-id` | `string` | Sí | Vacío |
+| `advanced-settings` | `boolean` | No | false |
 | `references_quote` | `string` | No | `参考资料来自:` |
 | `timeout` | `number` | No | `120` |
 | `langbot-assets-enabled` | `boolean` | No | false |

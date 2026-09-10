@@ -7,7 +7,7 @@
 ## 套件資訊
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
-- **版本**: `0.1.0`
+- **版本**: `0.1.2`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主要能力
@@ -20,6 +20,7 @@
 | 欄位 | 類型 | 必填 | 預設值 |
 | --- | --- | --- | --- |
 | `base-url` | `string` | 是 | `https://api.dify.ai/v1` |
+| `advanced-settings` | `boolean` | 否 | false |
 | `base-prompt` | `text` | 是 | `When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image.` |
 | `app-type` | `select` | 是 | `chat` |
 | `api-key` | `secret` | 是 | 空 |

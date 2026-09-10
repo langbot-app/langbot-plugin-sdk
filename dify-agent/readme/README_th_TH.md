@@ -7,7 +7,7 @@
 ## ข้อมูลแพ็กเกจ
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
-- **เวอร์ชัน**: `0.1.0`
+- **เวอร์ชัน**: `0.1.2`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## ความสามารถหลัก
@@ -20,6 +20,7 @@
 | ฟิลด์ | ชนิด | จำเป็น | ค่าเริ่มต้น |
 | --- | --- | --- | --- |
 | `base-url` | `string` | ใช่ | `https://api.dify.ai/v1` |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `base-prompt` | `text` | ใช่ | `When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image.` |
 | `app-type` | `select` | ใช่ | `chat` |
 | `api-key` | `secret` | ใช่ | ว่าง |

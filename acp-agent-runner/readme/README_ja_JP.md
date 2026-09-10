@@ -26,6 +26,7 @@ Agent Client Protocol 対応のコーディングエージェントを LangBot R
 | `provider` | `select` | はい | `claude-code` |
 | `location` | `select` | はい | `local` |
 | `workspace` | `string` | いいえ | 空 |
+| `advanced-settings` | `boolean` | いいえ | false |
 | `ssh-target` | `string` | いいえ | 空 |
 | `daemon-id` | `string` | いいえ | 空 |
 | `daemon-connect-timeout` | `integer` | いいえ | `30` |

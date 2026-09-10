@@ -7,7 +7,7 @@
 ## ข้อมูลแพ็กเกจ
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
-- **เวอร์ชัน**: `0.1.0`
+- **เวอร์ชัน**: `0.1.2`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## ความสามารถหลัก
@@ -22,6 +22,7 @@
 | `api-key` | `secret` | ใช่ | ว่าง |
 | `bot-id` | `string` | ใช่ | ว่าง |
 | `api-base` | `select` | ใช่ | `https://api.coze.cn` |
+| `advanced-settings` | `boolean` | ไม่ | false |
 | `auto-save-history` | `boolean` | ไม่ | true |
 | `timeout` | `number` | ไม่ | `120` |
 | `langbot-assets-enabled` | `boolean` | ไม่ | false |

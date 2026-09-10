@@ -18,6 +18,7 @@ Run an n8n workflow webhook as a LangBot Runner.
 | jwt-algorithm | string | no | HS256 | JWT algorithm |
 | header-name | string | no | '' | Custom header name |
 | header-value | secret | no | '' | Custom header value |
+| advanced-settings | boolean | no | false | Show timeout and response mapping controls |
 | timeout | integer | no | 120 | Request timeout (seconds) |
 | output-key | string | no | response | Response output key |
 | langbot-assets-enabled | boolean | no | false | Register a short-lived LangBot asset token for each run and inject it into the webhook payload |

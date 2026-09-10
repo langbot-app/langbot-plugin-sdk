@@ -7,7 +7,7 @@ Langflow フローを LangBot Runner として実行します。
 ## パッケージ情報
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
-- **バージョン**: `0.1.0`
+- **バージョン**: `0.1.2`
 - **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
 ## 主な機能
@@ -22,6 +22,7 @@ Langflow フローを LangBot Runner として実行します。
 | `base-url` | `string` | はい | `http://localhost:7860` |
 | `api-key` | `secret` | はい | 空 |
 | `flow-id` | `string` | はい | 空 |
+| `advanced-settings` | `boolean` | いいえ | false |
 | `input-type` | `string` | いいえ | `chat` |
 | `output-type` | `string` | いいえ | `chat` |
 | `tweaks` | `json` | いいえ | `{}` |
