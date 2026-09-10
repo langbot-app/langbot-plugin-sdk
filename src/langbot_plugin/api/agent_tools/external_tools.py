@@ -13,8 +13,8 @@ from langbot_plugin.api.agent_tools.decorators import (
     agent_tool,
     collect_agent_tools,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 
 class EmptyArgs(pydantic.BaseModel):
@@ -115,9 +115,9 @@ def _with_optional_run_token(tool: dict[str, typing.Any]) -> dict[str, typing.An
 
 
 class AgentRunExternalTools:
-    """Annotated tool surface backed by AgentRunAPIProxy."""
+    """Annotated tool surface backed by RunnerAPIProxy."""
 
-    def __init__(self, api: AgentRunAPIProxy, ctx: AgentRunContext) -> None:
+    def __init__(self, api: RunnerAPIProxy, ctx: RunnerContext) -> None:
         self.api = api
         self.ctx = ctx
         self._tools = collect_agent_tools(self)

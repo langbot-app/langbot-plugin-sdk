@@ -30,8 +30,7 @@ from langbot_plugin.api.definition.components.knowledge_engine.engine import (
 )
 from langbot_plugin.api.definition.components.page import Page
 from langbot_plugin.api.definition.components.parser.parser import Parser
-from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-from langbot_plugin.api.definition.components.event_processor import EventProcessor
+from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 from langbot_plugin.runtime.security import (
@@ -45,17 +44,17 @@ from langbot_plugin.runtime.security import (
 logger = logging.getLogger(__name__)
 
 
-def _apply_agent_runner_class_defaults(
+def _apply_runner_class_defaults(
     component_manifest: ComponentManifest,
-    component_impl_cls: type[AgentRunner],
+    component_impl_cls: type[Runner],
 ) -> None:
-    """Fill empty AgentRunner manifest declarations from class overrides."""
+    """Fill empty Runner manifest declarations from class overrides."""
     spec = component_manifest.spec
     if not isinstance(spec, dict):
         return
 
     config_schema = component_impl_cls.get_config_schema()
-    if not spec.get("config") and config_schema != AgentRunner.get_config_schema():
+    if not spec.get("config") and config_schema != Runner.get_config_schema():
         spec["config"] = config_schema
 
     component_manifest.manifest["spec"] = spec
@@ -325,8 +324,7 @@ class PluginRuntimeController:
             KnowledgeEngine,
             Parser,
             Page,
-            AgentRunner,
-            EventProcessor,
+            Runner,
         ]
 
         for component_cls in preinitialize_component_classes:
@@ -345,8 +343,8 @@ class PluginRuntimeController:
                     )
                     assert issubclass(component_impl_cls, component_cls)
                     component_container.component_instance = component_impl_cls()
-                    if issubclass(component_impl_cls, AgentRunner):
-                        _apply_agent_runner_class_defaults(
+                    if issubclass(component_impl_cls, Runner):
+                        _apply_runner_class_defaults(
                             component_container.manifest,
                             component_impl_cls,
                         )
@@ -358,10 +356,9 @@ class PluginRuntimeController:
                                 f"{self.plugin_container.manifest.metadata.name}"
                             ),
                         )
-                    else:
-                        component_container.component_instance.plugin = (
-                            self.plugin_container.plugin_instance
-                        )
+                    component_container.component_instance.plugin = (
+                        self.plugin_container.plugin_instance
+                    )
                     await component_container.component_instance.initialize()
                     logger.info(
                         f"Component {component_container.manifest.metadata.name} initialized, "

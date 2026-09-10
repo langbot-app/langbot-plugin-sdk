@@ -19,8 +19,8 @@ from langbot_plugin.api.agent_tools.mcp_protocol import (
     jsonrpc_error,
     mcp_tool_error,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 LANGBOT_AGENT_GATEWAY_SERVER_NAME = "langbot_agent"
 LANGBOT_AGENT_GATEWAY_INFO = {"name": "langbot-agent-gateway", "version": "0.1.0"}
@@ -254,8 +254,8 @@ class AgentAssetGateway:
 
     def register_run(
         self,
-        api: AgentRunAPIProxy,
-        ctx: AgentRunContext,
+        api: RunnerAPIProxy,
+        ctx: RunnerContext,
         *,
         token: str | None = None,
         ttl_seconds: float = DEFAULT_RUN_TOKEN_TTL_SECONDS,

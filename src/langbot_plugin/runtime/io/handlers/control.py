@@ -70,8 +70,8 @@ TENANT_SCOPED_CONTROL_ACTIONS = frozenset(
         LangBotToRuntimeAction.LIST_PARSERS.value,
         LangBotToRuntimeAction.PARSE_DOCUMENT.value,
         LangBotToRuntimeAction.PAGE_API.value,
-        LangBotToRuntimeAction.LIST_AGENT_RUNNERS.value,
-        LangBotToRuntimeAction.RUN_AGENT.value,
+        LangBotToRuntimeAction.LIST_RUNNERS.value,
+        LangBotToRuntimeAction.RUN_RUNNER.value,
         LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
         LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION.value,
     }
@@ -487,15 +487,15 @@ class ControlConnectionHandler(handler.Handler):
             ):
                 yield handler.ActionResponse.success(resp.model_dump(mode="json"))
 
-        # AgentRunner actions
-        @self.action(LangBotToRuntimeAction.LIST_AGENT_RUNNERS)
-        async def list_agent_runners(data: dict[str, Any]) -> handler.ActionResponse:
+        # Runner actions
+        @self.action(LangBotToRuntimeAction.LIST_RUNNERS)
+        async def list_runners(data: dict[str, Any]) -> handler.ActionResponse:
             include_plugins = data.get("include_plugins")
-            runners = await self.context.plugin_mgr.list_agent_runners(include_plugins)
+            runners = await self.context.plugin_mgr.list_runners(include_plugins)
             return handler.ActionResponse.success({"runners": runners})
 
-        @self.action(LangBotToRuntimeAction.RUN_AGENT)
-        async def run_agent(
+        @self.action(LangBotToRuntimeAction.RUN_RUNNER)
+        async def run_runner(
             data: dict[str, Any],
         ) -> AsyncGenerator[handler.ActionResponse, None]:
             plugin_author = data["plugin_author"]
@@ -503,7 +503,7 @@ class ControlConnectionHandler(handler.Handler):
             runner_name = data["runner_name"]
             context = data["context"]
 
-            async for result in self.context.plugin_mgr.run_agent(
+            async for result in self.context.plugin_mgr.run_runner(
                 plugin_author, plugin_name, runner_name, context
             ):
                 yield handler.ActionResponse.success(result)

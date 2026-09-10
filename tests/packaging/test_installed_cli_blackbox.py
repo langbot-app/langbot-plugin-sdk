@@ -360,8 +360,7 @@ def test_installed_lbp_run_stdio_runtime_protocol(
 @pytest.mark.parametrize(
     ("component_type", "directory", "component_name", "class_name"),
     [
-        ("EventProcessor", "event_processor", "welcome", "Welcome"),
-        ("AgentRunner", "agent_runner", "echo_runner", "EchoRunner"),
+        ("Runner", "runner", "echo_runner", "EchoRunner"),
     ],
 )
 def test_installed_processor_scaffold_builds_and_executes(
@@ -387,7 +386,7 @@ def test_installed_processor_scaffold_builds_and_executes(
     with zipfile.ZipFile(packages[0]) as archive:
         assert f"components/{directory}/{component_name}.py" in archive.namelist()
         assert f"components/{directory}/{component_name}.yaml" in archive.namelist()
-    script = f'''
+    script = f"""
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -405,13 +404,9 @@ async def main():
     )
     results = [item async for item in component.run(ctx)]
     assert sum(item.type == "run.completed" for item in results) == 1
-    if "{component_type}" == "EventProcessor":
-        api.call_tool.assert_awaited_once_with("event_reply", {{"text": "Hello, Alice"}})
-        assert [item.type for item in results] == ["processor.log", "tool.call.started", "tool.call.completed", "run.completed"]
-    else:
-        assert results[-1].data["message"]["content"] == "Received: 你好"
+    assert results[-1].data["message"]["content"] == "Received: 你好"
 asyncio.run(main())
-'''
+"""
     result = subprocess.run(
         [str(installed_wheel.python), "-c", script],
         cwd=plugin,

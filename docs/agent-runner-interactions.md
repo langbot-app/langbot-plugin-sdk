@@ -1,6 +1,6 @@
-# AgentRunner Structured Interactions
+# Runner Structured Interactions
 
-Structured interactions are a provider-neutral AgentRunner Protocol v1
+Structured interactions are a provider-neutral Runner Protocol v1
 capability. Dify human input, deployment approval, a remote harness question,
 and a CLI permission confirmation all use the same Host contract.
 
@@ -25,13 +25,13 @@ not bypass Host authorization.
 Emit an SDK `InteractionRequest` through the whitelisted result factory:
 
 ```python
-from langbot_plugin.api.entities.builtin.agent_runner import (
-    AgentRunResult,
+from langbot_plugin.api.entities.builtin.runner import (
+    RunnerResult,
     InteractionAction,
     InteractionRequest,
 )
 
-yield AgentRunResult.interaction_requested(
+yield RunnerResult.interaction_requested(
     ctx.run_id,
     InteractionRequest(
         interaction_id="provider-neutral-correlation-id",

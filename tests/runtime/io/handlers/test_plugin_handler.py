@@ -921,7 +921,7 @@ async def test_plugin_handler_calls_registered_runtime_tool():
     ]
 
 
-async def test_plugin_handler_forwards_agent_runner_tool_envelope():
+async def test_plugin_handler_forwards_runner_tool_envelope():
     handler, _manager, control = _handler()
     control.results[PluginToRuntimeAction.CALL_TOOL] = {
         "result": {"text": "tool response"}

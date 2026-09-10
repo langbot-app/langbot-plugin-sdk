@@ -1,4 +1,4 @@
-"""Run-scoped MCP access helper for external AgentRunner runtimes."""
+"""Run-scoped MCP access helper for external Runner runtimes."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from langbot_plugin.api.agent_tools.mcp_config import (
     AgentMCPServerConfig,
     reverse_tunnel_for_mcp_server,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 
 class AgentRunMCPAccess:
@@ -24,8 +24,8 @@ class AgentRunMCPAccess:
 
     def __init__(
         self,
-        api: AgentRunAPIProxy,
-        ctx: AgentRunContext,
+        api: RunnerAPIProxy,
+        ctx: RunnerContext,
         *,
         enabled: bool = True,
         location: str = "local",
@@ -80,7 +80,9 @@ class AgentRunMCPAccess:
 
         if self.mode == "gateway":
             if self.tools is not None:
-                raise ValueError("Custom AgentRunner tools require ephemeral MCP access mode")
+                raise ValueError(
+                    "Custom Runner tools require ephemeral MCP access mode"
+                )
             gateway = get_default_agent_asset_gateway(
                 host=self.gateway_host,
                 port=self.gateway_port,

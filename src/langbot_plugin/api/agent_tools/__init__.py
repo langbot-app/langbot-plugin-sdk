@@ -1,4 +1,4 @@
-"""External tool adapters for LangBot AgentRunner components."""
+"""External tool adapters for LangBot Runner components."""
 
 from langbot_plugin.api.agent_tools.decorators import (
     AgentToolSpec,

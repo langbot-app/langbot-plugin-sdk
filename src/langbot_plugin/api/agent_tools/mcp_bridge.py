@@ -1,4 +1,4 @@
-"""MCP adapter for annotated LangBot AgentRunner tools."""
+"""MCP adapter for annotated LangBot Runner tools."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from langbot_plugin.api.agent_tools.mcp_protocol import (
     handle_mcp_tool_method,
     jsonrpc_error,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 LANGBOT_AGENT_MCP_SERVER_NAME = "langbot_agent"
 MCP_SERVER_INFO = {"name": "langbot-agent", "version": "0.1.0"}
@@ -73,8 +73,8 @@ class AgentRunMCPBridge:
     @classmethod
     def from_run_api(
         cls,
-        api: AgentRunAPIProxy,
-        ctx: AgentRunContext,
+        api: RunnerAPIProxy,
+        ctx: RunnerContext,
         *,
         host: str = "127.0.0.1",
         port: int = 0,

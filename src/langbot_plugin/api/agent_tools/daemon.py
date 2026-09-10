@@ -1,4 +1,4 @@
-"""Generic daemon relay for external AgentRunner runtimes."""
+"""Generic daemon relay for external Runner runtimes."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ DAEMON_MCP_SERVER_INFO = {"name": "langbot-agent-daemon", "version": "0.1.0"}
 
 
 class AgentRuntimeDaemonError(Exception):
-    """Daemon relay error surfaced as an AgentRunner failure."""
+    """Daemon relay error surfaced as a Runner failure."""
 
     def __init__(
         self,

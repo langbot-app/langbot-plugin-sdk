@@ -769,7 +769,7 @@ class PluginConnectionHandler(handler.Handler):
             if data.get("run_id") is not None:
                 if "parameters" not in data:
                     return handler.ActionResponse.error(
-                        "parameters is required for AgentRunner tool calls"
+                        "parameters is required for Runner tool calls"
                     )
             elif "tool_parameters" not in data:
                 return handler.ActionResponse.error(

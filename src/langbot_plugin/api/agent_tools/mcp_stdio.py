@@ -1,4 +1,4 @@
-"""Stdio MCP proxy for a run-scoped LangBot AgentRunner bridge."""
+"""Stdio MCP proxy for a run-scoped LangBot Runner bridge."""
 
 from __future__ import annotations
 

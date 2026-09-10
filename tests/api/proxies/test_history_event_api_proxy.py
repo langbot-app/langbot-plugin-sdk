@@ -1,25 +1,25 @@
-"""Tests for AgentRunAPIProxy history and event methods."""
+"""Tests for RunnerAPIProxy history and event methods."""
 
 from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.entities.builtin.agent_runner.resources import (
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.entities.builtin.runner.resources import (
     AgentResources,
     ModelResource,
     ToolResource,
     KnowledgeBaseResource,
     StorageResource,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
-from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
-from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
-from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
-from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+from langbot_plugin.api.entities.builtin.runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.runner.trigger import AgentTrigger
+from langbot_plugin.api.entities.builtin.runner.input import AgentInput
+from langbot_plugin.api.entities.builtin.runner.event import AgentEventContext
+from langbot_plugin.api.entities.builtin.runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.runner.context_access import (
     ContextAccess,
     ContextAPICapabilities,
 )
@@ -29,9 +29,9 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 def create_mock_context(
     run_id: str = "test_run",
     conversation_id: str | None = None,
-) -> AgentRunContext:
-    """Create a mock AgentRunContext for testing."""
-    return AgentRunContext(
+) -> RunnerContext:
+    """Create a mock RunnerContext for testing."""
+    return RunnerContext(
         run_id=run_id,
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(
@@ -75,7 +75,7 @@ class TestHistoryPageMethod:
         )
 
         ctx = create_mock_context(run_id="run_prompt")
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         prompt = await proxy.get_prompt()
 
@@ -99,7 +99,7 @@ class TestHistoryPageMethod:
         )
 
         ctx = create_mock_context(run_id="run_123")
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.history_page()
 
@@ -122,7 +122,7 @@ class TestHistoryPageMethod:
         )
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.history_page(
             conversation_id="conv_1",
@@ -157,7 +157,7 @@ class TestHistorySearchMethod:
         )
 
         ctx = create_mock_context(run_id="run_456")
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.history_search(query="test query")
 
@@ -179,7 +179,7 @@ class TestHistorySearchMethod:
         )
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.history_search(
             query="search term",
@@ -209,7 +209,7 @@ class TestEventGetMethod:
         )
 
         ctx = create_mock_context(run_id="run_789")
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.event_get(event_id="event_1")
 
@@ -235,7 +235,7 @@ class TestEventPageMethod:
         )
 
         ctx = create_mock_context(run_id="run_abc")
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.event_page()
 
@@ -256,7 +256,7 @@ class TestEventPageMethod:
         )
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.event_page(
             conversation_id="conv_1",

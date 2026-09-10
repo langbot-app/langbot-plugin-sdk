@@ -23,25 +23,25 @@ from langbot_plugin.api.agent_tools.daemon import (
     handle_agent_runtime_mcp_payload,
 )
 from langbot_plugin.api.agent_tools.mcp_config import reverse_tunnel_for_endpoint
-from langbot_plugin.api.entities.builtin.agent_runner import (
+from langbot_plugin.api.entities.builtin.runner import (
     AgentEventContext,
     AgentInput,
     AgentResources,
-    AgentRunContext,
+    RunnerContext,
     AgentRuntimeContext,
     AgentTrigger,
     DeliveryContext,
     HistoryPage,
     TranscriptItem,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+from langbot_plugin.api.entities.builtin.runner.context_access import (
     ContextAccess,
     ContextAPICapabilities,
 )
 
 
-def _ctx() -> AgentRunContext:
-    return AgentRunContext(
+def _ctx() -> RunnerContext:
+    return RunnerContext(
         run_id="run_1",
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(
@@ -57,7 +57,7 @@ def _ctx() -> AgentRunContext:
     )
 
 
-def _authorized_ctx() -> AgentRunContext:
+def _authorized_ctx() -> RunnerContext:
     ctx = _ctx()
     ctx.resources = AgentResources.model_validate(
         {

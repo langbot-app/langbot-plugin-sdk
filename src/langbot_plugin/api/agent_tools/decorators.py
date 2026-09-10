@@ -1,4 +1,4 @@
-"""Declarative AgentRunner external tool registration."""
+"""Declarative Runner external tool registration."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pydantic
 
 @dataclasses.dataclass(frozen=True)
 class AgentToolSpec:
-    """Metadata used to expose a run-scoped AgentRunner tool."""
+    """Metadata used to expose a run-scoped Runner tool."""
 
     name: str
     description: str
@@ -47,7 +47,7 @@ def agent_tool(
 ) -> typing.Callable[
     [typing.Callable[..., typing.Any]], typing.Callable[..., typing.Any]
 ]:
-    """Mark a method as safe to expose through external AgentRunner adapters."""
+    """Mark a method as safe to expose through external Runner adapters."""
 
     def decorator(
         func: typing.Callable[..., typing.Any],

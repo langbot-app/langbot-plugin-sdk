@@ -587,8 +587,8 @@ class TestPluginConnectionHandlerCallerIdentity:
             )
 
 
-class TestAgentRunAPIProxyPullAPIPayloads:
-    """Tests for pull API payload structure via AgentRunAPIProxy.
+class TestRunnerAPIProxyPullAPIPayloads:
+    """Tests for pull API payload structure via RunnerAPIProxy.
 
     These tests verify the proxy layer sends correct payloads to the mock handler.
     """
@@ -596,24 +596,24 @@ class TestAgentRunAPIProxyPullAPIPayloads:
     @pytest.mark.anyio
     async def test_state_api_payloads_via_proxy(self):
         """State API payloads are correctly forwarded via proxy."""
-        from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
-        from langbot_plugin.api.entities.builtin.agent_runner.context import (
-            AgentRunContext,
+        from langbot_plugin.api.proxies.runner import RunnerAPIProxy
+        from langbot_plugin.api.entities.builtin.runner.context import (
+            RunnerContext,
         )
-        from langbot_plugin.api.entities.builtin.agent_runner.resources import (
+        from langbot_plugin.api.entities.builtin.runner.resources import (
             AgentResources,
         )
-        from langbot_plugin.api.entities.builtin.agent_runner.trigger import (
+        from langbot_plugin.api.entities.builtin.runner.trigger import (
             AgentTrigger,
         )
-        from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
-        from langbot_plugin.api.entities.builtin.agent_runner.event import (
+        from langbot_plugin.api.entities.builtin.runner.input import AgentInput
+        from langbot_plugin.api.entities.builtin.runner.event import (
             AgentEventContext,
         )
-        from langbot_plugin.api.entities.builtin.agent_runner.delivery import (
+        from langbot_plugin.api.entities.builtin.runner.delivery import (
             DeliveryContext,
         )
-        from langbot_plugin.api.entities.builtin.agent_runner.runtime import (
+        from langbot_plugin.api.entities.builtin.runner.runtime import (
             AgentRuntimeContext,
         )
 
@@ -622,7 +622,7 @@ class TestAgentRunAPIProxyPullAPIPayloads:
             return_value={"value": None, "success": True}
         )
 
-        ctx = AgentRunContext(
+        ctx = RunnerContext(
             run_id="proxy_run",
             trigger=AgentTrigger(type="user_message"),
             event=AgentEventContext(event_id="e1", event_type="test", source="test"),
@@ -633,7 +633,7 @@ class TestAgentRunAPIProxyPullAPIPayloads:
             resources=AgentResources(),
         )
 
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.state_get("conversation", "key")
 

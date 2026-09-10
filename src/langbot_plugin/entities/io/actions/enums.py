@@ -70,7 +70,7 @@ class PluginToRuntimeAction(ActionType):
     VECTOR_DELETE = "vector_delete"
     VECTOR_LIST = "vector_list"
     # TODO: Keep the legacy misspelled enum member for now. Renaming this
-    # member is unrelated to the AgentRunner branch and should be handled in
+    # member is unrelated to the Runner branch and should be handled in
     # a separate compatibility cleanup.
     GET_KNOWLEDEGE_FILE_STREAM = "get_knowledge_file_stream"
 
@@ -137,8 +137,8 @@ class RuntimeToPluginAction(ActionType):
     EXECUTE_COMMAND = "execute_command"
     SHUTDOWN = "shutdown"
 
-    # AgentRunner actions
-    RUN_AGENT = "run_agent"
+    # Runner actions
+    RUN_RUNNER = "run_runner"
 
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
     INGEST_DOCUMENT = "ingest_document"
@@ -175,9 +175,9 @@ class LangBotToRuntimeAction(ActionType):
     # KnowledgeEngine retrieval action
     RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
 
-    # AgentRunner actions
-    LIST_AGENT_RUNNERS = "list_agent_runners"
-    RUN_AGENT = "run_agent"
+    # Runner actions
+    LIST_RUNNERS = "list_runners"
+    RUN_RUNNER = "run_runner"
 
     # Knowledge Engine actions (LangBot -> Runtime -> Plugin)
     LIST_KNOWLEDGE_ENGINES = "list_knowledge_engines"

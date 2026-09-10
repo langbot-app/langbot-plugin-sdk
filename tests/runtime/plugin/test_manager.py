@@ -13,7 +13,7 @@ import pytest
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.plugin import NonePlugin
-from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+from langbot_plugin.api.entities.builtin.runner.result import RunnerResult
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.context import EventContext
@@ -310,11 +310,11 @@ class FakeHandler:
     async def call_action_generator(self, action, data, timeout=300):
         self.agent_run_calls.append((action, data, timeout))
         run_id = data["context"]["run_id"]
-        yield AgentRunResult.message_completed(
+        yield RunnerResult.message_completed(
             run_id=run_id,
             message=Message(role="assistant", content="toy runner ok"),
         ).model_dump(mode="json")
-        yield AgentRunResult.run_completed(
+        yield RunnerResult.run_completed(
             run_id=run_id,
             finish_reason="stop",
         ).model_dump(mode="json")
@@ -1160,7 +1160,7 @@ async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
         _component("Command", "admin"),
         _component("Page", "settings"),
         _component(
-            "AgentRunner",
+            "Runner",
             "default",
             {
                 "capabilities": {"streaming": True},
@@ -1219,11 +1219,11 @@ async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
     )
     assert page_response["data"]["body"] == {"enabled": True}
 
-    runners = await manager.list_agent_runners()
+    runners = await manager.list_runners()
     assert runners[0]["manifest"]["id"] == "plugin:tester/toy/default"
     results = [
         item
-        async for item in manager.run_agent(
+        async for item in manager.run_runner(
             "tester",
             "toy",
             "default",

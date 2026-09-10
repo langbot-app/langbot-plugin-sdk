@@ -1,6 +1,6 @@
-"""Tests for AgentRunAPIProxy restricted API surface and permission validation.
+"""Tests for RunnerAPIProxy restricted API surface and permission validation.
 
-These tests verify that AgentRunAPIProxy:
+These tests verify that RunnerAPIProxy:
 1. Only exposes APIs explicitly authorized through ctx.resources
 2. Validates resource access before execution
 3. Does NOT expose unrestricted global APIs
@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from langbot_plugin.api.proxies.agent_run import (
-    AgentRunAdminAPIProxy,
-    AgentRunAPIProxy,
+from langbot_plugin.api.proxies.runner import (
+    RunnerAdminAPIProxy,
+    RunnerAPIProxy,
     PermissionDeniedError,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.errors import AgentAPIException
+from langbot_plugin.api.entities.builtin.runner.errors import AgentAPIException
 from langbot_plugin.entities.io.errors import (
     ActionCallError,
     ActionCallTimeoutError,
@@ -27,28 +27,28 @@ from langbot_plugin.entities.io.errors import (
 )
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider.message import Message
-from langbot_plugin.api.entities.builtin.agent_runner.context import AgentRunContext
-from langbot_plugin.api.entities.builtin.agent_runner.resources import (
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.entities.builtin.runner.resources import (
     AgentResources,
     ModelResource,
     ToolResource,
     KnowledgeBaseResource,
     StorageResource,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
-from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
-from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput
-from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
-from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
+from langbot_plugin.api.entities.builtin.runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.runner.trigger import AgentTrigger
+from langbot_plugin.api.entities.builtin.runner.input import AgentInput
+from langbot_plugin.api.entities.builtin.runner.event import AgentEventContext
+from langbot_plugin.api.entities.builtin.runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.runner.context_access import (
     ContextAccess,
     ContextAPICapabilities,
 )
-from langbot_plugin.api.entities.builtin.agent_runner.result import AgentRunResult
+from langbot_plugin.api.entities.builtin.runner.result import RunnerResult
 
 
 class MockHandler:
-    """Mock Handler for testing AgentRunAPIProxy."""
+    """Mock Handler for testing RunnerAPIProxy."""
 
     def __init__(self):
         self.call_action_mock = AsyncMock()
@@ -75,8 +75,8 @@ def create_mock_context(
     knowledge_bases: list[dict] | None = None,
     storage: dict | None = None,
     available_apis: ContextAPICapabilities | None = None,
-) -> AgentRunContext:
-    """Create a mock AgentRunContext for testing."""
+) -> RunnerContext:
+    """Create a mock RunnerContext for testing."""
     if available_apis is None:
         available_apis = ContextAPICapabilities(
             history_page=True,
@@ -88,7 +88,7 @@ def create_mock_context(
             steering_pull=True,
         )
 
-    return AgentRunContext(
+    return RunnerContext(
         run_id=run_id,
         trigger=AgentTrigger(type="user_message"),
         event=AgentEventContext(
@@ -116,127 +116,127 @@ def create_mock_context(
     )
 
 
-class TestAgentRunAPIProxyRestrictedAPISurface:
-    """Tests to verify AgentRunAPIProxy does NOT expose unrestricted global APIs."""
+class TestRunnerAPIProxyRestrictedAPISurface:
+    """Tests to verify RunnerAPIProxy does NOT expose unrestricted global APIs."""
 
     def test_does_not_expose_get_bots(self):
-        """AgentRunAPIProxy should NOT have get_bots method."""
+        """RunnerAPIProxy should NOT have get_bots method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "get_bots"), (
-            "AgentRunAPIProxy should not expose get_bots (use AgentRunResult.action_requested)"
+            "RunnerAPIProxy should not expose get_bots (use RunnerResult.action_requested)"
         )
 
     def test_does_not_expose_send_message(self):
-        """AgentRunAPIProxy should NOT have send_message method."""
+        """RunnerAPIProxy should NOT have send_message method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "send_message"), (
-            "AgentRunAPIProxy should not expose send_message (use AgentRunResult.action_requested)"
+            "RunnerAPIProxy should not expose send_message (use RunnerResult.action_requested)"
         )
 
     def test_does_not_expose_list_tools(self):
-        """AgentRunAPIProxy should NOT have list_tools method."""
+        """RunnerAPIProxy should NOT have list_tools method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "list_tools"), (
-            "AgentRunAPIProxy should not expose list_tools (use get_allowed_tools() instead)"
+            "RunnerAPIProxy should not expose list_tools (use get_allowed_tools() instead)"
         )
 
     def test_exposes_get_tool_detail_with_validation(self):
-        """AgentRunAPIProxy exposes get_tool_detail() for authorized tool schemas."""
+        """RunnerAPIProxy exposes get_tool_detail() for authorized tool schemas."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert hasattr(proxy, "get_tool_detail"), (
-            "AgentRunAPIProxy should expose get_tool_detail() for authorized function calling"
+            "RunnerAPIProxy should expose get_tool_detail() for authorized function calling"
         )
 
     def test_does_not_expose_vector_upsert(self):
-        """AgentRunAPIProxy should NOT have vector_upsert method."""
+        """RunnerAPIProxy should NOT have vector_upsert method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "vector_upsert"), (
-            "AgentRunAPIProxy should not expose vector_upsert (no vector resources defined)"
+            "RunnerAPIProxy should not expose vector_upsert (no vector resources defined)"
         )
 
     def test_does_not_expose_vector_search(self):
-        """AgentRunAPIProxy should NOT have vector_search method."""
+        """RunnerAPIProxy should NOT have vector_search method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "vector_search"), (
-            "AgentRunAPIProxy should not expose vector_search (no vector resources defined)"
+            "RunnerAPIProxy should not expose vector_search (no vector resources defined)"
         )
 
     def test_does_not_expose_invoke_embedding(self):
-        """AgentRunAPIProxy should NOT have invoke_embedding method."""
+        """RunnerAPIProxy should NOT have invoke_embedding method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "invoke_embedding"), (
-            "AgentRunAPIProxy should not expose invoke_embedding (no embedding model resources defined)"
+            "RunnerAPIProxy should not expose invoke_embedding (no embedding model resources defined)"
         )
 
     def test_does_not_expose_get_llm_models(self):
-        """AgentRunAPIProxy should NOT have get_llm_models method."""
+        """RunnerAPIProxy should NOT have get_llm_models method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "get_llm_models"), (
-            "AgentRunAPIProxy should not expose get_llm_models (use get_allowed_models() instead)"
+            "RunnerAPIProxy should not expose get_llm_models (use get_allowed_models() instead)"
         )
 
     def test_does_not_expose_list_knowledge_bases(self):
-        """AgentRunAPIProxy should NOT have list_knowledge_bases method."""
+        """RunnerAPIProxy should NOT have list_knowledge_bases method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "list_knowledge_bases"), (
-            "AgentRunAPIProxy should not expose list_knowledge_bases (use get_allowed_knowledge_bases() instead)"
+            "RunnerAPIProxy should not expose list_knowledge_bases (use get_allowed_knowledge_bases() instead)"
         )
 
     def test_does_not_expose_get_config_file(self):
-        """AgentRunAPIProxy should NOT have get_config_file method."""
+        """RunnerAPIProxy should NOT have get_config_file method."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "get_config_file"), (
-            "AgentRunAPIProxy should not expose get_config_file (use sandbox file tools)"
+            "RunnerAPIProxy should not expose get_config_file (use sandbox file tools)"
         )
 
     def test_does_not_expose_get_file(self):
-        """AgentRunAPIProxy should NOT have Host file methods."""
+        """RunnerAPIProxy should NOT have Host file methods."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "get_file")
 
     def test_exposes_allowed_resource_helpers(self):
-        """AgentRunAPIProxy exposes resource helper methods."""
+        """RunnerAPIProxy exposes resource helper methods."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert hasattr(proxy, "get_allowed_models")
         assert hasattr(proxy, "get_allowed_tools")
         assert hasattr(proxy, "get_allowed_knowledge_bases")
 
     def test_exposes_storage_methods_with_validation(self):
-        """AgentRunAPIProxy exposes storage methods with permission validation."""
+        """RunnerAPIProxy exposes storage methods with permission validation."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert hasattr(proxy, "set_plugin_storage")
         assert hasattr(proxy, "get_plugin_storage")
 
     def test_exposes_run_ledger_methods(self):
-        """AgentRunAPIProxy exposes run-scoped ledger methods."""
+        """RunnerAPIProxy exposes run-scoped ledger methods."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert hasattr(proxy, "run_get")
         assert hasattr(proxy, "run_list")
@@ -250,9 +250,9 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         assert hasattr(proxy, "delete_workspace_storage")
 
     def test_does_not_expose_control_plane_methods(self):
-        """AgentRunAPIProxy should not expose runtime/admin control-plane APIs."""
+        """RunnerAPIProxy should not expose runtime/admin control-plane APIs."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "runtime_register")
         assert not hasattr(proxy, "runtime_heartbeat")
@@ -265,22 +265,22 @@ class TestAgentRunAPIProxyRestrictedAPISurface:
         assert not hasattr(proxy, "runner_stats")
 
     def test_exposes_version_api(self):
-        """AgentRunAPIProxy exposes get_langbot_version (no authorization needed)."""
+        """RunnerAPIProxy exposes get_langbot_version (no authorization needed)."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert hasattr(proxy, "get_langbot_version")
 
     def test_exposes_prompt_api_with_available_api_gate(self):
-        """AgentRunAPIProxy exposes get_prompt only behind prompt_get capability."""
+        """RunnerAPIProxy exposes get_prompt only behind prompt_get capability."""
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert hasattr(proxy, "get_prompt")
 
 
-class TestAgentRunAPIProxyResourceValidation:
-    """Tests for resource validation in AgentRunAPIProxy."""
+class TestRunnerAPIProxyResourceValidation:
+    """Tests for resource validation in RunnerAPIProxy."""
 
     @pytest.mark.anyio
     async def test_invoke_llm_with_authorized_model(self):
@@ -293,7 +293,7 @@ class TestAgentRunAPIProxyResourceValidation:
         ctx = create_mock_context(
             run_id="run_llm_test", models=[{"model_id": "model_001"}]
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         messages = [Message(role="user", content="Hello")]
         await proxy.invoke_llm("model_001", messages)
@@ -321,7 +321,7 @@ class TestAgentRunAPIProxyResourceValidation:
         ctx = create_mock_context(
             run_id="run_llm_usage_test", models=[{"model_id": "model_001"}]
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.invoke_llm_with_usage(
             "model_001",
@@ -345,7 +345,7 @@ class TestAgentRunAPIProxyResourceValidation:
         }
 
         ctx = create_mock_context(models=[{"model_id": "model_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         message = await proxy.invoke_llm(
             "model_001",
@@ -364,7 +364,7 @@ class TestAgentRunAPIProxyResourceValidation:
             run_id="run_unauth",
             models=[{"model_id": "model_001"}],  # Only model_001 is authorized
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         messages = [Message(role="user", content="Hello")]
 
@@ -383,7 +383,7 @@ class TestAgentRunAPIProxyResourceValidation:
             run_id="run_stream_denied",
             models=[{"model_id": "model_001", "operations": ["invoke"]}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         messages = [Message(role="user", content="Hello")]
 
@@ -416,7 +416,7 @@ class TestAgentRunAPIProxyResourceValidation:
         ctx = create_mock_context(
             models=[{"model_id": "model_001", "operations": ["stream"]}]
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=StreamHandler())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=StreamHandler())
 
         events = [
             event
@@ -450,7 +450,7 @@ class TestAgentRunAPIProxyResourceValidation:
         ctx = create_mock_context(
             models=[{"model_id": "model_001", "operations": ["stream"]}]
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=StreamHandler())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=StreamHandler())
 
         chunks = [
             chunk
@@ -472,7 +472,7 @@ class TestAgentRunAPIProxyResourceValidation:
         ctx = create_mock_context(
             run_id="run_tool_test", tools=[{"tool_name": "web_search"}]
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.call_tool("web_search", {"query": "hello"})
 
@@ -492,7 +492,7 @@ class TestAgentRunAPIProxyResourceValidation:
             run_id="run_unauth",
             tools=[{"tool_name": "web_search"}],  # Only web_search is authorized
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.call_tool(
@@ -511,7 +511,7 @@ class TestAgentRunAPIProxyResourceValidation:
             run_id="run_tool_call_denied",
             tools=[{"tool_name": "web_search", "operations": ["detail"]}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.call_tool("web_search", {"query": "hello"})
@@ -528,7 +528,7 @@ class TestAgentRunAPIProxyResourceValidation:
         ctx = create_mock_context(
             run_id="run_kb_test", knowledge_bases=[{"kb_id": "kb_001"}]
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.retrieve_knowledge("kb_001", "search query")
 
@@ -548,7 +548,7 @@ class TestAgentRunAPIProxyResourceValidation:
             run_id="run_unauth",
             knowledge_bases=[{"kb_id": "kb_001"}],  # Only kb_001 is authorized
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.retrieve_knowledge(
@@ -559,7 +559,7 @@ class TestAgentRunAPIProxyResourceValidation:
         assert "not authorized" in str(exc_info.value)
 
 
-class TestAgentRunAPIProxyAvailableAPIGate:
+class TestRunnerAPIProxyAvailableAPIGate:
     """Run-scoped pull APIs must fail locally when Host did not expose them."""
 
     @pytest.mark.anyio
@@ -582,7 +582,7 @@ class TestAgentRunAPIProxyAvailableAPIGate:
             (
                 "run_append_result",
                 "run_append_result",
-                (AgentRunResult.run_completed("test_run"),),
+                (RunnerResult.run_completed("test_run"),),
             ),
             ("run_finalize", "run_finalize", ()),
         ],
@@ -594,7 +594,7 @@ class TestAgentRunAPIProxyAvailableAPIGate:
         args: tuple,
     ):
         mock_handler = MockHandler()
-        proxy = AgentRunAPIProxy(
+        proxy = RunnerAPIProxy(
             ctx=create_mock_context(available_apis=ContextAPICapabilities()),
             plugin_runtime_handler=mock_handler,
         )
@@ -610,7 +610,7 @@ class TestAgentRunAPIProxyAvailableAPIGate:
     async def test_pull_api_gate_accepts_dict_context_payloads(self):
         mock_handler = MockHandler()
         mock_handler.call_action_mock.return_value = {"items": []}
-        proxy = AgentRunAPIProxy(
+        proxy = RunnerAPIProxy(
             ctx=SimpleNamespace(
                 run_id="run_dict_context",
                 runtime=SimpleNamespace(deadline_at=None),
@@ -632,12 +632,12 @@ class TestAgentRunAPIProxyAvailableAPIGate:
         assert call_args[0][1]["run_id"] == "run_dict_context"
 
 
-class TestAgentRunAPIProxyNoQueryId:
-    """AgentRunAPIProxy does not expose or forward query_id."""
+class TestRunnerAPIProxyNoQueryId:
+    """RunnerAPIProxy does not expose or forward query_id."""
 
     def test_query_id_property_is_not_exposed(self):
         ctx = create_mock_context(run_id="test_run")
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=MagicMock())
 
         assert not hasattr(proxy, "query_id")
 
@@ -650,7 +650,7 @@ class TestAgentRunAPIProxyNoQueryId:
             run_id="run_no_query",
             knowledge_bases=[{"kb_id": "kb_001"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.retrieve_knowledge("kb_001", "search query")
 
@@ -668,7 +668,7 @@ class TestAgentRunAPIProxyNoQueryId:
             run_id="run_no_query",
             tools=[{"tool_name": "test_tool"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.call_tool("test_tool", {"param": "value"})
 
@@ -678,8 +678,8 @@ class TestAgentRunAPIProxyNoQueryId:
         assert "query_id" not in data
 
 
-class TestAgentRunAPIProxyStoragePermission:
-    """Tests for storage permission validation in AgentRunAPIProxy."""
+class TestRunnerAPIProxyStoragePermission:
+    """Tests for storage permission validation in RunnerAPIProxy."""
 
     @pytest.mark.anyio
     async def test_plugin_storage_when_disabled_raises_error(self):
@@ -690,7 +690,7 @@ class TestAgentRunAPIProxyStoragePermission:
             run_id="run_storage",
             storage={"plugin_storage": False, "workspace_storage": False},  # Disabled
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.set_plugin_storage("key", b"value")
@@ -711,7 +711,7 @@ class TestAgentRunAPIProxyStoragePermission:
                 "workspace_storage": False,
             },  # Plugin storage enabled
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.set_plugin_storage("key", b"value")
 
@@ -727,7 +727,7 @@ class TestAgentRunAPIProxyStoragePermission:
             run_id="run_storage",
             storage={"plugin_storage": False, "workspace_storage": False},  # Disabled
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.set_workspace_storage("key", b"value")
@@ -748,7 +748,7 @@ class TestAgentRunAPIProxyStoragePermission:
                 "workspace_storage": True,
             },  # Workspace storage enabled
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.set_workspace_storage("key", b"value")
 
@@ -764,7 +764,7 @@ class TestAgentRunAPIProxyStoragePermission:
             run_id="run_storage",
             storage={"plugin_storage": False, "workspace_storage": False},
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(PermissionDeniedError) as exc_info:
             await proxy.get_plugin_storage("key")
@@ -772,8 +772,8 @@ class TestAgentRunAPIProxyStoragePermission:
         assert "plugin storage" in str(exc_info.value).lower()
 
 
-class TestAgentRunAPIProxyTimeoutValues:
-    """Tests for timeout values in AgentRunAPIProxy."""
+class TestRunnerAPIProxyTimeoutValues:
+    """Tests for timeout values in RunnerAPIProxy."""
 
     @pytest.mark.anyio
     async def test_invoke_llm_default_timeout(self):
@@ -784,7 +784,7 @@ class TestAgentRunAPIProxyTimeoutValues:
         }
 
         ctx = create_mock_context(models=[{"model_id": "model_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.invoke_llm("model_001", [Message(role="user", content="Hello")])
 
@@ -802,7 +802,7 @@ class TestAgentRunAPIProxyTimeoutValues:
         }
 
         ctx = create_mock_context(models=[{"model_id": "model_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.invoke_llm(
             "model_001", [Message(role="user", content="Hello")], timeout=60.0
@@ -820,7 +820,7 @@ class TestAgentRunAPIProxyTimeoutValues:
         mock_handler.call_action_mock.return_value = {"result": {}}
 
         ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.call_tool("test_tool", {"param": "value"})
 
@@ -836,7 +836,7 @@ class TestAgentRunAPIProxyTimeoutValues:
         mock_handler.call_action_mock.return_value = {"results": []}
 
         ctx = create_mock_context(knowledge_bases=[{"kb_id": "kb_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.retrieve_knowledge("kb_001", "search query")
 
@@ -857,7 +857,7 @@ class TestAgentRunAPIProxyTimeoutValues:
             deadline_at=time.time() + 5,
             models=[{"model_id": "model_001"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.invoke_llm("model_001", [Message(role="user", content="Hello")])
 
@@ -877,7 +877,7 @@ class TestAgentRunAPIProxyTimeoutValues:
             deadline_at=time.time() + 5,
             tools=[{"tool_name": "test_tool"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.call_tool("test_tool", {"param": "value"})
 
@@ -886,7 +886,7 @@ class TestAgentRunAPIProxyTimeoutValues:
         assert 0 < timeout <= 5
 
 
-class TestAgentRunAPIProxyActionEnumCorrectness:
+class TestRunnerAPIProxyActionEnumCorrectness:
     """Tests to ensure correct action enum usage."""
 
     def test_retrieve_knowledge_uses_retrieve_knowledge_base_action(self):
@@ -905,7 +905,7 @@ class TestAgentRunAPIProxyActionEnumCorrectness:
         mock_handler.call_action_mock.return_value = {"results": []}
 
         ctx = create_mock_context(knowledge_bases=[{"kb_id": "kb_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.retrieve_knowledge("kb_001", "search query")
 
@@ -915,7 +915,7 @@ class TestAgentRunAPIProxyActionEnumCorrectness:
         assert action == PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE
 
 
-class TestAgentRunAPIProxyFieldConsistency:
+class TestRunnerAPIProxyFieldConsistency:
     """Tests for field name consistency between SDK and Host handler."""
 
     @pytest.mark.anyio
@@ -927,7 +927,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         }
 
         ctx = create_mock_context(models=[{"model_id": "model_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.invoke_llm("model_001", [Message(role="user", content="Hello")])
 
@@ -951,7 +951,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         }
 
         ctx = create_mock_context(models=[{"model_id": "model_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.invoke_llm(
             "model_001", [Message(role="user", content="Hello")], remove_think=True
@@ -969,7 +969,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler.call_action_mock.return_value = {"results": []}
 
         ctx = create_mock_context(models=[{"model_id": "rerank_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.invoke_rerank(
             "rerank_001", "query", ["doc"], extra_args={"top_n": 2}
@@ -989,7 +989,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler.call_action_mock.return_value = {"unexpected": []}
 
         ctx = create_mock_context(models=[{"model_id": "rerank_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(AgentAPIException) as exc_info:
             await proxy.invoke_rerank("rerank_001", "query", ["doc"])
@@ -1004,7 +1004,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler.call_action_mock.return_value = {"result": {}}
 
         ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.call_tool("test_tool", {"param": "value"})
 
@@ -1024,7 +1024,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler.call_action_mock.return_value = {"results": []}
 
         ctx = create_mock_context(knowledge_bases=[{"kb_id": "kb_001"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.retrieve_knowledge(
             "kb_001", "search query", top_k=5, filters={"cat": "tech"}
@@ -1060,7 +1060,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         }
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.steering_pull(mode="one")
 
@@ -1085,7 +1085,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         ctx = create_mock_context(
             knowledge_bases=[{"kb_id": "kb_001"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(AgentAPIException) as exc_info:
             await proxy.retrieve_knowledge("kb_001", "query")
@@ -1104,7 +1104,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         ctx = create_mock_context(
             knowledge_bases=[{"kb_id": "kb_001"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(AgentAPIException) as exc_info:
             await proxy.retrieve_knowledge("kb_001", "query")
@@ -1125,7 +1125,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         )
 
         ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(AgentAPIException) as exc_info:
             await proxy.call_tool("test_tool", {})
@@ -1146,7 +1146,7 @@ class TestAgentRunAPIProxyFieldConsistency:
             deadline_at=time.time() - 1,
             knowledge_bases=[{"kb_id": "kb_001"}],
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(AgentAPIException) as exc_info:
             await proxy.retrieve_knowledge("kb_001", "query")
@@ -1161,7 +1161,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         mock_handler.call_action_mock.return_value = {"unexpected": "shape"}
 
         ctx = create_mock_context(tools=[{"tool_name": "test_tool"}])
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         with pytest.raises(AgentAPIException) as exc_info:
             await proxy.call_tool("test_tool", {})
@@ -1170,7 +1170,7 @@ class TestAgentRunAPIProxyFieldConsistency:
         assert exc_info.value.error.details["missing_key"] == "result"
 
 
-class TestAgentRunAPIProxyRunLedgerAPI:
+class TestRunnerAPIProxyRunLedgerAPI:
     """Tests for Run Ledger API proxy methods."""
 
     @pytest.mark.anyio
@@ -1185,7 +1185,7 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         }
 
         ctx = create_mock_context(available_apis=ContextAPICapabilities(run_get=True))
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.run_get("run_target")
 
@@ -1205,7 +1205,7 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         }
 
         ctx = create_mock_context(available_apis=ContextAPICapabilities(run_list=True))
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.run_list(
             conversation_id="conv_1",
@@ -1245,7 +1245,7 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         ctx = create_mock_context(
             available_apis=ContextAPICapabilities(run_events_page=True)
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.run_events_page(
             "run_target",
@@ -1277,7 +1277,7 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         ctx = create_mock_context(
             available_apis=ContextAPICapabilities(run_cancel=True)
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.run_cancel("run_target", reason="user requested")
 
@@ -1306,8 +1306,8 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         ctx = create_mock_context(
             available_apis=ContextAPICapabilities(run_append_result=True)
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
-        event = AgentRunResult.run_completed(
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        event = RunnerResult.run_completed(
             "run_target",
             finish_reason="stop",
             sequence=3,
@@ -1341,7 +1341,7 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         ctx = create_mock_context(
             available_apis=ContextAPICapabilities(run_finalize=True)
         )
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.run_finalize(
             "run_target",
@@ -1362,7 +1362,7 @@ class TestAgentRunAPIProxyRunLedgerAPI:
         }
 
 
-class TestAgentRunAdminAPIProxy:
+class TestRunnerAdminAPIProxy:
     """Tests for Host-authorized admin proxy methods."""
 
     @pytest.mark.anyio
@@ -1382,7 +1382,7 @@ class TestAgentRunAdminAPIProxy:
             "prev_cursor": None,
             "has_more": False,
         }
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         page = await proxy.run_list(statuses=["completed"], limit=10)
 
@@ -1420,7 +1420,7 @@ class TestAgentRunAdminAPIProxy:
                 "has_more": False,
             },
         ]
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         run = await proxy.run_get("run_target")
         events = await proxy.run_events_page(
@@ -1464,7 +1464,7 @@ class TestAgentRunAdminAPIProxy:
                 "metadata": {},
             },
         ]
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         runtimes = await proxy.runtime_list(
             statuses=["online"], labels={"region": "local"}
@@ -1505,7 +1505,7 @@ class TestAgentRunAdminAPIProxy:
                 "last_heartbeat_at": 100,
             },
         ]
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         registered = await proxy.runtime_register(
             runtime_id="runtime_1",
@@ -1572,7 +1572,7 @@ class TestAgentRunAdminAPIProxy:
                 "metadata": {},
             },
         ]
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         renewed = await proxy.run_renew_claim(
             "run_target",
@@ -1618,7 +1618,7 @@ class TestAgentRunAdminAPIProxy:
                 "name": "default",
             }
         ]
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         runners = await proxy.runner_list(include_plugins=["test/plugin"])
 
@@ -1641,7 +1641,7 @@ class TestAgentRunAdminAPIProxy:
             "stale_runtime_count": 2,
             "updated_runtime_count": 1,
         }
-        proxy = AgentRunAdminAPIProxy(plugin_runtime_handler=mock_handler)
+        proxy = RunnerAdminAPIProxy(plugin_runtime_handler=mock_handler)
 
         result = await proxy.runtime_reconcile(stale_after_seconds=60.5)
 
@@ -1652,7 +1652,7 @@ class TestAgentRunAdminAPIProxy:
         assert data == {"stale_after_seconds": 60.5}
 
 
-class TestAgentRunAPIProxyStateAPI:
+class TestRunnerAPIProxyStateAPI:
     """Tests for State API proxy methods."""
 
     @pytest.mark.anyio
@@ -1662,7 +1662,7 @@ class TestAgentRunAPIProxyStateAPI:
         mock_handler.call_action_mock.return_value = {"value": {"key": "value"}}
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.state_get("conversation", "external.session_id")
 
@@ -1683,7 +1683,7 @@ class TestAgentRunAPIProxyStateAPI:
         mock_handler.call_action_mock.return_value = {"success": True}
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.state_set("conversation", "external.session_id", "sess_123")
 
@@ -1706,7 +1706,7 @@ class TestAgentRunAPIProxyStateAPI:
         mock_handler.call_action_mock.return_value = {"success": True}
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.state_delete("conversation", "external.session_id")
 
@@ -1730,7 +1730,7 @@ class TestAgentRunAPIProxyStateAPI:
         }
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         await proxy.state_list("conversation", prefix="external.", limit=50)
 
@@ -1753,7 +1753,7 @@ class TestAgentRunAPIProxyStateAPI:
         mock_handler.call_action_mock.return_value = {"value": {"nested": "data"}}
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.state_get("conversation", "test_key")
 
@@ -1766,7 +1766,7 @@ class TestAgentRunAPIProxyStateAPI:
         mock_handler.call_action_mock.return_value = {"success": True}
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.state_set("conversation", "test_key", "test_value")
 
@@ -1782,7 +1782,7 @@ class TestAgentRunAPIProxyStateAPI:
         }
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         result = await proxy.state_list("runner", limit=100)
 
@@ -1796,7 +1796,7 @@ class TestAgentRunAPIProxyStateAPI:
         mock_handler.call_action_mock.return_value = {"value": None}
 
         ctx = create_mock_context()
-        proxy = AgentRunAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=mock_handler)
 
         # Test each method uses correct action
         await proxy.state_get("conversation", "key")
@@ -1832,7 +1832,7 @@ async def test_reply_stream_is_explicit_and_finishes_one_message():
     )
     handler = MockHandler()
     handler.call_action_mock.return_value = {"result": {"status": "completed"}}
-    api = AgentRunAPIProxy(ctx, handler)
+    api = RunnerAPIProxy(ctx, handler)
     async with api.reply_stream() as stream:
         handler.call_action_mock.assert_not_awaited()
         await stream.update("Hello")
@@ -1851,7 +1851,7 @@ async def test_reply_stream_rejects_old_host_without_sending():
         tools=[{"tool_name": "event_reply", "tool_type": "platform"}]
     )
     handler = MockHandler()
-    api = AgentRunAPIProxy(ctx, handler)
+    api = RunnerAPIProxy(ctx, handler)
     with pytest.raises(PermissionDeniedError, match="reply_stream"):
         async with api.reply_stream():
             pass

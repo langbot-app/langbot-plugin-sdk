@@ -18,7 +18,7 @@ def test_components_import_success():
         Command,
         Tool,
         EventListener,
-        AgentRunner,
+        Runner,
     )
 
     # Verify they are the expected classes
@@ -26,7 +26,7 @@ def test_components_import_success():
     assert Command.__kind__ == "Command"
     assert Tool.__kind__ == "Tool"
     assert EventListener.__kind__ == "EventListener"
-    assert AgentRunner.__kind__ == "AgentRunner"
+    assert Runner.__kind__ == "Runner"
 
 
 def test_components_all_exports_exist():

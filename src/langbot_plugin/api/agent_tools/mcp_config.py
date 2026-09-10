@@ -1,4 +1,4 @@
-"""Neutral MCP server configuration helpers for AgentRunner integrations."""
+"""Neutral MCP server configuration helpers for Runner integrations."""
 
 from __future__ import annotations
 

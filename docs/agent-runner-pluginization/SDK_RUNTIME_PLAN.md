@@ -1,29 +1,29 @@
-# AgentRunner SDK / Runtime 实现说明
+# Runner SDK / Runtime 实现说明
 
 更新：2026-09-05，代码基线 `dev/4.11.x` / `f1da058`。源码版本为 `0.5.5`；版本字段不证明 registry 包包含本分支实现。Core 仍锁定 `langbot-plugin==0.5.3`，本机通过 editable 源码联调，发布前必须固定实际配套依赖。
 
-本文档面向 SDK / Runtime 维护者。它不定义 AgentRunner Protocol v1 的
+本文档面向 SDK / Runtime 维护者。它不定义 Runner Protocol v1 的
 schema；协议字段、结果类型、permissions 字面量和 Host API 语义以 LangBot 仓库的
 `docs/agent-runner-pluginization/PROTOCOL_V1.md` 为准。
 
 ## SDK 负责的实现面
 
-- `AgentRunner` 组件基类和 runner-scoped API 入口。
-- AgentRunner Protocol v1 的 Pydantic 实体实现。
-- `LIST_AGENT_RUNNERS` / `RUN_AGENT` runtime action 转发。
+- `Runner` 组件基类和 runner-scoped API 入口。
+- Runner Protocol v1 的 Pydantic 实体实现。
+- `LIST_RUNNERS` / `RUN_RUNNER` runtime action 转发。
 - component manifest 的 `spec.capabilities` / `spec.permissions` / `spec.config` 读取。
 - runner 组件模板和 CLI 生成入口。
 - run-scoped Host API helper，包括工具、知识库、历史等资源访问的权限边界。
-- SDK 不内置 Claude Code、Codex、Kimi Code、Pi Agent 等具体 adapter；只保留 runner/plugin 可复用的低层 daemon relay primitives，不提供托管式通用远端 AgentRunner 产品。外部 harness 执行策略应由 runner/plugin 包负责，优先复用 ACP 这类轻量 runtime 协议。
+- SDK 不内置 Claude Code、Codex、Kimi Code、Pi Agent 等具体 adapter；只保留 runner/plugin 可复用的低层 daemon relay primitives，不提供托管式通用远端 Runner 产品。外部 harness 执行策略应由 runner/plugin 包负责，优先复用 ACP 这类轻量 runtime 协议。
 - SDK 侧单测和模板示例，保证 runner 作者只看到当前协议字段。
 
 ## 当前分支同步状态
 
-`dev/4.11.x` 已同步 LangBot `dev/4.11.x` 的 AgentRunner Protocol v1 与
+`dev/4.11.x` 已同步 LangBot `dev/4.11.x` 的 Runner Protocol v1 与
 EBA 基础实体。SDK 侧负责的当前闭环包括：
 
-- AgentRunner component discovery、manifest capabilities / permissions validation。
-- `RUN_AGENT` 转发、result sequence 注入、deadline / cancel 传播和异常到 `run.failed` 的转换。
+- Runner component discovery、manifest capabilities / permissions validation。
+- `RUN_RUNNER` 转发、result sequence 注入、deadline / cancel 传播和异常到 `run.failed` 的转换。
 - run-scoped Host API proxy，包括 history / event / state / resource / ledger / admin 边界。
 - agent tools MCP bridge、asset gateway、skill-as-tool resource surface。
 - runtime register / heartbeat、run claim / renew / release / reconcile 的基础实体与 proxy。
@@ -32,7 +32,7 @@ EBA 基础实体。SDK 侧负责的当前闭环包括：
 
 ### 近期 Runtime 能力
 
-- `runtime/plugin/agent_runner_service.py` 承担 Runner discovery 与执行流转发；`mgr.py` 是插件生命周期和集成入口。
+- `runtime/plugin/runner_service.py` 承担 Runner discovery 与执行流转发；`mgr.py` 是插件生命周期和集成入口。
 - `dependency_environment.py` 为已验证 artifact 准备独立依赖树，按 artifact、requirements、Python ABI、Runtime 版本与 profile 等计算复用键，原子发布；不把一个插件的依赖安装进另一个插件的环境。
 - `worker_launcher.py` 管理进程与一次性注册凭据；Windows worker 使用 Runtime 管理的子进程和 loopback WebSocket 回连。
 - shared profile 保留安装作用域、只读 artifact 和私有目录边界；硬 CPU/内存/PID 限制依赖部署的 nsjail/cgroup 条件。出站网络与硬磁盘配额仍有生产门禁。
@@ -46,7 +46,7 @@ Core 已把 `event_*` / `platform_*` 作为 `ToolResource(tool_type="platform")`
 
 - `src/langbot_plugin/api/agent_tools/asset_gateway.py`
 - `src/langbot_plugin/api/agent_tools/external_tools.py`
-- `src/langbot_plugin/api/entities/builtin/agent_runner/resources.py`
+- `src/langbot_plugin/api/entities/builtin/runner/resources.py`
 - `tests/api/test_agent_tools_mcp_bridge.py`
 
 改动使 `langbot_list_assets` 可分别返回普通 `tools` 与 `platform_tools`，并按 `include_schemas` 返回平台工具 schema，更新 gateway 引导。下面本地测试包括这组改动，不能标记为已发布功能。配套授权规则见 LangBot `docs/agent-runner-pluginization/PLATFORM_ACTION_TOOLS.md`。
@@ -59,13 +59,13 @@ SDK 已有 typed interaction contract 和通用 Runner 脚手架支持；Host �
 
 | 入口 | 责任 |
 | --- | --- |
-| `src/langbot_plugin/api/definition/components/agent_runner/runner.py` | `AgentRunner` 基类、`get_run_api(ctx)`、插件实例边界。 |
-| `src/langbot_plugin/api/entities/builtin/agent_runner/` | SDK Pydantic 实体实现。 |
+| `src/langbot_plugin/api/definition/components/runner/runner.py` | `Runner` 基类、`get_run_api(ctx)`、插件实例边界。 |
+| `src/langbot_plugin/api/entities/builtin/runner/` | SDK Pydantic 实体实现。 |
 | `src/langbot_plugin/api/proxies/agent_run/` | run-scoped Host API proxy，按 resource/context/state/ledger/admin 边界拆分。 |
-| `src/langbot_plugin/runtime/plugin/mgr.py` | 插件生命周期、作用域与 AgentRunner service 集成入口。 |
-| `src/langbot_plugin/runtime/plugin/agent_runner_service.py` | discovery / run 的实现、sequence、deadline 与失败结果转换。 |
+| `src/langbot_plugin/runtime/plugin/mgr.py` | 插件生命周期、作用域与 Runner service 集成入口。 |
+| `src/langbot_plugin/runtime/plugin/runner_service.py` | discovery / run 的实现、sequence、deadline 与失败结果转换。 |
 | `src/langbot_plugin/runtime/io/handlers/control.py` | LangBot -> Runtime action handler。 |
-| `src/langbot_plugin/assets/templates/components/agent_runner/` | runner scaffold 模板。 |
+| `src/langbot_plugin/assets/templates/components/runner/` | runner scaffold 模板。 |
 
 ## 同步流程
 
@@ -73,7 +73,7 @@ SDK 已有 typed interaction contract 和通用 Runner 脚手架支持；Host �
 2. SDK 实体、Runtime、模板和测试按 canonical spec 同步。
 3. runner 示例必须只引用 LangBot canonical spec 中的当前字段和稳定 result types。
 4. SDK Runtime 把插件异常转换为 `run.failed`，不能把 generator 异常直接暴露给 Host。
-5. 一个插件可以暴露多个 AgentRunner component，Runtime discovery 不得限制为单 runner。
+5. 一个插件可以暴露多个 Runner component，Runtime discovery 不得限制为单 runner。
 
 ## Host action 兼容
 
@@ -81,7 +81,7 @@ SDK 已有 typed interaction contract 和通用 Runner 脚手架支持；Host �
 不再只在 SDK Runtime 本地解析。Host 必须同时支持两种调用 envelope：
 
 - 普通插件调用不带 `run_id`，继续使用 `tool_parameters` / `tool_response`。
-- AgentRunner 调用带 `run_id`，使用 `parameters` / `result`，并由 Host 按
+- Runner 调用带 `run_id`，使用 `parameters` / `result`，并由 Host 按
   `caller_plugin_identity` 和 run resources 做权限校验。
 
 发布 SDK Runtime 变更时必须确认配套 LangBot Host 已实现上述两个 shape；如果
@@ -92,22 +92,22 @@ SDK 与 Host 独立发版，先验证 Host action handler，再升级会转发 t
 2026-09-05 在现有 Windows venv 中以 `python -m pytest` 对以下范围执行定向验证：362 passed，10 warnings。使用当前 editable 源码及上述未提交改动，没有重新验证正式包安装或真实 provider。
 
 ```text
-tests/api/entities/builtin/agent_runner
+tests/api/entities/builtin/runner
 tests/api/proxies
 tests/api/test_agent_tools_mcp_bridge.py
-tests/runtime/plugin/test_mgr_agent_runner.py
+tests/runtime/plugin/test_mgr_runner.py
 tests/runtime/plugin/test_dependency_environment.py
 tests/runtime/plugin/test_restart_coordinator.py
 ```
 
 跨仓库测试前分别确认 Core 和 Runtime 的 `langbot_plugin.__file__` 与发行版元数据；两者都应指向预期版本。保留本地安装运行使用 `uv run --no-sync`。正式发布还需干净环境包安装验证，不能由 editable 测试替代。
 
-- `AgentRunContext` 最小字段 validate。
-- `AgentRunResult` 所有稳定 result type validate。
+- `RunnerContext` 最小字段 validate。
+- `RunnerResult` 所有稳定 result type validate。
 - manifest capabilities / permissions 和 context access 默认值。
-- 单插件多 AgentRunner discovery。
-- `RUN_AGENT` 成功流式输出。
-- `RUN_AGENT` 插件异常、runner 不存在、context schema 错误 -> `run.failed`。
+- 单插件多 Runner discovery。
+- `RUN_RUNNER` 成功流式输出。
+- `RUN_RUNNER` 插件异常、runner 不存在、context schema 错误 -> `run.failed`。
 - 模板和 README 示例不出现旧协议字段。
 - run-scoped Host API helper 会携带调用方插件身份，并让 Host 进行资源授权校验。
 
@@ -116,10 +116,10 @@ tests/runtime/plugin/test_restart_coordinator.py
 ```bash
 uv run pytest \
   tests/api/entities/test_events.py \
-  tests/api/entities/builtin/agent_runner \
+  tests/api/entities/builtin/runner \
   tests/api/proxies \
   tests/api/test_agent_tools_mcp_bridge.py \
-  tests/runtime/plugin/test_mgr_agent_runner.py \
+  tests/runtime/plugin/test_mgr_runner.py \
   tests/runtime/test_pull_api_handlers.py \
   tests/runtime/io/handlers/test_plugin_handler.py \
   tests/test_message.py -q
