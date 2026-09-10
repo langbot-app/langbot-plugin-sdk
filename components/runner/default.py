@@ -5,7 +5,7 @@ Supports:
 - Streaming and non-streaming
 - Tool calling loop with max iterations
 - Knowledge retrieval with permission validation
-- Protocol v1 AgentRunResult output
+- Protocol v1 RunnerResult output
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ import logging
 import time
 from typing import Any, AsyncGenerator
 
-from langbot_plugin.api.definition.components.agent_runner.runner import AgentRunner
-from langbot_plugin.api.entities.builtin.agent_runner import (
-    AgentRunContext,
-    AgentRunResult,
-)
+from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import Message
+from langbot_plugin.api.entities.builtin.runner import (
+    RunnerContext,
+    RunnerResult,
+)
 
 from pkg.agent_core import (
     AgentLoop,
@@ -61,7 +61,7 @@ class RunInterruptChecker:
     def __init__(
         self,
         api: Any,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         *,
         interval_seconds: float = INTERRUPT_CHECK_INTERVAL_SECONDS,
     ):
@@ -148,8 +148,8 @@ def _run_cancel_requested(run: Any) -> bool:
     return getattr(run, "cancel_requested_at", None) is not None or getattr(run, "status", None) == "cancelled"
 
 
-class DefaultAgentRunner(AgentRunner):
-    """Default AgentRunner for Local Agent.
+class DefaultRunner(Runner):
+    """Default Runner for Local Agent.
 
     Full-featured LLM runner with:
     - Model primary/fallback selection
@@ -157,10 +157,10 @@ class DefaultAgentRunner(AgentRunner):
     - Tool calling loop
     - Knowledge retrieval (RAG)
 
-    All resource access goes through AgentRunAPIProxy for authorization.
+    All resource access goes through RunnerAPIProxy for authorization.
     """
 
-    async def run(self, ctx: AgentRunContext) -> AsyncGenerator[AgentRunResult, None]:
+    async def run(self, ctx: RunnerContext) -> AsyncGenerator[RunnerResult, None]:
         """Run the agent with full LLM capabilities.
 
         Implementation:
@@ -169,7 +169,7 @@ class DefaultAgentRunner(AgentRunner):
         3. Build messages from prompt + history + input
         4. Stream/Invoke LLM with fallback support
         5. Handle tool calling loop
-        6. Yield AgentRunResult events
+        6. Yield RunnerResult events
         """
         api = self.get_run_api(ctx)
         interrupt_checker = RunInterruptChecker(api, ctx)
@@ -179,7 +179,7 @@ class DefaultAgentRunner(AgentRunner):
         usage_tracker = RunUsageTracker()
 
         if await interrupt_checker.is_cancelled(force=True):
-            yield AgentRunResult.run_failed(
+            yield RunnerResult.run_failed(
                 ctx.run_id,
                 error=CANCELLED_ERROR,
                 code=CANCELLED_CODE,
@@ -193,7 +193,7 @@ class DefaultAgentRunner(AgentRunner):
                 deadline=deadline,
             )
         except NoAuthorizedModelError:
-            yield AgentRunResult.run_failed(
+            yield RunnerResult.run_failed(
                 ctx.run_id,
                 error="No authorized model for local-agent",
                 code="runner.no_model",
@@ -207,7 +207,7 @@ class DefaultAgentRunner(AgentRunner):
             return
         except Exception as e:
             logger.exception("Agent run assembly failed")
-            yield AgentRunResult.run_failed(
+            yield RunnerResult.run_failed(
                 ctx.run_id,
                 error=str(e) or "Agent run assembly failed",
                 code="runner.error",
@@ -216,7 +216,7 @@ class DefaultAgentRunner(AgentRunner):
             return
 
         if await interrupt_checker.is_cancelled(force=True):
-            yield AgentRunResult.run_failed(
+            yield RunnerResult.run_failed(
                 ctx.run_id,
                 error=CANCELLED_ERROR,
                 code=CANCELLED_CODE,
@@ -225,7 +225,7 @@ class DefaultAgentRunner(AgentRunner):
             return
 
         try:
-            results = self._run_agent_loop(
+            results = self._run_runner_loop(
                 run_id=ctx.run_id,
                 api=api,
                 assembly=assembly,
@@ -242,21 +242,21 @@ class DefaultAgentRunner(AgentRunner):
             yield _timeout_result(ctx.run_id, usage=usage_tracker.current())
         except Exception as e:
             logger.exception("Agent run failed")
-            yield AgentRunResult.run_failed(
+            yield RunnerResult.run_failed(
                 ctx.run_id,
                 error=str(e) or "Agent run failed",
                 code="runner.error",
                 retryable=False,
             )
 
-    async def _run_agent_loop(
+    async def _run_runner_loop(
         self,
         run_id: str,
         api: Any,
         assembly: AgentRunAssembly,
         interrupt_checker: RunInterruptChecker | None = None,
         usage_tracker: RunUsageTracker | None = None,
-    ) -> AsyncGenerator[AgentRunResult, None]:
+    ) -> AsyncGenerator[RunnerResult, None]:
         """Run the LangBot-native Pi-style agent loop."""
         loop = AgentLoop(
             model_adapter=LangBotModelAdapter(api, remove_think=assembly.remove_think),
@@ -279,7 +279,7 @@ class DefaultAgentRunner(AgentRunner):
                     usage_tracker.update(event.usage)
 
             if interrupt_checker is not None and await interrupt_checker.is_cancelled():
-                yield AgentRunResult.run_failed(
+                yield RunnerResult.run_failed(
                     run_id,
                     error=CANCELLED_ERROR,
                     code=CANCELLED_CODE,
@@ -295,7 +295,7 @@ class DefaultAgentRunner(AgentRunner):
                     return
 
                 if interrupt_checker is not None and await interrupt_checker.is_cancelled(force=True):
-                    yield AgentRunResult.run_failed(
+                    yield RunnerResult.run_failed(
                         run_id,
                         error=CANCELLED_ERROR,
                         code=CANCELLED_CODE,
@@ -314,7 +314,7 @@ class DefaultAgentRunner(AgentRunner):
 
             if event.type == AgentLoopEventType.AGENT_END:
                 if interrupt_checker is not None and await interrupt_checker.is_cancelled(force=True):
-                    yield AgentRunResult.run_failed(
+                    yield RunnerResult.run_failed(
                         run_id,
                         error=CANCELLED_ERROR,
                         code=CANCELLED_CODE,
@@ -323,8 +323,8 @@ class DefaultAgentRunner(AgentRunner):
                     )
                     return
                 if final_message is not None:
-                    yield AgentRunResult.message_completed(run_id, final_message)
-                yield AgentRunResult.run_completed(
+                    yield RunnerResult.message_completed(run_id, final_message)
+                yield RunnerResult.run_completed(
                     run_id,
                     finish_reason="stop",
                     usage=event.usage or terminal_usage,
@@ -336,12 +336,12 @@ class DefaultAgentRunner(AgentRunner):
         event: AgentLoopEvent,
         *,
         streaming: bool,
-    ) -> AgentRunResult | None:
+    ) -> RunnerResult | None:
         if event.type == AgentLoopEventType.MESSAGE_UPDATE and streaming and event.chunk is not None:
-            return AgentRunResult.message_delta(run_id, event.chunk)
+            return RunnerResult.message_delta(run_id, event.chunk)
 
         if event.type == AgentLoopEventType.TOOL_EXECUTION_START and event.tool_call_id and event.tool_name:
-            return AgentRunResult.tool_call_started(
+            return RunnerResult.tool_call_started(
                 run_id,
                 tool_call_id=event.tool_call_id,
                 tool_name=event.tool_name,
@@ -349,7 +349,7 @@ class DefaultAgentRunner(AgentRunner):
             )
 
         if event.type == AgentLoopEventType.TOOL_EXECUTION_END and event.tool_call_id and event.tool_name:
-            return AgentRunResult.tool_call_completed(
+            return RunnerResult.tool_call_completed(
                 run_id,
                 tool_call_id=event.tool_call_id,
                 tool_name=event.tool_name,
@@ -358,7 +358,7 @@ class DefaultAgentRunner(AgentRunner):
             )
 
         if event.type == AgentLoopEventType.RUN_FAILED:
-            return AgentRunResult.run_failed(
+            return RunnerResult.run_failed(
                 run_id,
                 error=event.error or "Agent loop failed",
                 code=event.code or "runner.error",
@@ -376,10 +376,10 @@ def _tool_event_result_payload(result: Any) -> dict[str, Any] | None:
 
 
 async def _iterate_with_run_controls(
-    results: AsyncGenerator[AgentRunResult, None],
+    results: AsyncGenerator[RunnerResult, None],
     interrupt_checker: RunInterruptChecker,
     deadline: RunDeadline | None,
-) -> AsyncGenerator[AgentRunResult, None]:
+) -> AsyncGenerator[RunnerResult, None]:
     iterator = results.__aiter__()
     try:
         while True:
@@ -392,8 +392,8 @@ async def _iterate_with_run_controls(
         raise
 
 
-def _cancelled_result(run_id: str, usage: dict[str, Any] | None = None) -> AgentRunResult:
-    return AgentRunResult.run_failed(
+def _cancelled_result(run_id: str, usage: dict[str, Any] | None = None) -> RunnerResult:
+    return RunnerResult.run_failed(
         run_id,
         error=CANCELLED_ERROR,
         code=CANCELLED_CODE,
@@ -402,8 +402,8 @@ def _cancelled_result(run_id: str, usage: dict[str, Any] | None = None) -> Agent
     )
 
 
-def _timeout_result(run_id: str, usage: dict[str, Any] | None = None) -> AgentRunResult:
-    return AgentRunResult.run_failed(
+def _timeout_result(run_id: str, usage: dict[str, Any] | None = None) -> RunnerResult:
+    return RunnerResult.run_failed(
         run_id,
         error=TIMEOUT_ERROR,
         code=TIMEOUT_CODE,
@@ -412,6 +412,6 @@ def _timeout_result(run_id: str, usage: dict[str, Any] | None = None) -> AgentRu
     )
 
 
-def _is_terminal_result(result: AgentRunResult) -> bool:
+def _is_terminal_result(result: RunnerResult) -> bool:
     result_type = getattr(result.type, "value", result.type)
     return result_type in {"run.failed", "run.completed"}

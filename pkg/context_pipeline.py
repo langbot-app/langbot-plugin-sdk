@@ -10,8 +10,8 @@ import typing
 import unicodedata
 from dataclasses import dataclass, field
 
-from langbot_plugin.api.entities.builtin.agent_runner import AgentRunContext
 from langbot_plugin.api.entities.builtin.provider.message import Message
+from langbot_plugin.api.entities.builtin.runner import RunnerContext
 
 from pkg.config import get_knowledge_base_ids, get_rerank_config, get_retrieval_top_k
 from pkg.messages import (
@@ -139,7 +139,7 @@ class ContextBudget:
     history_fetch_limit: int = DEFAULT_HISTORY_FETCH_LIMIT
 
     @classmethod
-    def from_context(cls, ctx: AgentRunContext) -> "ContextBudget":
+    def from_context(cls, ctx: RunnerContext) -> "ContextBudget":
         config = ctx.config if isinstance(ctx.config, dict) else {}
         runtime = getattr(ctx, "runtime", None)
         metadata = getattr(runtime, "metadata", {}) if runtime is not None else {}
@@ -411,12 +411,12 @@ class HostContextTokenCounter:
 
 
 class ContextAssembler:
-    """Build the model-facing context for one AgentRunner run."""
+    """Build the model-facing context for one Runner run."""
 
     def __init__(
         self,
         api: typing.Any,
-        ctx: AgentRunContext,
+        ctx: RunnerContext,
         budget: ContextBudget | None = None,
         summarizer: ContextSummarizer | None = None,
         token_counter: ContextTokenCounter | None = None,

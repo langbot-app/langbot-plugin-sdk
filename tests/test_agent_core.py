@@ -6,10 +6,10 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
-from langbot_plugin.api.entities.builtin.agent_runner.errors import AgentAPIError, AgentAPIException
-from langbot_plugin.api.entities.builtin.agent_runner.steering import SteeringPullResult
 from langbot_plugin.api.entities.builtin.provider.message import FunctionCall, Message, MessageChunk, ToolCall
-from langbot_plugin.api.proxies.agent_run import PermissionDeniedError
+from langbot_plugin.api.entities.builtin.runner.errors import AgentAPIError, AgentAPIException
+from langbot_plugin.api.entities.builtin.runner.steering import SteeringPullResult
+from langbot_plugin.api.proxies.runner import PermissionDeniedError
 
 from pkg.agent_core import (
     AgentLoop,
@@ -103,7 +103,7 @@ def test_tool_call_request_generates_uuid_ids_for_raw_calls_without_id():
 
 @pytest.mark.asyncio
 async def test_streaming_loop_emits_turn_message_and_tool_events():
-    """The core loop exposes a Pi-style lifecycle independent from AgentRunResult."""
+    """The core loop exposes a Pi-style lifecycle independent from RunnerResult."""
 
     class FakeAPI:
         def __init__(self):

@@ -15,29 +15,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
-from langbot_plugin.api.entities.builtin.agent_runner.context import AdapterContext, AgentRunContext
-from langbot_plugin.api.entities.builtin.agent_runner.context_access import (
-    ContextAccess,
-    ContextAPICapabilities,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.agent_runner.errors import AgentAPIError, AgentAPIException
-from langbot_plugin.api.entities.builtin.agent_runner.event import AgentEventContext
-from langbot_plugin.api.entities.builtin.agent_runner.input import AgentInput, InputAttachment
-from langbot_plugin.api.entities.builtin.agent_runner.page_results import HistoryPage
-from langbot_plugin.api.entities.builtin.agent_runner.resources import (
-    AgentResources,
-    KnowledgeBaseResource,
-    ModelResource,
-    SkillResource,
-    ToolResource,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.result import (
-    AgentRunResultType,
-)
-from langbot_plugin.api.entities.builtin.agent_runner.runtime import AgentRuntimeContext
-from langbot_plugin.api.entities.builtin.agent_runner.transcript import TranscriptItem
-from langbot_plugin.api.entities.builtin.agent_runner.trigger import AgentTrigger
 from langbot_plugin.api.entities.builtin.provider.message import (
     ContentElement,
     FunctionCall,
@@ -46,6 +23,29 @@ from langbot_plugin.api.entities.builtin.provider.message import (
     MessageChunk,
     ToolCall,
 )
+from langbot_plugin.api.entities.builtin.runner.context import AdapterContext, RunnerContext
+from langbot_plugin.api.entities.builtin.runner.context_access import (
+    ContextAccess,
+    ContextAPICapabilities,
+)
+from langbot_plugin.api.entities.builtin.runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.runner.errors import AgentAPIError, AgentAPIException
+from langbot_plugin.api.entities.builtin.runner.event import AgentEventContext
+from langbot_plugin.api.entities.builtin.runner.input import AgentInput, InputAttachment
+from langbot_plugin.api.entities.builtin.runner.page_results import HistoryPage
+from langbot_plugin.api.entities.builtin.runner.resources import (
+    AgentResources,
+    KnowledgeBaseResource,
+    ModelResource,
+    SkillResource,
+    ToolResource,
+)
+from langbot_plugin.api.entities.builtin.runner.result import (
+    RunnerResultType,
+)
+from langbot_plugin.api.entities.builtin.runner.runtime import AgentRuntimeContext
+from langbot_plugin.api.entities.builtin.runner.transcript import TranscriptItem
+from langbot_plugin.api.entities.builtin.runner.trigger import AgentTrigger
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -105,7 +105,7 @@ from pkg.rag import retrieve_rag_chunks
 # ==================== Fixtures ====================
 
 
-class FakeAgentRunAPIProxy:
+class FakeRunnerAPIProxy:
     """Fake API proxy for testing."""
 
     def __init__(
@@ -209,11 +209,11 @@ def make_context(
     prompt_get: bool = False,
     conversation_id: str = "conv-test",
     delivery_supports_streaming: bool | None = None,
-) -> AgentRunContext:
-    """Create a test AgentRunContext."""
+) -> RunnerContext:
+    """Create a test RunnerContext."""
     if delivery_supports_streaming is None:
         delivery_supports_streaming = (runtime_metadata or {}).get("streaming_supported", True)
-    return AgentRunContext(
+    return RunnerContext(
         run_id=run_id,
         trigger=AgentTrigger(type="message.received"),
         event=AgentEventContext(
@@ -242,12 +242,12 @@ def make_context(
 
 
 def make_token_counter(
-    api: FakeAgentRunAPIProxy | None = None,
+    api: FakeRunnerAPIProxy | None = None,
     *,
     model_id: str = "model-1",
     tools: list[Any] | None = None,
 ) -> HostContextTokenCounter:
-    return HostContextTokenCounter(api or FakeAgentRunAPIProxy(), model_id, tools or [])
+    return HostContextTokenCounter(api or FakeRunnerAPIProxy(), model_id, tools or [])
 
 
 # ==================== Config Parsing Tests ====================
@@ -762,7 +762,7 @@ class TestContextCompaction:
     @pytest.mark.asyncio
     async def test_async_compaction_uses_llm_summary_and_previous_checkpoint(self):
         """Compaction can use Host model APIs for Pi-style checkpoint summaries."""
-        fake_api = FakeAgentRunAPIProxy(models=[ModelResource(model_id="model-1")])
+        fake_api = FakeRunnerAPIProxy(models=[ModelResource(model_id="model-1")])
         fake_api.invoke_llm = AsyncMock(
             return_value=Message(role="assistant", content="## Goal\nLLM checkpoint sentinel")
         )
@@ -1182,7 +1182,7 @@ class TestContextCompaction:
     @pytest.mark.asyncio
     async def test_host_token_counter_does_not_charge_tools_for_each_context_slice(self):
         """Tool schemas are request-level overhead, not repeated per-slice context cost."""
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         large_tools = [
             {
                 "name": "massive_tool_schema",
@@ -1244,7 +1244,7 @@ class TestContextAssembler:
 
     @pytest.mark.asyncio
     async def test_assembler_preserves_text_contents_and_attachments(self):
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         ctx = make_context(
             input_text="current text sentinel",
             input_contents=[ContentElement.from_image_base64("base64-image")],
@@ -1274,7 +1274,7 @@ class TestContextAssembler:
     @pytest.mark.asyncio
     async def test_rag_context_is_separate_from_current_user_message(self):
         """RAG chunks keep metadata internally while rendered context stays stable."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             knowledge_bases=[KnowledgeBaseResource(kb_id="kb-1")],
         )
         fake_api.retrieve_knowledge = AsyncMock(
@@ -1313,7 +1313,7 @@ class TestContextAssembler:
     @pytest.mark.asyncio
     async def test_rag_without_rerank_caps_chunks_globally(self):
         """Multiple KB retrievals do not expand model context beyond top-k."""
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         fake_api.retrieve_knowledge = AsyncMock(
             side_effect=[
                 [
@@ -1339,7 +1339,7 @@ class TestContextAssembler:
     @pytest.mark.asyncio
     async def test_compaction_checkpoint_reads_state_and_fetches_incremental_history(self):
         """A persisted checkpoint is reused and history resumes after covers_until."""
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         fake_api.state_get = AsyncMock(
             return_value={
                 "value": {
@@ -1413,7 +1413,7 @@ class TestContextAssembler:
             async def summarize(self, messages: list[Message], max_tokens: int) -> str:
                 return "<conversation_summary>\ncheckpoint write sentinel\n</conversation_summary>"
 
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         fake_api.history_page = AsyncMock(
             return_value={
                 "items": [
@@ -1468,14 +1468,12 @@ class TestContextAssembler:
 # ==================== Runner Integration Tests ====================
 
 
-class TestDefaultAgentRunner:
-    """Tests for DefaultAgentRunner behavior."""
+class TestDefaultRunner:
+    """Tests for DefaultRunner behavior."""
 
     def test_manifest_declares_local_agent_capabilities(self):
         """The local runner declares the capabilities it actively needs."""
-        manifest = yaml.safe_load(
-            (Path(__file__).resolve().parents[1] / "components/agent_runner/default.yaml").read_text()
-        )
+        manifest = yaml.safe_load((Path(__file__).resolve().parents[1] / "components/runner/default.yaml").read_text())
 
         assert manifest["spec"]["capabilities"]["skill_authoring"] is True
         assert manifest["spec"]["capabilities"]["interrupt"] is True
@@ -1641,7 +1639,7 @@ class TestDefaultAgentRunner:
 
     @pytest.mark.asyncio
     async def test_build_llm_tools_skips_failed_detail_fetches(self, caplog):
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
 
         async def get_tool_detail(tool_name):
             if tool_name == "broken_tool":
@@ -1663,7 +1661,7 @@ class TestDefaultAgentRunner:
 
     @pytest.mark.asyncio
     async def test_invoke_with_fallback_logs_failed_primary_model(self, caplog):
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         fake_api.invoke_llm = AsyncMock(
             side_effect=[
                 RuntimeError("primary unavailable"),
@@ -1684,7 +1682,7 @@ class TestDefaultAgentRunner:
 
     @pytest.mark.asyncio
     async def test_invoke_with_fallback_result_uses_usage_api_when_available(self):
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         fake_api.invoke_llm_with_usage = AsyncMock(
             return_value=LLMCallResult(
                 message=Message(role="assistant", content="usage response"),
@@ -1706,7 +1704,7 @@ class TestDefaultAgentRunner:
 
     @pytest.mark.asyncio
     async def test_invoke_deadline_exceeded_stops_fallback_and_maps_code(self):
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
         fake_api.invoke_llm_with_usage = AsyncMock(
             side_effect=AgentAPIException(
                 AgentAPIError(
@@ -1730,9 +1728,9 @@ class TestDefaultAgentRunner:
     @pytest.fixture
     def runner(self):
         """Create a runner instance."""
-        from components.agent_runner.default import DefaultAgentRunner
+        from components.runner.default import DefaultRunner
 
-        runner = DefaultAgentRunner()
+        runner = DefaultRunner()
         runner.bind_runtime(
             plugin_runtime_handler=MagicMock(),
             plugin_identity="langbot/local-agent",
@@ -1752,13 +1750,13 @@ class TestDefaultAgentRunner:
             results.append(result)
 
         assert len(results) == 1
-        assert results[0].type == AgentRunResultType.RUN_FAILED
+        assert results[0].type == RunnerResultType.RUN_FAILED
         assert results[0].data.get("code") == "runner.no_model"
 
     @pytest.mark.asyncio
     async def test_assembly_exception_returns_failed_result(self, runner, monkeypatch):
         """Unexpected Host/assembly failures still produce a terminal event."""
-        fake_api = FakeAgentRunAPIProxy()
+        fake_api = FakeRunnerAPIProxy()
 
         def get_allowed_models():
             raise RuntimeError("model inventory unavailable")
@@ -1772,14 +1770,14 @@ class TestDefaultAgentRunner:
         async for result in runner.run(ctx):
             results.append(result)
 
-        assert [result.type for result in results] == [AgentRunResultType.RUN_FAILED]
+        assert [result.type for result in results] == [RunnerResultType.RUN_FAILED]
         assert results[0].data["code"] == "runner.error"
         assert "model inventory unavailable" in results[0].data["error"]
 
     @pytest.mark.asyncio
     async def test_run_timeout_returns_failed_result(self, runner, monkeypatch):
         """A stalled model/tool path is bounded by the runner timeout config."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -1789,7 +1787,7 @@ class TestDefaultAgentRunner:
 
         fake_api.invoke_llm_stream = stalled_stream
         monkeypatch.setattr(runner, "get_run_api", lambda ctx: fake_api)
-        monkeypatch.setattr("components.agent_runner.default.get_run_timeout_seconds", lambda config: 0.01)
+        monkeypatch.setattr("components.runner.default.get_run_timeout_seconds", lambda config: 0.01)
 
         ctx = make_context(
             config={"model": {"primary": "model-1", "fallbacks": []}, "timeout": 1},
@@ -1800,7 +1798,7 @@ class TestDefaultAgentRunner:
         async for result in runner.run(ctx):
             results.append(result)
 
-        assert [result.type for result in results] == [AgentRunResultType.RUN_FAILED]
+        assert [result.type for result in results] == [RunnerResultType.RUN_FAILED]
         assert results[0].data == {
             "error": "Agent run timed out",
             "code": "runner.timeout",
@@ -1810,7 +1808,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_timeout_zero_disables_local_runner_deadline(self, runner, monkeypatch):
         """timeout=0 relies on Host deadline/cancellation instead of local wait_for."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -1828,15 +1826,15 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(result.type == AgentRunResultType.RUN_COMPLETED for result in results)
+        assert any(result.type == RunnerResultType.RUN_COMPLETED for result in results)
         assert not any(
-            result.type == AgentRunResultType.RUN_FAILED and result.data.get("code") == "runner.timeout"
+            result.type == RunnerResultType.RUN_FAILED and result.data.get("code") == "runner.timeout"
             for result in results
         )
 
     @pytest.mark.asyncio
     async def test_host_deadline_exceeded_maps_to_runner_timeout(self, runner, monkeypatch):
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.invoke_llm_with_usage = AsyncMock(
@@ -1858,13 +1856,13 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert [result.type for result in results] == [AgentRunResultType.RUN_FAILED]
+        assert [result.type for result in results] == [RunnerResultType.RUN_FAILED]
         assert results[0].data["code"] == "runner.timeout"
         assert results[0].data["retryable"] is True
 
     @pytest.mark.asyncio
     async def test_local_timeout_preserves_prior_model_usage(self, runner, monkeypatch):
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="slow_tool")],
         )
@@ -1897,7 +1895,7 @@ class TestDefaultAgentRunner:
 
         fake_api.call_tool = AsyncMock(side_effect=slow_tool)
         monkeypatch.setattr(runner, "get_run_api", lambda ctx: fake_api)
-        monkeypatch.setattr("components.agent_runner.default.get_run_timeout_seconds", lambda config: 0.2)
+        monkeypatch.setattr("components.runner.default.get_run_timeout_seconds", lambda config: 0.2)
 
         ctx = make_context(
             config={"model": {"primary": "model-1", "fallbacks": []}, "timeout": 1},
@@ -1911,8 +1909,8 @@ class TestDefaultAgentRunner:
         results = [result async for result in runner.run(ctx)]
 
         assert [result.type for result in results] == [
-            AgentRunResultType.TOOL_CALL_STARTED,
-            AgentRunResultType.RUN_FAILED,
+            RunnerResultType.TOOL_CALL_STARTED,
+            RunnerResultType.RUN_FAILED,
         ]
         assert results[-1].data["code"] == "runner.timeout"
         assert results[-1].usage is not None
@@ -1928,7 +1926,7 @@ class TestDefaultAgentRunner:
     async def test_primary_success_no_fallback(self, runner, monkeypatch):
         """Primary model succeeds, no fallback needed."""
         # Setup fake API
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -1953,19 +1951,19 @@ class TestDefaultAgentRunner:
 
         # Streaming still emits a completed message so the Host can persist
         # the final assistant transcript before the terminal run event.
-        assert any(r.type == AgentRunResultType.MESSAGE_DELTA for r in results)
-        completed = [r for r in results if r.type == AgentRunResultType.MESSAGE_COMPLETED]
+        assert any(r.type == RunnerResultType.MESSAGE_DELTA for r in results)
+        completed = [r for r in results if r.type == RunnerResultType.MESSAGE_COMPLETED]
         assert len(completed) == 1
         assert completed[0].data.get("message", {}).get("content") == "Hello world"
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
-        assert results[-2].type == AgentRunResultType.MESSAGE_COMPLETED
-        assert results[-1].type == AgentRunResultType.RUN_COMPLETED
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
+        assert results[-2].type == RunnerResultType.MESSAGE_COMPLETED
+        assert results[-1].type == RunnerResultType.RUN_COMPLETED
         fake_api.history_page.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_streaming_terminal_result_reports_usage(self, runner, monkeypatch):
         """Provider usage collected during streaming reaches run.completed."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -1988,7 +1986,7 @@ class TestDefaultAgentRunner:
         async for result in runner.run(ctx):
             results.append(result)
 
-        run_completed = [result for result in results if result.type == AgentRunResultType.RUN_COMPLETED]
+        run_completed = [result for result in results if result.type == RunnerResultType.RUN_COMPLETED]
         assert len(run_completed) == 1
         assert run_completed[0].usage is not None
         assert run_completed[0].usage.model_dump(mode="json", exclude_none=True) == {
@@ -2002,7 +2000,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_streaming_run_cancel_e2e_emits_cancelled_failure(self, runner, monkeypatch):
         """Local Agent cooperatively stops when Host marks the active run cancelled."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -2037,21 +2035,21 @@ class TestDefaultAgentRunner:
             results.append(result)
 
         assert [result.type for result in results] == [
-            AgentRunResultType.MESSAGE_DELTA,
-            AgentRunResultType.RUN_FAILED,
+            RunnerResultType.MESSAGE_DELTA,
+            RunnerResultType.RUN_FAILED,
         ]
         assert results[-1].data == {
             "error": "Run cancellation requested",
             "code": "cancelled",
             "retryable": False,
         }
-        assert not any(result.type == AgentRunResultType.RUN_COMPLETED for result in results)
+        assert not any(result.type == RunnerResultType.RUN_COMPLETED for result in results)
         assert fake_api.run_get.await_count >= 5
 
     @pytest.mark.asyncio
     async def test_non_streaming_cancel_before_agent_end_does_not_complete(self, runner, monkeypatch):
         """Cancellation discovered at AGENT_END wins over completed terminal events."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.invoke_llm_with_usage = AsyncMock(
@@ -2085,7 +2083,7 @@ class TestDefaultAgentRunner:
         async for result in runner.run(ctx):
             results.append(result)
 
-        assert [result.type for result in results] == [AgentRunResultType.RUN_FAILED]
+        assert [result.type for result in results] == [RunnerResultType.RUN_FAILED]
         assert results[0].data["code"] == "cancelled"
         assert results[0].usage is not None
         assert results[0].usage.model_dump(mode="json", exclude_none=True) == {
@@ -2095,13 +2093,13 @@ class TestDefaultAgentRunner:
             "model_calls": 1,
             "turns": [{"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}],
         }
-        assert not any(result.type == AgentRunResultType.MESSAGE_COMPLETED for result in results)
-        assert not any(result.type == AgentRunResultType.RUN_COMPLETED for result in results)
+        assert not any(result.type == RunnerResultType.MESSAGE_COMPLETED for result in results)
+        assert not any(result.type == RunnerResultType.RUN_COMPLETED for result in results)
 
     @pytest.mark.asyncio
     async def test_runner_pulls_steering_through_public_proxy(self, runner, monkeypatch):
-        """Run assembly hooks should consume steering through AgentRunAPIProxy."""
-        fake_api = FakeAgentRunAPIProxy(
+        """Run assembly hooks should consume steering through RunnerAPIProxy."""
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.steering_pull = AsyncMock(
@@ -2150,7 +2148,7 @@ class TestDefaultAgentRunner:
         assert fake_api.steering_pull.await_count == 2
         assert len(stream_messages) == 2
         assert any(
-            result.type == AgentRunResultType.MESSAGE_DELTA
+            result.type == RunnerResultType.MESSAGE_DELTA
             and result.data.get("chunk", {}).get("content") == "saw steering"
             for result in results
         )
@@ -2158,7 +2156,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_history_is_pulled_from_host_api(self, runner, monkeypatch):
         """Conversation history comes from Host history API, not adapter bootstrap."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.history_page = AsyncMock(
@@ -2210,7 +2208,7 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         fake_api.history_page.assert_awaited_once_with(
             conversation_id="conv-test",
             limit=50,
@@ -2226,7 +2224,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_history_tool_results_are_provider_normalized_before_model_call(self, runner, monkeypatch):
         """Host history orphan tool results are removed before provider invocation."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.history_page = AsyncMock(
@@ -2310,7 +2308,7 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         assert "ordinary context before tool" in [message.content for message in captured_messages]
         assert "ordinary context after orphan" in [message.content for message in captured_messages]
         assert "current request" == captured_messages[-1].content
@@ -2332,7 +2330,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_prompt_get_replaces_static_prompt(self, runner, monkeypatch):
         """PromptPreProcessing output from Host is pulled as the model-facing prompt."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.get_prompt = AsyncMock(return_value=[{"role": "system", "content": "Host effective prompt"}])
@@ -2357,7 +2355,7 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         assert [(msg.role, msg.content) for msg in captured_messages] == [
             ("system", "Host effective prompt"),
             ("user", "qa-effective-prompt"),
@@ -2367,7 +2365,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_context_compaction_runs_before_model_call(self, runner, monkeypatch):
         """Long host history is compacted by budget, not by a max-round setting."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.history_page = AsyncMock(
@@ -2430,7 +2428,7 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         assert captured_messages[0].content == "Static prompt"
         assert captured_messages[1].role == "system"
         assert "<conversation_summary>" in captured_messages[1].content
@@ -2443,7 +2441,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_follow_up_turn_context_is_transformed_after_tool_results(self, runner, monkeypatch):
         """Tool follow-up turns re-run context compaction before the next model call."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -2515,8 +2513,8 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
         assert completed[0].data["result"]["value"].startswith("tool result ")
         assert len(captured_turn_messages) == 2
         assert not any(
@@ -2532,7 +2530,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_streaming_context_overflow_compacts_and_retries_before_failure(self, runner, monkeypatch):
         """Provider context overflow before first token triggers a compacted retry."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.history_page = AsyncMock(
@@ -2586,7 +2584,7 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         assert len(captured_turn_messages) == 2
         assert not any(
             isinstance(message.content, str) and "<conversation_summary>" in message.content
@@ -2600,7 +2598,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_streaming_skips_none_chunks(self, runner, monkeypatch):
         """Provider heartbeat/no-op chunks do not fail a committed stream."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -2623,16 +2621,16 @@ class TestDefaultAgentRunner:
             results.append(result)
 
         deltas = [
-            result.data["chunk"]["content"] for result in results if result.type == AgentRunResultType.MESSAGE_DELTA
+            result.data["chunk"]["content"] for result in results if result.type == RunnerResultType.MESSAGE_DELTA
         ]
         assert deltas == ["Hello world"]
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
 
     @pytest.mark.asyncio
     async def test_concurrent_runs_do_not_share_per_run_state(self, runner, monkeypatch):
         """The same runner instance can process multiple runs concurrently."""
-        api_a = FakeAgentRunAPIProxy(models=[ModelResource(model_id="model-a")])
-        api_b = FakeAgentRunAPIProxy(models=[ModelResource(model_id="model-b")])
+        api_a = FakeRunnerAPIProxy(models=[ModelResource(model_id="model-a")])
+        api_b = FakeRunnerAPIProxy(models=[ModelResource(model_id="model-b")])
 
         async def stream_a(*args, **kwargs):
             await asyncio.sleep(0.01)
@@ -2668,10 +2666,10 @@ class TestDefaultAgentRunner:
         results_a, results_b = await asyncio.gather(collect(ctx_a), collect(ctx_b))
 
         chunks_a = [
-            result.data["chunk"]["content"] for result in results_a if result.type == AgentRunResultType.MESSAGE_DELTA
+            result.data["chunk"]["content"] for result in results_a if result.type == RunnerResultType.MESSAGE_DELTA
         ]
         chunks_b = [
-            result.data["chunk"]["content"] for result in results_b if result.type == AgentRunResultType.MESSAGE_DELTA
+            result.data["chunk"]["content"] for result in results_b if result.type == RunnerResultType.MESSAGE_DELTA
         ]
 
         assert chunks_a == ["response-a"]
@@ -2680,7 +2678,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_streaming_fallback_before_first_chunk(self, runner, monkeypatch):
         """Streaming: primary fails before first chunk, fallback succeeds."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[
                 ModelResource(model_id="model-1"),
                 ModelResource(model_id="model-2"),
@@ -2716,13 +2714,13 @@ class TestDefaultAgentRunner:
             results.append(result)
 
         # Should have message from fallback
-        assert any(r.type == AgentRunResultType.MESSAGE_DELTA for r in results)
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.MESSAGE_DELTA for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
 
     @pytest.mark.asyncio
     async def test_tool_call_only_authorized_tools(self, runner, monkeypatch):
         """Tool calls only execute for authorized tools."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -2774,8 +2772,8 @@ class TestDefaultAgentRunner:
             results.append(result)
 
         # Should have tool.call.started and tool.call.completed
-        started = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_STARTED]
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        started = [r for r in results if r.type == RunnerResultType.TOOL_CALL_STARTED]
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
 
         assert len(started) == 1
         assert started[0].data.get("tool_name") == "allowed_tool"
@@ -2787,7 +2785,7 @@ class TestDefaultAgentRunner:
     async def test_tool_success_followed_by_empty_completion_requires_normal_stop(
         self, runner, monkeypatch, finish_reason
     ):
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -2831,16 +2829,16 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(result.type == AgentRunResultType.TOOL_CALL_COMPLETED for result in results)
+        assert any(result.type == RunnerResultType.TOOL_CALL_COMPLETED for result in results)
         assert call_count == 2
         fake_api.call_tool.assert_awaited_once()
-        assert any(result.type == AgentRunResultType.RUN_FAILED for result in results) is (finish_reason != "stop")
-        assert any(result.type == AgentRunResultType.RUN_COMPLETED for result in results) is (finish_reason == "stop")
+        assert any(result.type == RunnerResultType.RUN_FAILED for result in results) is (finish_reason != "stop")
+        assert any(result.type == RunnerResultType.RUN_COMPLETED for result in results) is (finish_reason == "stop")
 
     @pytest.mark.asyncio
     async def test_skill_activation_uses_host_tool_call(self, runner, monkeypatch):
         """Host-owned activate tool is invoked through the normal tool API."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="activate")],
         )
@@ -2886,14 +2884,14 @@ class TestDefaultAgentRunner:
         results = [result async for result in runner.run(ctx)]
 
         fake_api.call_tool.assert_awaited_once_with(tool_name="activate", parameters={"skill_name": "pdf"})
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
         assert completed[0].data.get("tool_name") == "activate"
         assert completed[0].data.get("error") is None
 
     @pytest.mark.asyncio
     async def test_tool_result_is_bounded_before_follow_up_model_call(self, runner, monkeypatch):
         """Large tool output is truncated only for the next model request."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -2939,7 +2937,7 @@ class TestDefaultAgentRunner:
         assert "original_chars=25" in tool_messages[0].content
         assert "kept_chars=8" in tool_messages[0].content
 
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
         result_payload = completed[0].data.get("result")
         assert result_payload["type"] == "langbot_tool_result_preview"
         assert result_payload["reason"] == "tool_result_truncated"
@@ -2949,7 +2947,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_tool_error_is_passed_to_follow_up_model_call(self, runner, monkeypatch):
         """Tool execution errors are model-facing tool results, not silent loop failures."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -2987,21 +2985,21 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         assert len(captured_turn_messages) == 2
         tool_messages = [message for message in captured_turn_messages[1] if message.role == "tool"]
         assert len(tool_messages) == 1
         assert tool_messages[0].tool_call_id == "call-1"
         assert tool_messages[0].content == "Error: Tool execution failed: forced failure"
 
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
         assert len(completed) == 1
         assert completed[0].data.get("error") == "Tool execution failed: forced failure"
 
     @pytest.mark.asyncio
     async def test_tool_result_with_refs_is_passed_as_reference_payload(self, runner, monkeypatch):
         """Sandbox tools can return refs directly; runner keeps refs plus bounded preview."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="sandbox_read")],
         )
@@ -3050,7 +3048,7 @@ class TestDefaultAgentRunner:
 
         results = [result async for result in runner.run(ctx)]
 
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
         result_payload = completed[0].data.get("result")
         assert result_payload["type"] == TOOL_RESULT_REFERENCE_MARKER
         assert result_payload["file_refs"][0]["path"] == "/workspace/big.txt"
@@ -3067,7 +3065,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_authorized_tool_detail_is_fetched_and_passed_to_model(self, runner, monkeypatch):
         """Allowed tools are resolved through get_tool_detail and passed as LLM tools."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -3107,12 +3105,12 @@ class TestDefaultAgentRunner:
         assert len(captured_funcs) == 1
         assert captured_funcs[0].name == "allowed_tool"
         assert captured_funcs[0].parameters["properties"]["arg"]["type"] == "string"
-        assert any(r.type == AgentRunResultType.MESSAGE_DELTA for r in results)
+        assert any(r.type == RunnerResultType.MESSAGE_DELTA for r in results)
 
     @pytest.mark.asyncio
     async def test_streaming_tool_loop_preserves_visible_prefix_and_tools(self, runner, monkeypatch):
         """Tool follow-up chunks keep earlier visible content and available tools."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -3154,14 +3152,14 @@ class TestDefaultAgentRunner:
         async for result in runner.run(ctx):
             results.append(result)
 
-        deltas = [r.data.get("chunk", {}).get("content") for r in results if r.type == AgentRunResultType.MESSAGE_DELTA]
+        deltas = [r.data.get("chunk", {}).get("content") for r in results if r.type == RunnerResultType.MESSAGE_DELTA]
         assert deltas == ["before ", "before after"]
         assert stream_funcs[1], "tool follow-up stream should keep tools available"
 
     @pytest.mark.asyncio
     async def test_tool_call_unauthorized_tool_fails(self, runner, monkeypatch):
         """Tool call to unauthorized tool returns error."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],  # Only allowed_tool is authorized
         )
@@ -3210,14 +3208,14 @@ class TestDefaultAgentRunner:
             results.append(result)
 
         # Should have tool.call.completed with error
-        completed = [r for r in results if r.type == AgentRunResultType.TOOL_CALL_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.TOOL_CALL_COMPLETED]
         assert len(completed) == 1
         assert "not authorized" in completed[0].data.get("error", "")
 
     @pytest.mark.asyncio
     async def test_kb_retrieval_only_authorized(self, runner, monkeypatch):
         """KB retrieval only calls authorized knowledge bases."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             knowledge_bases=[KnowledgeBaseResource(kb_id="kb-1")],  # Only kb-1 authorized
         )
@@ -3255,7 +3253,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_kb_not_authorized_not_called(self, runner, monkeypatch):
         """KB not in authorized set is not called."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             knowledge_bases=[],  # No KBs authorized
         )
@@ -3285,7 +3283,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_rag_uses_authorized_rerank_model(self, runner, monkeypatch):
         """RAG retrieval invokes configured rerank model and uses its order."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[
                 ModelResource(model_id="model-1"),
                 ModelResource(model_id="rerank-1", model_type="rerank"),
@@ -3335,7 +3333,7 @@ class TestDefaultAgentRunner:
             documents=["low relevance", "high relevance sentinel"],
             top_k=1,
         )
-        assert any(r.type == AgentRunResultType.RUN_COMPLETED for r in results)
+        assert any(r.type == RunnerResultType.RUN_COMPLETED for r in results)
         rag_payload = json.loads(captured_messages[-2].content)
         assert rag_payload["type"] == "langbot_retrieved_context"
         assert rag_payload["data"]["chunks"][0]["content"] == "high relevance sentinel"
@@ -3349,7 +3347,7 @@ class TestDefaultAgentRunner:
         This verifies the critical rule: once first chunk is yielded, the model is committed
         and subsequent failures should result in controlled failure, not fallback.
         """
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[
                 ModelResource(model_id="model-1"),
                 ModelResource(model_id="model-2"),
@@ -3400,14 +3398,14 @@ class TestDefaultAgentRunner:
         assert call_count["model-2"] == 0
 
         # Should end with run.failed (not run.completed with model-2 content)
-        failed = [r for r in results if r.type == AgentRunResultType.RUN_FAILED]
+        failed = [r for r in results if r.type == RunnerResultType.RUN_FAILED]
         assert len(failed) == 1
         assert "no fallback possible" in failed[0].data.get("error", "").lower()
 
     @pytest.mark.asyncio
     async def test_streaming_truncated_after_first_chunk_no_fallback(self, runner, monkeypatch):
         """A stream that ends without a final chunk is a terminal committed failure."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[
                 ModelResource(model_id="model-1"),
                 ModelResource(model_id="model-2"),
@@ -3438,15 +3436,15 @@ class TestDefaultAgentRunner:
         results = [result async for result in runner.run(ctx)]
 
         assert call_count == {"model-1": 1, "model-2": 0}
-        failed = [result for result in results if result.type == AgentRunResultType.RUN_FAILED]
+        failed = [result for result in results if result.type == RunnerResultType.RUN_FAILED]
         assert len(failed) == 1
         assert "ended without a final chunk" in failed[0].data.get("error", "").lower()
-        assert not any(result.type == AgentRunResultType.RUN_COMPLETED for result in results)
+        assert not any(result.type == RunnerResultType.RUN_COMPLETED for result in results)
 
     @pytest.mark.asyncio
     async def test_streaming_tool_loop_stops_at_iteration_limit(self, runner, monkeypatch):
         """Repeated tool requests complete with a fallback assistant message."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
             tools=[ToolResource(tool_name="allowed_tool")],
         )
@@ -3484,12 +3482,12 @@ class TestDefaultAgentRunner:
         async for result in runner.run(ctx):
             results.append(result)
 
-        failed = [r for r in results if r.type == AgentRunResultType.RUN_FAILED]
+        failed = [r for r in results if r.type == RunnerResultType.RUN_FAILED]
         assert failed == []
-        completed = [r for r in results if r.type == AgentRunResultType.RUN_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.RUN_COMPLETED]
         assert len(completed) == 1
         assert any(
-            r.type == AgentRunResultType.MESSAGE_DELTA
+            r.type == RunnerResultType.MESSAGE_DELTA
             and "Tool call iteration limit reached" in r.data.get("chunk", {}).get("content", "")
             for r in results
         )
@@ -3499,7 +3497,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_non_streaming_mode_uses_invoke_llm(self, runner, monkeypatch):
         """Non-streaming mode uses invoke_llm and yields message.completed."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
 
@@ -3522,8 +3520,8 @@ class TestDefaultAgentRunner:
         assert fake_api.invoke_llm.call_count == 1
 
         # Should have message.completed and run.completed
-        completed = [r for r in results if r.type == AgentRunResultType.MESSAGE_COMPLETED]
-        run_completed = [r for r in results if r.type == AgentRunResultType.RUN_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.MESSAGE_COMPLETED]
+        run_completed = [r for r in results if r.type == RunnerResultType.RUN_COMPLETED]
 
         assert len(completed) == 1
         assert completed[0].data.get("message", {}).get("content") == "Non-streaming response"
@@ -3532,7 +3530,7 @@ class TestDefaultAgentRunner:
     @pytest.mark.asyncio
     async def test_remove_think_is_forwarded_to_model_calls(self, runner, monkeypatch):
         """Runner config can request Host-side thinking output removal."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.invoke_llm = AsyncMock(return_value=Message(role="assistant", content="Clean response"))
@@ -3550,13 +3548,13 @@ class TestDefaultAgentRunner:
 
         fake_api.invoke_llm.assert_awaited_once()
         assert fake_api.invoke_llm.await_args.kwargs["remove_think"] is True
-        completed = [r for r in results if r.type == AgentRunResultType.MESSAGE_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.MESSAGE_COMPLETED]
         assert completed[0].data.get("message", {}).get("content") == "Clean response"
 
     @pytest.mark.asyncio
     async def test_runtime_metadata_can_disable_default_streaming(self, runner, monkeypatch):
         """When config omits streaming, host adapter capability decides the mode."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[ModelResource(model_id="model-1")],
         )
         fake_api.invoke_llm = AsyncMock(return_value=Message(role="assistant", content="Adapter cannot stream"))
@@ -3574,13 +3572,13 @@ class TestDefaultAgentRunner:
 
         fake_api.invoke_llm.assert_awaited_once()
         assert fake_api.invoke_llm_stream.call_count == 0
-        completed = [r for r in results if r.type == AgentRunResultType.MESSAGE_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.MESSAGE_COMPLETED]
         assert completed[0].data.get("message", {}).get("content") == "Adapter cannot stream"
 
     @pytest.mark.asyncio
     async def test_non_streaming_fallback(self, runner, monkeypatch):
         """Non-streaming: primary fails, fallback succeeds."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[
                 ModelResource(model_id="model-1"),
                 ModelResource(model_id="model-2"),
@@ -3617,14 +3615,14 @@ class TestDefaultAgentRunner:
         assert call_count[0] == 2
 
         # Should have successful completion from fallback
-        completed = [r for r in results if r.type == AgentRunResultType.MESSAGE_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.MESSAGE_COMPLETED]
         assert len(completed) == 1
         assert completed[0].data.get("message", {}).get("content") == "Fallback response"
 
     @pytest.mark.asyncio
     async def test_non_streaming_tool_loop_uses_committed_fallback_model(self, runner, monkeypatch):
         """Tool loop continues with the model that succeeded during fallback."""
-        fake_api = FakeAgentRunAPIProxy(
+        fake_api = FakeRunnerAPIProxy(
             models=[
                 ModelResource(model_id="model-1"),
                 ModelResource(model_id="model-2"),
@@ -3674,5 +3672,5 @@ class TestDefaultAgentRunner:
 
         assert [model_id for model_id, _ in calls] == ["model-1", "model-2", "model-2"]
         assert calls[-1][1], "tool loop should keep tools available for multi-step calls"
-        completed = [r for r in results if r.type == AgentRunResultType.MESSAGE_COMPLETED]
+        completed = [r for r in results if r.type == RunnerResultType.MESSAGE_COMPLETED]
         assert completed[0].data.get("message", {}).get("content") == "Done"

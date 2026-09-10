@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 from langbot_plugin.api.entities.builtin.resource.tool import LLMTool
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 from pkg.config import DEFAULT_MAX_TOOL_RESULT_CHARS
 
@@ -111,7 +111,7 @@ def model_call_error_from_exception(error: BaseException, *, prefix: str | None 
 
 
 async def build_llm_tools(
-    api: AgentRunAPIProxy,
+    api: RunnerAPIProxy,
     allowed_tools: set[str],
     tool_resources: list | None = None,
 ) -> list[LLMTool]:
@@ -122,7 +122,7 @@ async def build_llm_tools(
     ``get_tool_detail`` round-trip when the host did not provide it.
 
     Args:
-        api: AgentRunAPIProxy for authorized access
+        api: RunnerAPIProxy for authorized access
         allowed_tools: Set of tool names authorized for this run
         tool_resources: ctx.resources.tools entries carrying prefilled schemas
 
@@ -143,7 +143,7 @@ async def build_llm_tools(
 
 
 async def _build_llm_tool(
-    api: AgentRunAPIProxy,
+    api: RunnerAPIProxy,
     tool_name: str,
     prefilled: tuple[str, dict] | None = None,
 ) -> LLMTool | None:
@@ -177,7 +177,7 @@ async def _build_llm_tool(
 
 
 async def invoke_with_fallback(
-    api: AgentRunAPIProxy,
+    api: RunnerAPIProxy,
     model_ids: list[str],
     messages: list[Message],
     tools: list[LLMTool] | None = None,
@@ -186,7 +186,7 @@ async def invoke_with_fallback(
     """Invoke LLM with sequential fallback on failure.
 
     Args:
-        api: AgentRunAPIProxy for authorized access
+        api: RunnerAPIProxy for authorized access
         model_ids: Ordered list of model IDs to try
         messages: Conversation messages for LLM
         tools: Optional tools for function calling
@@ -227,7 +227,7 @@ async def invoke_with_fallback(
 
 
 async def invoke_with_fallback_result(
-    api: AgentRunAPIProxy,
+    api: RunnerAPIProxy,
     model_ids: list[str],
     messages: list[Message],
     tools: list[LLMTool] | None = None,
@@ -274,7 +274,7 @@ class StreamingModelCaller:
 
     def __init__(
         self,
-        api: AgentRunAPIProxy,
+        api: RunnerAPIProxy,
         model_ids: list[str],
         messages: list[Message],
         tools: list[LLMTool] | None = None,

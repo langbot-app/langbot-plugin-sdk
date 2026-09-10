@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from langbot_plugin.api.entities.builtin.agent_runner import AgentRunContext
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.resource.tool import LLMTool
+from langbot_plugin.api.entities.builtin.runner import RunnerContext
 
 from pkg.agent_core import AgentLoopHooks, LangBotContextHooks, LangBotToolExecutor
 from pkg.agent_core.langbot import LangBotSteeringPuller
@@ -44,7 +44,7 @@ class AgentRunAssembly:
 class AgentRunAssembler:
     """Assemble LangBot-authorized run capabilities into AgentLoop inputs."""
 
-    def __init__(self, api: Any, ctx: AgentRunContext):
+    def __init__(self, api: Any, ctx: RunnerContext):
         self.api = api
         self.ctx = ctx
 

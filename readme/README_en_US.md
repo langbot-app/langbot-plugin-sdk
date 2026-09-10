@@ -1,15 +1,15 @@
-# Local Agent Runner
+# Local Runner
 
-Official LangBot AgentRunner plugin for the local, LangBot-hosted agent path.
+Official LangBot Runner plugin for the local, LangBot-hosted agent path.
 
-This runner is a consumer of LangBot AgentRunner Protocol v1. LangBot provides
+This runner is a consumer of LangBot Runner Protocol v1. LangBot provides
 the host infrastructure, authorization, facts, and pull APIs; the runner owns
 the model-facing agent behavior such as prompt assembly, history selection,
 tool loop, RAG orchestration, and optional context compaction.
 
 ## Compatibility
 
-This plugin tracks the LangBot 4.11.x AgentRunner integration work. Test it with:
+This plugin tracks the LangBot 4.11.x Runner integration work. Test it with:
 
 - `langbot-app/LangBot` branch `dev/4.11.x`
 - `langbot-app/langbot-plugin-sdk` branch `dev/4.11.x`
@@ -43,14 +43,14 @@ documents how Local Agent consumes that contract:
 
 LangBot does not inline full conversation history by default. When the runner
 needs more context, it should use authorized Host APIs through
-`AgentRunAPIProxy`, for example model, prompt, history, tool,
+`RunnerAPIProxy`, for example model, prompt, history, tool,
 knowledge-base, state, and storage APIs.
 
-AgentRunner components should obtain that proxy with `self.get_run_api(ctx)`.
+Runner components should obtain that proxy with `self.get_run_api(ctx)`.
 They should not use the legacy `self.plugin` proxy that regular non-runner
 plugin components use.
 The SDK proxy import path is
-`from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy`.
+`from langbot_plugin.api.proxies.runner import RunnerAPIProxy`.
 
 ## Runner ID
 
@@ -80,7 +80,7 @@ The SDK proxy import path is
 
 `prompt` is the static binding default. When LangBot exposes
 `ctx.context.available_apis.prompt_get`, Local Agent pulls the
-post-preprocessing effective prompt through `AgentRunAPIProxy.get_prompt()` and
+post-preprocessing effective prompt through `RunnerAPIProxy.get_prompt()` and
 uses it instead of the static default so `PromptPreProcessing` changes are
 preserved. If the prompt API is unavailable, Local Agent falls back to
 `ctx.config.prompt`.
@@ -191,20 +191,20 @@ and Host APIs over adapter fields.
 ## Host APIs Consumed
 
 Model, prompt, history, state, storage, tool, knowledge-base, rerank, and
-steering access go through `AgentRunAPIProxy`. LangBot validates these calls
+steering access go through `RunnerAPIProxy`. LangBot validates these calls
 with the current `run_id`, run-scoped resource policy / available APIs, and
 caller plugin identity.
 
 Local Agent must not expose the runner process filesystem as an agent
 capability. In sandboxed deployments, file access is mediated by Host/sandbox
 tools registered in `ctx.resources.tools`; the model can request those tools,
-and the runner invokes them through `AgentRunAPIProxy.call_tool()`. "Local" here
+and the runner invokes them through `RunnerAPIProxy.call_tool()`. "Local" here
 means the agent loop runs locally as a LangBot plugin, not that the model can
 read or write arbitrary files on the runner machine.
 
 Skill activation uses the same tool path. If Host exposes `activate` in the
 run's allowed tools, the model calls `activate` like any other function tool and
-Local Agent forwards it through `AgentRunAPIProxy.call_tool()`; no separate
+Local Agent forwards it through `RunnerAPIProxy.call_tool()`; no separate
 runner action is required for skill activation.
 
 Typical local-agent usage:
@@ -229,7 +229,7 @@ access unauthorized models, tools, knowledge bases, storage, or platform APIs.
 - `steering`: yes
 
 `interrupt` is cooperative. When Host exposes the run ledger API, Local Agent
-polls the current run through `AgentRunAPIProxy.run_get()` at run boundaries and
+polls the current run through `RunnerAPIProxy.run_get()` at run boundaries and
 streaming event boundaries. If Host has recorded `cancel_requested_at`, the
 runner stops and emits `run.failed` with `code="cancelled"`.
 
@@ -242,7 +242,7 @@ from those Host capabilities.
 Local Agent is reentrant and does not keep mutable per-conversation state in
 the plugin instance. It can pull Host history each run. When Host state APIs
 are available, it persists compacted summary checkpoints through
-`AgentRunAPIProxy` so later runs can resume from
+`RunnerAPIProxy` so later runs can resume from
 `runner.compaction.checkpoint`. It does not persist external session IDs or
 runner-owned memory outside Host-managed state/storage.
 
@@ -251,7 +251,7 @@ runner-owned memory outside Host-managed state/storage.
 This plugin does not implement LangBot EventGateway, event subscription, event
 notification, scheduler, or event fanout. Those systems belong to LangBot host
 or separate event-focused branches. This runner only consumes the run context
-that LangBot delivers through AgentRunner Protocol v1.
+that LangBot delivers through Runner Protocol v1.
 
 ## Current Boundary
 

@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: langbot-app/langbot-plugin-sdk
-          # Agent Runner APIs are currently developed on the 4.11 SDK branch.
+          # Runner APIs are currently developed on the 4.11 SDK branch.
           ref: dev/4.11.x
           path: langbot-plugin-sdk
 

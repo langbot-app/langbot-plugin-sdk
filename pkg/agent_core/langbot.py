@@ -9,7 +9,7 @@ import typing
 
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement, Message, MessageChunk
 from langbot_plugin.api.entities.builtin.resource.tool import LLMTool
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy, PermissionDeniedError
+from langbot_plugin.api.proxies.runner import PermissionDeniedError, RunnerAPIProxy
 
 from pkg.config import DEFAULT_MAX_TOOL_RESULT_CHARS
 from pkg.context_pipeline import (
@@ -87,7 +87,7 @@ def _prefix_chunk_content(chunk: MessageChunk, prefix: str) -> MessageChunk:
 class LangBotModelAdapter:
     """Model invocation adapter that keeps all model access behind Host APIs."""
 
-    def __init__(self, api: AgentRunAPIProxy, *, remove_think: bool = False):
+    def __init__(self, api: RunnerAPIProxy, *, remove_think: bool = False):
         self.api = api
         self.remove_think = remove_think
 
@@ -187,7 +187,7 @@ class LangBotToolExecutor:
 
     def __init__(
         self,
-        api: AgentRunAPIProxy,
+        api: RunnerAPIProxy,
         allowed_tools: set[str],
         max_result_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS,
     ):
@@ -418,7 +418,7 @@ class LangBotContextHooks(AgentLoopHooks):
 class LangBotSteeringPuller:
     """Pull and adapt Host-claimed steering inputs into user messages."""
 
-    def __init__(self, api: AgentRunAPIProxy):
+    def __init__(self, api: RunnerAPIProxy):
         self.api = api
 
     async def pull_messages(self, *, mode: str = "all") -> list[Message]:

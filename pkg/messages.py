@@ -15,7 +15,7 @@ MAX_ATTACHMENT_REFERENCE_CHARS = 8_000
 def get_effective_prompt_config(ctx: typing.Any) -> list[dict[str, typing.Any]]:
     """Return the prompt that should be sent to the model.
 
-    Host effective prompts should be pulled through AgentRunAPIProxy.get_prompt()
+    Host effective prompts should be pulled through RunnerAPIProxy.get_prompt()
     before calling this helper. This helper only returns the static binding
     fallback from ctx.config.prompt.
     """

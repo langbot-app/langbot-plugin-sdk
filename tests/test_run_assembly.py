@@ -3,17 +3,17 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from langbot_plugin.api.entities.builtin.agent_runner.resources import AgentResources, ModelResource, ToolResource
+from langbot_plugin.api.entities.builtin.runner.resources import AgentResources, ModelResource, ToolResource
 
 from pkg.agent_core import LangBotContextHooks, LangBotToolExecutor
 from pkg.messages import build_platform_tools_system_message
 from pkg.run_assembly import AgentRunAssembler, NoAuthorizedModelError
-from tests.test_runner import FakeAgentRunAPIProxy, make_context
+from tests.test_runner import FakeRunnerAPIProxy, make_context
 
 
 @pytest.mark.asyncio
 async def test_assembler_builds_authorized_loop_inputs() -> None:
-    api = FakeAgentRunAPIProxy(
+    api = FakeRunnerAPIProxy(
         models=[ModelResource(model_id="model-primary"), ModelResource(model_id="model-fallback")],
         tools=[ToolResource(tool_name="qa_plugin_echo")],
     )
@@ -53,7 +53,7 @@ async def test_assembler_builds_authorized_loop_inputs() -> None:
 
 @pytest.mark.asyncio
 async def test_assembler_disables_streaming_when_delivery_does_not_support_it() -> None:
-    api = FakeAgentRunAPIProxy(
+    api = FakeRunnerAPIProxy(
         models=[ModelResource(model_id="model-primary")],
     )
     ctx = make_context(
@@ -70,7 +70,7 @@ async def test_assembler_disables_streaming_when_delivery_does_not_support_it() 
 
 @pytest.mark.asyncio
 async def test_assembler_raises_when_configured_models_are_not_authorized() -> None:
-    api = FakeAgentRunAPIProxy(models=[ModelResource(model_id="authorized-model")])
+    api = FakeRunnerAPIProxy(models=[ModelResource(model_id="authorized-model")])
     api.get_tool_detail = AsyncMock()
     ctx = make_context(
         config={"model": {"primary": "unauthorized-model", "fallbacks": []}},
@@ -153,7 +153,7 @@ def test_platform_mock_guidance_is_scoped_to_debug_runs(mock):
     ],
 )
 async def test_event_data_reaches_model_context(event_type):
-    api = FakeAgentRunAPIProxy(models=[ModelResource(model_id="model-primary")])
+    api = FakeRunnerAPIProxy(models=[ModelResource(model_id="model-primary")])
     ctx = make_context(
         config={"model": {"primary": "model-primary"}},
         resources=AgentResources(models=[ModelResource(model_id="model-primary")]),

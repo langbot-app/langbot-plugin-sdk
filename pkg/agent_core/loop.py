@@ -30,7 +30,7 @@ TOOL_LOOP_LIMIT_TOOL_RESULT = "Tool call was not executed because the runner too
 class AgentLoop:
     """Turn/message/tool lifecycle loop for local-agent.
 
-    The loop is deliberately independent from AgentRunResult so the runner can
+    The loop is deliberately independent from RunnerResult so the runner can
     keep LangBot protocol adaptation at the boundary.
     """
 

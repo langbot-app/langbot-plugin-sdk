@@ -1,6 +1,6 @@
 # Local Agent
 
-Local Agent 是 LangBot 官方的进程内 AgentRunner。它在 LangBot 插件进程中完成提示词组装、模型调用、工具循环、知识库检索、上下文压缩和技能调用，适合使用 LangBot 托管模型与工具的通用 Agent 场景。
+Local Agent 是 LangBot 官方的进程内 Runner。它在 LangBot 插件进程中完成提示词组装、模型调用、工具循环、知识库检索、上下文压缩和技能调用，适合使用 LangBot 托管模型与工具的通用 Agent 场景。
 
 ## Runner ID
 
@@ -19,7 +19,7 @@ Local Agent 是 LangBot 官方的进程内 AgentRunner。它在 LangBot 插件�
 
 ## 工作方式
 
-LangBot 负责运行信封、资源授权与结果投递；Local Agent 负责 Agent 循环。每次运行会收到当前事件、输入、会话句柄、授权资源和运行时信息。需要历史、模型、工具、知识库或状态时，插件通过 `AgentRunAPIProxy` 调用 Host API，不直接访问 LangBot 内部管理器。
+LangBot 负责运行信封、资源授权与结果投递；Local Agent 负责 Agent 循环。每次运行会收到当前事件、输入、会话句柄、授权资源和运行时信息。需要历史、模型、工具、知识库或状态时，插件通过 `RunnerAPIProxy` 调用 Host API，不直接访问 LangBot 内部管理器。
 
 典型流程如下：
 
@@ -85,7 +85,7 @@ uv run --no-sync pytest -q
 uv run --no-sync ruff check .
 ```
 
-本地联调需要使用包含 AgentRunner Protocol v1 的 LangBot Plugin SDK。若 LangBot 固定的 PyPI 版本缺少新实体，请先安装工作区中的本地 SDK，并使用 `uv run --no-sync` 启动，避免同步过程覆盖 editable 安装。
+本地联调需要使用包含 Runner Protocol v1 的 LangBot Plugin SDK。若 LangBot 固定的 PyPI 版本缺少新实体，请先安装工作区中的本地 SDK，并使用 `uv run --no-sync` 启动，避免同步过程覆盖 editable 安装。
 
 ## 当前边界
 

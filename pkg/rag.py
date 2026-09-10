@@ -7,7 +7,7 @@ import logging
 import typing
 from dataclasses import dataclass, field, replace
 
-from langbot_plugin.api.proxies.agent_run import AgentRunAPIProxy, PermissionDeniedError
+from langbot_plugin.api.proxies.runner import PermissionDeniedError, RunnerAPIProxy
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class RagChunk:
 
 
 async def retrieve_from_knowledge_bases(
-    api: AgentRunAPIProxy,
+    api: RunnerAPIProxy,
     kb_ids: list[str],
     query_text: str,
     top_k: int = 5,
@@ -51,7 +51,7 @@ async def retrieve_from_knowledge_bases(
 
 
 async def retrieve_rag_chunks(
-    api: AgentRunAPIProxy,
+    api: RunnerAPIProxy,
     kb_ids: list[str],
     query_text: str,
     top_k: int = 5,

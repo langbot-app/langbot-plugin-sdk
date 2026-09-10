@@ -47,7 +47,7 @@ Agente integrado con modelos de respaldo, herramientas y recuperación de conoci
 ## Instalación y uso
 
 1. Instala el plugin desde el mercado de plugins de LangBot.
-2. Selecciona el Runner ID indicado en el selector AgentRunner del Pipeline.
+2. Selecciona el Runner ID indicado en el selector Runner del Pipeline.
 3. Completa la conexión según la tabla y guarda los valores sensibles en campos secret del panel de administración.
 
 ## Seguridad y limitaciones

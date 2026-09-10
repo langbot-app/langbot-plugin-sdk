@@ -21,7 +21,7 @@ MARKETPLACE_LOCALES = {
 
 def test_local_agent_has_publishable_marketplace_layout() -> None:
     manifest = yaml.safe_load((ROOT / "manifest.yaml").read_text(encoding="utf-8"))
-    runner = yaml.safe_load((ROOT / "components" / "agent_runner" / "default.yaml").read_text(encoding="utf-8"))
+    runner = yaml.safe_load((ROOT / "components" / "runner" / "default.yaml").read_text(encoding="utf-8"))
     metadata = manifest["metadata"]
     runner_id = f"plugin:{metadata['author']}/{metadata['name']}/{runner['metadata']['name']}"
     config_fields = [item["name"] for item in manifest["spec"].get("config", []) + runner["spec"].get("config", [])]

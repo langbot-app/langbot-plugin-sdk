@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from langbot_plugin.api.entities.builtin.agent_runner.resources import (
+from langbot_plugin.api.entities.builtin.runner.resources import (
     AgentResources,
     SkillResource,
 )
