@@ -2,11 +2,11 @@
 
 ## 概覽
 
-將 Codex CLI 作為 LangBot Runner 執行。
+將 Codex CLI 作為 LangBot 運行器執行。
 
 ## 套件資訊
 
-- **Runner ID**: `plugin:langbot-team/CodexAgent/default`
+- **運行器 ID**: `plugin:langbot-team/CodexAgent/default`
 - **版本**: `0.1.9`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
@@ -51,12 +51,12 @@
 ## 安裝與使用
 
 1. 從 LangBot 外掛市場安裝此外掛。
-2. 在 Pipeline 的 Runner 選擇器中選取下方 Runner ID。
+2. 在 Pipeline 的運行器選擇器中選取下方運行器 ID。
 3. 依照設定表填入連線資訊；密鑰欄位請使用管理介面保存。
 
 ## 安全與限制
 
 - 預設設定以 `approvalPolicy=never` 及 `sandbox=danger-full-access` 啟動 Codex，且不會等待互動式核准；請只在受信任的工作區與權限受限的作業系統帳號下使用此預設設定。
-- Runner 只能使用本次執行授權的 LangBot 資源。
+- 運行器只能使用本次執行授權的 LangBot 資源。
 - 外部服務的可用性、模型能力與速率限制由對應平台決定。
 - 完整行為、進階設定與產品特定限制請參閱根目錄中文 README 或英文 README_en_US.md。

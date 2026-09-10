@@ -7,7 +7,7 @@ metadata:
     zh_Hans: n8n
   description:
     en_US: Run an n8n workflow webhook as a LangBot Runner.
-    zh_Hans: 将 n8n 工作流 webhook 作为 LangBot Runner 运行。
+    zh_Hans: 将 n8n 工作流 webhook 作为 LangBot 运行器运行。
 spec:
   config:
     - name: webhook-url

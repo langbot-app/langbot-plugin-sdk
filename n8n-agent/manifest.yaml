@@ -16,8 +16,8 @@ metadata:
     ru_RU: Агент рабочих процессов n8n
   description:
     en_US: Run an n8n workflow webhook as a LangBot Runner.
-    zh_Hans: 将 n8n 工作流 webhook 作为 LangBot Runner 运行。
-    zh_Hant: 將 n8n 工作流程 Webhook 作為 LangBot Runner 執行。
+    zh_Hans: 将 n8n 工作流 webhook 作为 LangBot 运行器运行。
+    zh_Hant: 將 n8n 工作流程 Webhook 作為 LangBot 運行器執行。
     ja_JP: n8n ワークフローの Webhook を LangBot Runner として実行します。
     th_TH: เรียกใช้เว็บฮุกเวิร์กโฟลว์ n8n เป็น LangBot Runner
     vi_VN: Chạy webhook quy trình n8n dưới dạng LangBot Runner.

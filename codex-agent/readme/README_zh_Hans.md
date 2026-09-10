@@ -1,8 +1,8 @@
 # Codex Agent
 
-Codex Agent 通过 Codex app-server JSON-RPC 协议把 Codex CLI 接入 LangBot Runner。它支持本机、SSH 和用户侧 daemon 三种运行位置，并通过受控 MCP 配置向 Codex 提供当前运行授权的 LangBot 工具与资源。
+Codex Agent 通过 Codex app-server JSON-RPC 协议把 Codex CLI 接入 LangBot 运行器。它支持本机、SSH 和用户侧 daemon 三种运行位置，并通过受控 MCP 配置向 Codex 提供当前运行授权的 LangBot 工具与资源。
 
-## Runner ID
+## 运行器 ID
 
 `plugin:langbot-team/CodexAgent/default`
 
@@ -28,7 +28,7 @@ Codex Agent 通过 Codex app-server JSON-RPC 协议把 Codex CLI 接入 LangBot 
 | `daemon-port` | `integer` | `8768` | Hub 端口 |
 | `daemon-token` | `secret` | 空 | daemon 共享令牌 |
 
-## Runner 配置
+## 运行器配置
 
 | 字段 | 说明 |
 | --- | --- |

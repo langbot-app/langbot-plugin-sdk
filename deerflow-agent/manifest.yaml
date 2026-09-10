@@ -16,8 +16,8 @@ metadata:
     ru_RU: Агент DeerFlow
   description:
     en_US: Run a DeerFlow LangGraph agent as a LangBot Runner.
-    zh_Hans: 将 DeerFlow LangGraph 智能体作为 LangBot Runner 运行。
-    zh_Hant: 將 DeerFlow LangGraph 代理作為 LangBot Runner 執行。
+    zh_Hans: 将 DeerFlow LangGraph 智能体作为 LangBot 运行器运行。
+    zh_Hant: 將 DeerFlow LangGraph 代理作為 LangBot 運行器執行。
     ja_JP: DeerFlow LangGraph エージェントを LangBot Runner として実行します。
     th_TH: เรียกใช้เอเจนต์ DeerFlow LangGraph เป็น LangBot Runner
     vi_VN: Chạy tác nhân DeerFlow LangGraph dưới dạng LangBot Runner.

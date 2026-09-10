@@ -1,8 +1,8 @@
 # Coze Agent
 
-Coze Agent 将 Coze（扣子）机器人接入 LangBot Runner，负责把 LangBot 输入转换为 Coze Chat API 请求，并将 Coze 的流式回复、会话状态和错误事件转换为 Runner Protocol v1 结果。
+Coze Agent 将 Coze（扣子）机器人接入 LangBot 运行器，负责把 LangBot 输入转换为 Coze Chat API 请求，并将 Coze 的流式回复、会话状态和错误事件转换为 Runner Protocol v1 结果。
 
-## Runner ID
+## 运行器 ID
 
 `plugin:langbot-team/CozeAgent/default`
 

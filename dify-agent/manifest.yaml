@@ -16,8 +16,8 @@ metadata:
     ru_RU: Агент Dify
   description:
     en_US: Run a Dify application as a LangBot Runner.
-    zh_Hans: 将 Dify 应用作为 LangBot Runner 运行。
-    zh_Hant: 將 Dify 應用程式作為 LangBot Runner 執行。
+    zh_Hans: 将 Dify 应用作为 LangBot 运行器运行。
+    zh_Hant: 將 Dify 應用程式作為 LangBot 運行器執行。
     ja_JP: Dify アプリを LangBot Runner として実行します。
     th_TH: เรียกใช้แอป Dify เป็น LangBot Runner
     vi_VN: Chạy ứng dụng Dify dưới dạng LangBot Runner.

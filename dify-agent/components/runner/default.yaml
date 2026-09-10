@@ -7,7 +7,7 @@ metadata:
     zh_Hans: Dify
   description:
     en_US: Run a Dify application as a LangBot Runner.
-    zh_Hans: 将 Dify 应用作为 LangBot Runner 运行。
+    zh_Hans: 将 Dify 应用作为 LangBot 运行器运行。
 spec:
   config:
     - name: base-url

@@ -1,8 +1,8 @@
 # Claude Code Agent
 
-Claude Code Agent 将 Claude Code CLI 以非交互模式接入 LangBot Runner。它可以在 LangBot 本机、SSH 远端或用户侧 daemon 上运行，并通过 SDK MCP bridge 向 Claude Code 提供本次运行授权的 LangBot 工具和资源。
+Claude Code Agent 将 Claude Code CLI 以非交互模式接入 LangBot 运行器。它可以在 LangBot 本机、SSH 远端或用户侧 daemon 上运行，并通过 SDK MCP bridge 向 Claude Code 提供本次运行授权的 LangBot 工具和资源。
 
-## Runner ID
+## 运行器 ID
 
 `plugin:langbot-team/ClaudeCodeAgent/default`
 
@@ -28,7 +28,7 @@ Claude Code Agent 将 Claude Code CLI 以非交互模式接入 LangBot Runner。
 | `daemon-port` | `integer` | `8767` | Hub 端口 |
 | `daemon-token` | `secret` | 空 | daemon 共享令牌 |
 
-## Runner 配置
+## 运行器配置
 
 | 字段 | 说明 |
 | --- | --- |

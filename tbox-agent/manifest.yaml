@@ -16,8 +16,8 @@ metadata:
     ru_RU: Агент Tbox
   description:
     en_US: Run an Ant Tbox application as a LangBot Runner.
-    zh_Hans: 将蚂蚁百宝箱应用作为 LangBot Runner 运行。
-    zh_Hant: 將螞蟻 Tbox 應用程式作為 LangBot Runner 執行。
+    zh_Hans: 将蚂蚁百宝箱应用作为 LangBot 运行器运行。
+    zh_Hant: 將螞蟻 Tbox 應用程式作為 LangBot 運行器執行。
     ja_JP: Ant Tbox アプリを LangBot Runner として実行します。
     th_TH: เรียกใช้แอป Ant Tbox เป็น LangBot Runner
     vi_VN: Chạy ứng dụng Ant Tbox dưới dạng LangBot Runner.

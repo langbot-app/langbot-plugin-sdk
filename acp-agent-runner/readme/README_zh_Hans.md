@@ -2,7 +2,7 @@
 
 ACP Runner 用于把兼容 Agent Client Protocol（ACP）的编码 Agent 接入 LangBot。它支持在 LangBot 服务器本机、SSH 远端机器或用户侧 daemon 上启动 ACP 进程，并把 LangBot 本次运行授权的工具、知识库和历史能力通过 SDK MCP bridge 暴露给编码 Agent。
 
-## Runner ID
+## 运行器 ID
 
 `plugin:langbot-team/ACPRunner/default`
 
@@ -43,7 +43,7 @@ ACP Runner 用于把兼容 Agent Client Protocol（ACP）的编码 Agent 接入 
 
 只有在容器或反向代理明确暴露端口时才应使用 `0.0.0.0`，并应配置高强度 token 和 TLS 反向代理。
 
-## Runner 配置
+## 运行器配置
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |

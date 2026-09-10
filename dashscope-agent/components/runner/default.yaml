@@ -7,7 +7,7 @@ metadata:
     zh_Hans: 百炼
   description:
     en_US: Run an Aliyun DashScope application as a LangBot Runner.
-    zh_Hans: 将阿里云百炼应用作为 LangBot Runner 运行。
+    zh_Hans: 将阿里云百炼应用作为 LangBot 运行器运行。
 spec:
   config:
     - name: app-type

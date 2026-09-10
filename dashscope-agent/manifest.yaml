@@ -16,8 +16,8 @@ metadata:
     ru_RU: Агент DashScope
   description:
     en_US: Run an Aliyun DashScope application as a LangBot Runner.
-    zh_Hans: 将阿里云百炼应用作为 LangBot Runner 运行。
-    zh_Hant: 將阿里雲 DashScope 應用程式作為 LangBot Runner 執行。
+    zh_Hans: 将阿里云百炼应用作为 LangBot 运行器运行。
+    zh_Hant: 將阿里雲 DashScope 應用程式作為 LangBot 運行器執行。
     ja_JP: Alibaba Cloud DashScope アプリを LangBot Runner として実行します。
     th_TH: เรียกใช้แอป Aliyun DashScope เป็น LangBot Runner
     vi_VN: Chạy ứng dụng Aliyun DashScope dưới dạng LangBot Runner.

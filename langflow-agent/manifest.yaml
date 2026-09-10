@@ -16,8 +16,8 @@ metadata:
     ru_RU: Агент Langflow
   description:
     en_US: Run a Langflow flow as a LangBot Runner.
-    zh_Hans: 将 Langflow 流程作为 LangBot Runner 运行。
-    zh_Hant: 將 Langflow 流程作為 LangBot Runner 執行。
+    zh_Hans: 将 Langflow 流程作为 LangBot 运行器运行。
+    zh_Hant: 將 Langflow 流程作為 LangBot 運行器執行。
     ja_JP: Langflow フローを LangBot Runner として実行します。
     th_TH: เรียกใช้โฟลว์ Langflow เป็น LangBot Runner
     vi_VN: Chạy luồng Langflow dưới dạng LangBot Runner.

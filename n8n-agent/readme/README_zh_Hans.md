@@ -1,8 +1,8 @@
 # n8n 工作流 Agent
 
-n8n 工作流 Agent 将 n8n Webhook 工作流接入 LangBot Runner。插件把当前输入和会话标识发送到 Webhook，支持 Basic、JWT 和自定义 Header 鉴权，并可向工作流注入短期 LangBot 资产 token。
+n8n 工作流 Agent 将 n8n Webhook 工作流接入 LangBot 运行器。插件把当前输入和会话标识发送到 Webhook，支持 Basic、JWT 和自定义 Header 鉴权，并可向工作流注入短期 LangBot 资产 token。
 
-## Runner ID
+## 运行器 ID
 
 `plugin:langbot-team/N8nAgent/default`
 
