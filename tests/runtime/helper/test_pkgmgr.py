@@ -204,6 +204,23 @@ def test_get_plugin_python_returns_absolute_venv_interpreter(tmp_path):
     assert pathlib.Path(result) == executable.resolve()
 
 
+def test_get_plugin_site_packages_returns_existing_dependency_directory(tmp_path):
+    site_packages = (
+        tmp_path / ".venv" / "Lib" / "site-packages"
+        if pkgmgr.sys.platform == "win32"
+        else tmp_path
+        / ".venv"
+        / "lib"
+        / f"python{pkgmgr.sys.version_info.major}.{pkgmgr.sys.version_info.minor}"
+        / "site-packages"
+    )
+    site_packages.mkdir(parents=True)
+
+    result = pkgmgr.get_plugin_site_packages(str(tmp_path))
+
+    assert result == str(site_packages.resolve())
+
+
 @pytest.mark.asyncio
 async def test_ensure_plugin_environment_creates_missing_venv_for_symlinked_host_python(
     monkeypatch, tmp_path

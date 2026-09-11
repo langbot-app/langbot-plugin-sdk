@@ -192,6 +192,11 @@ async def test_launch_plugin_uses_sanitized_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("PYTHONPATH", "/tmp/langbot-plugin-sdk/src")
     monkeypatch.setattr(mgr_module, "get_platform", lambda: "linux")
     monkeypatch.setattr(
+        mgr_module.pkgmgr_helper,
+        "get_plugin_site_packages",
+        lambda _plugin_path: "/tmp/plugin-dependencies",
+    )
+    monkeypatch.setattr(
         mgr_module.stdio_client_controller,
         "StdioClientController",
         FakeStdioClientController,
@@ -203,7 +208,13 @@ async def test_launch_plugin_uses_sanitized_environment(monkeypatch, tmp_path):
 
     assert captured["working_dir"] == str(plugin_path)
     assert captured["env"] is not os.environ
-    assert "PYTHONPATH" not in captured["env"]
+    assert captured["env"]["PYTHONPATH"] == os.pathsep.join(
+        (
+            str(manager.worker_launcher.runtime_import_root),
+            "/tmp/plugin-dependencies",
+        )
+    )
+    assert "/tmp/langbot-plugin-sdk/src" not in captured["env"]["PYTHONPATH"]
     assert captured["env"][PLUGIN_REGISTRATION_CAPABILITY_ENV]
 
 

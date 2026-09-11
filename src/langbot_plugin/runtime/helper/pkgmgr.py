@@ -347,7 +347,9 @@ def _resolve_import_names(pkg_name: str) -> set[str]:
                     key = dist_name.lower().replace("_", "-")
                     _dist_to_packages.setdefault(key, set()).add(top_pkg)
         except Exception as exc:
-            logger.debug("Failed to load package distribution metadata: %s", exc, exc_info=True)
+            logger.debug(
+                "Failed to load package distribution metadata: %s", exc, exc_info=True
+            )
 
     key = pkg_name.lower().replace("_", "-")
     names = _dist_to_packages.get(key, set()).copy()
@@ -522,6 +524,22 @@ def get_plugin_python(plugin_path: str) -> str:
     if candidate.is_file():
         return str(candidate.resolve())
     return str(pathlib.Path(sys.executable).resolve())
+
+
+def get_plugin_site_packages(plugin_path: str) -> str | None:
+    """Return the plugin-local dependency directory when it exists."""
+    root = pathlib.Path(plugin_path) / PLUGIN_VENV_DIR
+    candidate = (
+        root / "Lib" / "site-packages"
+        if sys.platform == "win32"
+        else root
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    if candidate.is_dir():
+        return str(candidate.resolve())
+    return None
 
 
 async def ensure_plugin_environment(plugin_path: str) -> str:

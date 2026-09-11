@@ -555,6 +555,29 @@ class PluginManager:
             if key.upper() in _WINDOWS_PLUGIN_ENV_ALLOWLIST
         }
 
+    def _legacy_plugin_environment(
+        self,
+        plugin_path: str,
+        registration_capability: str,
+    ) -> dict[str, str]:
+        """Build a minimal environment with trusted SDK and plugin dependencies."""
+        child_env = (
+            self._windows_plugin_environment() if get_platform() == "win32" else {}
+        )
+        python_paths = [str(self.worker_launcher.runtime_import_root)]
+        plugin_site_packages = pkgmgr_helper.get_plugin_site_packages(plugin_path)
+        if plugin_site_packages is not None:
+            python_paths.append(plugin_site_packages)
+        child_env.update(
+            {
+                PLUGIN_REGISTRATION_CAPABILITY_ENV: registration_capability,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPATH": os.pathsep.join(python_paths),
+                "PYTHONUNBUFFERED": "1",
+            }
+        )
+        return child_env
+
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
@@ -833,6 +856,10 @@ class PluginManager:
         )
 
         try:
+            child_env = self._legacy_plugin_environment(
+                plugin_path,
+                registration_capability,
+            )
             if get_platform() == "win32":
                 # Due to Windows's lack of supports for both stdio and subprocess:
                 # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
@@ -847,11 +874,9 @@ class PluginManager:
                     "--prod",
                 ]
 
-                child_env = self._windows_plugin_environment()
                 child_env["RUNTIME_WS_URL"] = (
                     f"ws://localhost:{self.context.ws_debug_port}/plugin/ws"
                 )
-                child_env[PLUGIN_REGISTRATION_CAPABILITY_ENV] = registration_capability
 
                 process: asyncio.subprocess.Process = (
                     await asyncio.create_subprocess_exec(
@@ -887,7 +912,7 @@ class PluginManager:
                 ctrl = stdio_client_controller.StdioClientController(
                     command=python_path,
                     args=args,
-                    env={PLUGIN_REGISTRATION_CAPABILITY_ENV: registration_capability},
+                    env=child_env,
                     working_dir=plugin_path,
                 )
 
