@@ -114,6 +114,10 @@ class RunInterruptChecker:
                 try:
                     return await asyncio.wait_for(asyncio.shield(task), timeout=wait_seconds)
                 except asyncio.TimeoutError:
+                    # wait_for also propagates TimeoutError raised by the operation.
+                    # Only a still-pending task indicates a polling timeout.
+                    if task.done():
+                        return task.result()
                     if deadline is not None and deadline.remaining() <= 0:
                         task.cancel()
                         await asyncio.gather(task, return_exceptions=True)
