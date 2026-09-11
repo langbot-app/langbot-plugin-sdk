@@ -293,6 +293,13 @@ instance-scoped `SET_RUNTIME_CONFIG` handshake and per-action installation
 bindings are authorization fences after transport authentication; neither is a
 substitute for authenticating the peer.
 
+An OSS-only exception permits legacy knowledge `FILE_CHUNK` replies carrying
+`ActionContext`: the active, configured control connection must target the local
+instance and already-bound Workspace/generation, and its installation capability
+must exactly match a live registered plugin connection. Payload scope is ignored.
+Shared transfers still require a complete binding; candidate artifact pretransfer
+validates that binding without activating desired state.
+
 Legacy OSS plugins are stored under `data/plugins/{author}__{name}`. Runtime
 plugin processes normally run as separate Python processes and connect back via
 stdio or debug WebSocket. Shared workers instead use the digest-addressed
