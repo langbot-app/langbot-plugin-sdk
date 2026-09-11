@@ -228,9 +228,18 @@ async def _iterate_sync_in_thread(
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
 
+    async def _next_item():
+        # Cancelling to_thread(queue.get) cannot stop its blocking worker and
+        # can hang asyncio shutdown forever when the vendor stops producing.
+        while True:
+            try:
+                return output.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.01)
+
     while True:
         try:
-            item = await asyncio.wait_for(asyncio.to_thread(output.get), timeout=timeout)
+            item = await asyncio.wait_for(_next_item(), timeout=timeout)
         except TimeoutError:
             raise DashScopeAPIError(
                 f"DashScope API request timed out after {timeout}s",

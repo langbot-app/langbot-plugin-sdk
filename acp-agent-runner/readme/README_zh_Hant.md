@@ -6,7 +6,7 @@
 
 ## 套件資訊
 
-- **運行器 ID**: `plugin:langbot-team/ACPRunner/default`
+- **運行器 ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **版本**: `0.1.4`
 - **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 

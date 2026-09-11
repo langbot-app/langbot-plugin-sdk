@@ -6,7 +6,7 @@
 
 ## ข้อมูลแพ็กเกจ
 
-- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **เวอร์ชัน**: `0.1.4`
 - **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 

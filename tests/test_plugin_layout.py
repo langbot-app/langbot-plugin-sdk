@@ -26,7 +26,7 @@ from langbot_plugin.api.entities.builtin.runner import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_NAMES = {
-    "acp-agent-runner": "ACPRunner",
+    "acp-agent-runner": "ACPAgentRunner",
     "claude-code-agent": "ClaudeCodeAgent",
     "codex-agent": "CodexAgent",
     "coze-agent": "CozeAgent",

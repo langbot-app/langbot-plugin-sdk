@@ -6,7 +6,7 @@
 
 ## Информация о пакете
 
-- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **Версия**: `0.1.4`
 - **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 
