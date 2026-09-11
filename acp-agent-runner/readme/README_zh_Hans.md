@@ -4,7 +4,7 @@ ACP Runner 用于把兼容 Agent Client Protocol（ACP）的编码 Agent 接入 
 
 ## 运行器 ID
 
-`plugin:langbot-team/ACPRunner/default`
+`plugin:langbot-team/ACPAgentRunner/default`
 
 ## 主要能力
 

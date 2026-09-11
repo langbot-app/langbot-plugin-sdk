@@ -6,7 +6,7 @@ Ejecuta cualquier agente de programación compatible con Agent Client Protocol c
 
 ## Información del paquete
 
-- **Runner ID**: `plugin:langbot-team/ACPRunner/default`
+- **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **Versión**: `0.1.4`
 - **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
 

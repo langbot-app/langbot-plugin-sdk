@@ -14,7 +14,7 @@ It is a thin runtime adapter:
 
 ## Runner ID
 
-`plugin:langbot-team/ACPRunner/default`
+`plugin:langbot-team/ACPAgentRunner/default`
 
 ## Configuration
 
