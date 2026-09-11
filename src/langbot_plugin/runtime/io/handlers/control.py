@@ -639,6 +639,47 @@ class ControlConnectionHandler(handler.Handler):
             )
         return config
 
+    def _authorize_legacy_file_chunk(
+        self, action_context: ActionEnvelopeContext | None
+    ) -> ActionContext:
+        """Accept OSS file replies only for a live, registered connection binding.
+
+        Unlike candidate artifact pretransfer, legacy knowledge transfers have
+        no revision/digest tuple. Never synthesize one from request data.
+        """
+        workspace = self.context.workspace_binding
+        identity = self.context.runtime_identity
+        if (
+            self.context.runtime_profile != "oss_dev"
+            or not isinstance(action_context, ActionContext)
+            or not action_context.installation_uuid
+            or identity is None
+            or action_context.instance_uuid != identity.instance_uuid
+            or workspace is None
+            or not workspace.same_workspace(action_context)
+        ):
+            raise ValueError(
+                "Legacy FILE_CHUNK requires the bound OSS Workspace and installation"
+            )
+
+        manager = self.context.plugin_mgr
+        for plugin in manager.plugins:
+            worker = plugin._runtime_plugin_handler
+            if (
+                worker is not None
+                and worker in manager.plugin_handlers
+                and not worker._closed
+                and worker.bound_action_context == action_context
+            ):
+                # Reuse connection validation, including debug-token revocation.
+                worker.validate_inbound_action_context(
+                    CommonAction.FILE_CHUNK.value, action_context
+                )
+                return action_context
+        raise ValueError(
+            "Legacy FILE_CHUNK requires a live registered plugin installation"
+        )
+
     def validate_inbound_action_context(
         self,
         action: str,
@@ -686,6 +727,11 @@ class ControlConnectionHandler(handler.Handler):
                 f"{action} is unavailable in the shared Runtime profile; "
                 "use installation desired state"
             )
+
+        if action == CommonAction.FILE_CHUNK.value and not isinstance(
+            action_context, InstallationBinding
+        ):
+            return self._authorize_legacy_file_chunk(action_context)
 
         if action in {
             LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
