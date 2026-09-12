@@ -30,6 +30,7 @@ from langbot_plugin.box.errors import (
 from langbot_plugin.box.models import (
     BoxExecutionResult,
     BoxExecutionStatus,
+    BoxSpec,
     SandboxAdmissionGrant,
     SandboxAdmissionRevocation,
 )
@@ -110,15 +111,14 @@ def mock_connection():
 def mock_runtime():
     """A mock BoxRuntime with async/sync methods stubbed out.
 
-    Async methods are AsyncMock; the skill_store and synchronous methods are
-    plain MagicMock. Defaults return realistic shapes; individual tests
-    override return values / side effects as needed.
+    Async methods are AsyncMock and synchronous methods are plain MagicMock.
+    Defaults return realistic shapes; individual tests override return values
+    and side effects as needed.
     """
     runtime = mock.MagicMock()
     runtime.admission_required = False
     runtime.max_admission_records = 100
     runtime.max_rpc_file_bytes = 20 * 1024 * 1024
-    runtime.skill_operation_lock = asyncio.Lock()
     runtime.blocking_executor = None
     runtime.event_loop_monitor = None
     runtime._sessions = {}
@@ -163,21 +163,6 @@ def mock_runtime():
     )
     runtime.shutdown = mock.AsyncMock()
 
-    skill_store = mock.MagicMock()
-    skill_store.list_skills = mock.MagicMock(return_value=[{"name": "demo"}])
-    skill_store.get_skill = mock.MagicMock(return_value={"name": "demo"})
-    skill_store.create_skill = mock.MagicMock(return_value={"name": "demo"})
-    skill_store.update_skill = mock.MagicMock(return_value={"name": "demo"})
-    skill_store.delete_skill = mock.MagicMock(return_value={"deleted": True})
-    skill_store.scan_directory = mock.MagicMock(return_value={"name": "demo"})
-    skill_store.list_skill_files = mock.MagicMock(return_value={"entries": []})
-    skill_store.read_skill_file = mock.MagicMock(return_value={"content": "x"})
-    skill_store.write_skill_file = mock.MagicMock(return_value={"written": True})
-    skill_store.preview_zip_upload = mock.MagicMock(return_value=[{"name": "demo"}])
-    skill_store.install_zip_upload = mock.MagicMock(return_value=[{"name": "demo"}])
-    runtime.skill_store = skill_store
-    skill_store.scoped.return_value = skill_store
-
     return runtime
 
 
@@ -219,6 +204,16 @@ def test_result_to_dict_serializes_execution_result():
     assert as_dict["status"] == "completed"  # enum serialized to its value
     assert as_dict["exit_code"] == 0
     assert as_dict["duration_ms"] == 12
+
+
+def test_box_protocol_has_no_skill_surface(handler):
+    assert all("skill" not in action.value for action in LangBotToBoxAction)
+    assert "skill_name" not in BoxSpec.model_fields
+    assert "box_list_skills" not in handler.actions
+    with pytest.raises(ValueError, match="skill_name"):
+        BoxSpec.model_validate(
+            {"session_id": "s1", "cmd": "true", "skill_name": "demo"}
+        )
 
 
 def test_error_response_shape_and_status():
@@ -861,282 +856,6 @@ async def test_stop_managed_process_explicit(handler, mock_runtime):
     mock_runtime.stop_managed_process.assert_awaited_once_with(
         _physical_session_id("s1"), "p3"
     )
-
-
-# ── SKILL store actions (sync skill_store) ───────────────────────────
-
-
-async def test_list_skills(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILLS, {})
-    assert resp.code == 0
-    assert resp.data == {"skills": [{"name": "demo"}]}
-    mock_runtime.skill_store.list_skills.assert_called_once()
-
-
-async def test_get_skill(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.GET_SKILL, {"name": "demo"})
-    assert resp.code == 0
-    assert resp.data == {"skill": {"name": "demo"}}
-    mock_runtime.skill_store.get_skill.assert_called_once_with("demo")
-
-
-async def test_create_skill_success(handler, mock_runtime):
-    resp = await _invoke(
-        handler, LangBotToBoxAction.CREATE_SKILL, {"skill": {"name": "demo"}}
-    )
-    assert resp.code == 0
-    assert resp.data == {"skill": {"name": "demo"}}
-    mock_runtime.skill_store.create_skill.assert_called_once_with({"name": "demo"})
-
-
-async def test_create_skill_error(handler, mock_runtime):
-    mock_runtime.skill_store.create_skill.side_effect = ValueError("bad skill")
-    resp = await _invoke(
-        handler, LangBotToBoxAction.CREATE_SKILL, {"skill": {"name": "demo"}}
-    )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-    assert "bad skill" in resp.message
-
-
-async def test_update_skill_success(handler, mock_runtime):
-    resp = await _invoke(
-        handler,
-        LangBotToBoxAction.UPDATE_SKILL,
-        {"name": "demo", "skill": {"name": "demo2"}},
-    )
-    assert resp.code == 0
-    mock_runtime.skill_store.update_skill.assert_called_once_with(
-        "demo", {"name": "demo2"}
-    )
-
-
-async def test_update_skill_error(handler, mock_runtime):
-    mock_runtime.skill_store.update_skill.side_effect = KeyError("missing")
-    resp = await _invoke(
-        handler,
-        LangBotToBoxAction.UPDATE_SKILL,
-        {"name": "demo", "skill": {}},
-    )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-async def test_delete_skill_success(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"})
-    assert resp.code == 0
-    assert resp.data == {"deleted": True}
-    mock_runtime.skill_store.delete_skill.assert_called_once_with("demo")
-
-
-async def test_delete_skill_error(handler, mock_runtime):
-    mock_runtime.skill_store.delete_skill.side_effect = RuntimeError("locked")
-    resp = await _invoke(handler, LangBotToBoxAction.DELETE_SKILL, {"name": "demo"})
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-async def test_scan_skill_directory_success(handler, mock_runtime):
-    resp = await _invoke(
-        handler, LangBotToBoxAction.SCAN_SKILL_DIRECTORY, {"path": "/skills/demo"}
-    )
-    assert resp.code == 0
-    assert resp.data == {"name": "demo"}
-    mock_runtime.skill_store.scan_directory.assert_called_once_with("/skills/demo")
-
-
-async def test_scan_skill_directory_error(handler, mock_runtime):
-    mock_runtime.skill_store.scan_directory.side_effect = FileNotFoundError("nope")
-    resp = await _invoke(
-        handler, LangBotToBoxAction.SCAN_SKILL_DIRECTORY, {"path": "/x"}
-    )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-async def test_list_skill_files_uses_defaults(handler, mock_runtime):
-    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"})
-    assert resp.code == 0
-    mock_runtime.skill_store.list_skill_files.assert_called_once_with(
-        "demo", ".", include_hidden=False, max_entries=200
-    )
-
-
-async def test_list_skill_files_passes_overrides(handler, mock_runtime):
-    await _invoke(
-        handler,
-        LangBotToBoxAction.LIST_SKILL_FILES,
-        {
-            "name": "demo",
-            "path": "sub",
-            "include_hidden": True,
-            "max_entries": 5,
-        },
-    )
-    mock_runtime.skill_store.list_skill_files.assert_called_once_with(
-        "demo", "sub", include_hidden=True, max_entries=5
-    )
-
-
-async def test_list_skill_files_error(handler, mock_runtime):
-    mock_runtime.skill_store.list_skill_files.side_effect = ValueError("nope")
-    resp = await _invoke(handler, LangBotToBoxAction.LIST_SKILL_FILES, {"name": "demo"})
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-async def test_read_skill_file_success(handler, mock_runtime):
-    resp = await _invoke(
-        handler,
-        LangBotToBoxAction.READ_SKILL_FILE,
-        {"name": "demo", "path": "notes.txt"},
-    )
-    assert resp.code == 0
-    assert resp.data == {"content": "x"}
-    mock_runtime.skill_store.read_skill_file.assert_called_once_with(
-        "demo", "notes.txt"
-    )
-
-
-async def test_read_skill_file_error(handler, mock_runtime):
-    mock_runtime.skill_store.read_skill_file.side_effect = ValueError("nope")
-    resp = await _invoke(
-        handler,
-        LangBotToBoxAction.READ_SKILL_FILE,
-        {"name": "demo", "path": "x"},
-    )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-async def test_write_skill_file_success(handler, mock_runtime):
-    resp = await _invoke(
-        handler,
-        LangBotToBoxAction.WRITE_SKILL_FILE,
-        {"name": "demo", "path": "notes.txt", "content": "hi"},
-    )
-    assert resp.code == 0
-    assert resp.data == {"written": True}
-    mock_runtime.skill_store.write_skill_file.assert_called_once_with(
-        "demo", "notes.txt", "hi"
-    )
-
-
-async def test_write_skill_file_defaults_content(handler, mock_runtime):
-    await _invoke(
-        handler,
-        LangBotToBoxAction.WRITE_SKILL_FILE,
-        {"name": "demo", "path": "notes.txt"},
-    )
-    mock_runtime.skill_store.write_skill_file.assert_called_once_with(
-        "demo", "notes.txt", ""
-    )
-
-
-async def test_write_skill_file_error(handler, mock_runtime):
-    mock_runtime.skill_store.write_skill_file.side_effect = OSError("disk full")
-    resp = await _invoke(
-        handler,
-        LangBotToBoxAction.WRITE_SKILL_FILE,
-        {"name": "demo", "path": "x"},
-    )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-# ── PREVIEW / INSTALL skill zip (use Handler file helpers) ───────────
-
-
-async def test_preview_skill_zip_reads_and_deletes_local_file(handler, mock_runtime):
-    with (
-        mock.patch.object(
-            handler, "read_local_file", mock.AsyncMock(return_value=b"zipbytes")
-        ) as read_mock,
-        mock.patch.object(
-            handler, "delete_local_file", mock.AsyncMock()
-        ) as delete_mock,
-    ):
-        resp = await _invoke(
-            handler,
-            LangBotToBoxAction.PREVIEW_SKILL_ZIP,
-            {"file_key": "key1", "filename": "demo.zip", "source_subdir": "pkgs"},
-        )
-
-    assert resp.code == 0
-    assert resp.data == {"skills": [{"name": "demo"}]}
-    read_mock.assert_awaited_once_with("key1")
-    delete_mock.assert_awaited_once_with("key1")
-    mock_runtime.skill_store.preview_zip_upload.assert_called_once_with(
-        file_bytes=b"zipbytes",
-        filename="demo.zip",
-        source_subdir="pkgs",
-        target_suffix="upload",
-    )
-
-
-async def test_preview_skill_zip_error(handler, mock_runtime):
-    mock_runtime.skill_store.preview_zip_upload.side_effect = ValueError("bad zip")
-    with (
-        mock.patch.object(
-            handler, "read_local_file", mock.AsyncMock(return_value=b"x")
-        ),
-        mock.patch.object(handler, "delete_local_file", mock.AsyncMock()),
-    ):
-        resp = await _invoke(
-            handler,
-            LangBotToBoxAction.PREVIEW_SKILL_ZIP,
-            {"file_key": "key1"},
-        )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
-
-
-async def test_install_skill_zip_passes_all_args(handler, mock_runtime):
-    with (
-        mock.patch.object(
-            handler, "read_local_file", mock.AsyncMock(return_value=b"zipbytes")
-        ),
-        mock.patch.object(handler, "delete_local_file", mock.AsyncMock()),
-    ):
-        resp = await _invoke(
-            handler,
-            LangBotToBoxAction.INSTALL_SKILL_ZIP,
-            {
-                "file_key": "key1",
-                "filename": "demo.zip",
-                "source_paths": ["alpha"],
-                "source_path": "alpha",
-                "source_subdir": "pkgs",
-                "target_suffix": "v2",
-            },
-        )
-    assert resp.code == 0
-    assert resp.data == {"skills": [{"name": "demo"}]}
-    mock_runtime.skill_store.install_zip_upload.assert_called_once_with(
-        file_bytes=b"zipbytes",
-        filename="demo.zip",
-        source_paths=["alpha"],
-        source_path="alpha",
-        source_subdir="pkgs",
-        target_suffix="v2",
-    )
-
-
-async def test_install_skill_zip_error(handler, mock_runtime):
-    mock_runtime.skill_store.install_zip_upload.side_effect = RuntimeError("boom")
-    with (
-        mock.patch.object(
-            handler, "read_local_file", mock.AsyncMock(return_value=b"x")
-        ),
-        mock.patch.object(handler, "delete_local_file", mock.AsyncMock()),
-    ):
-        resp = await _invoke(
-            handler,
-            LangBotToBoxAction.INSTALL_SKILL_ZIP,
-            {"file_key": "key1"},
-        )
-    assert resp.code == 1
-    assert "BoxValidationError" in resp.message
 
 
 # ── INIT / SHUTDOWN ──────────────────────────────────────────────────

@@ -231,11 +231,13 @@ class SandboxAdmissionPolicy(pydantic.BaseModel):
 
 
 class BoxMountSpec(pydantic.BaseModel):
-    """A single additional bind mount specification."""
+    """A generic additional bind mount specification."""
 
     host_path: str
     mount_path: str
     mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
+    content_digest: str | None = None
+    manifest_path: str | None = None
 
     @pydantic.field_validator("host_path")
     @classmethod
@@ -251,6 +253,31 @@ class BoxMountSpec(pydantic.BaseModel):
         value = value.strip()
         if not value.startswith("/"):
             raise ValueError("mount_path must be an absolute path inside the sandbox")
+        if posixpath.normpath(value) != value:
+            raise ValueError("mount_path must be normalized")
+        return value
+
+    @pydantic.field_validator("content_digest")
+    @classmethod
+    def validate_content_digest(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value.startswith("sha256:"):
+            raise ValueError("content_digest must use sha256:<hex>")
+        digest = value[len("sha256:") :]
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise ValueError("content_digest must use sha256:<64 lowercase hex>")
+        return value
+
+    @pydantic.field_validator("manifest_path")
+    @classmethod
+    def validate_manifest_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not (posixpath.isabs(value) or ntpath.isabs(value)):
+            raise ValueError("manifest_path must be an absolute host path")
         return value
 
 
@@ -266,10 +293,6 @@ class BoxSpec(pydantic.BaseModel):
     host_path_mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
     mount_path: str = DEFAULT_BOX_MOUNT_PATH
     extra_mounts: list[BoxMountSpec] = pydantic.Field(default_factory=list)
-    # Optional logical package selection. In grant-enforced mode the Runtime
-    # resolves this name through the trusted Workspace-scoped BoxSkillStore and
-    # constructs the read-only host mount itself. Callers never provide a path.
-    skill_name: str | None = None
     persistent: bool = False
     # Resource limits
     cpus: float = 1.0
@@ -277,6 +300,8 @@ class BoxSpec(pydantic.BaseModel):
     pids_limit: int = 128
     read_only_rootfs: bool = True
     workspace_quota_mb: int = 0
+
+    model_config = pydantic.ConfigDict(extra="forbid")
 
     @pydantic.model_validator(mode="before")
     @classmethod
@@ -345,20 +370,6 @@ class BoxSpec(pydantic.BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("session_id must not be empty")
-        return value
-
-    @pydantic.field_validator("skill_name")
-    @classmethod
-    def validate_skill_name(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip()
-        if not value:
-            return None
-        if len(value) > 64 or not value.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "skill_name can only contain up to 64 letters, numbers, hyphens and underscores"
-            )
         return value
 
     @pydantic.field_validator("env")
