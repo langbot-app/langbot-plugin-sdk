@@ -9,6 +9,7 @@ metadata:
     en_US: Run an Ant Tbox application as a LangBot Runner.
     zh_Hans: 将蚂蚁百宝箱应用作为 LangBot 运行器运行。
 spec:
+  usages: [agent]
   config:
     - name: api-key
       label:

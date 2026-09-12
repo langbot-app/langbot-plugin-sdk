@@ -9,6 +9,7 @@ metadata:
     en_US: Run an Aliyun DashScope application as a LangBot Runner.
     zh_Hans: 将阿里云百炼应用作为 LangBot 运行器运行。
 spec:
+  usages: [agent]
   config:
     - name: app-type
       label:

@@ -9,6 +9,7 @@ metadata:
     en_US: Run a DeerFlow LangGraph agent as a LangBot Runner.
     zh_Hans: 将 DeerFlow LangGraph 智能体作为 LangBot 运行器运行。
 spec:
+  usages: [agent]
   config:
     - name: api-base
       label:

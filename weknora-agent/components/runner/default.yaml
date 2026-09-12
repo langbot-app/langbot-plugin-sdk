@@ -9,6 +9,7 @@ metadata:
     en_US: Run a WeKnora agent or knowledge-base chat app as a LangBot Runner.
     zh_Hans: 将 WeKnora 智能体或知识库问答应用作为 LangBot 运行器运行。
 spec:
+  usages: [agent]
   config:
     - name: base-url
       label:
