@@ -339,10 +339,21 @@ Default Box WebSocket endpoints on port `5410`:
 - `/v1/sessions/{session_id}/managed-process/ws`: legacy default process stdio relay.
 - `/v1/sessions/{session_id}/managed-process/{process_id}/ws`: named process stdio relay.
 
-The Skill store keeps durable package paths in an `(instance, workspace)`
-namespace. LangBot Core owns that store and composes executable packages into
-generic read-only `BoxMountSpec` values. Box has no Skill model, CRUD API, or
-`SKILL.md` knowledge in its normal path; it only validates and mounts artifacts.
+The Skill store keeps an authoritative registry in an `(instance, workspace)`
+namespace. Each successful publication validates a complete staging tree,
+computes one `sha256-tree-v1` digest, atomically installs an immutable revision,
+and only then advances the registry pointer. Updates require the current
+`base_revision`; deletion removes the pointer while retaining revisions for
+active or recoverable runs. Former mutable package directories are only a
+one-time online-upgrade import source.
+
+LangBot Core composes pinned revisions into generic read-only `BoxMountSpec`
+values whose `content_digest` and publication `manifest_path` participate in
+the session mount signature. Box
+has no Skill model, CRUD API, or `SKILL.md` knowledge in its normal path; it only
+validates and mounts artifacts. Copy-based backends prepare a digest-specific
+staging tree, verify the complete manifest, and publish it before projecting the
+mount path, so partial transfers and removed-file residue cannot be executed.
 Core and the Box Runtime SDK are upgraded in lockstep; Box deliberately rejects
 retired Skill-aware payload fields instead of carrying a mixed-version bridge.
 Sandbox sessions and managed processes use an

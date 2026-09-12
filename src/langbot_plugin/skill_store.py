@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 import datetime as dt
-import hashlib
 import io
+import json
 import mimetypes
 import os
 import posixpath
 import shutil
 import stat
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
+from .artifact import build_tree_manifest
 from .workspace import workspace_namespace
 
 
@@ -31,8 +34,10 @@ _PUBLIC_SKILL_FIELDS = (
     "description",
     "instructions",
     "package_root",
+    "manifest_path",
     "entry_file",
     "python_project",
+    "revision",
     "created_at",
     "updated_at",
 )
@@ -52,12 +57,52 @@ _MAX_SKILL_LIST_ENTRIES = 1_000
 _MAX_SKILL_DIRECTORY_ENTRIES = 10_000
 _MAX_SKILL_LIST_TOTAL_TEXT_BYTES = 16 * 1024 * 1024
 _MAX_REVISION_FILES = 2_048
-_MAX_REVISION_BYTES = 64 * 1024 * 1024
+_MAX_REVISION_BYTES = 256 * 1024 * 1024
 _REVISION_SKIP_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
+_STORE_DIRECTORY = ".langbot-skill-store"
+_REVISION_PREFIX = "sha256:"
 
 
 class SkillRevisionMismatchError(ValueError):
     """Raised when a caller reads a package other than the activated revision."""
+
+
+class SkillRevisionConflictError(SkillRevisionMismatchError):
+    """Raised when a publication is based on a stale current revision."""
+
+
+class SkillRevisionNotFoundError(SkillRevisionMismatchError):
+    """Raised when a pinned immutable revision can no longer be recovered."""
+
+
+@contextlib.contextmanager
+def _exclusive_file_lock(path: str):
+    """Hold an OS-backed exclusive lock shared by all Core processes."""
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a+b") as lock_file:
+        if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+            import msvcrt
+
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def skill_namespace(instance_uuid: str, workspace_uuid: str) -> str:
@@ -154,16 +199,19 @@ class SkillStore:
         return str(resolved_root)
 
     def list_skills(self) -> list[dict]:
-        os.makedirs(self.root, exist_ok=True)
+        self._ensure_legacy_packages_published()
         skills: list[dict] = []
         retained_text_bytes = 0
-        for package_root, entry_file in self._discover_skill_directories(
-            self.root, max_depth=6
-        ):
-            try:
-                skill = self._load_skill_package(package_root, entry_file)
-            except Exception:
+        registry_root = self._registry_root()
+        if not os.path.isdir(registry_root):
+            return []
+        for entry in sorted(os.scandir(registry_root), key=lambda item: item.name):
+            if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(
+                ".json"
+            ):
                 continue
+            skill_name = entry.name[: -len(".json")]
+            skill = self._load_published_skill(skill_name)
             retained_text_bytes += sum(
                 len(value.encode("utf-8"))
                 for value in skill.values()
@@ -173,25 +221,36 @@ class SkillStore:
                 raise ValueError("Skill listing exceeds the configured text limit")
             skills.append(skill)
         skills.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
-        return [self._serialize_skill(skill) for skill in skills]
+        return skills
 
-    def get_skill(self, skill_name: str) -> Optional[dict]:
-        for skill in self.list_skills():
-            if skill.get("name") == skill_name:
-                return skill
-        return None
-
-    def get_skill_snapshot(self, skill_name: str) -> Optional[dict]:
-        """Return one Skill together with its opaque package revision."""
-
-        skill = self.get_skill(skill_name)
-        if skill is None:
+    def get_skill(
+        self,
+        skill_name: str,
+        *,
+        revision: str | None = None,
+    ) -> Optional[dict]:
+        skill_name = self._validate_skill_name(skill_name)
+        self._ensure_legacy_packages_published()
+        if revision is not None:
+            return self._load_published_skill(skill_name, revision=revision)
+        if not os.path.isfile(self._registry_path(skill_name)):
             return None
-        result = dict(skill)
-        result["revision"] = self._package_revision(result["package_root"])
-        return result
+        return self._load_published_skill(skill_name)
 
-    def resolve_skill_package_root(self, skill_name: str) -> str:
+    def get_skill_snapshot(
+        self,
+        skill_name: str,
+        revision: str | None = None,
+    ) -> Optional[dict]:
+        """Return the current or explicitly pinned immutable publication."""
+
+        return self.get_skill(skill_name, revision=revision)
+
+    def resolve_skill_package_root(
+        self,
+        skill_name: str,
+        revision: str | None = None,
+    ) -> str:
         """Return a trusted package root for a Runtime-owned sandbox mount.
 
         Only Workspace-scoped stores may resolve mounts. The result comes from
@@ -202,7 +261,7 @@ class SkillStore:
         if self._namespace is None:
             raise ValueError("Skill sandbox mounts require a Workspace-scoped store")
         skill_name = self._validate_skill_name(skill_name)
-        skill = self._require_skill(skill_name)
+        skill = self._require_skill(skill_name, revision=revision)
         package_root = self._require_scoped_path(
             str(skill.get("package_root") or ""), "skill package"
         )
@@ -212,99 +271,61 @@ class SkillStore:
 
     def create_skill(self, data: dict) -> dict:
         name = self._validate_skill_name(data.get("name", ""))
-        if self.get_skill(name):
-            raise ValueError(f'Skill with name "{name}" already exists')
+        source_root = self._normalize_package_root(data.get("package_root", ""))
+        if self._namespace is not None and source_root:
+            self._require_scoped_path(source_root, "package_root")
+        self._ensure_legacy_packages_published()
+        with self._skill_lock(name):
+            if self._read_registry(name) is not None:
+                raise ValueError(f'Skill with name "{name}" already exists')
+            return self._publish_from_source_locked(name, data)
 
-        package_root = self._normalize_package_root(data.get("package_root", ""))
-        if self._namespace is not None and package_root:
-            self._require_scoped_path(package_root, "package_root")
-        managed_root = self._managed_skill_path(name)
-        target_root = managed_root
-        imported_skill_data: dict | None = None
-
-        if package_root and self._managed_install_root_for_package(package_root):
-            if not os.path.isdir(package_root):
-                raise ValueError(f"Directory does not exist: {package_root}")
-            target_root = package_root
-            imported_skill_data = self._read_skill_package(target_root)
-        elif package_root and package_root != managed_root:
-            if not os.path.isdir(package_root):
-                raise ValueError(f"Directory does not exist: {package_root}")
-            if os.path.exists(managed_root):
-                raise ValueError(f"Skill directory already exists: {managed_root}")
-            os.makedirs(os.path.dirname(managed_root), exist_ok=True)
-            shutil.copytree(package_root, managed_root)
-            imported_skill_data = self._read_skill_package(managed_root)
-        else:
-            os.makedirs(managed_root, exist_ok=True)
-
-        metadata = {
-            "name": name,
-            "display_name": self._resolve_create_field(
-                data, "display_name", imported_skill_data, default=""
-            ),
-            "description": self._resolve_create_field(
-                data, "description", imported_skill_data, default=""
-            ),
-        }
-        instructions = self._resolve_create_field(
-            data, "instructions", imported_skill_data, default=""
-        )
-        self._write_skill_md(target_root, metadata, instructions)
-
-        created = self.get_skill(name)
-        if not created:
-            raise ValueError(f'Failed to create skill "{name}"')
-        return created
-
-    def update_skill(self, skill_name: str, data: dict) -> dict:
-        skill = self.get_skill(skill_name)
-        if not skill:
-            raise ValueError(f'Skill "{skill_name}" not found')
-
-        requested_name = str(data.get("name", skill["name"]) or skill["name"]).strip()
-        if requested_name != skill["name"]:
-            raise ValueError("Renaming skills is not supported")
-
-        requested_package_root = str(data.get("package_root", "") or "").strip()
-        existing_package_root = self._normalize_package_root(skill["package_root"])
-        if (
-            requested_package_root
-            and self._normalize_package_root(requested_package_root)
-            != existing_package_root
-        ):
-            raise ValueError(
-                "Updating package_root is not supported; recreate the skill to import a different package"
+    def update_skill(
+        self,
+        skill_name: str,
+        data: dict,
+        *,
+        base_revision: str | None,
+    ) -> dict:
+        skill_name = self._validate_skill_name(skill_name)
+        self._ensure_legacy_packages_published()
+        with self._skill_lock(skill_name):
+            current = self._require_current_registry(skill_name)
+            self._require_base_revision(skill_name, current, base_revision)
+            skill = self._load_published_skill(skill_name, registry=current)
+            requested_name = str(
+                data.get("name", skill["name"]) or skill["name"]
+            ).strip()
+            if requested_name != skill["name"]:
+                raise ValueError("Renaming skills is not supported")
+            requested_package_root = str(data.get("package_root", "") or "").strip()
+            if requested_package_root:
+                raise ValueError(
+                    "Updating package_root is not supported; publish a draft directory instead"
+                )
+            publish_data = {
+                "name": skill["name"],
+                "display_name": data.get("display_name", skill.get("display_name", "")),
+                "description": data.get("description", skill.get("description", "")),
+                "instructions": str(
+                    data.get("instructions", skill.get("instructions", "")) or ""
+                ),
+                "package_root": skill["package_root"],
+            }
+            return self._publish_from_source_locked(
+                skill_name,
+                publish_data,
+                current_registry=current,
             )
-
-        metadata = {
-            "name": skill["name"],
-            "display_name": data.get("display_name", skill.get("display_name", "")),
-            "description": data.get("description", skill.get("description", "")),
-        }
-        instructions = str(
-            data.get("instructions", skill.get("instructions", "")) or ""
-        )
-        self._write_skill_md(skill["package_root"], metadata, instructions)
-
-        updated = self.get_skill(skill_name)
-        if not updated:
-            raise ValueError(f'Skill "{skill_name}" not found after update')
-        return updated
 
     def delete_skill(self, skill_name: str) -> dict:
-        skill = self.get_skill(skill_name)
-        if not skill:
-            raise ValueError(f'Skill "{skill_name}" not found')
-
-        package_root = self._normalize_package_root(skill["package_root"])
-        managed_install_root = self._managed_install_root_for_package(package_root)
-        if not managed_install_root:
-            raise ValueError(
-                "Only managed skills under the Skill store root can be deleted"
-            )
-
-        shutil.rmtree(managed_install_root, ignore_errors=True)
+        skill_name = self._validate_skill_name(skill_name)
+        self._ensure_legacy_packages_published()
+        with self._skill_lock(skill_name):
+            self._require_current_registry(skill_name)
+            os.unlink(self._registry_path(skill_name))
+            self._fsync_directory(self._registry_root())
+        # Immutable revisions are retained for active and recoverable runs.
         return {"deleted": skill_name}
 
     def scan_directory(self, path: str) -> dict:
@@ -340,14 +361,30 @@ class SkillStore:
         data: dict,
         *,
         source_root: str,
+        base_revision: str | None = None,
     ) -> dict:
-        """Copy a package from a fenced source tree into this managed store."""
+        """Atomically publish a fenced draft as a new immutable revision."""
 
         source = self._require_path_under(path, source_root, "import path")
         self._require_safe_import_tree(source)
         payload = dict(data)
         payload["package_root"] = source
-        return SkillStore(self.root).create_skill(payload)
+        name = self._validate_skill_name(payload.get("name", ""))
+        self._ensure_legacy_packages_published()
+        with self._skill_lock(name):
+            current = self._read_registry(name)
+            if current is None:
+                if str(base_revision or "").strip():
+                    raise SkillRevisionConflictError(
+                        f'Skill "{name}" does not exist; base_revision must be omitted'
+                    )
+            else:
+                self._require_base_revision(name, current, base_revision)
+            return self._publish_from_source_locked(
+                name,
+                payload,
+                current_registry=current,
+            )
 
     def _require_scoped_path(self, path: str, label: str) -> str:
         """Keep host-path operations inside this Workspace's skill root.
@@ -470,8 +507,8 @@ class SkillStore:
     ) -> dict:
         """List resources after checking the activated Skill revision."""
 
-        skill = self._require_skill(skill_name)
-        revision = self._require_revision(skill, expected_revision)
+        skill = self._require_skill(skill_name, revision=expected_revision)
+        revision = str(skill["revision"])
         result = self._list_skill_files(
             skill,
             path,
@@ -495,32 +532,65 @@ class SkillStore:
     ) -> dict:
         """Read one UTF-8 resource after checking the activated revision."""
 
-        skill = self._require_skill(skill_name)
-        revision = self._require_revision(skill, expected_revision)
+        skill = self._require_skill(skill_name, revision=expected_revision)
+        revision = str(skill["revision"])
         result = self._read_skill_file(skill, path)
         result["revision"] = revision
         result["mime_type"] = mimetypes.guess_type(path)[0] or "text/plain"
         return result
 
-    def write_skill_file(self, skill_name: str, path: str, content: str) -> dict:
-        skill = self._require_skill(skill_name)
-        target_path, relative_path = self._resolve_skill_path(
-            skill, path, expect_directory=False
-        )
+    def write_skill_file(
+        self,
+        skill_name: str,
+        path: str,
+        content: str,
+        *,
+        base_revision: str | None,
+    ) -> dict:
+        """Publish a new revision containing one changed text file.
+
+        This API remains useful to trusted management UIs, but it never writes
+        into the current published package. Agent authoring should use a draft
+        directory and ``import_skill_directory`` instead.
+        """
+
         encoded_content = content.encode("utf-8")
+        relative_path = str(path or "").strip()
         if len(encoded_content) > _MAX_SKILL_TEXT_BYTES:
             raise ValueError(
                 f"Skill file {relative_path} exceeds the "
                 f"{_MAX_SKILL_TEXT_BYTES}-byte limit"
             )
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
+        skill_name = self._validate_skill_name(skill_name)
+        self._ensure_legacy_packages_published()
+        with self._skill_lock(skill_name):
+            current = self._require_current_registry(skill_name)
+            self._require_base_revision(skill_name, current, base_revision)
+            skill = self._load_published_skill(skill_name, registry=current)
+            staging_root, staging_package = self._stage_package(skill["package_root"])
+            try:
+                staging_skill = dict(skill)
+                staging_skill["package_root"] = staging_package
+                target_path, normalized_relative = self._resolve_skill_path(
+                    staging_skill, relative_path, expect_directory=False
+                )
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                with open(target_path, "w", encoding="utf-8") as file:
+                    file.write(content)
+                published = self._publish_staged_locked(
+                    skill_name,
+                    staging_root,
+                    current_registry=current,
+                )
+                staging_root = ""
+            finally:
+                if staging_root:
+                    self._remove_staging_tree(staging_root)
         return {
             "skill": {"name": skill["name"]},
-            "path": relative_path.replace(os.sep, "/"),
+            "path": normalized_relative.replace(os.sep, "/"),
             "bytes_written": len(encoded_content),
+            "revision": published["revision"],
         }
 
     def preview_zip_upload(
@@ -575,15 +645,17 @@ class SkillStore:
                 {"source_paths": source_paths or [], "source_path": source_path},
             )
             scanned = self._install_preview_candidates(skill_root, selected_previews)
-            return [
-                self.get_skill(skill["name"]) or self._serialize_skill(skill)
-                for skill in scanned
-            ]
+            return scanned
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _require_skill(self, skill_name: str) -> dict:
-        skill = self.get_skill(skill_name)
+    def _require_skill(
+        self,
+        skill_name: str,
+        *,
+        revision: str | None = None,
+    ) -> dict:
+        skill = self.get_skill(skill_name, revision=revision)
         if not skill:
             raise ValueError(f'Skill "{skill_name}" not found')
         return skill
@@ -612,6 +684,9 @@ class SkillStore:
     def _require_safe_import_tree(root: str) -> None:
         scanned_entries = 0
         for current_root, dir_names, file_names in os.walk(root, followlinks=False):
+            dir_names[:] = [
+                name for name in dir_names if name not in _REVISION_SKIP_DIRS
+            ]
             for name in (*dir_names, *file_names):
                 scanned_entries += 1
                 if scanned_entries > _MAX_SKILL_SCAN_ENTRIES:
@@ -624,74 +699,415 @@ class SkillStore:
                     raise ValueError("Skill imports can contain regular files only")
 
     @staticmethod
-    def _package_revision(package_root: str) -> str:
-        """Build a cheap, opaque revision from package filesystem metadata.
+    def _package_manifest(package_root: str) -> tuple[str, dict]:
+        """Validate and digest a complete staged package exactly once."""
 
-        This deliberately is not a content digest. Reading every package byte
-        made activation and each resource access proportional to package size.
-        Paths, sizes, nanosecond timestamps and modes retain practical stale
-        revision detection without loading file contents. Callers must treat
-        the value as a change token, not as a cryptographic integrity proof.
+        return build_tree_manifest(
+            package_root,
+            max_files=_MAX_REVISION_FILES,
+            max_total_bytes=_MAX_REVISION_BYTES,
+            skip_directories=_REVISION_SKIP_DIRS,
+            subject="Skill package",
+        )
+
+    @staticmethod
+    def _package_revision(package_root: str) -> str:
+        """Return the publication digest for a staged package.
+
+        Published reads use the persisted registry pointer and never call this
+        function, so package-size work stays confined to publication.
         """
 
-        root = os.path.realpath(str(package_root or "").strip())
-        if not root or not os.path.isdir(root):
-            raise ValueError("Skill package directory is unavailable")
+        return SkillStore._package_manifest(package_root)[0]
 
-        digest = hashlib.blake2s(digest_size=16)
-        file_count = 0
-        total_bytes = 0
-        for current_root, dir_names, file_names in os.walk(root, followlinks=False):
-            dir_names[:] = [
-                name for name in dir_names if name not in _REVISION_SKIP_DIRS
-            ]
-            dir_names.sort()
-            file_names.sort()
-            for directory_name in tuple(dir_names):
-                if os.path.islink(os.path.join(current_root, directory_name)):
-                    raise ValueError("Skill packages cannot contain symbolic links")
+    def _store_root(self) -> str:
+        return os.path.join(self.root, _STORE_DIRECTORY)
+
+    def _registry_root(self) -> str:
+        return os.path.join(self._store_root(), "registry")
+
+    def _revisions_root(self) -> str:
+        return os.path.join(self._store_root(), "revisions")
+
+    def _staging_root(self) -> str:
+        return os.path.join(self._store_root(), "staging")
+
+    def _locks_root(self) -> str:
+        return os.path.join(self._store_root(), "locks")
+
+    def _registry_path(self, skill_name: str) -> str:
+        return os.path.join(self._registry_root(), f"{skill_name}.json")
+
+    def _revision_directory(self, revision: str) -> str:
+        digest = self._validate_revision(revision)
+        return os.path.join(self._revisions_root(), digest)
+
+    def _revision_package_root(self, revision: str) -> str:
+        return os.path.join(self._revision_directory(revision), "package")
+
+    @staticmethod
+    def _validate_revision(revision: str | None) -> str:
+        normalized = str(revision or "").strip()
+        if not normalized.startswith(_REVISION_PREFIX):
+            raise SkillRevisionNotFoundError(
+                f"Pinned Skill revision is invalid: {normalized or '<empty>'}"
+            )
+        digest = normalized[len(_REVISION_PREFIX) :]
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise SkillRevisionNotFoundError(
+                f"Pinned Skill revision is invalid: {normalized}"
+            )
+        return digest
+
+    @contextlib.contextmanager
+    def _skill_lock(self, skill_name: str):
+        lock_path = os.path.join(self._locks_root(), f"{skill_name}.lock")
+        with _exclusive_file_lock(lock_path):
+            yield
+
+    def _read_registry(self, skill_name: str) -> dict | None:
+        path = self._registry_path(skill_name)
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f'Skill "{skill_name}" registry is unreadable') from exc
+        if not isinstance(data, dict) or data.get("name") != skill_name:
+            raise ValueError(f'Skill "{skill_name}" registry is invalid')
+        self._validate_revision(data.get("current_revision"))
+        return data
+
+    def _require_current_registry(self, skill_name: str) -> dict:
+        registry = self._read_registry(skill_name)
+        if registry is None:
+            raise ValueError(f'Skill "{skill_name}" not found')
+        return registry
+
+    @staticmethod
+    def _require_base_revision(
+        skill_name: str,
+        registry: dict,
+        base_revision: str | None,
+    ) -> None:
+        current_revision = str(registry.get("current_revision") or "")
+        normalized = str(base_revision or "").strip()
+        if not normalized:
+            raise SkillRevisionConflictError(
+                f'Updating Skill "{skill_name}" requires base_revision '
+                f"(current {current_revision})"
+            )
+        if normalized != current_revision:
+            raise SkillRevisionConflictError(
+                f'Skill "{skill_name}" changed since the draft was created '
+                f"(base {normalized}, current {current_revision})"
+            )
+
+    def _load_published_skill(
+        self,
+        skill_name: str,
+        *,
+        revision: str | None = None,
+        registry: dict | None = None,
+    ) -> dict:
+        registry = registry if registry is not None else self._read_registry(skill_name)
+        if revision is None:
+            if registry is None:
+                raise ValueError(f'Skill "{skill_name}" not found')
+            revision = str(registry["current_revision"])
+        normalized_revision = f"{_REVISION_PREFIX}{self._validate_revision(revision)}"
+        package_root = self._revision_package_root(normalized_revision)
+        if not os.path.isdir(package_root):
+            raise SkillRevisionNotFoundError(
+                f'Skill "{skill_name}" pinned revision {normalized_revision} is unavailable'
+            )
+        skill = self._load_skill_package(package_root)
+        if skill["name"] != skill_name:
+            raise SkillRevisionNotFoundError(
+                f'Pinned revision {normalized_revision} does not belong to Skill "{skill_name}"'
+            )
+        skill["revision"] = normalized_revision
+        skill["manifest_path"] = os.path.join(
+            self._revision_directory(normalized_revision),
+            "manifest.json",
+        )
+        if registry is not None:
+            skill["created_at"] = registry.get("created_at", skill["created_at"])
+            if normalized_revision == registry.get("current_revision"):
+                skill["updated_at"] = registry.get("updated_at", skill["updated_at"])
+        return self._serialize_skill(skill)
+
+    def _stage_package(self, source_root: str | None = None) -> tuple[str, str]:
+        os.makedirs(self._staging_root(), exist_ok=True)
+        staging_root = tempfile.mkdtemp(prefix="publish-", dir=self._staging_root())
+        package_root = os.path.join(staging_root, "package")
+        try:
+            if source_root:
+                self._copy_publish_tree(source_root, package_root)
+                self._make_tree_writable(package_root)
+            else:
+                os.makedirs(package_root, exist_ok=True)
+        except Exception:
+            self._remove_staging_tree(staging_root)
+            raise
+        return staging_root, package_root
+
+    def _copy_publish_tree(self, source_root: str, target_root: str) -> None:
+        source_root = self._normalize_package_root(source_root)
+        if not os.path.isdir(source_root):
+            raise ValueError(f"Directory does not exist: {source_root}")
+        self._require_safe_import_tree(source_root)
+
+        def ignore(_path: str, names: list[str]) -> set[str]:
+            return {name for name in names if name in _REVISION_SKIP_DIRS}
+
+        shutil.copytree(source_root, target_root, symlinks=False, ignore=ignore)
+
+    def _publish_from_source_locked(
+        self,
+        skill_name: str,
+        data: dict,
+        *,
+        current_registry: dict | None = None,
+    ) -> dict:
+        source_root = self._normalize_package_root(data.get("package_root", ""))
+        if source_root and not os.path.isdir(source_root):
+            raise ValueError(f"Directory does not exist: {source_root}")
+        imported = self._read_skill_package(source_root) if source_root else None
+        staging_root, package_root = self._stage_package(source_root or None)
+        try:
+            metadata = {
+                "name": skill_name,
+                "display_name": self._resolve_create_field(
+                    data, "display_name", imported, default=""
+                ),
+                "description": self._resolve_create_field(
+                    data, "description", imported, default=""
+                ),
+            }
+            instructions = self._resolve_create_field(
+                data, "instructions", imported, default=""
+            )
+            self._write_skill_md(package_root, metadata, instructions)
+            published = self._publish_staged_locked(
+                skill_name,
+                staging_root,
+                current_registry=current_registry,
+            )
+            staging_root = ""
+            return published
+        finally:
+            if staging_root:
+                self._remove_staging_tree(staging_root)
+
+    def _publish_staged_locked(
+        self,
+        skill_name: str,
+        staging_root: str,
+        *,
+        current_registry: dict | None,
+    ) -> dict:
+        package_root = os.path.join(staging_root, "package")
+        loaded = self._load_skill_package(package_root)
+        if loaded["name"] != skill_name:
+            raise ValueError(
+                f'Published package name "{loaded["name"]}" does not match "{skill_name}"'
+            )
+        revision, manifest = self._package_manifest(package_root)
+        manifest_path = os.path.join(staging_root, "manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as file:
+            json.dump(manifest, file, ensure_ascii=False, sort_keys=True)
+            file.flush()
+            os.fsync(file.fileno())
+
+        os.makedirs(self._revisions_root(), exist_ok=True)
+        target_revision_root = self._revision_directory(revision)
+        if os.path.exists(target_revision_root):
+            self._require_matching_revision_manifest(
+                target_revision_root,
+                revision,
+                manifest,
+            )
+            self._remove_staging_tree(staging_root)
+        else:
+            self._make_tree_read_only(staging_root)
+            # A directory itself must remain writable while it is renamed on
+            # some filesystems. Children are already immutable and the root is
+            # sealed immediately after it reaches its content-addressed path,
+            # before the registry pointer can expose it.
+            os.chmod(staging_root, 0o755)
+            try:
+                os.rename(staging_root, target_revision_root)
+            except FileExistsError:
+                self._require_matching_revision_manifest(
+                    target_revision_root,
+                    revision,
+                    manifest,
+                )
+                self._remove_staging_tree(staging_root)
+            else:
+                os.chmod(target_revision_root, 0o555)
+            self._fsync_directory(self._revisions_root())
+
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        registry = {
+            "format": 1,
+            "name": skill_name,
+            "current_revision": revision,
+            "metadata": {
+                "display_name": loaded.get("display_name", skill_name),
+                "description": loaded.get("description", ""),
+                "entry_file": loaded.get("entry_file", "SKILL.md"),
+                "python_project": loaded.get("python_project", False),
+            },
+            "created_at": (
+                current_registry.get("created_at", now)
+                if current_registry is not None
+                else now
+            ),
+            "updated_at": now,
+        }
+        self._write_registry_atomic(skill_name, registry)
+        return self._load_published_skill(skill_name, registry=registry)
+
+    def _write_registry_atomic(self, skill_name: str, registry: dict) -> None:
+        registry_root = self._registry_root()
+        os.makedirs(registry_root, exist_ok=True)
+        temporary = os.path.join(
+            registry_root,
+            f".{skill_name}.{uuid.uuid4().hex}.tmp",
+        )
+        try:
+            with open(temporary, "x", encoding="utf-8") as file:
+                json.dump(
+                    registry,
+                    file,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                file.write("\n")
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, self._registry_path(skill_name))
+            self._fsync_directory(registry_root)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _make_tree_read_only(root: str) -> None:
+        for current_root, dir_names, file_names in os.walk(root, topdown=False):
             for file_name in file_names:
                 path = os.path.join(current_root, file_name)
-                if os.path.islink(path):
-                    raise ValueError("Skill packages cannot contain symbolic links")
-                stat_result = os.stat(path, follow_symlinks=False)
-                if not stat.S_ISREG(stat_result.st_mode):
-                    raise ValueError("Skill packages can contain regular files only")
-                file_count += 1
-                if file_count > _MAX_REVISION_FILES:
-                    raise ValueError("Skill package contains too many files")
-                total_bytes += stat_result.st_size
-                if total_bytes > _MAX_REVISION_BYTES:
-                    raise ValueError("Skill package is too large to revision safely")
+                mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+                os.chmod(path, 0o555 if mode & 0o111 else 0o444)
+            for directory_name in dir_names:
+                os.chmod(os.path.join(current_root, directory_name), 0o555)
+        os.chmod(root, 0o555)
 
-                relative = os.path.relpath(path, root).replace(os.sep, "/")
-                metadata = (
-                    relative,
-                    stat_result.st_size,
-                    stat_result.st_mtime_ns,
-                    stat_result.st_ctime_ns,
-                    stat.S_IMODE(stat_result.st_mode),
-                )
-                digest.update(
-                    "\0".join(str(value) for value in metadata).encode("utf-8")
-                )
-                digest.update(b"\0")
-        return f"stat-v1:{digest.hexdigest()}"
+    @staticmethod
+    def _make_tree_writable(root: str) -> None:
+        for current_root, dir_names, file_names in os.walk(root):
+            os.chmod(current_root, 0o755)
+            for directory_name in dir_names:
+                os.chmod(os.path.join(current_root, directory_name), 0o755)
+            for file_name in file_names:
+                path = os.path.join(current_root, file_name)
+                mode = stat.S_IMODE(os.stat(path, follow_symlinks=False).st_mode)
+                os.chmod(path, 0o755 if mode & 0o111 else 0o644)
 
-    def _require_revision(
-        self,
-        skill: dict,
-        expected_revision: str | None,
-    ) -> str:
-        revision = self._package_revision(str(skill.get("package_root") or ""))
-        normalized_expected = str(expected_revision or "").strip()
-        if normalized_expected and normalized_expected != revision:
-            raise SkillRevisionMismatchError(
-                "Skill revision changed "
-                f"(expected {normalized_expected}, current {revision}); "
-                "reactivate the Skill."
-            )
-        return revision
+    def _remove_staging_tree(self, root: str) -> None:
+        if not os.path.exists(root):
+            return
+        try:
+            self._make_tree_writable(root)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    @staticmethod
+    def _require_matching_revision_manifest(
+        revision_root: str,
+        revision: str,
+        expected_manifest: dict,
+    ) -> None:
+        existing_manifest = os.path.join(revision_root, "manifest.json")
+        try:
+            with open(existing_manifest, "r", encoding="utf-8") as file:
+                if json.load(file) != expected_manifest:
+                    raise ValueError(
+                        f"Revision collision or corrupt manifest for {revision}"
+                    )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Published revision {revision} is corrupt") from exc
+
+    @staticmethod
+    def _fsync_directory(path: str) -> None:
+        if os.name == "nt":  # pragma: no cover - directories cannot be fsynced
+            return
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _ensure_legacy_packages_published(self) -> None:
+        """One-time online upgrade from the former mutable directory layout."""
+
+        os.makedirs(self.root, exist_ok=True)
+        marker = os.path.join(self._store_root(), "legacy-import-complete")
+        if os.path.isfile(marker):
+            return
+        with _exclusive_file_lock(os.path.join(self._locks_root(), "migration.lock")):
+            if os.path.isfile(marker):
+                return
+            discovered: list[tuple[str, str]] = []
+            for entry in sorted(os.scandir(self.root), key=lambda item: item.name):
+                if entry.name == _STORE_DIRECTORY or not entry.is_dir(
+                    follow_symlinks=False
+                ):
+                    continue
+                discovered.extend(
+                    self._discover_skill_directories(entry.path, max_depth=5)
+                )
+            for package_root, entry_file in discovered:
+                try:
+                    legacy = self._load_skill_package(package_root, entry_file)
+                except Exception:
+                    continue
+                skill_name = legacy["name"]
+                with self._skill_lock(skill_name):
+                    if self._read_registry(skill_name) is not None:
+                        continue
+                    self._publish_from_source_locked(
+                        skill_name,
+                        {
+                            "name": skill_name,
+                            "package_root": package_root,
+                            "display_name": legacy.get("display_name", ""),
+                            "description": legacy.get("description", ""),
+                            "instructions": legacy.get("instructions", ""),
+                        },
+                    )
+                    registry = self._require_current_registry(skill_name)
+                    registry["created_at"] = legacy.get(
+                        "created_at", registry["created_at"]
+                    )
+                    registry["updated_at"] = legacy.get(
+                        "updated_at", registry["updated_at"]
+                    )
+                    self._write_registry_atomic(skill_name, registry)
+            os.makedirs(self._store_root(), exist_ok=True)
+            temporary = f"{marker}.{uuid.uuid4().hex}.tmp"
+            with open(temporary, "x", encoding="utf-8") as file:
+                file.write("1\n")
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, marker)
+            self._fsync_directory(self._store_root())
 
     @staticmethod
     def _serialize_skill(skill: dict) -> dict:
@@ -759,25 +1175,6 @@ class SkillStore:
         content = build_skill_md(metadata, instructions)
         with open(os.path.join(package_root, "SKILL.md"), "w", encoding="utf-8") as f:
             f.write(content)
-
-    def _managed_skill_path(self, skill_name: str) -> str:
-        return self._normalize_package_root(os.path.join(self.root, skill_name))
-
-    def _managed_install_root_for_package(self, package_root: str) -> str:
-        managed_root = self._normalize_package_root(self.root)
-        package_root = self._normalize_package_root(package_root)
-        if not package_root or package_root == managed_root:
-            return ""
-
-        prefix = f"{managed_root}{os.sep}"
-        if not package_root.startswith(prefix):
-            return ""
-
-        relative = os.path.relpath(package_root, managed_root)
-        top_level = relative.split(os.sep, 1)[0]
-        if top_level in ("", ".", ".."):
-            return ""
-        return os.path.join(managed_root, top_level)
 
     def _build_preview_target_dir(
         self, base_target_name: str, source_path: str, suffix: str
@@ -866,33 +1263,41 @@ class SkillStore:
     def _install_preview_candidates(
         self, root_path: str, selected_previews: list[dict]
     ) -> list[dict]:
-        target_dirs: list[str] = []
-        for preview in selected_previews:
-            target_dir = self._normalize_package_root(preview["package_root"])
-            if target_dir in target_dirs:
-                raise ValueError(f"Duplicate target directory selected: {target_dir}")
-            if os.path.exists(target_dir):
-                raise ValueError(f"Skill directory already exists: {target_dir}")
-            target_dirs.append(target_dir)
-
-        installed_scans: list[dict] = []
-        created_dirs: list[str] = []
+        installed: list[dict] = []
         try:
             for preview in selected_previews:
-                target_dir = self._normalize_package_root(preview["package_root"])
                 source_root = self._preview_source_root(
                     root_path, preview["source_path"]
                 )
-                os.makedirs(os.path.dirname(target_dir), exist_ok=True)
-                shutil.copytree(source_root, target_dir)
-                created_dirs.append(target_dir)
-                installed_scans.append(self.scan_directory(target_dir))
+                scanned = SkillStore(self.root).scan_directory(source_root)
+                skill_name = self._validate_skill_name(scanned["name"])
+                self._ensure_legacy_packages_published()
+                with self._skill_lock(skill_name):
+                    if self._read_registry(skill_name) is not None:
+                        raise ValueError(
+                            f'Skill with name "{skill_name}" already exists'
+                        )
+                    installed.append(
+                        self._publish_from_source_locked(
+                            skill_name,
+                            {
+                                "name": skill_name,
+                                "display_name": scanned.get("display_name", ""),
+                                "description": scanned.get("description", ""),
+                                "instructions": scanned.get("instructions", ""),
+                                "package_root": source_root,
+                            },
+                        )
+                    )
         except Exception:
-            for target_dir in created_dirs:
-                shutil.rmtree(target_dir, ignore_errors=True)
+            for skill in installed:
+                try:
+                    self.delete_skill(skill["name"])
+                except Exception:
+                    pass
             raise
 
-        return installed_scans
+        return installed
 
     def _extract_uploaded_skill_to_temp(self, file_bytes: bytes, tmp_dir: str) -> str:
         extract_dir = os.path.join(tmp_dir, "extracted")
@@ -1221,7 +1626,9 @@ class SkillStore:
 
 
 __all__ = [
+    "SkillRevisionConflictError",
     "SkillRevisionMismatchError",
+    "SkillRevisionNotFoundError",
     "SkillStore",
     "build_skill_md",
     "parse_frontmatter",

@@ -137,11 +137,13 @@ class _RuntimeSession:
     )
     # Signature of the extra bind mounts the container was created with. Used
     # to detect when a reused session would be missing newly-requested mounts.
-    extra_mounts_key: frozenset[tuple[str, str, str]] = frozenset()
+    extra_mounts_key: frozenset[tuple[str, str, str, str, str]] = frozenset()
     closing: bool = False
 
 
-def _compute_extra_mounts_key(spec: BoxSpec) -> frozenset[tuple[str, str, str]]:
+def _compute_extra_mounts_key(
+    spec: BoxSpec,
+) -> frozenset[tuple[str, str, str, str, str]]:
     """Signature of a spec's effective extra bind mounts.
 
     Mirrors the backend's mount filtering (``mode == "none"`` mounts are not
@@ -151,12 +153,20 @@ def _compute_extra_mounts_key(spec: BoxSpec) -> frozenset[tuple[str, str, str]]:
     session's container would be missing newly-requested mounts and must be
     recreated.
     """
-    key: set[tuple[str, str, str]] = set()
+    key: set[tuple[str, str, str, str, str]] = set()
     for mount in spec.extra_mounts:
         mode_val = mount.mode.value if hasattr(mount.mode, "value") else str(mount.mode)
         if mode_val == "none":
             continue
-        key.add((mount.host_path, mount.mount_path, mode_val))
+        key.add(
+            (
+                mount.host_path,
+                mount.mount_path,
+                mode_val,
+                str(mount.content_digest or ""),
+                str(mount.manifest_path or ""),
+            )
+        )
     return frozenset(key)
 
 
@@ -623,6 +633,24 @@ class BoxRuntime:
                 raise BoxAdmissionError(
                     "Managed sandbox read-only mount source is outside allowed_mount_roots"
                 )
+            manifest_path = None
+            if mount.manifest_path is not None:
+                if mount.content_digest is None:
+                    raise BoxAdmissionError(
+                        "Managed sandbox mount manifests require content_digest"
+                    )
+                manifest_path = _resolve_local_path(mount.manifest_path)
+                if not os.path.isfile(manifest_path):
+                    raise BoxAdmissionError(
+                        "Managed sandbox read-only mount manifest is unavailable"
+                    )
+                if not any(
+                    self._path_is_under(manifest_path, allowed_root)
+                    for allowed_root in allowed_roots
+                ):
+                    raise BoxAdmissionError(
+                        "Managed sandbox read-only mount manifest is outside allowed_mount_roots"
+                    )
             mount_path = mount.mount_path
             if not mount_path.startswith(f"{DEFAULT_BOX_MOUNT_PATH}/"):
                 raise BoxAdmissionError(
@@ -633,7 +661,14 @@ class BoxRuntime:
                     "Managed sandbox additional mount targets must be unique"
                 )
             destinations.add(mount_path)
-            normalized.append(mount.model_copy(update={"host_path": host_path}))
+            normalized.append(
+                mount.model_copy(
+                    update={
+                        "host_path": host_path,
+                        "manifest_path": manifest_path,
+                    }
+                )
+            )
         return normalized
 
     def _normalize_admitted_spec(

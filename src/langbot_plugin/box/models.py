@@ -236,6 +236,8 @@ class BoxMountSpec(pydantic.BaseModel):
     host_path: str
     mount_path: str
     mode: BoxHostMountMode = BoxHostMountMode.READ_WRITE
+    content_digest: str | None = None
+    manifest_path: str | None = None
 
     @pydantic.field_validator("host_path")
     @classmethod
@@ -253,6 +255,29 @@ class BoxMountSpec(pydantic.BaseModel):
             raise ValueError("mount_path must be an absolute path inside the sandbox")
         if posixpath.normpath(value) != value:
             raise ValueError("mount_path must be normalized")
+        return value
+
+    @pydantic.field_validator("content_digest")
+    @classmethod
+    def validate_content_digest(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value.startswith("sha256:"):
+            raise ValueError("content_digest must use sha256:<hex>")
+        digest = value[len("sha256:") :]
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise ValueError("content_digest must use sha256:<64 lowercase hex>")
+        return value
+
+    @pydantic.field_validator("manifest_path")
+    @classmethod
+    def validate_manifest_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not (posixpath.isabs(value) or ntpath.isabs(value)):
+            raise ValueError("manifest_path must be an absolute host path")
         return value
 
 

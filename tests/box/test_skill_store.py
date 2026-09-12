@@ -81,9 +81,8 @@ def test_skill_store_installs_zip_under_configured_relative_skills_root(tmp_path
 
     installed = store.install_zip_upload(file_bytes=_skill_zip(), filename="demo.zip")
     assert installed[0]["name"] == "demo"
-    assert installed[0]["package_root"] == str(
-        tmp_path / "custom-skills" / "demo-upload"
-    )
+    assert ".langbot-skill-store" in installed[0]["package_root"]
+    assert installed[0]["revision"].startswith("sha256:")
 
     files = store.list_skill_files("demo")
     assert {entry["name"] for entry in files["entries"]} == {"SKILL.md", "notes.txt"}
@@ -91,7 +90,12 @@ def test_skill_store_installs_zip_under_configured_relative_skills_root(tmp_path
     content = store.read_skill_file("demo", "notes.txt")
     assert content["content"] == "hello"
 
-    store.write_skill_file("demo", "notes.txt", "updated")
+    store.write_skill_file(
+        "demo",
+        "notes.txt",
+        "updated",
+        base_revision=installed[0]["revision"],
+    )
     assert store.read_skill_file("demo", "notes.txt")["content"] == "updated"
 
 
@@ -178,7 +182,7 @@ def test_skill_store_supports_source_subdir_before_selecting_candidates(tmp_path
     )
 
     assert [skill["name"] for skill in installed] == ["beta"]
-    assert installed[0]["package_root"] == str(tmp_path / "skills" / "repo-beta-upload")
+    assert ".langbot-skill-store" in installed[0]["package_root"]
 
 
 # ── parse_frontmatter ───────────────────────────────────────────────────
@@ -299,8 +303,10 @@ def test_list_skills_returns_managed_skills_sorted_by_updated_at(tmp_path):
         "description",
         "instructions",
         "package_root",
+        "manifest_path",
         "entry_file",
         "python_project",
+        "revision",
         "created_at",
         "updated_at",
     }
@@ -347,11 +353,16 @@ def test_get_skill_returns_match_and_none_for_missing(tmp_path):
 
 def test_skill_python_project_metadata_is_computed_by_box_runtime_store(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "python-demo", "instructions": "run it"})
+    created = store.create_skill({"name": "python-demo", "instructions": "run it"})
 
     assert store.get_skill("python-demo")["python_project"] is False
 
-    store.write_skill_file("python-demo", "requirements.txt", "requests==2.32.0\n")
+    store.write_skill_file(
+        "python-demo",
+        "requirements.txt",
+        "requests==2.32.0\n",
+        base_revision=created["revision"],
+    )
 
     assert store.get_skill("python-demo")["python_project"] is True
 
@@ -401,7 +412,7 @@ def test_create_skill_minimal_managed(tmp_path):
     assert created["display_name"] == "Fresh Skill"
     assert created["description"] == "desc"
     assert created["instructions"].strip() == "do stuff"
-    assert os.path.isfile(os.path.join(store.root, "fresh", "SKILL.md"))
+    assert os.path.isfile(os.path.join(created["package_root"], "SKILL.md"))
 
 
 def test_create_skill_rejects_duplicate(tmp_path):
@@ -437,10 +448,9 @@ def test_create_skill_imports_external_package_by_copy(tmp_path):
     # Imported metadata flows through when not overridden.
     assert created["display_name"] == "Imported"
     assert created["description"] == "A test skill"
-    # Copied into the managed root, extra file came along.
-    managed = os.path.join(store.root, "copied")
-    assert os.path.isfile(os.path.join(managed, "extra.txt"))
-    assert created["package_root"] == os.path.realpath(managed)
+    # Copied into an immutable content-addressed revision; extra file came along.
+    assert os.path.isfile(os.path.join(created["package_root"], "extra.txt"))
+    assert created["package_root"] != os.path.realpath(src)
 
 
 def test_create_skill_imports_in_place_when_package_under_root(tmp_path):
@@ -465,9 +475,8 @@ def test_create_skill_imports_in_place_when_package_under_root(tmp_path):
     )
     assert created["name"] == "native"
     assert created["display_name"] == "Overridden"
-    # Imported in place: the SKILL.md is rewritten inside the original directory,
-    # and the sibling asset is preserved.
-    assert created["package_root"] == os.path.realpath(str(in_root))
+    # The legacy source is only an import source and is not rewritten in place.
+    assert created["package_root"] != os.path.realpath(str(in_root))
     assert (in_root / "asset.txt").read_text() == "payload"
 
 
@@ -496,7 +505,7 @@ def test_create_skill_external_target_collision_raises(tmp_path):
 
 def test_update_skill_changes_metadata_and_instructions(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "edit", "instructions": "old"})
+    created = store.create_skill({"name": "edit", "instructions": "old"})
     updated = store.update_skill(
         "edit",
         {
@@ -504,6 +513,7 @@ def test_update_skill_changes_metadata_and_instructions(tmp_path):
             "description": "new desc",
             "instructions": "new body",
         },
+        base_revision=created["revision"],
     )
     assert updated["display_name"] == "Edited"
     assert updated["description"] == "new desc"
@@ -513,47 +523,56 @@ def test_update_skill_changes_metadata_and_instructions(tmp_path):
 def test_update_skill_missing_raises(tmp_path):
     store = _make_store(tmp_path)
     with pytest.raises(ValueError, match="not found"):
-        store.update_skill("ghost", {"instructions": "x"})
+        store.update_skill("ghost", {"instructions": "x"}, base_revision=None)
 
 
 def test_update_skill_rename_rejected(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "keep", "instructions": "x"})
+    created = store.create_skill({"name": "keep", "instructions": "x"})
     with pytest.raises(ValueError, match="Renaming"):
-        store.update_skill("keep", {"name": "renamed"})
+        store.update_skill(
+            "keep",
+            {"name": "renamed"},
+            base_revision=created["revision"],
+        )
 
 
 def test_update_skill_changing_package_root_rejected(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "fixed", "instructions": "x"})
+    created = store.create_skill({"name": "fixed", "instructions": "x"})
     with pytest.raises(ValueError, match="Updating package_root is not supported"):
-        store.update_skill("fixed", {"package_root": str(tmp_path / "somewhere-else")})
+        store.update_skill(
+            "fixed",
+            {"package_root": str(tmp_path / "somewhere-else")},
+            base_revision=created["revision"],
+        )
 
 
-def test_update_skill_same_package_root_allowed(tmp_path):
+def test_update_skill_same_package_root_is_not_a_publication_input(tmp_path):
     store = _make_store(tmp_path)
     created = store.create_skill({"name": "samep", "instructions": "x"})
-    updated = store.update_skill(
-        "samep",
-        {
-            "package_root": created["package_root"],
-            "instructions": "changed",
-        },
-    )
-    assert updated["instructions"].strip() == "changed"
+    with pytest.raises(ValueError, match="publish a draft"):
+        store.update_skill(
+            "samep",
+            {
+                "package_root": created["package_root"],
+                "instructions": "changed",
+            },
+            base_revision=created["revision"],
+        )
 
 
 # ── delete_skill ────────────────────────────────────────────────────────
 
 
-def test_delete_skill_removes_managed_directory(tmp_path):
+def test_delete_skill_removes_current_pointer_but_retains_revision(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "gone", "instructions": "x"})
-    assert os.path.isdir(os.path.join(store.root, "gone"))
+    created = store.create_skill({"name": "gone", "instructions": "x"})
+    assert os.path.isdir(created["package_root"])
     result = store.delete_skill("gone")
     assert result == {"deleted": "gone"}
-    assert not os.path.exists(os.path.join(store.root, "gone"))
     assert store.get_skill("gone") is None
+    assert store.get_skill_snapshot("gone", created["revision"]) is not None
 
 
 def test_delete_skill_missing_raises(tmp_path):
@@ -563,18 +582,15 @@ def test_delete_skill_missing_raises(tmp_path):
 
 
 def test_delete_skill_rejects_skill_at_root_level(tmp_path):
-    # A skill whose package_root is the managed root itself is not a managed
-    # install (no top-level subdirectory), so deletion is refused.
+    # The store root is registry infrastructure, not a legacy package slot.
     store = _make_store(tmp_path)
     root = store.root
     os.makedirs(root, exist_ok=True)
     with open(os.path.join(root, "SKILL.md"), "w", encoding="utf-8") as f:
         f.write("---\nname: rootskill\n---\n\nbody\n")
 
-    skill = store.get_skill("rootskill")
-    assert skill is not None
-    assert os.path.realpath(skill["package_root"]) == os.path.realpath(root)
-    with pytest.raises(ValueError, match="Only managed skills"):
+    assert store.get_skill("rootskill") is None
+    with pytest.raises(ValueError, match="not found"):
         store.delete_skill("rootskill")
 
 
@@ -637,8 +653,13 @@ def test_scan_directory_multiple_skills_raises(tmp_path):
 
 def test_list_skill_files_root_and_subdir(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "files", "instructions": "x"})
-    store.write_skill_file("files", "sub/inner.txt", "hi")
+    created = store.create_skill({"name": "files", "instructions": "x"})
+    store.write_skill_file(
+        "files",
+        "sub/inner.txt",
+        "hi",
+        base_revision=created["revision"],
+    )
 
     top = store.list_skill_files("files")
     assert top["skill"] == {"name": "files"}
@@ -659,9 +680,12 @@ def test_list_skill_files_root_and_subdir(tmp_path):
 def test_list_skill_files_hidden_filter(tmp_path):
     store = _make_store(tmp_path)
     created = store.create_skill({"name": "hid", "instructions": "x"})
-    hidden = os.path.join(created["package_root"], ".secret")
-    with open(hidden, "w", encoding="utf-8") as f:
-        f.write("shh")
+    store.write_skill_file(
+        "hid",
+        ".secret",
+        "shh",
+        base_revision=created["revision"],
+    )
 
     without = {e["name"] for e in store.list_skill_files("hid")["entries"]}
     assert ".secret" not in without
@@ -674,9 +698,16 @@ def test_list_skill_files_hidden_filter(tmp_path):
 
 def test_list_skill_files_truncation(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "many", "instructions": "x"})
+    current = store.create_skill({"name": "many", "instructions": "x"})
     for i in range(5):
-        store.write_skill_file("many", f"file{i}.txt", "data")
+        result = store.write_skill_file(
+            "many",
+            f"file{i}.txt",
+            "data",
+            base_revision=current["revision"],
+        )
+        current = store.get_skill_snapshot("many")
+        assert current["revision"] == result["revision"]
 
     result = store.list_skill_files("many", max_entries=3)
     assert len(result["entries"]) == 3
@@ -698,9 +729,14 @@ def test_list_skill_files_directory_not_found_raises(tmp_path):
 
 def test_read_write_edit_delete_round_trip(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "crud", "instructions": "x"})
+    created = store.create_skill({"name": "crud", "instructions": "x"})
 
-    write_result = store.write_skill_file("crud", "data/info.txt", "hello world")
+    write_result = store.write_skill_file(
+        "crud",
+        "data/info.txt",
+        "hello world",
+        base_revision=created["revision"],
+    )
     assert write_result["path"] == "data/info.txt"
     assert write_result["bytes_written"] == len("hello world".encode("utf-8"))
 
@@ -710,42 +746,64 @@ def test_read_write_edit_delete_round_trip(tmp_path):
     assert read_result["skill"] == {"name": "crud"}
 
     # "Edit" == overwrite via write_skill_file.
-    store.write_skill_file("crud", "data/info.txt", "edited")
+    store.write_skill_file(
+        "crud",
+        "data/info.txt",
+        "edited",
+        base_revision=write_result["revision"],
+    )
     assert store.read_skill_file("crud", "data/info.txt")["content"] == "edited"
-
-    # Delete by removing the file on disk, then confirm read fails.
-    target = os.path.join(store.get_skill("crud")["package_root"], "data", "info.txt")
-    os.remove(target)
-    with pytest.raises(ValueError, match="Skill file not found"):
-        store.read_skill_file("crud", "data/info.txt")
+    assert (
+        store.read_skill_resource(
+            "crud",
+            "data/info.txt",
+            expected_revision=write_result["revision"],
+        )["content"]
+        == "hello world"
+    )
 
 
 def test_write_skill_file_handles_unicode(tmp_path):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "uni", "instructions": "x"})
+    created = store.create_skill({"name": "uni", "instructions": "x"})
     text = "你好, мир 🌍"
-    result = store.write_skill_file("uni", "i18n.txt", text)
+    result = store.write_skill_file(
+        "uni",
+        "i18n.txt",
+        text,
+        base_revision=created["revision"],
+    )
     assert result["bytes_written"] == len(text.encode("utf-8"))
     assert store.read_skill_file("uni", "i18n.txt")["content"] == text
 
 
 def test_read_skill_file_non_utf8_raises(tmp_path):
     store = _make_store(tmp_path)
-    created = store.create_skill({"name": "binskill", "instructions": "x"})
-    binpath = os.path.join(created["package_root"], "blob.bin")
+    source = tmp_path / "binary-source"
+    source.mkdir()
+    (source / "SKILL.md").write_text("---\nname: binskill\n---\n\nx", encoding="utf-8")
+    binpath = source / "blob.bin"
     with open(binpath, "wb") as f:
         f.write(b"\xff\xfe\x00\x01")
+    store.create_skill(
+        {"name": "binskill", "package_root": str(source), "instructions": "x"}
+    )
     with pytest.raises(ValueError, match="not valid UTF-8"):
         store.read_skill_file("binskill", "blob.bin")
 
 
 def test_read_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
     store = _make_store(tmp_path)
-    created = store.create_skill({"name": "large-read", "instructions": "x"})
+    source = tmp_path / "large-source"
+    source.mkdir()
+    (source / "SKILL.md").write_text(
+        "---\nname: large-read\n---\n\nx", encoding="utf-8"
+    )
+    (source / "large.txt").write_bytes(b"x" * 129)
+    store.create_skill(
+        {"name": "large-read", "package_root": str(source), "instructions": "x"}
+    )
     monkeypatch.setattr(skill_store_module, "_MAX_SKILL_TEXT_BYTES", 128)
-    target = os.path.join(created["package_root"], "large.txt")
-    with open(target, "wb") as file:
-        file.write(b"x" * 129)
 
     with pytest.raises(ValueError, match="exceeds"):
         store.read_skill_file("large-read", "large.txt")
@@ -753,11 +811,16 @@ def test_read_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
 
 def test_write_skill_file_rejects_oversized_text(tmp_path, monkeypatch):
     store = _make_store(tmp_path)
-    store.create_skill({"name": "large-write", "instructions": "x"})
+    created = store.create_skill({"name": "large-write", "instructions": "x"})
     monkeypatch.setattr(skill_store_module, "_MAX_SKILL_TEXT_BYTES", 128)
 
     with pytest.raises(ValueError, match="exceeds"):
-        store.write_skill_file("large-write", "large.txt", "x" * 129)
+        store.write_skill_file(
+            "large-write",
+            "large.txt",
+            "x" * 129,
+            base_revision=created["revision"],
+        )
 
 
 def test_read_skill_file_missing_raises(tmp_path):
@@ -1096,22 +1159,3 @@ def test_preview_target_dir_appends_leaf_and_suffix(tmp_path):
     )
     package_roots = {os.path.basename(p["package_root"]) for p in preview}
     assert package_roots == {"repo-alpha-v2", "repo-beta-v2"}
-
-
-# ── managed install root resolution ─────────────────────────────────────
-
-
-def test_managed_install_root_for_package(tmp_path):
-    store = _make_store(tmp_path)
-    root = store.root
-    # A package nested two levels under root maps to its top-level dir.
-    nested = os.path.join(root, "topdir", "inner")
-    assert store._managed_install_root_for_package(nested) == os.path.join(
-        root, "topdir"
-    )
-    # The root itself is not a managed install.
-    assert store._managed_install_root_for_package(root) == ""
-    # An empty package root yields ''.
-    assert store._managed_install_root_for_package("") == ""
-    # A path outside the root yields ''.
-    assert store._managed_install_root_for_package(str(tmp_path / "elsewhere")) == ""
