@@ -16,11 +16,14 @@ import pytest
 from langbot_plugin.box.e2b_backend import (
     E2BSandboxBackend,
     _adapt_path_for_e2b,
+    _build_e2b_host_manifest,
     _check_e2b_available,
 )
+from langbot_plugin.box.errors import BoxError
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
     BoxHostMountMode,
+    BoxMountSpec,
     BoxNetworkMode,
     BoxSessionInfo,
     BoxSpec,
@@ -92,6 +95,25 @@ def test_adapt_path_other_paths_unchanged():
     assert _adapt_path_for_e2b("/home/user") == "/home/user"
     assert _adapt_path_for_e2b("/tmp") == "/tmp"
     assert _adapt_path_for_e2b("/code") == "/code"
+
+
+def test_extra_mount_projections_are_excluded_from_workspace_sync(backend):
+    spec = BoxSpec(
+        session_id="overlay",
+        extra_mounts=[
+            BoxMountSpec(
+                host_path="/tmp/revision",
+                mount_path="/workspace/.skills/demo",
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ],
+    )
+
+    shadowed = backend._main_mount_shadow_paths(spec)
+
+    assert shadowed == {".skills/demo"}
+    assert backend._path_is_shadowed(".skills/demo/run.py", shadowed) is True
+    assert backend._path_is_shadowed("notes.txt", shadowed) is False
 
 
 # ── is_available ──────────────────────────────────────────────────────
@@ -528,6 +550,127 @@ async def test_remote_sync_stream_is_bounded(backend, tmp_path, monkeypatch):
     )
 
     assert not (tmp_path / "large.bin").exists()
+
+
+@pytest.mark.anyio
+async def test_immutable_mount_is_verified_before_projection(backend, tmp_path):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    (tmp_path / "run.py").write_text("print('ok')", encoding="utf-8")
+    digest, manifest = _build_e2b_host_manifest(str(tmp_path))
+    manifest_path = tmp_path.with_name(f"{tmp_path.name}-manifest.json")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    commands = SimpleNamespace(
+        run=mock.AsyncMock(
+            return_value=SimpleNamespace(exit_code=0, stdout="", stderr="")
+        )
+    )
+    files = SimpleNamespace(write=mock.AsyncMock())
+    sandbox = SimpleNamespace(commands=commands, files=files)
+
+    with mock.patch(
+        "langbot_plugin.box.e2b_backend._build_e2b_host_manifest",
+        side_effect=AssertionError("published mounts must use their manifest"),
+    ):
+        await backend._materialize_immutable_mount(
+            sandbox,
+            host_root=str(tmp_path),
+            remote_root="/home/user/workspace/.skills/demo",
+            expected_digest=digest,
+            manifest_path=str(manifest_path),
+        )
+
+    commands_text = "\n".join(call.args[0] for call in commands.run.await_args_list)
+    verify_index = commands_text.index("python3 -c")
+    publish_index = commands_text.index("mv ")
+    projection_index = commands_text.index("ln -s")
+    assert verify_index < publish_index < projection_index
+    assert files.write.await_count == 4  # two package files, manifest, ready marker
+
+
+@pytest.mark.anyio
+async def test_interrupted_immutable_transfer_never_projects_partial_tree(
+    backend,
+    tmp_path,
+):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    (tmp_path / "run.py").write_text("print('ok')", encoding="utf-8")
+    digest, _manifest = _build_e2b_host_manifest(str(tmp_path))
+    commands = SimpleNamespace(
+        run=mock.AsyncMock(
+            return_value=SimpleNamespace(exit_code=0, stdout="", stderr="")
+        )
+    )
+    files = SimpleNamespace(
+        write=mock.AsyncMock(side_effect=[None, OSError("upload interrupted")])
+    )
+    sandbox = SimpleNamespace(commands=commands, files=files)
+
+    with pytest.raises(BoxError, match="materialize immutable E2B mount"):
+        await backend._materialize_immutable_mount(
+            sandbox,
+            host_root=str(tmp_path),
+            remote_root="/home/user/workspace/.skills/demo",
+            expected_digest=digest,
+        )
+
+    commands_text = "\n".join(call.args[0] for call in commands.run.await_args_list)
+    assert "ln -s" not in commands_text
+    assert "staging" in commands_text and "rm -rf" in commands_text
+
+
+@pytest.mark.anyio
+async def test_immutable_mount_rejects_declared_digest_mismatch(backend, tmp_path):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    sandbox = SimpleNamespace(
+        commands=SimpleNamespace(run=mock.AsyncMock()),
+        files=SimpleNamespace(write=mock.AsyncMock()),
+    )
+
+    with pytest.raises(BoxError, match="does not match"):
+        await backend._materialize_immutable_mount(
+            sandbox,
+            host_root=str(tmp_path),
+            remote_root="/home/user/workspace/.skills/demo",
+            expected_digest="sha256:" + "0" * 64,
+        )
+
+    sandbox.files.write.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_box_restart_reuses_only_verified_ready_revision(backend, tmp_path):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    digest, manifest = _build_e2b_host_manifest(str(tmp_path))
+    manifest_path = tmp_path.with_name(f"{tmp_path.name}-manifest.json")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    success = SimpleNamespace(exit_code=0, stdout="", stderr="")
+    commands = SimpleNamespace(
+        run=mock.AsyncMock(
+            side_effect=[
+                SimpleNamespace(exit_code=0, stdout=digest, stderr=""),
+                success,
+                success,
+            ]
+        )
+    )
+    sandbox = SimpleNamespace(
+        commands=commands,
+        files=SimpleNamespace(write=mock.AsyncMock()),
+    )
+
+    await backend._materialize_immutable_mount(
+        sandbox,
+        host_root=str(tmp_path),
+        remote_root="/home/user/workspace/.skills/demo",
+        expected_digest=digest,
+        manifest_path=str(manifest_path),
+    )
+
+    sandbox.files.write.assert_not_awaited()
+    commands_text = "\n".join(call.args[0] for call in commands.run.await_args_list)
+    assert "python3 -c" in commands_text
+    assert "ln -s" in commands_text
+    assert "staging-" not in commands_text
 
 
 # ── _check_e2b_available ──────────────────────────────────────────────

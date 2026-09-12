@@ -33,13 +33,93 @@ from langbot_plugin.box.models import (
     BoxExecutionStatus,
     BoxManagedProcessSpec,
     BoxManagedProcessStatus,
+    BoxMountSpec,
+    BoxHostMountMode,
     BoxSessionInfo,
     BoxSpec,
 )
-from langbot_plugin.box.runtime import BoxRuntime
+from langbot_plugin.box.runtime import BoxRuntime, _compute_extra_mounts_key
 from langbot_plugin.entities.io.context import ActionContext
 
 _UTC = dt.timezone.utc
+
+
+def test_session_mount_signature_includes_content_digest():
+    def key(digest: str):
+        return _compute_extra_mounts_key(
+            BoxSpec(
+                session_id="revision-session",
+                extra_mounts=[
+                    BoxMountSpec(
+                        host_path="/tmp/revision",
+                        mount_path="/workspace/.skills/demo",
+                        mode=BoxHostMountMode.READ_ONLY,
+                        content_digest=digest,
+                    )
+                ],
+            )
+        )
+
+    assert key("sha256:" + "1" * 64) != key("sha256:" + "2" * 64)
+
+
+@pytest.mark.anyio
+async def test_concurrent_revision_change_waits_for_active_execution(logger):
+    backend = FakeBackend(logger)
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def controlled_exec(
+        session: BoxSessionInfo,
+        spec: BoxSpec,
+    ) -> BoxExecutionResult:
+        backend.exec_calls.append((session.backend_session_id, spec.cmd))
+        if spec.cmd == "v1":
+            first_started.set()
+            await release_first.wait()
+        return BoxExecutionResult(
+            session_id=session.session_id,
+            backend_name=backend.name,
+            status=BoxExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout=spec.cmd,
+            stderr="",
+            duration_ms=1,
+        )
+
+    backend.exec = controlled_exec
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+
+    def spec(command: str, digit: str) -> BoxSpec:
+        return _make_spec(
+            "revision-session",
+            cmd=command,
+            extra_mounts=[
+                BoxMountSpec(
+                    host_path=f"/tmp/revision-{digit}",
+                    mount_path="/workspace/.skills/demo",
+                    mode=BoxHostMountMode.READ_ONLY,
+                    content_digest="sha256:" + digit * 64,
+                )
+            ],
+        )
+
+    first_task = asyncio.create_task(runtime.execute(spec("v1", "1")))
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+    second_task = asyncio.create_task(runtime.execute(spec("v2", "2")))
+    await asyncio.sleep(0.05)
+
+    assert not second_task.done()
+    backend.stop_session.assert_not_awaited()
+
+    release_first.set()
+    first_result, second_result = await asyncio.gather(first_task, second_task)
+
+    assert first_result.stdout == "v1"
+    assert second_result.stdout == "v2"
+    assert backend.exec_calls == [("fake-1", "v1"), ("fake-2", "v2")]
+    backend.stop_session.assert_awaited_once()
 
 
 @pytest.fixture
