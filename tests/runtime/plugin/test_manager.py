@@ -1174,6 +1174,7 @@ async def test_minimal_toy_plugin_registers_and_dispatches_core_surfaces():
             "Runner",
             "default",
             {
+                "usages": ["agent"],
                 "capabilities": {"streaming": True},
                 "permissions": {},
                 "config": [],
@@ -1942,3 +1943,24 @@ async def test_install_plugin_marketplace_streams_progress_and_launches(monkeypa
         "plugin_version": "1.0.0",
     }
     assert launched == ["data/plugins/tester__demo"]
+
+
+@pytest.mark.asyncio
+async def test_reinstall_cancellation_does_not_cancel_runtime_launch(monkeypatch):
+    context = SimpleNamespace(wait_for_workspace_binding=AsyncMock())
+    manager = PluginManager(context)
+    monkeypatch.setattr(manager_module.glob, "glob", lambda pattern: [])
+    ready = asyncio.Event()
+
+    async def worker():
+        ready.set()
+        await asyncio.Future()
+
+    child = asyncio.create_task(worker())
+    manager.plugin_run_tasks = [child]
+    launch = asyncio.create_task(manager.launch_all_plugins())
+    await ready.wait()
+    child.cancel()
+    await launch
+    assert child.cancelled()
+    assert not launch.cancelled()

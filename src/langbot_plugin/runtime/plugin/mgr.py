@@ -753,7 +753,9 @@ class PluginManager:
 
         logger.info(f"launch all plugins: {len(self.plugin_run_tasks)}")
         if self.plugin_run_tasks:
-            await asyncio.gather(*list(self.plugin_run_tasks))
+            # Reinstall/disable cancels an individual supervisor. Do not let
+            # that cancellation tear down the Runtime's server tasks.
+            await asyncio.gather(*list(self.plugin_run_tasks), return_exceptions=True)
 
     def start_plugin_supervisor(self, plugin_path: str) -> asyncio.Task[None]:
         """Ensure one crash-restarting supervisor owns a production plugin."""

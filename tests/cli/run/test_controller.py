@@ -64,7 +64,7 @@ class DemoRunner(Runner):
         yield RunnerResult.run_completed(ctx.run_id)
 
 
-def _manifest(kind: str, name: str) -> ComponentManifest:
+def _manifest(kind: str, name: str, spec: dict | None = None) -> ComponentManifest:
     return ComponentManifest(
         owner="tester",
         rel_path=f"{name}.yaml",
@@ -77,7 +77,7 @@ def _manifest(kind: str, name: str) -> ComponentManifest:
                 "author": "tester",
                 "version": "1.0.0",
             },
-            "spec": {},
+            "spec": spec or {},
             "execution": {"python": {"path": f"./{name}.py", "attr": name.title()}},
         },
     )
@@ -241,7 +241,7 @@ def _runner_controller() -> PluginRuntimeController:
     return PluginRuntimeController(
         plugin_manifest=_manifest("Plugin", "demo"),
         component_manifests=[
-            _manifest("Runner", "runner"),
+            _manifest("Runner", "runner", spec={"usages": ["agent"]}),
         ],
         stdio=True,
         ws_debug_url="ws://runtime/plugin/ws",

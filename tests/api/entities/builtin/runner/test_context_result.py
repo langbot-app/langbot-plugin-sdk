@@ -679,6 +679,7 @@ class TestRunnerManifest:
     def test_manifest_minimal(self):
         """Test minimal manifest."""
         manifest = RunnerManifest(
+            usages=["agent"],
             id="plugin:author/plugin/runner",
             name="default",
             label={"en_US": "Default Runner"},
@@ -694,6 +695,7 @@ class TestRunnerManifest:
     def test_manifest_full(self):
         """Test full manifest."""
         manifest = RunnerManifest(
+            usages=["agent"],
             id="plugin:author/plugin/runner",
             name="default",
             label={"en_US": "Runner"},
@@ -715,6 +717,7 @@ class TestRunnerManifest:
         """Test non-standard capability keys are rejected."""
         with pytest.raises(pydantic.ValidationError, match="extra_forbidden"):
             RunnerManifest(
+                usages=["agent"],
                 id="plugin:author/plugin/runner",
                 name="default",
                 label={"en_US": "Runner"},
@@ -725,6 +728,7 @@ class TestRunnerManifest:
         """Test platform_api is not a Protocol v1 permission."""
         with pytest.raises(pydantic.ValidationError, match="extra_forbidden"):
             RunnerManifest(
+                usages=["agent"],
                 id="plugin:author/plugin/runner",
                 name="default",
                 label={"en_US": "Runner"},
@@ -778,3 +782,12 @@ class TestDeliveryContext:
         assert delivery.surface == "webui"
         assert delivery.supports_streaming is True
         assert delivery.max_message_size == 4096
+
+
+@pytest.mark.parametrize("usages", [None, [], ["invalid"], "agent"])
+def test_runner_manifest_rejects_missing_or_invalid_usages(usages):
+    data = {"id": "plugin:a/b/c", "name": "c", "label": {"en_US": "C"}}
+    if usages is not None:
+        data["usages"] = usages
+    with pytest.raises(pydantic.ValidationError):
+        RunnerManifest.model_validate(data)

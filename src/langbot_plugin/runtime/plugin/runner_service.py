@@ -210,14 +210,14 @@ class RunnerRuntimeService:
         runner_id = f"plugin:{plugin.manifest.metadata.author}/{plugin.manifest.metadata.name}/{runner_name}"
 
         try:
-            if "event" in spec.get("usages", ["agent"]) and not spec.get("events"):
+            if "event" in spec.get("usages", []) and not spec.get("events"):
                 raise ValueError(
                     "Event usage requires an explicit spec.events declaration"
                 )
             runner_manifest = RunnerManifest(
                 id=runner_id,
                 component_kind=component.manifest.kind,
-                usages=spec.get("usages", ["agent"]),
+                usages=spec.get("usages"),
                 supported_event_patterns=spec.get("events") or ["*"],
                 name=runner_name,
                 label=component.manifest.metadata.label.to_dict(),

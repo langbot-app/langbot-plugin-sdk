@@ -88,3 +88,28 @@ def test_generate_page_component_skips_python_package_init_files(tmp_path, monke
     assert not (tmp_path / "components" / "pages" / "__init__.py").exists()
     assert (tmp_path / "components" / "pages" / "settings.yaml").is_file()
     assert (tmp_path / "components" / "pages" / "settings.html").is_file()
+
+
+def test_generate_runner_declares_usage_and_builds(tmp_path, monkeypatch):
+    from langbot_plugin.cli.commands.buildplugin import build_plugin_process
+    from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
+
+    _write_plugin_manifest(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        gencomponent,
+        "input_form_values",
+        lambda fields: {
+            "runner_name": "echo",
+            "runner_label": "Echo",
+            "runner_description": "Echo input",
+            "runner_attr": "EchoRunner",
+        },
+    )
+    gencomponent.generate_component_process("Runner")
+    component = ComponentDiscoveryEngine().load_component_manifest(
+        "components/runner/echo.yaml"
+    )
+    assert component is not None
+    assert component.spec["usages"] == ["agent"]
+    assert build_plugin_process(str(tmp_path / "dist"))

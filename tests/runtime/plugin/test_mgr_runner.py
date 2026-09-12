@@ -132,6 +132,7 @@ def create_mock_component_manifest(
         "capabilities": {},
         "permissions": {},
     }
+    mock_manifest.spec = {"usages": ["agent"], **mock_manifest.spec}
     mock_manifest.manifest = {
         "kind": "Runner",
         "metadata": {

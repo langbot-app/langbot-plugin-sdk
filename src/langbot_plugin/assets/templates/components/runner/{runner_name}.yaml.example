@@ -9,8 +9,8 @@ metadata:
     en_US: {{ runner_description }}
     zh_Hans: {{ runner_description }}
 spec:
-  usages: [agent, event]
-  events: ["*"]
+  usages: [agent]
+  # For a plugin processor, declare usages: [event] and events: ["*"].
   capabilities:
     streaming: true
     tool_calling: false

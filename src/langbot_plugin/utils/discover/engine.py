@@ -5,7 +5,10 @@ import typing
 import os
 import yaml
 
-from langbot_plugin.api.definition.components.manifest import ComponentManifest
+from langbot_plugin.api.definition.components.manifest import (
+    ComponentManifest,
+    InvalidRunnerManifest,
+)
 
 
 class ComponentDiscoveryEngine:
@@ -24,6 +27,14 @@ class ComponentDiscoveryEngine:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 manifest = yaml.safe_load(f)
+                if (
+                    isinstance(manifest, dict)
+                    and manifest.get("kind") == "Runner"
+                    and "spec" not in manifest
+                ):
+                    raise InvalidRunnerManifest(
+                        f"Invalid Runner manifest {path}: spec.usages is required"
+                    )
                 if not ComponentManifest.is_component_manifest(manifest):
                     return None
 
@@ -33,6 +44,10 @@ class ComponentDiscoveryEngine:
                         self.components[comp.kind] = []
                     self.components[comp.kind].append(comp)
                 return comp
+        except InvalidRunnerManifest:
+            # Build, debug and runtime discovery must fail instead of silently
+            # packaging or loading a Runner with an ambiguous product usage.
+            raise
         except Exception as e:
             logging.getLogger(__name__).warning(
                 f"Failed to load component manifest {path}: {e}"
