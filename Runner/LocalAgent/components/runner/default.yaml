@@ -1,0 +1,226 @@
+apiVersion: langbot/v1
+kind: Runner
+metadata:
+  name: default
+  label:
+    en_US: Local Agent
+    zh_Hans: 本地 Agent
+  description:
+    en_US: Built-in agent with model fallback, tools, and knowledge retrieval.
+    zh_Hans: 内置 Agent，支持模型 fallback、工具调用和知识库检索。
+spec:
+  usages: [agent]
+  config:
+    - name: model
+      label:
+        en_US: Model
+        zh_Hans: 模型
+      type: model-fallback-selector
+      required: true
+      default:
+        primary: ''
+        fallbacks: []
+    - name: prompt
+      label:
+        en_US: Prompt
+        zh_Hans: 提示词
+      type: prompt-editor
+      required: true
+      default:
+        - role: system
+          content: "You are a helpful assistant."
+    - name: knowledge-bases
+      label:
+        en_US: Knowledge Bases
+        zh_Hans: 知识库
+      type: knowledge-base-multi-selector
+      required: false
+      default: []
+    - name: advanced-settings
+      label:
+        en_US: Advanced Settings
+        zh_Hans: 高级设置
+      description:
+        en_US: Show tuning controls for retrieval, tools, timeouts, and context management.
+        zh_Hans: 显示检索、工具、超时和上下文管理的调优选项。
+      type: boolean
+      required: false
+      default: false
+    - name: timeout
+      label:
+        en_US: Timeout
+        zh_Hans: 执行超时
+      type: integer
+      required: false
+      default: 300
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: remove-think
+      label:
+        en_US: Remove Thinking Output
+        zh_Hans: 移除思考内容
+      type: boolean
+      required: false
+      default: false
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: retrieval-top-k
+      label:
+        en_US: Retrieval Top K
+        zh_Hans: 知识库检索数量
+      type: integer
+      required: false
+      default: 5
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: rerank-model
+      label:
+        en_US: Rerank Model
+        zh_Hans: 重排序模型
+      type: rerank-model-selector
+      required: false
+      default: ''
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: rerank-top-k
+      label:
+        en_US: Rerank Top K
+        zh_Hans: 重排序保留数量
+      type: integer
+      required: false
+      default: 5
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: max-tool-iterations
+      label:
+        en_US: Max Tool Iterations
+        zh_Hans: 最大工具调用轮数
+      type: integer
+      required: false
+      default: 100
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: tool-execution-mode
+      label:
+        en_US: Tool Execution Mode
+        zh_Hans: 工具执行模式
+      type: select
+      required: false
+      default: parallel
+      options:
+        - name: parallel
+          label:
+            en_US: Parallel
+            zh_Hans: 并行
+        - name: serial
+          label:
+            en_US: Serial
+            zh_Hans: 串行
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: max-tool-result-chars
+      label:
+        en_US: Max Tool Result Characters
+        zh_Hans: 最大工具结果字符数
+      type: integer
+      required: false
+      default: 20000
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: context-history-fetch-limit
+      label:
+        en_US: History Fetch Limit
+        zh_Hans: 历史消息拉取数量
+      type: integer
+      required: false
+      default: 50
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: context-window-tokens
+      label:
+        en_US: Context Window Tokens
+        zh_Hans: 上下文窗口 Token 数
+      type: integer
+      required: false
+      default: 200000
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: context-reserve-tokens
+      label:
+        en_US: Reserved Output Tokens
+        zh_Hans: 输出保留 Token 数
+      type: integer
+      required: false
+      default: 16384
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: context-keep-recent-tokens
+      label:
+        en_US: Recent Context Tokens
+        zh_Hans: 最近上下文 Token 数
+      type: integer
+      required: false
+      default: 20000
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: context-summary-tokens
+      label:
+        en_US: Summary Tokens
+        zh_Hans: 摘要 Token 数
+      type: integer
+      required: false
+      default: 8000
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+  capabilities:
+    streaming: true
+    tool_calling: true
+    knowledge_retrieval: true
+    multimodal_input: true
+    skill_authoring: true
+    interrupt: true
+    steering: true
+  permissions:
+    models:
+      - count_tokens
+      - invoke
+      - stream
+      - rerank
+    tools:
+      - detail
+      - call
+    knowledge_bases:
+      - list
+      - retrieve
+    history:
+      - page
+execution:
+  python:
+    path: default.py
+    attr: DefaultRunner
