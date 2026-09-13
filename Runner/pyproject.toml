@@ -1,0 +1,51 @@
+[project]
+name = "langbot-agent-runner"
+version = "0.1.0"
+description = "Official Runner plugins for LangBot"
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+license = { text = "MIT" }
+authors = [{ name = "LangBot Team" }]
+keywords = ["langbot", "agent", "runner", "plugin"]
+
+dependencies = [
+    "langbot-plugin>=0.1.0",
+    "pydantic>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.4.0",
+    "pyyaml>=6.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.hatch.build.targets.wheel]
+only-include = [
+    "acp-agent-runner",
+    "claude-code-agent",
+    "codex-agent",
+    "coze-agent",
+    "dashscope-agent",
+    "deerflow-agent",
+    "dify-agent",
+    "docs",
+    "langflow-agent",
+    "n8n-agent",
+    "tbox-agent",
+    "weknora-agent",
+]
+
+[tool.uv.sources]
+langbot-plugin = { path = "../langbot-plugin-sdk", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,2 @@
+pydantic>=2.0.0
+dashscope>=1.20.0
