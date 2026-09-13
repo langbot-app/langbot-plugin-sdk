@@ -30,6 +30,7 @@ Each plugin is an independent package with its own `manifest.yaml`, dependencies
 
 - [DifyDatasetsConnector](KnowledgeEngine/DifyDatasetsConnector/README.md)
 - [FastGPTConnector](KnowledgeEngine/FastGPTConnector/README.md)
+- [LangRAG](KnowledgeEngine/LangRAG/README.md)
 - [RAGFlowConnector](KnowledgeEngine/RAGFlowConnector/README.md)
 
 ## misc
@@ -59,6 +60,6 @@ Each plugin is an independent package with its own `manifest.yaml`, dependencies
 
 Use a plugin directory as the working directory when building or running it; the repository root is not a plugin. Runner development and tests are documented in [Runner/README.md](Runner/README.md).
 
-The previous demo repository was renamed in place. External runner and LocalAgent source histories were imported with Git subtree; existing plugin IDs and authors are unchanged.
+The previous demo repository was renamed in place. External runner, LocalAgent, and LangRAG source histories were imported with Git subtree; existing plugin IDs and authors are unchanged.
 
 [Plugin documentation](https://docs.langbot.app)

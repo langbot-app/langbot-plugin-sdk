@@ -2,6 +2,8 @@
 
 RAG (Retrieval-Augmented Generation) Engine plugin for LangBot.
 
+Source: [KnowledgeEngine/LangRAG](https://github.com/langbot-app/langbot-plugins/tree/main/KnowledgeEngine/LangRAG). Run the commands below from this plugin directory.
+
 This plugin demonstrates how to build a Knowledge Engine that handles document ingestion and vector retrieval using LangBot Host's built-in infrastructure (Embedding models and Vector Database).
 
 ## Features

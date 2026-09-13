@@ -1,0 +1,44 @@
+name: LangRAG tests
+
+on:
+  push:
+    paths:
+      - 'KnowledgeEngine/LangRAG/**'
+      - '.github/workflows/langrag-tests.yml'
+  pull_request:
+    paths:
+      - 'KnowledgeEngine/LangRAG/**'
+      - '.github/workflows/langrag-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: langbot-plugins
+      - uses: actions/checkout@v4
+        with:
+          repository: langbot-app/langbot-plugin-sdk
+          ref: dev/4.11.x
+          path: langbot-plugin-sdk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install ./langbot-plugin-sdk -r langbot-plugins/KnowledgeEngine/LangRAG/requirements.txt
+      - name: Real SDK import smoke
+        working-directory: langbot-plugins/KnowledgeEngine/LangRAG
+        run: |
+          ../../../.venv/bin/python -c "import langbot_plugin; from main import LangRAG; from components.knowledge_engine.langrag import LangRAG as Engine; from components.pages.observability import LangRAGObservabilityPage; print('Real SDK:', langbot_plugin.__file__); print(LangRAG.__name__, Engine.__name__, LangRAGObservabilityPage.__name__)"
+      - name: Unit and benchmark tests
+        working-directory: langbot-plugins/KnowledgeEngine/LangRAG
+        run: ../../../.venv/bin/python -m unittest discover -s tests -v

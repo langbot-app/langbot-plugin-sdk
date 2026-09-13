@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: LangRAG
-  repository: https://github.com/langbot-app/langbot-rag
-  version: 0.1.9
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/KnowledgeEngine/LangRAG
+  version: 0.1.10
   description:
     en_US: LangBot Knowledge Engine - Document ingestion and vector retrieval 
       using Host infrastructure
