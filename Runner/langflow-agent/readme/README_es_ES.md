@@ -8,7 +8,7 @@ Ejecuta un flujo de Langflow como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent)
 
 ## Capacidades principales
 

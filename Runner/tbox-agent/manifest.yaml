@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: TboxAgent
-  version: 0.1.3
-  repository: https://github.com/langbot-app/langbot-agent-runner
+  version: 0.1.4
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent
   label:
     en_US: Tbox Agent
     zh_Hans: 百宝箱 Agent

@@ -8,7 +8,7 @@ Ejecuta una aplicación de Aliyun DashScope como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/DashScopeAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dashscope-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dashscope-agent)
 
 ## Capacidades principales
 

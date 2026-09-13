@@ -8,7 +8,7 @@ Chạy ứng dụng Ant Tbox dưới dạng LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/TboxAgent/default`
 - **Phiên bản**: `0.1.0`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent)
 
 ## Khả năng chính
 

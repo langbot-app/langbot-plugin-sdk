@@ -8,7 +8,7 @@ Agente integrado con modelos de respaldo, herramientas y recuperación de conoci
 
 - **Runner ID**: `plugin:langbot-team/LocalAgent/default`
 - **Versión**: `0.1.0`
-- **Repositorio**: [https://github.com/langbot-app/langbot-local-agent](https://github.com/langbot-app/langbot-local-agent)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent)
 
 ## Capacidades principales
 

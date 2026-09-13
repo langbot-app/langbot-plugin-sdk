@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/LocalAgent/default`
 - **เวอร์ชัน**: `0.1.0`
-- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-local-agent](https://github.com/langbot-app/langbot-local-agent)
+- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent)
 
 ## ความสามารถหลัก
 

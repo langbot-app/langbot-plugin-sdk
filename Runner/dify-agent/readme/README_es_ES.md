@@ -8,7 +8,7 @@ Ejecuta una aplicación de Dify como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dify-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dify-agent)
 
 ## Capacidades principales
 

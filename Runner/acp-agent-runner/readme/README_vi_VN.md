@@ -8,7 +8,7 @@ Chạy tác nhân lập trình tương thích Agent Client Protocol dưới dạ
 
 - **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **Phiên bản**: `0.1.4`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner)
 
 ## Khả năng chính
 

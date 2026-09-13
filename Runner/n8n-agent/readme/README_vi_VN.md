@@ -8,7 +8,7 @@ Chạy webhook quy trình n8n dưới dạng LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/N8nAgent/default`
 - **Phiên bản**: `0.1.2`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/n8n-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/n8n-agent)
 
 ## Khả năng chính
 

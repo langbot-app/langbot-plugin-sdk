@@ -8,7 +8,7 @@ Ejecuta un agente DeerFlow LangGraph como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/DeerFlowAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/deerflow-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/deerflow-agent)
 
 ## Capacidades principales
 

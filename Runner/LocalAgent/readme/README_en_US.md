@@ -13,7 +13,7 @@ This plugin tracks the LangBot 4.11.x Runner integration work. Test it with:
 
 - `langbot-app/LangBot` branch `dev/4.11.x`
 - `langbot-app/langbot-plugin-sdk` branch `dev/4.11.x`
-- `langbot-app/langbot-agent-runner` branch `main`
+- `langbot-app/langbot-plugins` (`Runner`) branch `main`
 - `langbot-app/langbot-agent-control-plane` branch `main`
 
 ## Scope

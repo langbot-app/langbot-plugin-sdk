@@ -8,7 +8,7 @@ Ejecuta Claude Code CLI como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/ClaudeCodeAgent/default`
 - **Versión**: `0.1.3`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/claude-code-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/claude-code-agent)
 
 ## Capacidades principales
 

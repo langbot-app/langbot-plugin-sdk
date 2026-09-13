@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: DeerFlowAgent
-  version: 0.1.5
-  repository: https://github.com/langbot-app/langbot-agent-runner
+  version: 0.1.6
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/deerflow-agent
   label:
     en_US: DeerFlow Agent
     zh_Hans: DeerFlow Agent

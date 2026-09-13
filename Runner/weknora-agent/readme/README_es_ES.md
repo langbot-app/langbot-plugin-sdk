@@ -8,7 +8,7 @@ Ejecuta un agente WeKnora o una aplicación de chat con base de conocimiento com
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent)
 
 ## Capacidades principales
 

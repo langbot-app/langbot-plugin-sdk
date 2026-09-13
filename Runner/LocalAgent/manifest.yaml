@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: LocalAgent
-  version: 0.1.4
-  repository: https://github.com/langbot-app/langbot-local-agent
+  version: 0.1.5
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent
   label:
     en_US: Local Agent
     zh_Hans: 内置 Agent

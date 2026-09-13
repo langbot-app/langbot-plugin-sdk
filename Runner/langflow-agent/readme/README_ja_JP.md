@@ -8,7 +8,7 @@ Langflow フローを LangBot Runner として実行します。
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
 - **バージョン**: `0.1.2`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent)
 
 ## 主な機能
 

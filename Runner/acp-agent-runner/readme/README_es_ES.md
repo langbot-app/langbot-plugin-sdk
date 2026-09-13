@@ -8,7 +8,7 @@ Ejecuta cualquier agente de programación compatible con Agent Client Protocol c
 
 - **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **Versión**: `0.1.4`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner)
 
 ## Capacidades principales
 

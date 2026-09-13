@@ -8,7 +8,7 @@ Ejecuta un webhook de flujo de n8n como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/N8nAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/n8n-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/n8n-agent)
 
 ## Capacidades principales
 

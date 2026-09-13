@@ -17,7 +17,17 @@ dependencies = [
 dev = [
     "ruff>=0.4.0",
     "pyyaml>=6.0.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "dashscope>=1.20.0",
+    "pyjwt>=2.8.0",
+    "tboxsdk>=0.0.12",
 ]
+
+[tool.pytest.ini_options]
+# LocalAgent and RunnerDemo run in fresh interpreters via tests/test_migrated_runners.py.
+# Their generic pkg/components/tests imports must not share the external Runner process.
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
@@ -29,6 +39,8 @@ ignore = ["E501"]
 
 [tool.hatch.build.targets.wheel]
 only-include = [
+    "LocalAgent",
+    "RunnerDemo",
     "acp-agent-runner",
     "claude-code-agent",
     "codex-agent",
@@ -44,7 +56,7 @@ only-include = [
 ]
 
 [tool.uv.sources]
-langbot-plugin = { path = "../langbot-plugin-sdk", editable = true }
+langbot-plugin = { path = "../../langbot-plugin-sdk", editable = true }
 
 [build-system]
 requires = ["hatchling"]

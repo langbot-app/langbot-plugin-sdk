@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/DifyAgent/default`
 - **เวอร์ชัน**: `0.1.2`
-- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dify-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dify-agent)
 
 ## ความสามารถหลัก
 

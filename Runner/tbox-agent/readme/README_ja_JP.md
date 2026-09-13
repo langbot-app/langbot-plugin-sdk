@@ -8,7 +8,7 @@ Ant Tbox アプリを LangBot Runner として実行します。
 
 - **Runner ID**: `plugin:langbot-team/TboxAgent/default`
 - **バージョン**: `0.1.0`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent)
 
 ## 主な機能
 

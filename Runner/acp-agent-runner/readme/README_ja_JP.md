@@ -8,7 +8,7 @@ Agent Client Protocol 対応のコーディングエージェントを LangBot R
 
 - **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **バージョン**: `0.1.4`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner)
 
 ## 主な機能
 

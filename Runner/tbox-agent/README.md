@@ -8,7 +8,7 @@ Run an Ant Tbox application as a LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/TboxAgent/default`
 - **Version**: `0.1.0`
-- **Repository**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repository**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent)
 
 ## Capabilities
 

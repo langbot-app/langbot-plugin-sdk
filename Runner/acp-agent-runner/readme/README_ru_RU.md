@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/ACPAgentRunner/default`
 - **Версия**: `0.1.4`
-- **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Репозиторий**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner)
 
 ## Основные возможности
 

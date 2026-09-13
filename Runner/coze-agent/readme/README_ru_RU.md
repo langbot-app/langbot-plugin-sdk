@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
 - **Версия**: `0.1.2`
-- **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Репозиторий**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/coze-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/coze-agent)
 
 ## Основные возможности
 

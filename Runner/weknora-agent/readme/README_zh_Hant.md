@@ -8,7 +8,7 @@
 
 - **運行器 ID**: `plugin:langbot-team/WeKnoraAgent/default`
 - **版本**: `0.1.2`
-- **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **程式碼儲存庫**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent)
 
 ## 主要能力
 

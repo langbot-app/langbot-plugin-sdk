@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: WeKnoraAgent
-  version: 0.1.5
-  repository: https://github.com/langbot-app/langbot-agent-runner
+  version: 0.1.6
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent
   label:
     en_US: WeKnora Agent
     zh_Hans: WeKnora Agent

@@ -8,7 +8,7 @@ Codex CLI を LangBot Runner として実行します。
 
 - **Runner ID**: `plugin:langbot-team/CodexAgent/default`
 - **バージョン**: `0.1.9`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent)
 
 ## 主な機能
 

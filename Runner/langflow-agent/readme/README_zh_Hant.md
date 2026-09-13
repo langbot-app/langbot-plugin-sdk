@@ -8,7 +8,7 @@
 
 - **運行器 ID**: `plugin:langbot-team/LangflowAgent/default`
 - **版本**: `0.1.2`
-- **程式碼儲存庫**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **程式碼儲存庫**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent)
 
 ## 主要能力
 

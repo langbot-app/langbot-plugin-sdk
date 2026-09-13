@@ -10,7 +10,7 @@
 
 - `langbot-app/LangBot` 分支 `dev/4.11.x`
 - `langbot-app/langbot-plugin-sdk` 分支 `dev/4.11.x`
-- `langbot-app/langbot-local-agent` 分支 `main`
+- `langbot-app/langbot-plugins` 分支 `main` 的 `Runner/LocalAgent` 目录
 - `langbot-app/langbot-agent-control-plane` 分支 `main`
 
 ## 仓库边界
@@ -56,7 +56,7 @@ LangBot 默认不会内联完整历史。如果运行器需要更多上下文，
 | `tbox-agent` | `plugin:langbot-team/TboxAgent/default` | `tbox-app-api` | 蚂蚁 Tbox（百宝箱）集成 |
 | `weknora-agent` | `plugin:langbot-team/WeKnoraAgent/default` | `weknora-api` | WeKnora 智能体和知识库问答集成 |
 
-官方 `local-agent` 运行器维护在相邻的 `langbot-local-agent` 仓库中，因为它会直接调用 LangBot 托管的模型和工具，并拥有独立的测试面。
+官方 [LocalAgent](LocalAgent/README.md) 与 [RunnerDemo](RunnerDemo/README.md) 也维护在本目录。LocalAgent 直接调用 LangBot 托管的模型和工具，并保留独立测试。
 
 ## 协议 v1 对齐
 
@@ -124,6 +124,7 @@ Pipeline 适配字段只用于适配层：
 ### 安装依赖
 
 ```bash
+cd Runner  # from the repository root
 uv sync --dev
 ```
 
@@ -141,7 +142,7 @@ uv run ruff check .
 
 ## 架构
 
-- 每个插件都是仓库根目录下的独立目录，不使用 `packages/<plugin>` 结构。
+- 每个运行器插件都是 `Runner/` 下的独立目录，不使用 `packages/<plugin>` 结构。
 - 本仓库作为插件集合分发，不作为可导入的 `langbot_runner` Python 包使用。
 - 每个插件声明一个或多个 Runner 组件。
 - 所有运行器都使用 Runner 协议 v1。

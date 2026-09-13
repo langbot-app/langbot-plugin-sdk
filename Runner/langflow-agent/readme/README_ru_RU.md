@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
 - **Версия**: `0.1.2`
-- **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Репозиторий**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent)
 
 ## Основные возможности
 

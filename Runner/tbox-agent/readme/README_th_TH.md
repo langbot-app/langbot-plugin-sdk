@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/TboxAgent/default`
 - **เวอร์ชัน**: `0.1.0`
-- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent)
 
 ## ความสามารถหลัก
 

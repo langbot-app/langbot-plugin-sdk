@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: N8nAgent
-  version: 0.1.5
-  repository: https://github.com/langbot-app/langbot-agent-runner
+  version: 0.1.6
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/n8n-agent
   label:
     en_US: N8n Agent
     zh_Hans: n8n 工作流 Agent

@@ -130,7 +130,7 @@ def test_plugins_have_publishable_marketplace_metadata() -> None:
         assert manifest["apiVersion"] == "v1"
         assert "version" not in manifest["spec"]
         assert re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", metadata["version"])
-        assert metadata["repository"] == "https://github.com/langbot-app/langbot-agent-runner"
+        assert metadata["repository"] == f"https://github.com/langbot-app/langbot-plugins/tree/main/Runner/{plugin_dir}"
         assert set(metadata["label"]) == MARKETPLACE_LOCALES
         assert set(metadata["description"]) == MARKETPLACE_LOCALES
         assert "LangBot 运行器" in metadata["description"]["zh_Hans"]
@@ -174,7 +174,11 @@ def test_repository_builds_as_plugin_collection_not_import_package() -> None:
     wheel_target = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]
 
     assert not (ROOT / "langbot_runner").exists()
-    assert set(wheel_target["only-include"]) == PLUGIN_DIRS | {"docs"}
+    assert set(wheel_target["only-include"]) == PLUGIN_DIRS | {"docs", "LocalAgent", "RunnerDemo"}
+    assert {path.parent.name for path in ROOT.glob("*/manifest.yaml")} == PLUGIN_DIRS | {
+        "LocalAgent",
+        "RunnerDemo",
+    }
 
 
 def test_bridge_runners_declare_bridge_related_capabilities() -> None:

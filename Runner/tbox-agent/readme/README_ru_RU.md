@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/TboxAgent/default`
 - **Версия**: `0.1.0`
-- **Репозиторий**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Репозиторий**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent)
 
 ## Основные возможности
 

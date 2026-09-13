@@ -32,7 +32,7 @@ def test_local_agent_has_publishable_marketplace_layout() -> None:
     assert metadata["name"] == "LocalAgent"
     assert re.fullmatch(r"[A-Z][A-Za-z0-9]*", metadata["name"])
     assert re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", metadata["version"])
-    assert metadata["repository"] == "https://github.com/langbot-app/langbot-local-agent"
+    assert metadata["repository"] == "https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent"
     assert set(metadata["label"]) == MARKETPLACE_LOCALES
     assert set(metadata["description"]) == MARKETPLACE_LOCALES
     root_readme = (ROOT / "README.md").read_text(encoding="utf-8")

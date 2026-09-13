@@ -141,6 +141,7 @@ async def probe(destination):
         name=component.metadata.name,
         label=component.manifest["metadata"]["label"],
         component_kind=component.kind,
+        usages=component.spec["usages"],
         capabilities=component.spec.get("capabilities", {}),
         permissions=component.spec.get("permissions", {}),
         config_schema=component.spec.get("config", []),

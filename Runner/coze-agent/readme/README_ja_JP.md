@@ -8,7 +8,7 @@ Coze ボットを LangBot Runner として実行します。
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
 - **バージョン**: `0.1.2`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/coze-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/coze-agent)
 
 ## 主な機能
 

@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/ClaudeCodeAgent/default`
 - **เวอร์ชัน**: `0.1.3`
-- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **ที่เก็บโค้ด**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/claude-code-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/claude-code-agent)
 
 ## ความสามารถหลัก
 

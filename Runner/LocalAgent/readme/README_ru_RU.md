@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/LocalAgent/default`
 - **Версия**: `0.1.0`
-- **Репозиторий**: [https://github.com/langbot-app/langbot-local-agent](https://github.com/langbot-app/langbot-local-agent)
+- **Репозиторий**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent)
 
 ## Основные возможности
 

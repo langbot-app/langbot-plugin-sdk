@@ -8,7 +8,7 @@ Alibaba Cloud DashScope アプリを LangBot Runner として実行します。
 
 - **Runner ID**: `plugin:langbot-team/DashScopeAgent/default`
 - **バージョン**: `0.1.2`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dashscope-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/dashscope-agent)
 
 ## 主な機能
 

@@ -8,7 +8,7 @@ Tác nhân tích hợp hỗ trợ mô hình dự phòng, gọi công cụ và tr
 
 - **Runner ID**: `plugin:langbot-team/LocalAgent/default`
 - **Phiên bản**: `0.1.0`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-local-agent](https://github.com/langbot-app/langbot-local-agent)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent)
 
 ## Khả năng chính
 

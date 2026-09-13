@@ -8,7 +8,7 @@ Chạy luồng Langflow dưới dạng LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/LangflowAgent/default`
 - **Phiên bản**: `0.1.2`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent)
 
 ## Khả năng chính
 

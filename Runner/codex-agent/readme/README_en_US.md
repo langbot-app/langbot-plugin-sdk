@@ -8,7 +8,7 @@ Run Codex CLI as a LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/CodexAgent/default`
 - **Version**: `0.1.9`
-- **Repository**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repository**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent)
 
 ## Capabilities
 

@@ -1,0 +1,68 @@
+name: Runner tests
+
+on:
+  push:
+    paths:
+      - "Runner/**"
+      - ".github/workflows/runner-tests.yml"
+  pull_request:
+    paths:
+      - "Runner/**"
+      - ".github/workflows/runner-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: langbot-plugins/Runner
+    steps:
+      - name: Checkout plugins
+        uses: actions/checkout@v4
+        with:
+          path: langbot-plugins
+      - name: Checkout plugin SDK
+        uses: actions/checkout@v4
+        with:
+          repository: langbot-app/langbot-plugin-sdk
+          ref: dev/4.11.x
+          path: langbot-plugin-sdk
+      - name: Record SDK revision
+        run: git -C ../../langbot-plugin-sdk rev-parse HEAD
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+      - name: Keep environment outside the checkout
+        run: |
+          printf 'UV_PROJECT_ENVIRONMENT=%s/runner-venv\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'RUNNER_EVIDENCE_DIR=%s/runner-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+      # Preserve the external Runner lint scope; LocalAgent has its own Ruff config.
+      # RunnerDemo did not have a Ruff gate before consolidation.
+      - name: Ruff check
+        run: uv run --no-sync ruff check tests ./*-agent acp-agent-runner
+      - name: Ruff format check
+        run: uv run --no-sync ruff format --check tests ./*-agent acp-agent-runner
+      - name: LocalAgent Ruff check
+        run: uv run --no-sync ruff check LocalAgent
+      - name: LocalAgent Ruff format check
+        run: uv run --no-sync ruff format --check LocalAgent
+      - name: All Runner tests, including isolated LocalAgent and RunnerDemo suites
+        run: uv run --no-sync python -m pytest --junitxml="${RUNNER_EVIDENCE_DIR}/runner.xml"
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-test-evidence
+          path: ${{ runner.temp }}/runner-evidence
+          if-no-files-found: warn

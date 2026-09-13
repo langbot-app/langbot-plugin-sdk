@@ -8,7 +8,7 @@
 
 - **Runner ID**: `plugin:langbot-team/LocalAgent/default`
 - **バージョン**: `0.1.0`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-local-agent](https://github.com/langbot-app/langbot-local-agent)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent)
 
 ## 主な機能
 

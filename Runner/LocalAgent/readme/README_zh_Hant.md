@@ -8,7 +8,7 @@
 
 - **運行器 ID**: `plugin:langbot-team/LocalAgent/default`
 - **版本**: `0.1.0`
-- **程式碼儲存庫**: [https://github.com/langbot-app/langbot-local-agent](https://github.com/langbot-app/langbot-local-agent)
+- **程式碼儲存庫**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/LocalAgent)
 
 ## 主要能力
 

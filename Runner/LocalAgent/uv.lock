@@ -472,7 +472,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "langbot-plugin", editable = "../langbot-plugin-sdk" },
+    { name = "langbot-plugin", editable = "../../../langbot-plugin-sdk" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
@@ -483,7 +483,7 @@ provides-extras = ["dev"]
 [[package]]
 name = "langbot-plugin"
 version = "0.5.5"
-source = { editable = "../langbot-plugin-sdk" }
+source = { editable = "../../../langbot-plugin-sdk" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },

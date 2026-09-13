@@ -8,7 +8,7 @@ WeKnora エージェントまたはナレッジベースチャットを LangBot 
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
 - **バージョン**: `0.1.2`
-- **リポジトリ**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **リポジトリ**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent)
 
 ## 主な機能
 

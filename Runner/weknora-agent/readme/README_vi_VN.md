@@ -8,7 +8,7 @@ Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dư�
 
 - **Runner ID**: `plugin:langbot-team/WeKnoraAgent/default`
 - **Phiên bản**: `0.1.2`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/weknora-agent)
 
 ## Khả năng chính
 

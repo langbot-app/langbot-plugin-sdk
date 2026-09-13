@@ -8,7 +8,7 @@ Ejecuta un bot de Coze como LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/CozeAgent/default`
 - **Versión**: `0.1.2`
-- **Repositorio**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Repositorio**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/coze-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/coze-agent)
 
 ## Capacidades principales
 

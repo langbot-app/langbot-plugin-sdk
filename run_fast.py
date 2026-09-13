@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import time
 from ruamel.yaml import YAML
 from deep_translator import GoogleTranslator
@@ -78,7 +79,10 @@ plugins = [
     "URLSummary", "WebSearch"
 ]
 
-os.chdir("/root/.openclaw/workspace/coding/projects/langbot-plugin-demo")
+repo_root = Path(__file__).resolve().parent
+plugins = [str(path.parent) for category in ("Runner", "KnowledgeEngine", "misc")
+           for path in sorted((repo_root / category).glob("*/manifest.yaml"))
+           if path.parent.name in plugins]
 
 def translate_file(plugin, l_key, l_code, readme_text):
     out_file = os.path.join(plugin, "readme", f"README_{l_key}.md")

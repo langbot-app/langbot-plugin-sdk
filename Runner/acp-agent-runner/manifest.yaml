@@ -3,8 +3,8 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: ACPAgentRunner
-  version: 0.1.9
-  repository: https://github.com/langbot-app/langbot-agent-runner
+  version: 0.1.10
+  repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/acp-agent-runner
   label:
     en_US: ACP Agent Runner
     zh_Hans: ACP Agent Runner

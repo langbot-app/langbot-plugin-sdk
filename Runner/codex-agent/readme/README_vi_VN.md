@@ -8,7 +8,7 @@ Chạy Codex CLI dưới dạng LangBot Runner.
 
 - **Runner ID**: `plugin:langbot-team/CodexAgent/default`
 - **Phiên bản**: `0.1.9`
-- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-agent-runner](https://github.com/langbot-app/langbot-agent-runner)
+- **Kho mã nguồn**: [https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent](https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent)
 
 ## Khả năng chính
 
