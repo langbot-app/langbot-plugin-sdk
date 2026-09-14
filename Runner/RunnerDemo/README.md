@@ -15,10 +15,11 @@ it does not work with older SDKs that lack `Runner`.
 | Event observer | `*` | A fallback `EBAEvent` handler that records summaries and optionally the typed payload; never calls tools |
 
 Installing the plugin does **not** activate either component. Create a processor
-instance, select its component in the detail-page header, and save. Each instance
-has independent configuration. Only events explicitly routed to that instance
-are processed. The observer is not a global event tap: a Bot route still chooses
-one target. Old Pipeline `EventListener` hooks are unchanged.
+configuration, select its component in the detail-page header, and save. Add the configuration under **Plugin processor** in a
+bot and save; declared events are delivered automatically. Subscriptions run
+independently alongside the primary Agent/Pipeline route, and one failed
+subscriber does not prevent other deliveries. The observer only receives events
+from explicitly bound bots. Old Pipeline `EventListener` hooks are unchanged.
 
 ## Install and try
 
@@ -26,7 +27,7 @@ one target. Old Pipeline `EventListener` hooks are unchanged.
 2. In this directory, run `lbp build` with that SDK. The package is written to
    `dist/langbot-team-RunnerDemo-0.1.0.lbpkg`.
 3. Upload it with **Add extension → local plugin installation** in LangBot.
-4. Create two **Plugin processor** instances. On each detail page, select
+4. Create two **Plugin processor** configurations. On each detail page, select
    **Community concierge** or **Event observer** from the component selector.
 5. Open the **Configuration** tab on the right, customize settings, and save.
 6. Use the in-page event debugger. Select the event type from an example file,
@@ -35,7 +36,8 @@ one target. Old Pipeline `EventListener` hooks are unchanged.
 7. Click **Run test**. The plugin executes for real; platform actions use Mock.
    Inspect its logs, action parameters/results, run status and elapsed time.
 
-To receive real platform events, explicitly bind a Bot event to the processor.
+To receive real platform events, bind the processor configuration to a bot. You can
+also create a configuration directly from the bot binding dialog.
 Community replies then send real messages. Feedback/reaction/friend-request
 handlers record logs only; this example never auto-approves friend requests.
 
@@ -89,10 +91,10 @@ python scripts/smoke.py --base-url http://127.0.0.1:5399
 
 `LANGBOT_TOKEN` can be used instead of an API key; optionally set
 `LANGBOT_WORKSPACE_ID`. The smoke script installs the package, creates/reuses two
-clearly named demo instances, configures them, executes 12 scenarios and verifies
+clearly named demo configurations, sets their parameters, executes 12 scenarios and verifies
 that debug replies are Mock. It deliberately creates one failed run, then turns
 the failure option off in `finally`. It enables departure announcements and
-observer payload logging on its demo instances. It creates no Bot bindings.
+observer payload logging on its demo configurations. It creates no Bot bindings.
 The receipt is saved to ignored `data/smoke-results.json`; credentials are never
 saved. Re-running adds another set of run records.
 
@@ -110,7 +112,7 @@ Agent loop to construct; returning from the handler ends that invocation.
 
 ## Full event matrix
 
-Create a dedicated **Event observer** instance with payload logging enabled and
+Create a dedicated **Event observer** configuration with payload logging enabled and
 no Bot bindings. With the same authentication environment as above, run:
 
 ```bash
