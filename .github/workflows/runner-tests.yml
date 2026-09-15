@@ -30,7 +30,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: langbot-app/langbot-plugin-sdk
-          ref: dev/4.11.x
+          # Update this tested SDK revision together with Runner/uv.lock.
+          ref: c373fa370f2a20f475fc7c56f50556e1831defca
           path: langbot-plugin-sdk
       - name: Record SDK revision
         run: git -C ../../langbot-plugin-sdk rev-parse HEAD

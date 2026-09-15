@@ -60,7 +60,7 @@ def runtime_evidence(request, tmp_path_factory):
 
 def test_real_sdk_discovers_and_initializes_runner(runtime_evidence):
     plugin, evidence = runtime_evidence
-    assert evidence["sdk_path"].endswith("langbot_plugin/__init__.py")
+    assert Path(evidence["sdk_path"]).parts[-2:] == ("langbot_plugin", "__init__.py")
     assert evidence["identity"] == f"langbot-team/{PLUGINS[plugin]}"
     assert evidence["status"] == "initialized"
     assert evidence["component_kind"] == "Runner"

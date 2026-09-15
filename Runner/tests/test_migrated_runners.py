@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("plugin", ["LocalAgent", "RunnerDemo"])
 def test_migrated_runner_suite(plugin, tmp_path):
     plugin_root = ROOT / plugin
-    manifest = yaml.safe_load((plugin_root / "manifest.yaml").read_text())
+    manifest = yaml.safe_load((plugin_root / "manifest.yaml").read_text(encoding="utf-8"))
     assert manifest["metadata"]["repository"] == (
         f"https://github.com/langbot-app/langbot-plugins/tree/main/Runner/{plugin}"
     )
@@ -34,9 +34,10 @@ def test_migrated_runner_suite(plugin, tmp_path):
             f"--junitxml={evidence_dir / (plugin + '.xml')}",
         ],
         cwd=plugin_root,
-        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONUTF8": "1"},
         capture_output=True,
         timeout=180,
     )
-    (evidence_dir / f"{plugin}.log").write_text(result.stdout + result.stderr)
+    (evidence_dir / f"{plugin}.log").write_text(result.stdout + result.stderr, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr

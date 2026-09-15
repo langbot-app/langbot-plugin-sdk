@@ -847,7 +847,7 @@ dev = [
 
 [[package]]
 name = "langbot-plugin"
-version = "0.5.5"
+version = "0.6.0b2"
 source = { editable = "../../langbot-plugin-sdk" }
 dependencies = [
     { name = "aiofiles" },
