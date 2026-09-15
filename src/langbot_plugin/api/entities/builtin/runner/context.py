@@ -314,10 +314,13 @@ class RunnerContext(pydantic.BaseModel):
             raise RuntimeError("Runner context is not active")
         if level not in {"debug", "info", "warning", "error"}:
             raise ValueError("Invalid log level")
+        log_level = typing.cast(
+            typing.Literal["debug", "info", "warning", "error"], level
+        )
         await self._results.put(
             RunnerResult(
                 run_id=self.run_id,
                 type="processor.log",
-                data=ProcessorLogPayload(text=str(text), level=level).model_dump(),
+                data=ProcessorLogPayload(text=str(text), level=log_level).model_dump(),
             )
         )

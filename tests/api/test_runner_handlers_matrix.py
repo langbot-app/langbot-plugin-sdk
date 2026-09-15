@@ -183,8 +183,11 @@ async def test_many_logs_drain_without_deadlock_or_loss():
     ctx = run_context(
         run_id="logs", config={}, event=SimpleNamespace(data={"type": "friend.added"})
     )
-    async with asyncio.timeout(3):
-        output = [item async for item in component.invoke(ctx)]
+
+    async def collect_results():
+        return [item async for item in component.invoke(ctx)]
+
+    output = await asyncio.wait_for(collect_results(), timeout=3)
     assert [item.data["text"] for item in output[:-1]] == list(map(str, range(600)))
     assert output[-1].type == "run.completed"
 

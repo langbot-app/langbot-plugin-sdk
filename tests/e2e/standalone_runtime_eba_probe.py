@@ -46,20 +46,30 @@ class RuntimeControlClient:
         else:
             response_data = {}
 
-        await self.websocket.send(json.dumps({
-            "seq_id": payload["seq_id"],
-            "code": 0,
-            "message": "success",
-            "data": response_data,
-            "chunk_status": "continue",
-        }))
+        await self.websocket.send(
+            json.dumps(
+                {
+                    "seq_id": payload["seq_id"],
+                    "code": 0,
+                    "message": "success",
+                    "data": response_data,
+                    "chunk_status": "continue",
+                }
+            )
+        )
 
-    async def call(self, action: str, data: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
+    async def call(
+        self, action: str, data: dict[str, Any], timeout: float = 10.0
+    ) -> dict[str, Any]:
         self.seq += 1
         seq_id = self.seq
-        waiter: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        waiter: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
         self.waiters[seq_id] = waiter
-        await self.websocket.send(json.dumps({"seq_id": seq_id, "action": action, "data": data}))
+        await self.websocket.send(
+            json.dumps({"seq_id": seq_id, "action": action, "data": data})
+        )
         response = await asyncio.wait_for(waiter, timeout)
         if response["code"] != 0:
             raise RuntimeError(response["message"])
@@ -132,14 +142,40 @@ def probe_events() -> list[dict[str, Any]]:
             },
             4,
         ),
-        event_context("GroupMemberJoined", {"group": group, "member": user, "inviter": user, "join_type": "invite"}, 5),
-        event_context("GroupMemberLeft", {"group": group, "member": user, "is_kicked": True, "operator": user}, 6),
-        event_context("GroupMemberBanned", {"group": group, "member": user, "operator": user, "duration": 60}, 7),
-        event_context("BotInvitedToGroup", {"group": group, "inviter": user, "request_id": "req-1"}, 8),
+        event_context(
+            "GroupMemberJoined",
+            {"group": group, "member": user, "inviter": user, "join_type": "invite"},
+            5,
+        ),
+        event_context(
+            "GroupMemberLeft",
+            {"group": group, "member": user, "is_kicked": True, "operator": user},
+            6,
+        ),
+        event_context(
+            "GroupMemberBanned",
+            {"group": group, "member": user, "operator": user, "duration": 60},
+            7,
+        ),
+        event_context(
+            "BotInvitedToGroup",
+            {"group": group, "inviter": user, "request_id": "req-1"},
+            8,
+        ),
         event_context("BotRemovedFromGroup", {"group": group, "operator": user}, 9),
-        event_context("BotMuted", {"group": group, "operator": user, "duration": 60}, 10),
+        event_context(
+            "BotMuted", {"group": group, "operator": user, "duration": 60}, 10
+        ),
         event_context("BotUnmuted", {"group": group, "operator": user}, 11),
-        event_context("PlatformSpecificEventReceived", {"adapter_name": "telegram", "action": "callback_query", "data": {"data": "button"}}, 12),
+        event_context(
+            "PlatformSpecificEventReceived",
+            {
+                "adapter_name": "telegram",
+                "action": "callback_query",
+                "data": {"data": "button"},
+            },
+            12,
+        ),
     ]
 
 
@@ -174,16 +210,26 @@ async def main() -> int:
                     timeout=20,
                 )
                 if not result["emitted_plugins"]:
-                    raise RuntimeError(f"Event was not emitted: {event_ctx['event_name']}")
+                    raise RuntimeError(
+                        f"Event was not emitted: {event_ctx['event_name']}"
+                    )
 
             for _ in range(20):
                 if log_path.exists():
-                    lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+                    lines = [
+                        json.loads(line)
+                        for line in log_path.read_text(encoding="utf-8").splitlines()
+                    ]
                     if len(lines) >= len(probe_events()):
                         seen = [line["event_name"] for line in lines]
                         expected = [event["event_name"] for event in probe_events()]
-                        if seen[-len(expected):] == expected:
-                            print(json.dumps({"ok": True, "events": seen[-len(expected):]}, ensure_ascii=False))
+                        if seen[-len(expected) :] == expected:
+                            print(
+                                json.dumps(
+                                    {"ok": True, "events": seen[-len(expected) :]},
+                                    ensure_ascii=False,
+                                )
+                            )
                             return 0
                 await asyncio.sleep(0.5)
 

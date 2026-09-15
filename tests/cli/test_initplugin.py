@@ -15,9 +15,7 @@ def test_get_lbp_path_uses_platform_specific_script_location(monkeypatch):
 
     monkeypatch.setattr(initplugin.sys, "executable", r"C:\Python\python.exe")
     monkeypatch.setattr(initplugin.platform, "system", lambda: "Windows")
-    assert initplugin.get_lbp_path() == ntpath.join(
-        r"C:\Python", "Scripts", "lbp.exe"
-    )
+    assert initplugin.get_lbp_path() == ntpath.join(r"C:\Python", "Scripts", "lbp.exe")
 
     monkeypatch.setattr(
         initplugin.sys,

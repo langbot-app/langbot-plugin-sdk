@@ -25,6 +25,7 @@ class Entity(pydantic.BaseModel):
 # EBA entities (backward-compatible additions)
 ###############################
 
+
 class ChatType(str, Enum):
     """Chat/session type."""
 
@@ -120,6 +121,7 @@ class UserGroupMember(pydantic.BaseModel):
 ###############################
 # Legacy entities (unchanged)
 ###############################
+
 
 class Friend(Entity):
     """Friend (direct-chat peer)."""

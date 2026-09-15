@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 class NotSupportedError(Exception):
     def __init__(self, api_name: str, *args):
         super().__init__(f"API '{api_name}' is not supported by this adapter", *args)

@@ -55,11 +55,15 @@ class MessageReceived(BaseEventModel):
         default_factory=platform_message.MessageChain,
         serialization_alias="message_chain",
     )
-    sender: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    sender: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
     chat_id: typing.Union[int, str] = ""
     group: typing.Optional[platform_entities.UserGroup] = None
-    platform_event: typing.Optional[platform_events.MessageReceivedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MessageReceivedEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @pydantic.field_serializer("message_chain")
     def serialize_message_chain(self, v, _info):
@@ -70,7 +74,9 @@ class MessageReceived(BaseEventModel):
         return platform_message.MessageChain.model_validate(v)
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MessageReceivedEvent) -> "MessageReceived":
+    def from_platform_event(
+        cls, event: platform_events.MessageReceivedEvent
+    ) -> "MessageReceived":
         return cls(
             bot_uuid=event.bot_uuid,
             adapter_name=event.adapter_name,
@@ -94,11 +100,15 @@ class MessageEdited(BaseEventModel):
         default_factory=platform_message.MessageChain,
         serialization_alias="new_content",
     )
-    editor: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    editor: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
     chat_id: typing.Union[int, str] = ""
     group: typing.Optional[platform_entities.UserGroup] = None
-    platform_event: typing.Optional[platform_events.MessageEditedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MessageEditedEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @pydantic.field_serializer("new_content")
     def serialize_new_content(self, v, _info):
@@ -109,7 +119,9 @@ class MessageEdited(BaseEventModel):
         return platform_message.MessageChain.model_validate(v)
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MessageEditedEvent) -> "MessageEdited":
+    def from_platform_event(
+        cls, event: platform_events.MessageEditedEvent
+    ) -> "MessageEdited":
         return cls(
             message_id=event.message_id,
             new_content=event.new_content,
@@ -131,10 +143,14 @@ class MessageDeleted(BaseEventModel):
     chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
     chat_id: typing.Union[int, str] = ""
     group: typing.Optional[platform_entities.UserGroup] = None
-    platform_event: typing.Optional[platform_events.MessageDeletedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MessageDeletedEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MessageDeletedEvent) -> "MessageDeleted":
+    def from_platform_event(
+        cls, event: platform_events.MessageDeletedEvent
+    ) -> "MessageDeleted":
         return cls(
             message_id=event.message_id,
             operator=event.operator,
@@ -151,16 +167,22 @@ class MessageReactionReceived(BaseEventModel):
     event_name: str = "MessageReactionReceived"
 
     message_id: typing.Union[int, str] = ""
-    user: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    user: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     reaction: str = ""
     is_add: bool = True
     chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
     chat_id: typing.Union[int, str] = ""
     group: typing.Optional[platform_entities.UserGroup] = None
-    platform_event: typing.Optional[platform_events.MessageReactionEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MessageReactionEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MessageReactionEvent) -> "MessageReactionReceived":
+    def from_platform_event(
+        cls, event: platform_events.MessageReactionEvent
+    ) -> "MessageReactionReceived":
         return cls(
             message_id=event.message_id,
             user=event.user,
@@ -186,10 +208,14 @@ class FeedbackReceived(BaseEventModel):
     session_id: typing.Optional[str] = None
     message_id: typing.Optional[str] = None
     stream_id: typing.Optional[str] = None
-    platform_event: typing.Optional[platform_events.FeedbackReceivedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.FeedbackReceivedEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.FeedbackReceivedEvent) -> "FeedbackReceived":
+    def from_platform_event(
+        cls, event: platform_events.FeedbackReceivedEvent
+    ) -> "FeedbackReceived":
         return cls(
             feedback_id=event.feedback_id,
             feedback_type=event.feedback_type,
@@ -208,14 +234,22 @@ class GroupMemberJoined(BaseEventModel):
 
     event_name: str = "GroupMemberJoined"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
-    member: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
+    member: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     inviter: typing.Optional[platform_entities.User] = None
     join_type: typing.Optional[str] = None
-    platform_event: typing.Optional[platform_events.MemberJoinedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MemberJoinedEvent] = pydantic.Field(
+        default=None, exclude=True
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MemberJoinedEvent) -> "GroupMemberJoined":
+    def from_platform_event(
+        cls, event: platform_events.MemberJoinedEvent
+    ) -> "GroupMemberJoined":
         return cls(
             group=event.group,
             member=event.member,
@@ -230,14 +264,22 @@ class GroupMemberLeft(BaseEventModel):
 
     event_name: str = "GroupMemberLeft"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
-    member: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
+    member: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     is_kicked: bool = False
     operator: typing.Optional[platform_entities.User] = None
-    platform_event: typing.Optional[platform_events.MemberLeftEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MemberLeftEvent] = pydantic.Field(
+        default=None, exclude=True
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MemberLeftEvent) -> "GroupMemberLeft":
+    def from_platform_event(
+        cls, event: platform_events.MemberLeftEvent
+    ) -> "GroupMemberLeft":
         return cls(
             group=event.group,
             member=event.member,
@@ -252,14 +294,22 @@ class GroupMemberBanned(BaseEventModel):
 
     event_name: str = "GroupMemberBanned"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
-    member: platform_entities.User = pydantic.Field(default_factory=lambda: platform_entities.User(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
+    member: platform_entities.User = pydantic.Field(
+        default_factory=lambda: platform_entities.User(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
     duration: typing.Optional[int] = None
-    platform_event: typing.Optional[platform_events.MemberBannedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.MemberBannedEvent] = pydantic.Field(
+        default=None, exclude=True
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.MemberBannedEvent) -> "GroupMemberBanned":
+    def from_platform_event(
+        cls, event: platform_events.MemberBannedEvent
+    ) -> "GroupMemberBanned":
         return cls(
             group=event.group,
             member=event.member,
@@ -274,13 +324,19 @@ class BotInvitedToGroup(BaseEventModel):
 
     event_name: str = "BotInvitedToGroup"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     inviter: typing.Optional[platform_entities.User] = None
     request_id: typing.Optional[typing.Union[int, str]] = None
-    platform_event: typing.Optional[platform_events.BotInvitedToGroupEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.BotInvitedToGroupEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.BotInvitedToGroupEvent) -> "BotInvitedToGroup":
+    def from_platform_event(
+        cls, event: platform_events.BotInvitedToGroupEvent
+    ) -> "BotInvitedToGroup":
         return cls(
             group=event.group,
             inviter=event.inviter,
@@ -294,12 +350,18 @@ class BotRemovedFromGroup(BaseEventModel):
 
     event_name: str = "BotRemovedFromGroup"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
-    platform_event: typing.Optional[platform_events.BotRemovedFromGroupEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.BotRemovedFromGroupEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.BotRemovedFromGroupEvent) -> "BotRemovedFromGroup":
+    def from_platform_event(
+        cls, event: platform_events.BotRemovedFromGroupEvent
+    ) -> "BotRemovedFromGroup":
         return cls(group=event.group, operator=event.operator, platform_event=event)
 
 
@@ -308,10 +370,14 @@ class BotMuted(BaseEventModel):
 
     event_name: str = "BotMuted"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
     duration: typing.Optional[int] = None
-    platform_event: typing.Optional[platform_events.BotMutedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.BotMutedEvent] = pydantic.Field(
+        default=None, exclude=True
+    )
 
     @classmethod
     def from_platform_event(cls, event: platform_events.BotMutedEvent) -> "BotMuted":
@@ -328,12 +394,18 @@ class BotUnmuted(BaseEventModel):
 
     event_name: str = "BotUnmuted"
 
-    group: platform_entities.UserGroup = pydantic.Field(default_factory=lambda: platform_entities.UserGroup(id=""))
+    group: platform_entities.UserGroup = pydantic.Field(
+        default_factory=lambda: platform_entities.UserGroup(id="")
+    )
     operator: typing.Optional[platform_entities.User] = None
-    platform_event: typing.Optional[platform_events.BotUnmutedEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.BotUnmutedEvent] = pydantic.Field(
+        default=None, exclude=True
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.BotUnmutedEvent) -> "BotUnmuted":
+    def from_platform_event(
+        cls, event: platform_events.BotUnmutedEvent
+    ) -> "BotUnmuted":
         return cls(group=event.group, operator=event.operator, platform_event=event)
 
 
@@ -345,10 +417,14 @@ class PlatformSpecificEventReceived(BaseEventModel):
     adapter_name: str = ""
     action: str = ""
     data: dict = pydantic.Field(default_factory=dict)
-    platform_event: typing.Optional[platform_events.PlatformSpecificEvent] = pydantic.Field(default=None, exclude=True)
+    platform_event: typing.Optional[platform_events.PlatformSpecificEvent] = (
+        pydantic.Field(default=None, exclude=True)
+    )
 
     @classmethod
-    def from_platform_event(cls, event: platform_events.PlatformSpecificEvent) -> "PlatformSpecificEventReceived":
+    def from_platform_event(
+        cls, event: platform_events.PlatformSpecificEvent
+    ) -> "PlatformSpecificEventReceived":
         return cls(
             adapter_name=event.adapter_name,
             action=event.action,

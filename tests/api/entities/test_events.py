@@ -394,7 +394,12 @@ def test_eba_plugin_event_models_convert_from_platform_events():
                 chat_id="group-1",
                 group=group,
             ),
-            {"message_id": "msg-1", "chat_id": "group-1", "bot_uuid": "bot-1", "adapter_name": "discord"},
+            {
+                "message_id": "msg-1",
+                "chat_id": "group-1",
+                "bot_uuid": "bot-1",
+                "adapter_name": "discord",
+            },
         ),
         (
             MessageEdited,
@@ -409,17 +414,27 @@ def test_eba_plugin_event_models_convert_from_platform_events():
         ),
         (
             MessageReactionReceived,
-            MessageReactionEvent(message_id="msg-3", user=user, reaction="👍", chat_id="group-1", group=group),
+            MessageReactionEvent(
+                message_id="msg-3",
+                user=user,
+                reaction="👍",
+                chat_id="group-1",
+                group=group,
+            ),
             {"message_id": "msg-3", "reaction": "👍"},
         ),
         (
             FeedbackReceived,
-            FeedbackReceivedEvent(feedback_id="fb-1", feedback_type=2, feedback_content="bad"),
+            FeedbackReceivedEvent(
+                feedback_id="fb-1", feedback_type=2, feedback_content="bad"
+            ),
             {"feedback_id": "fb-1", "feedback_type": 2},
         ),
         (
             GroupMemberJoined,
-            MemberJoinedEvent(group=group, member=user, inviter=user, join_type="invite"),
+            MemberJoinedEvent(
+                group=group, member=user, inviter=user, join_type="invite"
+            ),
             {"join_type": "invite"},
         ),
         (
@@ -439,7 +454,9 @@ def test_eba_plugin_event_models_convert_from_platform_events():
         ),
         (
             PlatformSpecificEventReceived,
-            PlatformSpecificEvent(adapter_name="telegram", action="callback_query", data={"data": "ok"}),
+            PlatformSpecificEvent(
+                adapter_name="telegram", action="callback_query", data={"data": "ok"}
+            ),
             {"adapter_name": "telegram", "action": "callback_query"},
         ),
     ]
@@ -477,7 +494,11 @@ def test_event_listener_can_handle_eba_plugin_events():
     )
     platform_ctx = EventContext.from_event(
         PlatformSpecificEventReceived.from_platform_event(
-            PlatformSpecificEvent(adapter_name="telegram", action="callback_query", data={"data": "button"})
+            PlatformSpecificEvent(
+                adapter_name="telegram",
+                action="callback_query",
+                data={"data": "button"},
+            )
         )
     )
 
