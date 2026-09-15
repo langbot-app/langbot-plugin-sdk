@@ -281,9 +281,10 @@ class PluginDependencyEnvironmentStore:
                     raise DependencyEnvironmentPreparationError(
                         "Runtime-provided dependency langbot-plugin is unavailable"
                     ) from exc
-                if (
-                    requirement.specifier
-                    and runtime_version not in requirement.specifier
+                # Validate the already-installed Runtime SDK, including beta
+                # releases, rather than filtering candidates for installation.
+                if requirement.specifier and not requirement.specifier.contains(
+                    runtime_version, prereleases=True
                 ):
                     raise DependencyEnvironmentPreparationError(
                         "Plugin requires "

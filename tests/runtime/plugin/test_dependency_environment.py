@@ -222,13 +222,18 @@ async def test_artifact_requirements_reject_pip_control_options(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    "runtime_version",
+    ["0.5.5", "0.6.0a1", "0.6.0b1", "0.6.0rc1", "0.6.0.dev1", "0.6.0"],
+)
 async def test_runtime_sdk_requirement_is_not_installed_into_plugin_environment(
     tmp_path,
     monkeypatch,
+    runtime_version,
 ):
     artifact = _artifact(
         tmp_path,
-        "langbot-plugin>=0.1.0\nthird-party-demo==1.0.0\n",
+        "langbot-plugin>=0.3.0\nthird-party-demo==1.0.0\n",
     )
     store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
     captured_requirements = None
@@ -236,7 +241,7 @@ async def test_runtime_sdk_requirement_is_not_installed_into_plugin_environment(
     monkeypatch.setattr(
         dependency_environment_module.importlib.metadata,
         "version",
-        lambda name: "0.5.5" if name == "langbot-plugin" else "1.0.0",
+        lambda name: runtime_version if name == "langbot-plugin" else "1.0.0",
     )
 
     async def installer(staging, requirements):
@@ -253,16 +258,29 @@ async def test_runtime_sdk_requirement_is_not_installed_into_plugin_environment(
     assert captured_requirements == ("third-party-demo==1.0.0",)
 
 
+@pytest.mark.parametrize(
+    ("runtime_version", "requirement"),
+    [
+        ("0.5.5", ">=9.0.0"),
+        ("0.6.0b1", ">=0.6.0"),
+        ("0.6.0b1", ">=0.7.0"),
+        ("0.6.0b1", ">=0.3.0,<0.6.0"),
+        ("0.6.0b1", ">=0.3.0,!=0.6.0b1"),
+        ("0.6.0b1", "==0.5.5"),
+    ],
+)
 async def test_runtime_sdk_requirement_rejects_incompatible_runtime_version(
     tmp_path,
     monkeypatch,
+    runtime_version,
+    requirement,
 ):
-    artifact = _artifact(tmp_path, "langbot-plugin>=9.0.0\n")
+    artifact = _artifact(tmp_path, f"langbot-plugin{requirement}\n")
     store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
     monkeypatch.setattr(
         dependency_environment_module.importlib.metadata,
         "version",
-        lambda name: "0.5.5",
+        lambda name: runtime_version,
     )
 
     async def installer(staging, requirements):  # pragma: no cover - must not run
@@ -270,7 +288,7 @@ async def test_runtime_sdk_requirement_rejects_incompatible_runtime_version(
 
     with pytest.raises(
         DependencyEnvironmentPreparationError,
-        match="Runtime provides langbot-plugin==0.5.5",
+        match=f"Runtime provides langbot-plugin=={runtime_version}",
     ):
         await store.prepare(
             artifact,
