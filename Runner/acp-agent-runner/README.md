@@ -300,6 +300,13 @@ includes:
 - `langbot_get_tool_detail`
 - `langbot_call_tool`
 
+Host-authorized platform and event actions are projected through the same MCP
+surface as `tool_type=platform` tools. Use `langbot_list_assets` with
+`asset_types=["platform_tools"]` to inspect them, then call them through
+`langbot_call_tool`. Event-level action targets are frozen by LangBot for the
+current run; platform-level actions may accept explicit target IDs. The ACP
+process never receives the platform adapter or its credentials directly.
+
 The stable tool list is intentionally compatible with platforms such as Dify
 that cache MCP provider tools. For those platforms, the same gateway can accept
 the short-lived `run_token` as a tool argument instead of an HTTP header.

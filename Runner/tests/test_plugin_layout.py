@@ -2281,7 +2281,14 @@ def test_acp_resource_summary_includes_run_scoped_bridge_tools() -> None:
         resources=AgentResources.model_validate(
             {
                 "knowledge_bases": [{"kb_id": "kb_1", "kb_name": "Docs"}],
-                "tools": [{"tool_name": "weather", "description": "lookup weather"}],
+                "tools": [
+                    {"tool_name": "weather", "description": "lookup weather"},
+                    {
+                        "tool_name": "event_reply",
+                        "tool_type": "platform",
+                        "description": "reply to the current event",
+                    },
+                ],
             }
         ),
         context=ContextAccess(available_apis=ContextAPICapabilities(history_page=True)),
@@ -2295,6 +2302,12 @@ def test_acp_resource_summary_includes_run_scoped_bridge_tools() -> None:
         {"tool_name": "langbot_retrieve_knowledge"},
         {"tool_name": "langbot_get_tool_detail"},
         {"tool_name": "langbot_call_tool"},
+    ]
+    assert module._resource_summary(ctx)["tools"] == [
+        {"tool_name": "weather", "type": None, "description": "lookup weather"}
+    ]
+    assert module._resource_summary(ctx)["platform_tools"] == [
+        {"tool_name": "event_reply", "description": "reply to the current event"}
     ]
 
     prompt = object.__new__(module.DefaultRunner)._with_run_scope_prompt(ctx, "call langbot_get_current_event")

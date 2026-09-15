@@ -211,6 +211,8 @@ def _mcp_bridge_tool_names(ctx: RunnerContext) -> list[str]:
 
 
 def _resource_summary(ctx: RunnerContext) -> dict[str, typing.Any]:
+    ordinary_tools = [item for item in ctx.resources.tools if item.tool_type != "platform"]
+    platform_tools = [item for item in ctx.resources.tools if item.tool_type == "platform"]
     return {
         "knowledge_bases": [
             {
@@ -226,7 +228,14 @@ def _resource_summary(ctx: RunnerContext) -> dict[str, typing.Any]:
                 "type": item.tool_type,
                 "description": item.description,
             }
-            for item in ctx.resources.tools
+            for item in ordinary_tools
+        ],
+        "platform_tools": [
+            {
+                "tool_name": item.tool_name,
+                "description": item.description,
+            }
+            for item in platform_tools
         ],
         "mcp_bridge_tools": [{"tool_name": name} for name in _mcp_bridge_tool_names(ctx)],
     }
