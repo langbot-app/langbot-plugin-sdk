@@ -1,5 +1,7 @@
 # Tbox Agent
 
+`remove-think` 为严格布尔值（默认 `false`）。设为 `true` 可隐藏推理字段和 `<think>` 块，支持跨流式分块边界，保留正文及工具内容。
+
 Tbox Agent 将蚂蚁百宝箱应用接入 LangBot 运行器。插件调用 Tbox SDK，把 LangBot 文本和图片输入发送给目标应用，并将流式结果转换为 Runner Protocol v1 消息。
 
 它适合已经在百宝箱中完成应用编排、希望通过 LangBot 统一接入聊天渠道的场景。
@@ -51,3 +53,11 @@ runner 会把 LangBot 输入中的图片 URL 或 base64 图片转换为 Tbox SDK
 uv run --no-sync pytest -q
 uv run --no-sync ruff check .
 ```
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-bot` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-bot` uses `conversation.bot_id` (or Host runtime `bot_id` when there is no conversation), exactly, without a prefix.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

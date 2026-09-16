@@ -1,5 +1,7 @@
 # Tbox Agent
 
+`remove-think` รับเฉพาะค่าบูลีน (ค่าเริ่มต้น `false`) ตั้งเป็น `true` เพื่อซ่อนการคิดและบล็อก `<think>` รวมถึงขอบเขตสตรีม โดยเก็บคำตอบและเนื้อหาเครื่องมือไว้
+
 ## ภาพรวม
 
 เรียกใช้แอป Ant Tbox เป็น LangBot Runner
@@ -38,3 +40,11 @@
 - Runner ใช้ได้เฉพาะทรัพยากร LangBot ที่ได้รับอนุญาตสำหรับการทำงานปัจจุบัน
 - ความพร้อมใช้งาน ความสามารถของโมเดล และขีดจำกัดอัตราขึ้นอยู่กับบริการภายนอก
 - ดูพฤติกรรมขั้นสูงและข้อจำกัดเฉพาะผลิตภัณฑ์ใน README ภาษาจีนที่รากหรือ README_en_US.md ภาษาอังกฤษ
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-bot` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-bot` uses `conversation.bot_id` (or Host runtime `bot_id` when there is no conversation), exactly, without a prefix.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

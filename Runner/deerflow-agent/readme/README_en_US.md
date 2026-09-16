@@ -1,5 +1,7 @@
 # DeerFlow Agent
 
+Credentials and provider identifiers are opaque: `api-key`, `auth-header`, `assistant-id`, and `model-name` keep explicit whitespace and empty values. A nonempty `auth-header` overrides Bearer `api-key`. Invalid string/boolean/integer types fail with a field-only configuration error rather than being substituted.
+
 ## Overview
 
 Run a DeerFlow LangGraph agent as a LangBot Runner.

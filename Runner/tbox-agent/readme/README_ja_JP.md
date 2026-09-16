@@ -1,5 +1,7 @@
 # Tbox Agent
 
+`remove-think` は真偽値です（既定値 `false`）。`true` にすると推論フィールドと `<think>` ブロックを非表示にし、回答とツール内容を保持します。分割されたストリーミングにも対応します。
+
 ## 概要
 
 Ant Tbox アプリを LangBot Runner として実行します。
@@ -38,3 +40,11 @@ Ant Tbox アプリを LangBot Runner として実行します。
 - Runner が利用できるのは、現在の実行で許可された LangBot リソースだけです。
 - 外部サービスの可用性、モデル機能、レート制限は各プラットフォームに依存します。
 - 高度な動作と製品固有の制約は、ルートの中国語 README または英語版 README_en_US.md を参照してください。
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-bot` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-bot` uses `conversation.bot_id` (or Host runtime `bot_id` when there is no conversation), exactly, without a prefix.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

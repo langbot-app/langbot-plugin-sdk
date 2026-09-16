@@ -34,12 +34,13 @@ LangBot 负责运行信封、资源授权与结果投递；Local Agent 负责 Ag
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
-| `model` | `model-fallback-selector` | 是 | 主模型为空，fallback 为空 | 选择主模型及备用模型 |
-| `timeout` | `integer` | 否 | `300` | 整次运行超时秒数；`0` 或 `null` 表示不设置 Host 截止时间 |
+| `model` | `model-fallback-selector` | 是 | 主模型为空，fallback 为空，reasoning 为 {} | 选择主模型及备用模型 |
+| `timeout` | `integer` | 否 | `300` | 整次运行超时秒数；`0` 或 `null` 仅关闭插件本地超时，Host 截止时间仍有效 |
 | `prompt` | `prompt-editor` | 是 | `You are a helpful assistant.` | 默认系统提示词；Host 提供有效提示词 API 时优先使用预处理后的结果 |
 | `remove-think` | `boolean` | 否 | `false` | 请求模型适配器移除思考内容 |
 | `knowledge-bases` | `knowledge-base-multi-selector` | 否 | `[]` | 用于 RAG 的知识库 |
 | `advanced-settings` | `boolean` | 否 | `false` | 展开检索、工具、超时和上下文管理的高级参数；仅影响表单显示 |
+| `date-grounding` | `boolean` | 否 | `true` | 注入当前 UTC 日期，并提醒核实时效信息 |
 | `retrieval-top-k` | `integer` | 否 | `5` | 每个知识库请求的检索条数 |
 | `rerank-model` | `rerank-model-selector` | 否 | 空 | 可选重排模型 |
 | `rerank-top-k` | `integer` | 否 | `5` | 重排后保留的结果数 |
@@ -92,3 +93,28 @@ uv run --no-sync ruff check .
 - 不负责 EventGateway、事件订阅、调度器或事件广播。
 - 不绕过 `ctx.resources` 访问未授权模型、工具、知识库或平台 API。
 - 不在插件实例上保存可变的跨会话状态；需要持久化时使用 Host 管理的状态或存储接口。
+
+## 原生运行器迁移说明
+
+以上字段属于**每条流水线的 Runner 绑定配置**（`ai.runner_config[plugin:langbot-team/LocalAgent/default]` / 解析后的
+`binding.runner_config`），不是插件全局配置。`model.reasoning` 默认 `{}`，按模型 UUID
+保存 provider-neutral 等级：`provider_default`、`disabled`、`enabled`、`minimal`、`low`、
+`medium`、`high`、`xhigh`、`max`。Host 必须从描述符声明的模型选择器读取配置，在运行开始时
+冻结到授权快照，并对主模型、fallback、工具跟进与摘要请求使用请求级模型副本。插件不生成
+供应商参数，也不扩展 SDK/wire；需要支持该桥接的 Host，单纯保存配置不代表推理等级已生效。
+`remove-think` 只控制思考输出过滤，不代表推理强度。
+
+`date-grounding=true` 默认在 token 预算计算前注入当前 UTC 日期与时效信息核实提示，
+并保留静态或 Host 有效提示词。UTC 不等于推测用户时区；已有独立日期提示时可设为 `false`。
+SDK 支持的结构化提示词内容与消息元数据会保留；无效内容显式报错，不再静默丢弃。
+
+迁移采用新默认：token 预算与 checkpoint 压缩替代 `max-round`，不做轮数到 token 的伪换算；
+工具结果上限 20000 字符、总运行超时 300 秒、工具跟进上限 100 轮；保留有界且独立的 RAG 上下文。
+`timeout=0`/`null` 只关闭插件本地超时，不能取消 Host 截止时间。`retrieval-top-k=5` 为每个知识库
+请求 5 条，无重排时合并后也最多保留 5 条；有重排时使用 `rerank-top-k=5`。
+
+保留 `tool-execution-mode=parallel` 默认以并发执行独立工具，结果仍按源顺序返回。
+**结果排列不代表执行顺序**，有副作用或依赖顺序的操作可能竞争，应选择 `serial`；
+两种模式均不能扩大 Host 授权范围。工具、MCP 附件/可见性、技能、Box 会话隔离由 Host 管理，
+不可移到插件全局配置。旧 `knowledge-base` 和字符串 `model` 分别需要显式迁移为
+`knowledge-bases` 与模型选择器；旧历史与 Box 文件共享范围必须另行分析，压缩不等于数据导入。

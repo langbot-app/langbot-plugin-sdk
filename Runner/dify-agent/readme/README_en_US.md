@@ -1,5 +1,7 @@
 # Dify Agent
 
+`remove-think` (boolean, default `false`) hides think-tagged reasoning, including unfinished reasoning. `app-type` also accepts `chatflow`.
+
 Run a Dify application as a LangBot Runner.
 
 ## Runner ID
@@ -15,8 +17,8 @@ Configuration is **static** and should not contain runtime state. Only the follo
 | base-url | string | yes | https://api.dify.ai/v1 | Dify API base URL |
 | advanced-settings | boolean | no | false | Show prompt and timeout tuning controls |
 | api-key | secret | yes | '' | Dify Service API key |
-| app-type | select | yes | chat | Application type (chat/agent/workflow) |
-| base-prompt | text | yes | File-handling instruction | Instruction prepended to LangBot input |
+| app-type | select | yes | chat | Application type (chat/chatflow/agent/workflow) |
+| base-prompt | text | yes | File-handling instruction | Fallback instruction when LangBot input is empty |
 | timeout | integer | no | 30 | Request timeout (seconds) |
 | langbot-assets-enabled | boolean | no | false | Register a short-lived LangBot asset token for each run and pass it to Dify inputs |
 | langbot-assets-gateway-host | string | no | 0.0.0.0 | Host for the local LangBot Asset Gateway |
@@ -292,3 +294,11 @@ Migrated from `dify-service-api` in LangBot.
 2. **State via protocol**: Use `ctx.state` and `state.updated`
 3. **Inputs via adapter params**: Use `ctx.adapter.extra.params` for workflow inputs
 4. **Scoped state**: `external.conversation_id` with `scope="conversation"`
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the native Query.session launcher into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

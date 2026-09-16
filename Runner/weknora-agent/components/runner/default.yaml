@@ -52,29 +52,20 @@ spec:
         en_US: Agent ID
         zh_Hans: 智能体 ID
       description:
-        en_US: Built-in agents include builtin-quick-answer, builtin-smart-reasoning, and builtin-data-analyst.
-        zh_Hans: 内置智能体包括 builtin-quick-answer、builtin-smart-reasoning、builtin-data-analyst。
+        en_US: When omitted, chat uses builtin-quick-answer and agent uses builtin-smart-reasoning. An explicit empty value lets the server choose. Saved IDs apply in both modes.
+        zh_Hans: 未设置时，聊天使用 builtin-quick-answer，智能体使用 builtin-smart-reasoning。显式留空则由服务端选择。已保存的 ID 在两种模式下均生效。
       type: string
-      required: true
-      default: 'builtin-smart-reasoning'
-      show_if:
-        field: app-type
-        operator: eq
-        value: agent
+      required: false
     - name: knowledge-base-ids
       label:
         en_US: Knowledge Base IDs
         zh_Hans: 知识库 ID 列表
       description:
-        en_US: WeKnora knowledge base IDs to use.
-        zh_Hans: 要使用的 WeKnora 知识库 ID 列表。
+        en_US: Remote WeKnora knowledge base IDs used in both modes, not LangBot knowledge base UUIDs. Values and order are preserved.
+        zh_Hans: 两种模式均可使用的远端 WeKnora 知识库 ID，不是 LangBot 知识库 UUID。保留原值和顺序。
       type: array[string]
       required: false
       default: []
-      show_if:
-        field: app-type
-        operator: eq
-        value: chat
     - name: web-search-enabled
       label:
         en_US: Enable Web Search

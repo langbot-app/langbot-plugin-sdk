@@ -1,5 +1,7 @@
 # DeerFlow Agent
 
+凭据和服务端标识是不透明值：`api-key`、`auth-header`、`assistant-id`、`model-name` 保留显式空白和空值。非空 `auth-header` 优先于 Bearer `api-key`。字符串、布尔或整数类型错误会返回仅含字段名的配置错误，不会静默替换。
+
 DeerFlow Agent 将 DeerFlow LangGraph HTTP API 接入 LangBot 运行器。插件负责创建或恢复 LangGraph thread、发送运行请求、解析 SSE 事件，并把结果转换为 LangBot 流式消息和状态更新。
 
 ## 运行器 ID

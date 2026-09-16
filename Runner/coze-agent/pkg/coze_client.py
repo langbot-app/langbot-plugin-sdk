@@ -33,6 +33,24 @@ class CozeConfigError(Exception):
         super().__init__(message)
 
 
+async def _bounded_body(response: aiohttp.ClientResponse) -> bytes:
+    """Read upload/error bodies without aiohttp's unbounded buffering."""
+    limit = 1024 * 1024
+    length = response.headers.get("Content-Length")
+    try:
+        declared_size = int(length) if length is not None else 0
+    except (TypeError, ValueError):
+        declared_size = 0
+    if declared_size > limit:
+        raise CozeAPIError("Coze response exceeds the runtime limit", code="coze.response_limit")
+    body = bytearray()
+    async for chunk in response.content.iter_chunked(65536):
+        if len(body) + len(chunk) > limit:
+            raise CozeAPIError("Coze response exceeds the runtime limit", code="coze.response_limit")
+        body.extend(chunk)
+    return bytes(body)
+
+
 class AsyncCozeClient:
     """Minimal Coze API client for Runner.
 
@@ -101,6 +119,9 @@ class AsyncCozeClient:
         Raises:
             CozeAPIError: On upload failure
         """
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise CozeAPIError("Upload exceeds the 10 MiB size limit", code="coze.input_error")
+
         url = f"{self.api_base}/v1/files/upload"
 
         try:
@@ -124,29 +145,35 @@ class AsyncCozeClient:
                             code="coze.auth_error",
                         )
 
-                    response_text = await response.text()
+                    response_body = await _bounded_body(response)
 
                     if response.status != 200:
                         raise CozeAPIError(
-                            f"File upload failed: {response.status} - {response_text[:200]}",
+                            f"File upload failed: HTTP {response.status}",
                             code="coze.http_error",
                         )
 
                     try:
-                        result = await response.json()
-                    except json.JSONDecodeError as e:
+                        result = json.loads(response_body)
+                    except (ValueError, UnicodeDecodeError):
                         raise CozeAPIError(
-                            f"File upload response parse error: {response_text[:200]}",
+                            "File upload response is not valid JSON",
                             code="coze.response_invalid",
-                        ) from e
+                        ) from None
+
+                    if not isinstance(result, dict):
+                        raise CozeAPIError("File upload response is not an object", code="coze.response_invalid")
 
                     if result.get("code") != 0:
                         raise CozeAPIError(
-                            f"File upload failed: {result.get('msg', 'Unknown error')}",
+                            "Coze rejected the file upload",
                             code="coze.api_error",
                         )
 
-                    file_id = result["data"]["id"]
+                    data = result.get("data")
+                    file_id = data.get("id") if isinstance(data, dict) else None
+                    if not isinstance(file_id, str) or not file_id:
+                        raise CozeAPIError("File upload response has no valid file id", code="coze.response_invalid")
                     return file_id
 
         except TimeoutError:
@@ -156,9 +183,9 @@ class AsyncCozeClient:
             ) from None
         except CozeAPIError:
             raise
-        except Exception as e:
+        except Exception:
             raise CozeAPIError(
-                f"File upload failed: {e}",
+                "File upload failed",
                 code="coze.upload_error",
             ) from None
 
@@ -223,9 +250,9 @@ class AsyncCozeClient:
                     )
 
                 if response.status != 200:
-                    error_text = await response.text()
+                    await _bounded_body(response)
                     raise CozeAPIError(
-                        f"Coze API request failed: {response.status} - {error_text[:200]}",
+                        f"Coze API request failed: HTTP {response.status}",
                         code="coze.http_error",
                     )
 
@@ -233,7 +260,11 @@ class AsyncCozeClient:
                 chunk_type = ""
                 chunk_data = ""
 
+                total_bytes = 0
                 async for chunk in response.content:
+                    total_bytes += len(chunk)
+                    if len(chunk) > 1024 * 1024 or total_bytes > 16 * 1024 * 1024:
+                        raise CozeAPIError("Coze stream exceeds the runtime limit", code="coze.response_limit")
                     chunk = chunk.decode("utf-8")
                     if chunk != "\n":
                         if chunk.startswith("event:"):
@@ -257,9 +288,9 @@ class AsyncCozeClient:
             ) from None
         except CozeAPIError:
             raise
-        except Exception as e:
+        except Exception:
             raise CozeAPIError(
-                f"Coze API request failed: {e}",
+                "Coze API request failed",
                 code="coze.api_error",
             ) from None
 

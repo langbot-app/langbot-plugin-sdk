@@ -74,7 +74,7 @@ def extract_references_from_chunk(
     references_list = stream_output.get("doc_references", [])
 
     if references_list:
-        for doc in references_list:
+        for doc in references_list[:1024]:
             index_id = doc.get("index_id")
             doc_name = doc.get("doc_name")
             if index_id is not None and doc_name is not None:

@@ -60,12 +60,13 @@ The SDK proxy import path is
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| model | model-fallback-selector | yes | primary: '', fallbacks: [] | LLM model with fallbacks |
-| timeout | integer | no | 300 | Total runner execution timeout in seconds. Set to `0` or `null` to disable the host deadline. |
+| model | model-fallback-selector | yes | primary: '', fallbacks: [], reasoning: {} | LLM model with fallbacks |
+| timeout | integer | no | 300 | Total runner execution timeout in seconds. Set to `0` or `null` to disable only the plugin-local timeout; Host deadlines still apply. |
 | prompt | prompt-editor | yes | system: "You are a helpful assistant." | Default system prompt edited in LangBot UI |
 | remove-think | boolean | no | false | Ask Host model APIs to remove provider thinking output when supported |
 | knowledge-bases | knowledge-base-multi-selector | no | [] | Knowledge bases for RAG |
 | advanced-settings | boolean | no | false | Show advanced retrieval, tool, timeout, and context controls; affects form visibility only |
+| date-grounding | boolean | no | `true` | Add current UTC date and verification guidance |
 | retrieval-top-k | integer | no | 5 | Retrieval results requested per knowledge base |
 | rerank-model | rerank-model-selector | no | '' | Rerank model for improved retrieval |
 | rerank-top-k | integer | no | 5 | Top-K results after reranking |
@@ -268,3 +269,40 @@ We welcome contributions. Useful areas include:
 - tool loop and RAG behavior
 - multimodal input handling
 - focused tests and documentation improvements
+
+## Native runner migration decisions
+
+All settings in the Runner descriptor belong to the **per-pipeline Runner binding**
+(`ai.runner_config[plugin:langbot-team/LocalAgent/default]` / resolved `binding.runner_config`), not plugin-global settings.
+`model.reasoning` is a map from model UUID to a provider-neutral level, default `{}`:
+`provider_default`, `disabled`, `enabled`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+The Host must freeze these overrides from the descriptor-declared model selector into
+the run authorization snapshot and apply them to an authorized, request-local model
+copy on every primary, fallback, tool-follow-up and summary request. The plugin does
+not translate vendor parameters or add SDK/wire hints. This requires a Host with that
+binding-to-model bridge; a saved map alone is not proof that provider reasoning changed.
+`remove-think` controls output filtering, not reasoning effort.
+
+`date-grounding` defaults to `true`: before token budgeting, the runner appends the
+current UTC date and a time-sensitive fact verification reminder to the first system
+prompt, or creates one. UTC is explicit, not an inferred user timezone. Set `false`
+when a separately managed prompt supplies time grounding. Effective Host prompts take
+precedence over static prompts. SDK-valid structured message content and metadata are
+preserved; malformed content fails validation rather than disappearing silently.
+
+Keep the newer defaults when migrating: token budgets and checkpoint compaction replace
+`max-round` (there is no rounds-to-tokens conversion); tool results stay bounded at
+20,000 characters; run timeout stays 300 seconds; tool iterations stay 100; retrieval
+stays bounded and separate from the user message. `timeout=0`/`null` only disables the
+plugin-local deadline, never a Host deadline. `retrieval-top-k=5` requests five entries
+per KB and, without reranking, keeps five combined chunks; `rerank-top-k=5` bounds
+reranked output. These are deliberately not the native unbounded retrieval defaults.
+
+`tool-execution-mode=parallel` is retained as the new default for independent tools,
+with results returned in source order. **Completion order is not execution order:**
+side-effecting or dependent calls may race. Select `serial` for ordered writes/actions;
+neither mode widens the Host allowlist. Tools, MCP attachments/visibility, skills and
+Box session isolation remain Host authority; do not copy them into plugin-global
+configuration. Legacy `knowledge-base` and string `model` need explicit migration to
+`knowledge-bases` and the model selector. Box scope/history import require Host-specific
+migration decisions; token compaction does not import old transcripts or shared files.

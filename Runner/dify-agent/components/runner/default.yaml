@@ -11,6 +11,21 @@ metadata:
 spec:
   usages: [agent]
   config:
+    - name: user-id-source
+      label:
+        en_US: Provider User Identity
+        zh_Hans: 供应商用户身份
+      description:
+        en_US: Sender is the default. Legacy mode requires trusted Host identity; missing identity fails closed. Does not import old sessions.
+        zh_Hans: 默认使用发送者身份。兼容模式需要可信 Host 身份，缺失时拒绝请求；不会导入旧会话。
+      type: select
+      required: false
+      default: sender
+      options:
+        - name: sender
+          label: {en_US: Sender, zh_Hans: 发送者}
+        - name: legacy-session
+          label: {en_US: Native identity compatibility, zh_Hans: 原生身份兼容}
     - name: base-url
       label:
         en_US: Base URL
@@ -37,8 +52,8 @@ spec:
         zh_Hans: 基础提示词
       type: text
       description:
-        en_US: Instruction prepended to LangBot input. Keep it short unless the Dify app expects additional file-handling guidance.
-        zh_Hans: 添加到 LangBot 输入前的指令。除非 Dify 应用需要额外的文件处理说明，否则建议保持简短。
+        en_US: Fallback instruction when LangBot input is empty, for example when only a file is sent.
+        zh_Hans: LangBot 文本输入为空时使用的回退指令，例如仅发送文件时。
       required: true
       default: "When the file content is readable, please read the content of this file. When the file is an image, describe the content of this image."
       show_if:
@@ -60,6 +75,10 @@ spec:
           label:
             en_US: Chat
             zh_Hans: 聊天（包括Chatflow）
+        - name: chatflow
+          label:
+            en_US: Chatflow
+            zh_Hans: 对话流
         - name: agent
           label:
             en_US: Agent
@@ -88,6 +107,20 @@ spec:
         zh_Hans: Dify 请求的最长等待秒数。使用代理或长工作流时建议至少设置为 60 秒。
       required: false
       default: 30
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
+    - name: remove-think
+      label:
+        en_US: Hide Thinking Content
+        zh_Hans: 隐藏思考内容
+      description:
+        en_US: Remove think-tagged reasoning from responses, including unfinished streamed reasoning.
+        zh_Hans: 从回复中移除 think 标签内的推理内容，包括尚未结束的流式思考。
+      type: boolean
+      required: false
+      default: false
       show_if:
         field: advanced-settings
         operator: eq

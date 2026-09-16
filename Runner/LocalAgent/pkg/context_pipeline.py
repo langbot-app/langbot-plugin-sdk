@@ -9,8 +9,9 @@ import time
 import typing
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
-from langbot_plugin.api.entities.builtin.provider.message import Message
+from langbot_plugin.api.entities.builtin.provider.message import ContentElement, Message
 from langbot_plugin.api.entities.builtin.runner import RunnerContext
 
 from pkg.config import get_knowledge_base_ids, get_rerank_config, get_retrieval_top_k
@@ -435,6 +436,25 @@ class ContextAssembler:
         history_messages, history_cursors = await self._get_history_messages(checkpoint)
 
         prompt_messages = build_prompt_messages(await self._get_prompt_config())
+        if self.ctx.config.get("date-grounding", True) is not False:
+            # Runtime clock, not the event timestamp: replayed events may be old.
+            # UTC is explicit so a separate plugin process cannot imply Host/user time.
+            date_guidance = (
+                f"Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d (%A)')} UTC. "
+                'Resolve relative time references (e.g. "today", "this quarter", "latest", '
+                '"currently") based on this date, not your training cutoff. For anything '
+                "time-sensitive that may have changed since training — stock prices, "
+                "financial results, news, current events, exchange rates, or similar — "
+                "verify with a search tool if one is available rather than answering from memory."
+            )
+            if prompt_messages and prompt_messages[0].role == "system":
+                head = prompt_messages[0]
+                if isinstance(head.content, str):
+                    head.content += "\n\n" + date_guidance
+                else:
+                    head.content.append(ContentElement.from_text(date_guidance))
+            else:
+                prompt_messages.insert(0, Message(role="system", content=date_guidance))
         skills_message = build_skills_system_message(self.ctx)
         if skills_message is not None:
             prompt_messages = [*prompt_messages, skills_message]
@@ -480,7 +500,8 @@ class ContextAssembler:
         if bool(prompt_get) or (prompt_get is None and hasattr(self.api, "get_prompt")):
             try:
                 prompt = await self.api.get_prompt()
-                if prompt:
+                if isinstance(prompt, list):
+                    # An empty effective prompt is an intentional Host override.
                     return prompt
             except Exception:
                 logger.debug("Host prompt_get failed; falling back to static prompt", exc_info=True)

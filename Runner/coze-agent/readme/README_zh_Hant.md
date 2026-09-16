@@ -1,5 +1,7 @@
 # Coze Agent
 
+`remove-think` 為嚴格布林值（預設 `false`）。設為 `true` 可隱藏推理欄位和 `<think>` 區塊，支援跨串流分塊邊界，保留正文及工具內容。
+
 ## 概覽
 
 將 Coze 機器人作為 LangBot 運行器執行。
@@ -21,7 +23,7 @@
 | --- | --- | --- | --- |
 | `api-key` | `secret` | 是 | 空 |
 | `bot-id` | `string` | 是 | 空 |
-| `api-base` | `select` | 是 | `https://api.coze.cn` |
+| `api-base` | `string` | 是 | `https://api.coze.cn` |
 | `advanced-settings` | `boolean` | 否 | false |
 | `auto-save-history` | `boolean` | 否 | true |
 | `timeout` | `number` | 否 | `120` |
@@ -50,3 +52,11 @@
 - 運行器只能使用本次執行授權的 LangBot 資源。
 - 外部服務的可用性、模型能力與速率限制由對應平台決定。
 - 完整行為、進階設定與產品特定限制請參閱根目錄中文 README 或英文 README_en_US.md。
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the Query launcher for Coze into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

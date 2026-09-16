@@ -19,12 +19,13 @@ Agente integrado con modelos de respaldo, herramientas y recuperación de conoci
 
 | Campo | Tipo | Obligatorio | Valor predeterminado |
 | --- | --- | --- | --- |
-| `model` | `model-fallback-selector` | Sí | `{fallbacks: [], primary: ''}` |
+| `model` | `model-fallback-selector` | Sí | `{fallbacks: [], primary: '', reasoning: {}}` |
 | `timeout` | `integer` | No | `300` |
 | `prompt` | `prompt-editor` | Sí | `[{content: You are a helpful assistant., role: system}]` |
 | `remove-think` | `boolean` | No | false |
 | `knowledge-bases` | `knowledge-base-multi-selector` | No | `[]` |
 | `advanced-settings` | `boolean` | No | `false` |
+| `date-grounding` | `boolean` | No | `true` |
 | `retrieval-top-k` | `integer` | No | `5` |
 | `rerank-model` | `rerank-model-selector` | No | Vacío |
 | `rerank-top-k` | `integer` | No | `5` |

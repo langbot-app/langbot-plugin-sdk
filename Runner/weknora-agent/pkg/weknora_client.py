@@ -12,6 +12,7 @@ import typing
 import httpx
 
 from pkg.errors import WeKnoraAPIError
+from pkg.http_limits import limited_body, limited_lines, limited_post
 
 
 class AsyncWeKnoraClient:
@@ -49,8 +50,10 @@ class AsyncWeKnoraClient:
 
         try:
             async with httpx.AsyncClient(trust_env=True, timeout=timeout) as http_client:
-                response = await http_client.post(
+                response = await limited_post(
+                    http_client,
                     self._url("/sessions"),
+                    WeKnoraAPIError,
                     headers=self._headers(),
                     json=payload,
                 )
@@ -161,13 +164,13 @@ class AsyncWeKnoraClient:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        body = await response.aread()
+                        body = await limited_body(response, WeKnoraAPIError)
                         raise WeKnoraAPIError(
                             f"WeKnora request failed: status={response.status_code}, body={body.decode('utf-8', errors='replace')[:200]}",
                             code="weknora.http_error",
                         )
 
-                    async for line in response.aiter_lines():
+                    async for line in limited_lines(response, WeKnoraAPIError):
                         line = line.strip()
                         if not line:
                             continue
@@ -181,6 +184,8 @@ class AsyncWeKnoraClient:
                         except json.JSONDecodeError:
                             continue
 
+                        if not isinstance(data, dict):
+                            continue
                         yield data
                         if data.get("response_type") == "error":
                             return

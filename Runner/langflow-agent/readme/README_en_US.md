@@ -1,5 +1,7 @@
 # Langflow Agent
 
+Tweaks must be a JSON object (a JSON string or an object). Missing, null, empty, or whitespace-only input means no overrides. Invalid JSON and other values fail with `langflow.config_invalid` without logging the payload. Whitespace-only input is a plugin convenience; native Langflow rejected it. Conversation history remains persistent through `external.session_id`; migration does not restore the native fresh-session-per-request behavior.
+
 Run a Langflow flow as a LangBot Runner.
 
 ## Runner ID

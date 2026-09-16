@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 import typing
+from urllib.parse import urlsplit
 
 from langbot_plugin.api.agent_tools.asset_gateway import get_default_agent_asset_gateway
 from langbot_plugin.api.definition.components.runner.runner import Runner
@@ -22,6 +23,7 @@ from pkg.coze_client import (
     CozeAPIError,
     CozeConfigError,
 )
+from pkg.reasoning import ResponseBudget, ThinkingFilter, positive_timeout, strict_bool
 
 logger = logging.getLogger(__name__)
 
@@ -77,18 +79,29 @@ def _content_type_from_base64(value: typing.Any, default: str) -> str:
 
 
 def _decode_content(value: typing.Any) -> bytes | None:
-    if value is None:
-        return None
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, bytearray):
+    max_bytes = 10 * 1024 * 1024
+
+    def check_size(size: int) -> None:
+        if size > max_bytes:
+            raise CozeAPIError("Input attachment exceeds the 10 MiB size limit", code="coze.input_error")
+
+    if isinstance(value, (bytes, bytearray)):
+        check_size(len(value))
         return bytes(value)
     if isinstance(value, str):
-        payload = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+        start = value.find(",") + 1 if value.startswith("data:") else 0
+        # Check before slicing or decoding: decoding itself allocates memory.
+        if len(value) - start > 4 * ((max_bytes + 2) // 3) + 4:
+            check_size(max_bytes + 1)
+        payload = value[start:]
         try:
-            return base64.b64decode(payload, validate=True)
-        except Exception:
-            return value.encode("utf-8")
+            decoded = base64.b64decode(payload, validate=True)
+        except (ValueError, base64.binascii.Error):
+            # Retain the existing plain-text attachment fallback, also bounded.
+            check_size(len(value))
+            decoded = value.encode("utf-8")
+        check_size(len(decoded))
+        return decoded
     return None
 
 
@@ -214,6 +227,33 @@ class DefaultRunner(Runner):
         Raises CozeConfigError on missing required fields.
         """
         config = ctx.config or {}
+        self._get_user_id(ctx)  # Validate identity before constructing any upstream client.
+        try:
+            remove_think = strict_bool(config, "remove-think")
+            timeout = positive_timeout(config)
+            auto_save_history = strict_bool(config, "auto-save-history", True)
+        except ValueError as exc:
+            raise CozeConfigError(str(exc), code="coze.config_invalid") from None
+
+        api_base = config.get("api-base", "https://api.coze.cn")
+        try:
+            if not isinstance(api_base, str) or any(c.isspace() or ord(c) < 32 for c in api_base):
+                raise ValueError
+            parsed = urlsplit(api_base)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError
+            _ = parsed.port  # Validate port without echoing the URL.
+        except (ValueError, TypeError):
+            raise CozeConfigError(
+                "api-base must be an HTTP(S) URL without credentials, query or fragment", code="coze.config_invalid"
+            ) from None
 
         api_key = config.get("api-key", "")
         if not api_key:
@@ -226,9 +266,10 @@ class DefaultRunner(Runner):
         return {
             "api_key": api_key,
             "bot_id": bot_id,
-            "api_base": config.get("api-base", "https://api.coze.cn"),
-            "timeout": float(config.get("timeout", 120)),
-            "auto_save_history": bool(config.get("auto-save-history", True)),
+            "api_base": api_base,
+            "timeout": timeout,
+            "remove_think": remove_think,
+            "auto_save_history": auto_save_history,
             "langbot_assets_enabled": _to_bool(config.get("langbot-assets-enabled"), False),
             "asset_gateway_host": str(config.get("langbot-assets-gateway-host") or "0.0.0.0"),
             "asset_gateway_port": _to_int(config.get("langbot-assets-gateway-port"), 8765),
@@ -264,6 +305,16 @@ class DefaultRunner(Runner):
 
     def _get_user_id(self, ctx: RunnerContext) -> str:
         """Get user identifier for Coze API."""
+        source = ctx.config.get("user-id-source", "sender")
+        if source not in ("sender", "legacy-session"):
+            raise CozeConfigError("user-id-source is invalid", code="coze.config_invalid")
+        if source == "legacy-session":
+            conversation = ctx.conversation
+            if conversation and conversation.launcher_type in ("group", "person"):
+                launcher_id = conversation.launcher_id
+                if isinstance(launcher_id, str) and launcher_id:
+                    return f"{conversation.launcher_type}_{launcher_id}"
+            raise CozeConfigError("user-id-source requires trusted Host identity", code="coze.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
             return f"{actor.actor_type}_{actor.actor_id}"
@@ -424,7 +475,9 @@ class DefaultRunner(Runner):
             return
 
         final_conversation_id = conversation_id
+        budget = ResponseBudget(CozeAPIError, "coze.response_limit")
         full_content = ""
+        text_filter = ThinkingFilter(config["remove_think"], (("🤔", "💬"),))
         full_reasoning = ""
         has_response = False
         usage: dict[str, typing.Any] | None = None
@@ -455,17 +508,20 @@ class DefaultRunner(Runner):
                 usage = _usage_from_payload(data) or usage
 
                 if event_type == "conversation.message.delta":
+                    budget.add(data.get("reasoning_content", ""), data.get("content", ""))
                     # Collect reasoning content
                     if "reasoning_content" in data:
                         reasoning = data.get("reasoning_content", "")
                         if reasoning:
-                            full_reasoning += reasoning
+                            has_response = True
+                            if not config["remove_think"]:
+                                full_reasoning += reasoning
 
                     # Collect main content
                     if "content" in data:
                         content_delta = data.get("content", "")
                         if content_delta:
-                            full_content += content_delta
+                            full_content += text_filter.feed(content_delta)
                             has_response = True
 
                 elif event_type.endswith(".done") or event_type == "conversation.chat.completed":
@@ -483,7 +539,7 @@ class DefaultRunner(Runner):
                     return
 
             # Build final response content
-            final_content = full_content
+            final_content = full_content + text_filter.feed("", final=True)
 
             # Add reasoning with think tags if present
             if full_reasoning:
@@ -496,6 +552,8 @@ class DefaultRunner(Runner):
                     code="coze.empty_response",
                 )
                 return
+
+            budget.check_rendered(final_content)
 
             # Yield final message
             yield RunnerResult.message_delta(

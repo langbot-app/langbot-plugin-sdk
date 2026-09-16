@@ -22,6 +22,7 @@ from pkg.dashscope_client import (
     extract_references_from_chunk,
     replace_references,
 )
+from pkg.reasoning import ResponseBudget, ThinkingFilter, positive_timeout, strict_bool
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,11 @@ class DefaultRunner(Runner):
         Raises DashScopeConfigError on missing required fields.
         """
         config = ctx.config or {}
+        try:
+            remove_think = strict_bool(config, "remove-think")
+            timeout = positive_timeout(config)
+        except ValueError as exc:
+            raise DashScopeConfigError(str(exc), code="dashscope.config_invalid") from None
 
         app_type = config.get("app-type", "agent")
         valid_types = ["agent", "workflow"]
@@ -180,7 +186,8 @@ class DefaultRunner(Runner):
             "api_key": api_key,
             "app_id": app_id,
             "references_quote": config.get("references_quote", "参考资料来自:"),
-            "timeout": float(config.get("timeout", 120)),
+            "timeout": timeout,
+            "remove_think": remove_think,
             "langbot_assets_enabled": _to_bool(config.get("langbot-assets-enabled"), False),
             "asset_gateway_host": str(config.get("langbot-assets-gateway-host") or "0.0.0.0"),
             "asset_gateway_port": _to_int(config.get("langbot-assets-gateway-port"), 8765),
@@ -309,7 +316,12 @@ class DefaultRunner(Runner):
 
         Streams message_delta chunks with thinking content support.
         """
+        budget = ResponseBudget(DashScopeAPIError, "dashscope.response_limit")
         pending_content = ""
+        remove_think = strict_bool(ctx.config, "remove-think")
+        text_filter = ThinkingFilter(remove_think, ((THINK_START, THINK_END),))
+        saw_output = False
+        last_final = False
         references_dict: dict[str, str] = {}
         final_session_id = session_id
 
@@ -318,9 +330,8 @@ class DefaultRunner(Runner):
         usage: dict[str, typing.Any] | None = None
         has_response = False
 
-        # Check if thinking should be enabled (default: True)
-        # Can be controlled via adapter params if needed
-        enable_thinking = True
+        # Match native request flags as well as filtering provider output.
+        enable_thinking = not remove_think
 
         async for chunk in client.iter_agent(
             prompt=input_text,
@@ -351,7 +362,10 @@ class DefaultRunner(Runner):
 
             # Handle thinking/reasoning content
             stream_think = stream_output.get("thoughts") or []
+            budget.add(stream_output.get("text", ""), *(item.get("thought", "") for item in stream_think))
             if stream_think and stream_think[0].get("thought"):
+                saw_output = True
+            if not remove_think and stream_think and stream_think[0].get("thought"):
                 if not think_start:
                     think_start = True
                     pending_content += f"{THINK_START}\n{stream_think[0].get('thought')}"
@@ -363,12 +377,15 @@ class DefaultRunner(Runner):
                 pending_content += f"\n{THINK_END}\n"
 
             # Handle text content
-            if stream_output.get("text") is not None:
-                pending_content += stream_output.get("text")
+            if stream_output.get("text"):
+                saw_output = True
+                pending_content += text_filter.feed(stream_output["text"])
 
             # Check if this is the final chunk
             finish_reason = stream_output.get("finish_reason")
             is_final = finish_reason != "null" if finish_reason else False
+            if is_final:
+                pending_content += text_filter.feed("", final=True)
 
             # Extract and accumulate references
             chunk_refs = extract_references_from_chunk(stream_output)
@@ -382,9 +399,12 @@ class DefaultRunner(Runner):
                     client.references_quote,
                 )
 
+            budget.check_rendered(pending_content)
+
             # Yield periodically or on final chunk
-            if pending_content:
+            if pending_content or (is_final and saw_output):
                 has_response = True
+                last_final = is_final
                 yield RunnerResult.message_delta(
                     ctx.run_id,
                     MessageChunk(
@@ -395,6 +415,17 @@ class DefaultRunner(Runner):
                 )
                 if is_final:
                     pending_content = ""
+
+        # Providers may omit finish_reason; emit a final snapshot at EOF,
+        # including an empty snapshot when only hidden reasoning was received.
+        tail = text_filter.feed("", final=True)
+        pending_content += tail
+        budget.check_rendered(pending_content)
+        if saw_output and (not last_final or tail):
+            has_response = True
+            yield RunnerResult.message_delta(
+                ctx.run_id, MessageChunk(role="assistant", content=pending_content, is_final=True)
+            )
 
         if not has_response:
             raise DashScopeAPIError(
@@ -425,7 +456,12 @@ class DefaultRunner(Runner):
 
         Streams message_delta chunks from workflow message format output.
         """
+        budget = ResponseBudget(DashScopeAPIError, "dashscope.response_limit")
         pending_content = ""
+        remove_think = strict_bool(ctx.config, "remove-think")
+        text_filter = ThinkingFilter(remove_think, ((THINK_START, THINK_END),))
+        saw_output = False
+        last_final = False
         references_dict: dict[str, str] = {}
         final_session_id = session_id
         usage: dict[str, typing.Any] | None = None
@@ -465,15 +501,21 @@ class DefaultRunner(Runner):
             # Handle workflow message format output
             workflow_message = stream_output.get("workflow_message")
             if workflow_message is not None:
-                message_content = workflow_message.get("message", {})
-                if message_content:
-                    content = message_content.get("content", "")
-                    if content:
-                        pending_content += content
+                content = (workflow_message.get("message") or {}).get("content", "")
+            else:
+                # Native non-streaming workflows use output.text. Do not add
+                # both representations when a provider includes both.
+                content = stream_output.get("text", "")
+            if content:
+                budget.add(content)
+                saw_output = True
+                pending_content += text_filter.feed(content)
 
             # Check if this is the final chunk
             finish_reason = stream_output.get("finish_reason")
             is_final = finish_reason != "null" if finish_reason else False
+            if is_final:
+                pending_content += text_filter.feed("", final=True)
 
             # Extract and accumulate references
             chunk_refs = extract_references_from_chunk(stream_output)
@@ -487,9 +529,12 @@ class DefaultRunner(Runner):
                     client.references_quote,
                 )
 
+            budget.check_rendered(pending_content)
+
             # Yield periodically or on final chunk
-            if pending_content:
+            if pending_content or (is_final and saw_output):
                 has_response = True
+                last_final = is_final
                 yield RunnerResult.message_delta(
                     ctx.run_id,
                     MessageChunk(
@@ -500,6 +545,17 @@ class DefaultRunner(Runner):
                 )
                 if is_final:
                     pending_content = ""
+
+        # Providers may omit finish_reason; emit a final snapshot at EOF,
+        # including an empty snapshot when only hidden reasoning was received.
+        tail = text_filter.feed("", final=True)
+        pending_content += tail
+        budget.check_rendered(pending_content)
+        if saw_output and (not last_final or tail):
+            has_response = True
+            yield RunnerResult.message_delta(
+                ctx.run_id, MessageChunk(role="assistant", content=pending_content, is_final=True)
+            )
 
         if not has_response:
             raise DashScopeAPIError(

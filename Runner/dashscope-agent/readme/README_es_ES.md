@@ -1,5 +1,7 @@
 # Agente DashScope
 
+`remove-think` acepta solo valores booleanos (predeterminado `false`). Con `true` oculta el razonamiento y los bloques `<think>`, incluso entre fragmentos, sin eliminar respuestas ni contenido de herramientas.
+
 ## Descripción general
 
 Ejecuta una aplicación de Aliyun DashScope como LangBot Runner.

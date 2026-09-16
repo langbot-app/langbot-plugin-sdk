@@ -1,5 +1,7 @@
 # WeKnora Agent
 
+`agent-id` 在兩種模式下均為選填。未設定時，`chat` 使用 `builtin-quick-answer`，`agent` 使用 `builtin-smart-reasoning`；明確留空時不傳送智能體 ID。已儲存的 ID 不會被替換。`knowledge-base-ids` 是兩種模式均可使用的遠端 WeKnora ID，不是 LangBot 知識庫 UUID。
+
 ## 概覽
 
 將 WeKnora 代理或知識庫聊天應用程式作為 LangBot 運行器執行。
@@ -22,7 +24,7 @@
 | `base-url` | `string` | 是 | `http://localhost:8080/api/v1` |
 | `api-key` | `secret` | 是 | 空 |
 | `app-type` | `select` | 是 | `agent` |
-| `agent-id` | `string` | 是 | `builtin-smart-reasoning` |
+| `agent-id` | `string` | 否 | `chat`: `builtin-quick-answer`; `agent`: `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | 否 | `[]` |
 | `web-search-enabled` | `boolean` | 否 | false |
 | `advanced-settings` | `boolean` | 否 | false |

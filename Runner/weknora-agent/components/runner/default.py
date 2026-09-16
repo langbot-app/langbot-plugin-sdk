@@ -57,12 +57,19 @@ class DefaultRunner(Runner):
         if not isinstance(knowledge_base_ids, list):
             raise WeKnoraConfigError("knowledge-base-ids must be a list", code="weknora.config_invalid")
 
+        if any(not isinstance(item, str) or not item.strip() for item in knowledge_base_ids):
+            raise WeKnoraConfigError("knowledge-base-ids must contain nonblank strings", code="weknora.config_invalid")
+        default_agent = "builtin-quick-answer" if app_type == "chat" else "builtin-smart-reasoning"
+        agent_id = config.get("agent-id", default_agent)
+        if agent_id is not None and not isinstance(agent_id, str):
+            raise WeKnoraConfigError("agent-id must be a string or null", code="weknora.config_invalid")
+
         return {
             "base_url": base_url,
             "api_key": api_key,
             "app_type": app_type,
-            "agent_id": str(config.get("agent-id", "builtin-smart-reasoning")).strip(),
-            "knowledge_base_ids": [str(item).strip() for item in knowledge_base_ids if str(item).strip()],
+            "agent_id": agent_id,
+            "knowledge_base_ids": list(knowledge_base_ids),
             "web_search_enabled": bool(config.get("web-search-enabled", False)),
             "timeout": float(config.get("timeout", 120)),
             "base_prompt": str(config.get("base-prompt", "")),
@@ -207,6 +214,8 @@ class DefaultRunner(Runner):
             if response_type == "answer":
                 message_count += 1
                 if content:
+                    if len(pending_answer) + len(str(content)) > 1024 * 1024:
+                        raise WeKnoraAPIError("WeKnora response exceeds the runtime limit")
                     pending_answer += str(content)
                 if done:
                     is_final = True
@@ -257,7 +266,7 @@ class DefaultRunner(Runner):
             session_id=session_id,
             query=input_text,
             user=user_tag,
-            agent_id=config["agent_id"] or "builtin-quick-answer",
+            agent_id=config["agent_id"],
             knowledge_base_ids=config["knowledge_base_ids"],
             timeout=config["timeout"],
         ):
@@ -271,6 +280,8 @@ class DefaultRunner(Runner):
             if response_type == "answer":
                 message_count += 1
                 if content:
+                    if len(pending_answer) + len(str(content)) > 1024 * 1024:
+                        raise WeKnoraAPIError("WeKnora response exceeds the runtime limit")
                     pending_answer += str(content)
                 if done:
                     is_final = True

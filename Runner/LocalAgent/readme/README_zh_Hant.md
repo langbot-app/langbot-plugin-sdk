@@ -19,12 +19,13 @@
 
 | 欄位 | 類型 | 必填 | 預設值 |
 | --- | --- | --- | --- |
-| `model` | `model-fallback-selector` | 是 | `{fallbacks: [], primary: ''}` |
+| `model` | `model-fallback-selector` | 是 | `{fallbacks: [], primary: '', reasoning: {}}` |
 | `timeout` | `integer` | 否 | `300` |
 | `prompt` | `prompt-editor` | 是 | `[{content: You are a helpful assistant., role: system}]` |
 | `remove-think` | `boolean` | 否 | false |
 | `knowledge-bases` | `knowledge-base-multi-selector` | 否 | `[]` |
 | `advanced-settings` | `boolean` | 否 | `false` |
+| `date-grounding` | `boolean` | 否 | `true` |
 | `retrieval-top-k` | `integer` | 否 | `5` |
 | `rerank-model` | `rerank-model-selector` | 否 | 空 |
 | `rerank-top-k` | `integer` | 否 | `5` |

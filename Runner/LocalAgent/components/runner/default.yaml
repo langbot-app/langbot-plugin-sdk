@@ -12,6 +12,9 @@ spec:
   usages: [agent]
   config:
     - name: model
+      description:
+        en_US: Primary/fallback model UUIDs and per-model reasoning levels. Host validates and applies reasoning for every request; this is per-pipeline configuration.
+        zh_Hans: 主模型/备用模型 UUID 与各模型推理等级。由 Host 对每次请求校验并应用，属于流水线独立配置。
       label:
         en_US: Model
         zh_Hans: 模型
@@ -20,6 +23,7 @@ spec:
       default:
         primary: ''
         fallbacks: []
+        reasoning: {}
     - name: prompt
       label:
         en_US: Prompt
@@ -46,6 +50,20 @@ spec:
       type: boolean
       required: false
       default: false
+    - name: date-grounding
+      label:
+        en_US: Current Date Grounding
+        zh_Hans: 当前日期锚定
+      description:
+        en_US: Add the current UTC date and a reminder to verify time-sensitive facts with available search tools.
+        zh_Hans: 注入当前 UTC 日期，并提醒使用可用搜索工具核实有时效性的信息。
+      type: boolean
+      required: false
+      default: true
+      show_if:
+        field: advanced-settings
+        operator: eq
+        value: true
     - name: timeout
       label:
         en_US: Timeout
@@ -113,6 +131,9 @@ spec:
         operator: eq
         value: true
     - name: tool-execution-mode
+      description:
+        en_US: Parallel is faster for independent tools. Use serial for dependent or side-effecting actions; result order does not guarantee execution order.
+        zh_Hans: 并行适合独立工具；有依赖或副作用的操作请选择串行。结果排列不保证执行顺序。
       label:
         en_US: Tool Execution Mode
         zh_Hans: 工具执行模式

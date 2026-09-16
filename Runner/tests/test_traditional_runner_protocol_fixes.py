@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 from langbot_plugin.api.entities.builtin.runner import (
@@ -471,46 +472,53 @@ def test_dify_interaction_resume_can_pause_again() -> None:
 def test_dify_client_submits_form_then_streams_resumed_events(monkeypatch) -> None:
     module = _load_runner_module("dify-agent")
     client_module = sys.modules["pkg.dify_client"]
-    calls: list[tuple[str, str, dict[str, Any]]] = []
+    real_async_client = httpx.AsyncClient
+    calls: list[httpx.Request] = []
+    expected_event = {
+        "event": "workflow_finished",
+        "data": {"outputs": {"summary": "done", "note": "完成"}},
+    }
+    event_bytes = b"data: " + json.dumps(expected_event, ensure_ascii=False).encode("utf-8")
+    # Split UTF-8 across the bounded reader's 8192-byte boundary as well as
+    # transport chunks. Keep the original blank line and unterminated EOF event.
+    padding = 8191 - len(b"\r\n:\r\n") - event_bytes.index("完".encode())
+    wire = b"\r\n:" + b" " * padding + b"\r\n" + event_bytes
+    assert wire[8191:8194] == "完".encode()
 
-    class FakeResponse:
-        is_success = True
-        status_code = 200
-        text = ""
+    class ChunkedBytes(httpx.AsyncByteStream):
+        def __init__(self, chunks):
+            self.chunks = chunks
+            self.consumed = False
+            self.closed = False
 
-        async def aread(self):
-            return b""
+        async def __aiter__(self):
+            for chunk in self.chunks:
+                yield chunk
+            self.consumed = True
 
-        async def aiter_lines(self):
-            yield ""
-            yield 'data: {"event":"workflow_finished","data":{"outputs":{"summary":"done"}}}'
+        async def aclose(self):
+            self.closed = True
 
-    class FakeStream:
-        async def __aenter__(self):
-            return FakeResponse()
+    form_body = ChunkedBytes([b'{"res', b'ult":"success"}'])
+    # CR/LF, SSE prefix, JSON and multibyte characters may all span chunks.
+    event_body = ChunkedBytes([wire[:1], *[wire[i : i + 7] for i in range(1, len(wire), 7)]])
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+    def handle_request(request):
+        calls.append(request)
+        if len(calls) == 1:
+            assert request.method == "POST"
+            return httpx.Response(200, headers={"content-type": "application/json"}, stream=form_body)
+        assert len(calls) == 2
+        assert request.method == "GET"
+        assert form_body.consumed and form_body.closed
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=event_body)
 
-    class FakeAsyncClient:
-        def __init__(self, **kwargs):
-            calls.append(("init", "", kwargs))
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def post(self, path, **kwargs):
-            calls.append(("post", path, kwargs))
-            return FakeResponse()
-
-        def stream(self, method, path, **kwargs):
-            calls.append((method.lower(), path, kwargs))
-            return FakeStream()
-
-    monkeypatch.setattr(client_module.httpx, "AsyncClient", FakeAsyncClient)
+    transport = httpx.MockTransport(handle_request)
+    monkeypatch.setattr(
+        client_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_async_client(transport=transport, **kwargs),
+    )
     client = module.AsyncDifyClient(api_key="key", base_url="https://dify.example/v1")
     events = asyncio.run(
         _collect_async(
@@ -525,14 +533,24 @@ def test_dify_client_submits_form_then_streams_resumed_events(monkeypatch) -> No
     )
 
     assert events[0]["event"] == "workflow_finished"
-    assert calls[1][0:2] == ("post", "/form/human_input/form-token")
-    assert calls[1][2]["json"] == {
+    assert events == [expected_event]
+    assert [(request.method, request.url.path) for request in calls] == [
+        ("POST", "/v1/form/human_input/form-token"),
+        ("GET", "/v1/workflow/workflow-run/events"),
+    ]
+    assert json.loads(calls[0].content) == {
         "inputs": {"priority": "high"},
         "user": "user-1",
         "action": "approve",
     }
-    assert calls[2][0:2] == ("get", "/workflow/workflow-run/events")
-    assert calls[2][2]["params"] == {"user": "user-1"}
+    assert calls[0].headers["content-type"] == "application/json"
+    assert dict(calls[1].url.params) == {"user": "user-1"}
+    assert calls[1].content == b""
+    for request in calls:
+        assert request.url.host == "dify.example"
+        assert request.headers["authorization"] == "Bearer key"
+    assert form_body.consumed and form_body.closed
+    assert event_body.consumed and event_body.closed
 
 
 def test_dify_text_image_upload_failure_is_input_error() -> None:

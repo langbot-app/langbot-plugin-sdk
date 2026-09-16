@@ -44,9 +44,7 @@ async def reply(ctx: RunnerContext, content: str) -> None:
             "Mock reply completed; no real message sent."
             if simulated
             else "Reply action completed; see the action result for delivery details.",
-            "Mock 回复完成，未发送真实消息。"
-            if simulated
-            else "回复动作已完成，投递情况请查看动作结果。",
+            "Mock 回复完成，未发送真实消息。" if simulated else "回复动作已完成，投递情况请查看动作结果。",
         )
     )
 
@@ -66,9 +64,7 @@ class CommunityProcessor(Runner):
                 )
             )
             await self.profile(ctx, group=True)
-            welcome = str(
-                ctx.config.get("welcome_text", "欢迎加入！请友善交流，一起分享与学习。")
-            )
+            welcome = str(ctx.config.get("welcome_text", "欢迎加入！请友善交流，一起分享与学习。"))
             await reply(ctx, f"{name(event.member)}，{welcome}")
             await ctx.log(
                 text(
@@ -115,12 +111,8 @@ class CommunityProcessor(Runner):
         @self.handler(MessageReceivedEvent)
         async def on_message(ctx: RunnerContext):
             event = ctx.platform_event
-            content = "".join(
-                part.text for part in event.message_chain if isinstance(part, Plain)
-            ).strip()
-            attachments = [
-                part.type for part in event.message_chain if not isinstance(part, Plain)
-            ]
+            content = "".join(part.text for part in event.message_chain if isinstance(part, Plain)).strip()
+            attachments = [part.type for part in event.message_chain if not isinstance(part, Plain)]
             await ctx.log(
                 text(
                     ctx,
@@ -172,9 +164,7 @@ class CommunityProcessor(Runner):
                 for step in range(1, 4):
                     await asyncio.sleep(delay / 3000)
                     await ctx.log(text(ctx, f"Progress {step}/3", f"处理进度 {step}/3"))
-                await reply(
-                    ctx, text(ctx, "The demo task is complete.", "演示任务已完成。")
-                )
+                await reply(ctx, text(ctx, "The demo task is complete.", "演示任务已完成。"))
             elif command == "fail":
                 if not ctx.config.get("allow_demo_failure", False):
                     await ctx.log(
@@ -194,9 +184,7 @@ class CommunityProcessor(Runner):
                     ),
                     "error",
                 )
-                raise RuntimeError(
-                    "RunnerDemo: intentional failure requested by /demo fail"
-                )
+                raise RuntimeError("RunnerDemo: intentional failure requested by /demo fail")
             else:
                 await reply(
                     ctx,
@@ -221,9 +209,7 @@ class CommunityProcessor(Runner):
         @self.handler(FeedbackReceivedEvent)
         async def on_feedback(ctx: RunnerContext):
             event = ctx.platform_event
-            category = {1: "positive", 2: "negative", 3: "cancelled"}.get(
-                event.feedback_type, "unknown"
-            )
+            category = {1: "positive", 2: "negative", 3: "cancelled"}.get(event.feedback_type, "unknown")
             await ctx.log(
                 text(
                     ctx,
@@ -271,16 +257,12 @@ class CommunityProcessor(Runner):
 
     async def profile(self, ctx: RunnerContext, *, group: bool) -> None:
         available = {tool["name"] for tool in await ctx.get_available_tools()}
-        for tool in (
-            ["event_get_actor", "event_get_group"] if group else ["event_get_actor"]
-        ):
+        for tool in ["event_get_actor", "event_get_group"] if group else ["event_get_actor"]:
             if tool not in available:
                 continue
             try:
                 await self.plugin.call_tool(tool, {})
-                await ctx.log(
-                    text(ctx, f"Lookup completed: {tool}", f"资料查询完成：{tool}")
-                )
+                await ctx.log(text(ctx, f"Lookup completed: {tool}", f"资料查询完成：{tool}"))
             except Exception as exc:
                 # Optional enrichment should not prevent a welcome reply on adapters without lookup support.
                 await ctx.log(

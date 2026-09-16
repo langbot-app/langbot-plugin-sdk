@@ -1,5 +1,7 @@
 # DashScope Agent
 
+`remove-think` is a strict boolean (default `false`). Set it to `true` to hide reasoning fields and `<think>` blocks, including split streaming delimiters; answer text and tool-call content are preserved.
+
 Run an Aliyun DashScope application as a LangBot Runner.
 
 ## Runner ID
@@ -91,3 +93,9 @@ langbot-assets-input-name = langbot_asset_run_token
 ## Legacy Runner
 
 Migrated from `dashscope-app-api` in LangBot.
+
+## Native migration notes
+
+`remove-think=true` also sends `enable_thinking=false` and `has_thoughts=false` in agent requests. Workflow output accepts either `workflow_message.message.content` or the native `text` fallback, without duplicating both. The canonical citation prefix field is `references_quote`; the old seed key `references-quote` was not read by the native runner and is retired (explicitly repair it during migration). Workflow business inputs come from `ctx.adapter.extra.params`. Provider sessions remain in scoped `external.conversation_id` state.
+
+`timeout` defaults to 120 seconds and must be finite and positive. Generated text (including hidden reasoning) is limited to 1 MiB characters; Coze and Tbox uploads are limited to 10 MiB per file. Existing remote conversation IDs require an explicit scoped import or reset when migrating from native runners. These source changes do not publish or install a new plugin version.

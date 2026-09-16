@@ -1,5 +1,7 @@
 # DashScope Agent
 
+`remove-think` は真偽値です（既定値 `false`）。`true` にすると推論フィールドと `<think>` ブロックを非表示にし、回答とツール内容を保持します。分割されたストリーミングにも対応します。
+
 ## 概要
 
 Alibaba Cloud DashScope アプリを LangBot Runner として実行します。

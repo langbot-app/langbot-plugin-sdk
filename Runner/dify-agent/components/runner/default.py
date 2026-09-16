@@ -104,18 +104,29 @@ def _content_type_from_base64(value: typing.Any, default: str) -> str:
 
 
 def _decode_content(value: typing.Any) -> bytes | None:
-    if value is None:
-        return None
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, bytearray):
+    max_bytes = 10 * 1024 * 1024
+
+    def check_size(size: int) -> None:
+        if size > max_bytes:
+            raise DifyAPIError("Input attachment exceeds the 10 MiB size limit", code="dify.input_error")
+
+    if isinstance(value, (bytes, bytearray)):
+        check_size(len(value))
         return bytes(value)
     if isinstance(value, str):
-        payload = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+        start = value.find(",") + 1 if value.startswith("data:") else 0
+        # Check before slicing or decoding: decoding itself allocates memory.
+        if len(value) - start > 4 * ((max_bytes + 2) // 3) + 4:
+            check_size(max_bytes + 1)
+        payload = value[start:]
         try:
-            return base64.b64decode(payload, validate=True)
-        except Exception:
-            return value.encode("utf-8")
+            decoded = base64.b64decode(payload, validate=True)
+        except (ValueError, base64.binascii.Error):
+            # Retain the existing plain-text attachment fallback, also bounded.
+            check_size(len(value))
+            decoded = value.encode("utf-8")
+        check_size(len(decoded))
+        return decoded
     return None
 
 
@@ -131,6 +142,14 @@ def _attachments_from_contents(contents: list[typing.Any]) -> list[dict[str, typ
                     "name": "image",
                     "content": content,
                     "content_type": _content_type_from_base64(content, "image/jpeg"),
+                }
+            )
+        elif item_type == "file_url":
+            attachments.append(
+                {
+                    "type": "file",
+                    "name": _content_get(item, "file_name") or "file",
+                    "url": _content_get(item, "file_url"),
                 }
             )
         elif item_type == "file_base64":
@@ -323,6 +342,7 @@ class DefaultRunner(Runner):
         Raises DifyConfigError on missing required fields.
         """
         config = ctx.config or {}
+        self._get_user_tag(ctx)  # Validate identity before constructing any upstream client.
 
         base_url = config.get("base-url", "https://api.dify.ai/v1")
         if not base_url:
@@ -333,12 +353,16 @@ class DefaultRunner(Runner):
             raise DifyConfigError("api-key is required", code="dify.config_invalid")
 
         app_type = config.get("app-type", "chat")
-        valid_types = ["chat", "agent", "workflow"]
+        valid_types = ["chat", "chatflow", "agent", "workflow"]
         if app_type not in valid_types:
             raise DifyConfigError(
                 f"Invalid app-type: {app_type}. Must be one of {valid_types}",
                 code="dify.config_invalid",
             )
+
+        remove_think = config.get("remove-think", False)
+        if not isinstance(remove_think, bool):
+            raise DifyConfigError("remove-think must be a boolean", code="dify.config_invalid")
 
         return {
             "base_url": base_url,
@@ -346,7 +370,7 @@ class DefaultRunner(Runner):
             "app_type": app_type,
             "base_prompt": config.get("base-prompt", ""),
             "timeout": float(config.get("timeout", 30)),
-            "remove_think": bool(config.get("remove-think", False)),
+            "remove_think": remove_think,
             "langbot_assets_enabled": _to_bool(config.get("langbot-assets-enabled"), False),
             "asset_gateway_host": str(config.get("langbot-assets-gateway-host") or "0.0.0.0"),
             "asset_gateway_port": _to_int(config.get("langbot-assets-gateway-port"), 8765),
@@ -359,6 +383,16 @@ class DefaultRunner(Runner):
 
     def _get_user_tag(self, ctx: RunnerContext) -> str:
         """Get user identifier for Dify API."""
+        source = ctx.config.get("user-id-source", "sender")
+        if source not in ("sender", "legacy-session"):
+            raise DifyConfigError("user-id-source is invalid", code="dify.config_invalid")
+        if source == "legacy-session":
+            conversation = ctx.conversation
+            if conversation and conversation.launcher_type in ("group", "person"):
+                launcher_id = conversation.launcher_id
+                if isinstance(launcher_id, str) and launcher_id:
+                    return f"{conversation.launcher_type}_{launcher_id}"
+            raise DifyConfigError("user-id-source requires trusted Host identity", code="dify.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
             return f"{actor.actor_type}_{actor.actor_id}"
@@ -448,6 +482,9 @@ class DefaultRunner(Runner):
         for attachment in attachments:
             try:
                 file_bytes = _decode_content(_attachment_get(attachment, "content"))
+                downloaded_type = None
+                if file_bytes is None and _attachment_get(attachment, "url"):
+                    file_bytes, downloaded_type = await client.download_file(_attachment_get(attachment, "url"))
                 if not file_bytes:
                     raise DifyAPIError(
                         f"Input attachment {_attachment_get(attachment, 'name', 'file')} has no uploadable content",
@@ -458,6 +495,7 @@ class DefaultRunner(Runner):
                 content_type = (
                     _attachment_get(attachment, "content_type")
                     or _attachment_get(attachment, "mime_type")
+                    or downloaded_type
                     or "application/octet-stream"
                 )
 
@@ -869,6 +907,7 @@ class DefaultRunner(Runner):
         """
         pending_content = ""
         mode = "basic"  # basic or workflow mode in chat
+        message_count = 0
         has_response = False
         final_conversation_id = conversation_id
         usage: dict[str, typing.Any] | None = None
@@ -911,6 +950,7 @@ class DefaultRunner(Runner):
             if mode == "workflow" and event_type == "node_finished":
                 if event.get("data", {}).get("node_type") == "answer":
                     answer = extract_text_from_output(event.get("data", {}).get("outputs", {}).get("answer"))
+                    pending_content = answer
                     content, _ = process_thinking_content(answer, remove_think)
                     if content:
                         has_response = True
@@ -947,7 +987,19 @@ class DefaultRunner(Runner):
             elif event_type == "message" or event_type == "agent_message":
                 # Accumulate text chunks
                 answer = event.get("answer", "")
-                pending_content += answer
+                # Dify deployments send either deltas or cumulative snapshots.
+                if pending_content and len(answer) > len(pending_content) and answer.startswith(pending_content):
+                    pending_content = answer
+                else:
+                    pending_content += answer
+                message_count += 1
+                if message_count % 8 == 0:
+                    content, _ = process_thinking_content(pending_content, remove_think)
+                    if content:
+                        has_response = True
+                        yield RunnerResult.message_delta(
+                            ctx.run_id, MessageChunk(role="assistant", content=content, is_final=False)
+                        )
 
             elif event_type == "message_end":
                 # Final message for chat mode

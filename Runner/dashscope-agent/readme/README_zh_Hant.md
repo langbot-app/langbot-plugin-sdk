@@ -1,5 +1,7 @@
 # DashScope Agent
 
+`remove-think` 為嚴格布林值（預設 `false`）。設為 `true` 可隱藏推理欄位和 `<think>` 區塊，支援跨串流分塊邊界，保留正文及工具內容。
+
 ## 概覽
 
 將阿里雲 DashScope 應用程式作為 LangBot 運行器執行。

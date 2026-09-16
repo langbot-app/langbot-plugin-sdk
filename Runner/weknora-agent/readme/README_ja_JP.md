@@ -1,5 +1,7 @@
 # WeKnora Agent
 
+`agent-id` は両モードで任意です。省略時は `chat` が `builtin-quick-answer`、`agent` が `builtin-smart-reasoning` を使用します。明示的な空値は ID を送信しません。保存済み ID は置き換えません。`knowledge-base-ids` は両モードで使える WeKnora のリモート ID であり、LangBot の UUID ではありません。
+
 ## 概要
 
 WeKnora エージェントまたはナレッジベースチャットを LangBot Runner として実行します。
@@ -22,7 +24,7 @@ WeKnora エージェントまたはナレッジベースチャットを LangBot 
 | `base-url` | `string` | はい | `http://localhost:8080/api/v1` |
 | `api-key` | `secret` | はい | 空 |
 | `app-type` | `select` | はい | `agent` |
-| `agent-id` | `string` | はい | `builtin-smart-reasoning` |
+| `agent-id` | `string` | いいえ | `chat`: `builtin-quick-answer`; `agent`: `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | いいえ | `[]` |
 | `web-search-enabled` | `boolean` | いいえ | false |
 | `advanced-settings` | `boolean` | いいえ | false |

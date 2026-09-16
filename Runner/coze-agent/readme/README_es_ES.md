@@ -1,5 +1,7 @@
 # Agente Coze
 
+`remove-think` acepta solo valores booleanos (predeterminado `false`). Con `true` oculta el razonamiento y los bloques `<think>`, incluso entre fragmentos, sin eliminar respuestas ni contenido de herramientas.
+
 ## Descripción general
 
 Ejecuta un bot de Coze como LangBot Runner.
@@ -21,7 +23,7 @@ Ejecuta un bot de Coze como LangBot Runner.
 | --- | --- | --- | --- |
 | `api-key` | `secret` | Sí | Vacío |
 | `bot-id` | `string` | Sí | Vacío |
-| `api-base` | `select` | Sí | `https://api.coze.cn` |
+| `api-base` | `string` | Sí | `https://api.coze.cn` |
 | `advanced-settings` | `boolean` | No | false |
 | `auto-save-history` | `boolean` | No | true |
 | `timeout` | `number` | No | `120` |
@@ -50,3 +52,11 @@ Ejecuta un bot de Coze como LangBot Runner.
 - El runner solo puede usar recursos de LangBot autorizados para la ejecución actual.
 - La disponibilidad, las capacidades del modelo y los límites de uso dependen del servicio externo.
 - Consulta el README chino de la raíz o README_en_US.md para el comportamiento avanzado y las limitaciones específicas.
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the Query launcher for Coze into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

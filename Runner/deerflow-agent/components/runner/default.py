@@ -75,30 +75,45 @@ class DefaultRunner(Runner):
     def _validate_config(self, ctx: RunnerContext) -> dict[str, typing.Any]:
         config = ctx.config or {}
 
-        api_base = str(config.get("api-base", "")).strip()
+        api_base = self._as_string(config, "api-base", "").strip()
         if not api_base or not api_base.startswith(("http://", "https://")):
             raise DeerFlowConfigError("api-base must start with http:// or https://")
 
         return {
             "api_base": api_base,
-            "api_key": str(config.get("api-key", "")).strip(),
-            "auth_header": str(config.get("auth-header", "")).strip(),
-            "assistant_id": str(config.get("assistant-id", "lead_agent")).strip() or "lead_agent",
-            "model_name": str(config.get("model-name", "")).strip(),
-            "thinking_enabled": bool(config.get("thinking-enabled", False)),
-            "plan_mode": bool(config.get("plan-mode", False)),
-            "subagent_enabled": bool(config.get("subagent-enabled", False)),
+            "api_key": self._as_string(config, "api-key", ""),
+            "auth_header": self._as_string(config, "auth-header", ""),
+            "assistant_id": self._as_string(config, "assistant-id", "lead_agent"),
+            "model_name": self._as_string(config, "model-name", ""),
+            "thinking_enabled": self._as_bool(config, "thinking-enabled", False),
+            "plan_mode": self._as_bool(config, "plan-mode", False),
+            "subagent_enabled": self._as_bool(config, "subagent-enabled", False),
             "max_concurrent_subagents": self._as_int(config, "max-concurrent-subagents", 3),
             "timeout": self._as_int(config, "timeout", 300),
             "recursion_limit": self._as_int(config, "recursion-limit", 1000),
         }
 
+    def _as_string(self, config: dict[str, typing.Any], name: str, default: str) -> str:
+        value = config.get(name, default)
+        if not isinstance(value, str):
+            raise DeerFlowConfigError(f"{name} must be a string")
+        # Credentials and provider identifiers are opaque, including whitespace.
+        return value
+
+    def _as_bool(self, config: dict[str, typing.Any], name: str, default: bool) -> bool:
+        value = config.get(name, default)
+        if not isinstance(value, bool):
+            raise DeerFlowConfigError(f"{name} must be a boolean")
+        return value
+
     def _as_int(self, config: dict[str, typing.Any], name: str, default: int) -> int:
         raw_value = config.get(name, default)
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, str)):
+            raise DeerFlowConfigError(f"{name} must be an integer")
         try:
             return int(raw_value)
-        except (TypeError, ValueError) as exc:
-            raise DeerFlowConfigError(f"{name} must be an integer") from exc
+        except (TypeError, ValueError):
+            raise DeerFlowConfigError(f"{name} must be an integer") from None
 
     def _get_user_tag(self, ctx: RunnerContext) -> str:
         actor = ctx.actor

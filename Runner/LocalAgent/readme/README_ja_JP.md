@@ -19,12 +19,13 @@
 
 | フィールド | 型 | 必須 | 既定値 |
 | --- | --- | --- | --- |
-| `model` | `model-fallback-selector` | はい | `{fallbacks: [], primary: ''}` |
+| `model` | `model-fallback-selector` | はい | `{fallbacks: [], primary: '', reasoning: {}}` |
 | `timeout` | `integer` | いいえ | `300` |
 | `prompt` | `prompt-editor` | はい | `[{content: You are a helpful assistant., role: system}]` |
 | `remove-think` | `boolean` | いいえ | false |
 | `knowledge-bases` | `knowledge-base-multi-selector` | いいえ | `[]` |
 | `advanced-settings` | `boolean` | いいえ | `false` |
+| `date-grounding` | `boolean` | いいえ | `true` |
 | `retrieval-top-k` | `integer` | いいえ | `5` |
 | `rerank-model` | `rerank-model-selector` | いいえ | 空 |
 | `rerank-top-k` | `integer` | いいえ | `5` |

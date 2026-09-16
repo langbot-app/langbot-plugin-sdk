@@ -1,5 +1,7 @@
 # WeKnora Agent
 
+`agent-id` เป็นตัวเลือกในทั้งสองโหมด หากไม่กำหนด `chat` ใช้ `builtin-quick-answer` และ `agent` ใช้ `builtin-smart-reasoning` ค่าว่างที่ระบุชัดเจนจะไม่ส่ง ID และจะไม่แทนที่ ID ที่บันทึกไว้ `knowledge-base-ids` คือ ID ระยะไกลของ WeKnora สำหรับทั้งสองโหมด ไม่ใช่ UUID ของ LangBot
+
 ## ภาพรวม
 
 เรียกใช้เอเจนต์ WeKnora หรือแอปแชตฐานความรู้เป็น LangBot Runner
@@ -22,7 +24,7 @@
 | `base-url` | `string` | ใช่ | `http://localhost:8080/api/v1` |
 | `api-key` | `secret` | ใช่ | ว่าง |
 | `app-type` | `select` | ใช่ | `agent` |
-| `agent-id` | `string` | ใช่ | `builtin-smart-reasoning` |
+| `agent-id` | `string` | ไม่ | `chat`: `builtin-quick-answer`; `agent`: `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | ไม่ | `[]` |
 | `web-search-enabled` | `boolean` | ไม่ | false |
 | `advanced-settings` | `boolean` | ไม่ | false |

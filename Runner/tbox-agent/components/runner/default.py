@@ -16,6 +16,7 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerContext,
     RunnerResult,
 )
+from pkg.reasoning import ResponseBudget, ThinkingFilter, positive_timeout, strict_bool
 from pkg.tbox_client import (
     AsyncTboxClient,
     TboxAPIError,
@@ -44,18 +45,29 @@ def _content_type_from_base64(value: typing.Any, default: str) -> str:
 
 
 def _decode_content(value: typing.Any) -> bytes | None:
-    if value is None:
-        return None
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, bytearray):
+    max_bytes = 10 * 1024 * 1024
+
+    def check_size(size: int) -> None:
+        if size > max_bytes:
+            raise TboxAPIError("Input attachment exceeds the 10 MiB size limit", code="tbox.input_error")
+
+    if isinstance(value, (bytes, bytearray)):
+        check_size(len(value))
         return bytes(value)
     if isinstance(value, str):
-        payload = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+        start = value.find(",") + 1 if value.startswith("data:") else 0
+        # Check before slicing or decoding: decoding itself allocates memory.
+        if len(value) - start > 4 * ((max_bytes + 2) // 3) + 4:
+            check_size(max_bytes + 1)
+        payload = value[start:]
         try:
-            return base64.b64decode(payload, validate=True)
-        except Exception:
-            return value.encode("utf-8")
+            decoded = base64.b64decode(payload, validate=True)
+        except (ValueError, base64.binascii.Error):
+            # Retain the existing plain-text attachment fallback, also bounded.
+            check_size(len(value))
+            decoded = value.encode("utf-8")
+        check_size(len(decoded))
+        return decoded
     return None
 
 
@@ -179,6 +191,14 @@ class DefaultRunner(Runner):
         Raises TboxConfigError on missing required fields.
         """
         config = ctx.config or {}
+        self._get_user_id(ctx)  # Validate identity before constructing any upstream client.
+        try:
+            remove_think = strict_bool(config, "remove-think")
+            timeout = positive_timeout(config)
+            if "streaming" in config:
+                strict_bool(config, "streaming")
+        except ValueError as exc:
+            raise TboxConfigError(str(exc), code="tbox.config_invalid") from None
 
         app_id = config.get("app-id", "")
         if not app_id:
@@ -191,11 +211,21 @@ class DefaultRunner(Runner):
         return {
             "app_id": app_id,
             "api_key": api_key,
-            "timeout": float(config.get("timeout", 120)),
+            "timeout": timeout,
+            "remove_think": remove_think,
         }
 
     def _get_user_id(self, ctx: RunnerContext) -> str:
         """Get user identifier for Tbox API."""
+        source = ctx.config.get("user-id-source", "sender")
+        if source not in ("sender", "legacy-bot"):
+            raise TboxConfigError("user-id-source is invalid", code="tbox.config_invalid")
+        if source == "legacy-bot":
+            conversation = ctx.conversation
+            bot_id = conversation.bot_id if conversation else ctx.runtime.metadata.get("bot_id")
+            if isinstance(bot_id, str) and bot_id:
+                return bot_id
+            raise TboxConfigError("user-id-source requires trusted Host identity", code="tbox.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
             return f"{actor.actor_type}_{actor.actor_id}"
@@ -288,10 +318,9 @@ class DefaultRunner(Runner):
 
     def _should_stream(self, ctx: RunnerContext) -> bool:
         """Decide whether to request streaming from Tbox."""
-        configured = ctx.config.get("streaming")
-        if configured is not None:
-            return bool(configured)
-        return bool(ctx.runtime.metadata.get("streaming_supported", True))
+        if "streaming" in ctx.config:
+            return strict_bool(ctx.config, "streaming")
+        return bool(ctx.runtime.metadata.get("streaming_supported", ctx.delivery.supports_streaming))
 
     async def run(self, ctx: RunnerContext) -> typing.AsyncGenerator[RunnerResult, None]:
         """Run the Tbox agent.
@@ -360,7 +389,10 @@ class DefaultRunner(Runner):
 
         Streams message_delta chunks and handles streaming/non-streaming responses.
         """
+        budget = ResponseBudget(TboxAPIError, "tbox.response_limit")
         pending_content = ""
+        remove_think = strict_bool(ctx.config, "remove-think")
+        text_filter = ThinkingFilter(remove_think)
         final_conversation_id = conversation_id
         has_response = False
         idx_msg = 0
@@ -395,9 +427,11 @@ class DefaultRunner(Runner):
                     if not final_conversation_id:
                         final_conversation_id = payload.get("conversationId")
 
+                    budget.add(payload.get("text", ""))
                     if payload.get("text"):
                         idx_msg += 1
-                        pending_content += payload.get("text")
+                        has_response = True
+                        pending_content += text_filter.feed(payload.get("text"))
 
                 elif chunk_type == "thinking":
                     """
@@ -406,7 +440,11 @@ class DefaultRunner(Runner):
                     """
                     try:
                         payload = json.loads(chunk.get("payload", "{}"))
+                        budget.add(payload.get("ext_data", {}).get("text", ""))
                         if payload.get("ext_data", {}).get("text"):
+                            has_response = True
+                            if remove_think:
+                                continue
                             idx_msg += 1
                             content = payload.get("ext_data", {}).get("text")
                             if not think_start:
@@ -423,6 +461,8 @@ class DefaultRunner(Runner):
                         f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
                         code="tbox.api_error",
                     )
+
+                budget.check_rendered(pending_content)
 
                 # Yield periodic updates (every 8 chunks)
                 if idx_msg > 0 and idx_msg % 8 == 0:
@@ -451,15 +491,20 @@ class DefaultRunner(Runner):
                 payload = chunk.get("data", {})
                 final_conversation_id = payload.get("conversationId", "")
 
+                budget.add(
+                    *(item.get("text", "") for item in payload.get("reasoningContent", [])),
+                    *(item.get("chunk", "") for item in payload.get("result", [])),
+                )
                 result = ""
                 thinking_content = payload.get("reasoningContent", [])
-                if thinking_content:
+                if thinking_content and not remove_think:
                     result += f"<tool_call>\n{thinking_content[0].get('text', '')}\n viewport\n"
 
                 content = payload.get("result", [])
                 if content:
-                    result += content[0].get("chunk", "")
+                    result += text_filter.feed(content[0].get("chunk", ""), final=True)
 
+                budget.check_rendered(result)
                 has_response = True
                 yield RunnerResult.message_delta(
                     ctx.run_id,
@@ -470,8 +515,11 @@ class DefaultRunner(Runner):
                     ),
                 )
 
-        # Handle remaining pending content for streaming
-        if is_stream and pending_content:
+        # Flush literal partial delimiters only at EOF. Hidden-only responses
+        # still complete successfully with an empty final chunk.
+        pending_content += text_filter.feed("", final=True)
+        budget.check_rendered(pending_content)
+        if is_stream and (pending_content or has_response):
             has_response = True
             yield RunnerResult.message_delta(
                 ctx.run_id,

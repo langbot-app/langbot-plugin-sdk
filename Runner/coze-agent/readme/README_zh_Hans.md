@@ -1,5 +1,7 @@
 # Coze Agent
 
+`remove-think` 为严格布尔值（默认 `false`）。设为 `true` 可隐藏推理字段和 `<think>` 块，支持跨流式分块边界，保留正文及工具内容。
+
 Coze Agent 将 Coze（扣子）机器人接入 LangBot 运行器，负责把 LangBot 输入转换为 Coze Chat API 请求，并将 Coze 的流式回复、会话状态和错误事件转换为 Runner Protocol v1 结果。
 
 ## 运行器 ID
@@ -21,7 +23,7 @@ Coze Agent 将 Coze（扣子）机器人接入 LangBot 运行器，负责把 Lan
 | --- | --- | --- | --- | --- |
 | `api-key` | `secret` | 是 | 空 | Coze Personal Access Token 或 API Token |
 | `bot-id` | `string` | 是 | 空 | Coze Bot ID |
-| `api-base` | `select` | 是 | `https://api.coze.cn` | 中国站或全球站 API 地址 |
+| `api-base` | `string` | 是 | `https://api.coze.cn` | 中国站或全球站 API 地址 |
 | `advanced-settings` | `boolean` | 否 | `false` | 展开历史和超时调优选项 |
 | `auto-save-history` | `boolean` | 否 | `true` | 是否让 Coze 保存会话历史 |
 | `timeout` | `number` | 否 | `120` | 请求超时秒数 |
@@ -48,3 +50,11 @@ Coze Agent 将 Coze（扣子）机器人接入 LangBot 运行器，负责把 Lan
 uv run --no-sync pytest -q
 uv run --no-sync ruff check .
 ```
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the Query launcher for Coze into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

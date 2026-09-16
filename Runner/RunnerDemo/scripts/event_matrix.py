@@ -28,15 +28,11 @@ def check_matrix(client: httpx.Client, processor_id: str, receipt: Path) -> dict
         )
         frames = []
         if response.is_success:
-            frames = [
-                json.loads(line) for line in response.text.splitlines() if line.strip()
-            ]
+            frames = [json.loads(line) for line in response.text.splitlines() if line.strip()]
         errors = [frame for frame in frames if frame.get("kind") == "error"]
         results = [frame["data"] for frame in frames if frame.get("kind") == "result"]
         failed = (
-            response.status_code >= 400
-            or bool(errors)
-            or any(item.get("type") == "run.failed" for item in results)
+            response.status_code >= 400 or bool(errors) or any(item.get("type") == "run.failed" for item in results)
         )
         assert failed == case["expected_error"], (
             case["name"],
@@ -46,19 +42,11 @@ def check_matrix(client: httpx.Client, processor_id: str, receipt: Path) -> dict
         assert response.status_code < 500, (case["name"], response.status_code)
         run_ids = {item["run_id"] for item in results if item.get("run_id")}
         assert len(run_ids) <= 1, (case["name"], run_ids)
-        assert not any(
-            item.get("type", "").startswith("tool.call.") for item in results
-        ), case["name"]
+        assert not any(item.get("type", "").startswith("tool.call.") for item in results), case["name"]
         if not failed:
             assert len(run_ids) == 1, case["name"]
-            assert sum(item.get("type") == "run.completed" for item in results) == 1, (
-                case["name"]
-            )
-            logs = [
-                item["data"]["text"]
-                for item in results
-                if item.get("type") == "processor.log"
-            ]
+            assert sum(item.get("type") == "run.completed" for item in results) == 1, case["name"]
+            logs = [item["data"]["text"] for item in results if item.get("type") == "processor.log"]
             payloads = []
             for line in logs:
                 try:
@@ -76,9 +64,7 @@ def check_matrix(client: httpx.Client, processor_id: str, receipt: Path) -> dict
             for key, value in case["request"]["data"].items():
                 if key in {"message_chain", "new_content"}:
                     for original, restored in zip(value, observed[key], strict=True):
-                        assert all(restored.get(k) == v for k, v in original.items()), (
-                            case["name"]
-                        )
+                        assert all(restored.get(k) == v for k, v in original.items()), case["name"]
                 elif not isinstance(value, dict):
                     assert observed[key] == value, (case["name"], key)
                 else:
@@ -88,14 +74,10 @@ def check_matrix(client: httpx.Client, processor_id: str, receipt: Path) -> dict
                     )
         if run_ids:
             run_id = next(iter(run_ids))
-            detail_response = client.get(
-                f"/api/v1/agents/{processor_id}/runs/{run_id}/events"
-            )
+            detail_response = client.get(f"/api/v1/agents/{processor_id}/runs/{run_id}/events")
             detail_response.raise_for_status()
             detail = detail_response.json()["data"]
-            assert detail["run"]["status"] == ("failed" if failed else "completed"), (
-                case["name"]
-            )
+            assert detail["run"]["status"] == ("failed" if failed else "completed"), case["name"]
         else:
             run_id = None
         row = {
@@ -116,9 +98,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--processor-id", required=True)
-    parser.add_argument(
-        "--receipt", type=Path, default=ROOT / "data/event-matrix-results.json"
-    )
+    parser.add_argument("--receipt", type=Path, default=ROOT / "data/event-matrix-results.json")
     args = parser.parse_args()
     token, key = os.environ.get("LANGBOT_TOKEN"), os.environ.get("LANGBOT_API_KEY")
     if not token and not key:
@@ -126,9 +106,7 @@ def main():
     headers = {"Authorization": "Bearer " + token} if token else {"X-API-Key": key}
     if os.environ.get("LANGBOT_WORKSPACE_ID"):
         headers["X-Workspace-Id"] = os.environ["LANGBOT_WORKSPACE_ID"]
-    with httpx.Client(
-        base_url=args.base_url.rstrip("/"), headers=headers, timeout=30
-    ) as client:
+    with httpx.Client(base_url=args.base_url.rstrip("/"), headers=headers, timeout=30) as client:
         check_matrix(client, args.processor_id, args.receipt)
 
 

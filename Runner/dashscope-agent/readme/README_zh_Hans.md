@@ -1,5 +1,7 @@
 # DashScope Agent
 
+`remove-think` 为严格布尔值（默认 `false`）。设为 `true` 可隐藏推理字段和 `<think>` 块，支持跨流式分块边界，保留正文及工具内容。
+
 DashScope Agent 将阿里云百炼 Agent 或 Workflow 应用接入 LangBot 运行器。插件调用 DashScope Application API，并把流式文本、引用信息和错误转换为 Runner Protocol v1 事件。
 
 ## 运行器 ID

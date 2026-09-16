@@ -1,5 +1,7 @@
 # DashScope Agent
 
+`remove-think` chỉ nhận giá trị boolean (mặc định `false`). Đặt `true` để ẩn suy luận và khối `<think>`, kể cả khi chia đoạn luồng, đồng thời giữ câu trả lời và nội dung công cụ.
+
 ## Tổng quan
 
 Chạy ứng dụng Aliyun DashScope dưới dạng LangBot Runner.

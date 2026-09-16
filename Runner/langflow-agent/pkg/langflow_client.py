@@ -12,6 +12,8 @@ import uuid
 
 import httpx
 
+from pkg.http_limits import limited_body, limited_lines, limited_post
+
 logger = logging.getLogger(__name__)
 
 
@@ -128,14 +130,14 @@ class AsyncLangflowClient:
                         json=payload,
                     ) as response:
                         if response.status_code != 200:
-                            error_body = await response.aread()
+                            error_body = await limited_body(response, LangflowAPIError)
                             error_text = error_body.decode("utf-8", errors="replace")
                             raise LangflowAPIError(
                                 f"Langflow API error: {response.status_code} - {error_text[:200]}",
                                 code="langflow.http_error",
                             )
 
-                        async for line in response.aiter_lines():
+                        async for line in limited_lines(response, LangflowAPIError):
                             if not line or not line.strip():
                                 continue
 
@@ -154,8 +156,10 @@ class AsyncLangflowClient:
                                 continue
                 else:
                     # Non-streaming mode
-                    response = await client.post(
+                    response = await limited_post(
+                        client,
                         url,
+                        LangflowAPIError,
                         headers=self._get_headers(),
                         json=payload,
                     )

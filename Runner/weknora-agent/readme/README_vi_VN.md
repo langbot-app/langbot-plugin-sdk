@@ -1,5 +1,7 @@
 # WeKnora Agent
 
+`agent-id` là tùy chọn trong cả hai chế độ. Nếu không đặt, `chat` dùng `builtin-quick-answer` và `agent` dùng `builtin-smart-reasoning`; giá trị rỗng tường minh không gửi ID. ID đã lưu không bị thay thế. `knowledge-base-ids` là ID WeKnora từ xa cho cả hai chế độ, không phải UUID LangBot.
+
 ## Tổng quan
 
 Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dưới dạng LangBot Runner.
@@ -22,7 +24,7 @@ Chạy tác nhân WeKnora hoặc ứng dụng trò chuyện kho tri thức dư�
 | `base-url` | `string` | Có | `http://localhost:8080/api/v1` |
 | `api-key` | `secret` | Có | Trống |
 | `app-type` | `select` | Có | `agent` |
-| `agent-id` | `string` | Có | `builtin-smart-reasoning` |
+| `agent-id` | `string` | Không | `chat`: `builtin-quick-answer`; `agent`: `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | Không | `[]` |
 | `web-search-enabled` | `boolean` | Không | false |
 | `advanced-settings` | `boolean` | Không | false |

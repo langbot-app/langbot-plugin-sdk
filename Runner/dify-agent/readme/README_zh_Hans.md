@@ -1,5 +1,7 @@
 # Dify Agent
 
+`remove-think`（布尔值，默认 `false`）隐藏 think 标签中的推理内容，包括未结束的思考。`app-type` 也支持 `chatflow`。
+
 Dify Agent 将 Dify 的 Chat、Agent、Chatflow 或 Workflow 应用接入 LangBot 运行器。插件负责组装输入、管理 Dify conversation ID、解析阻塞或流式响应，并可通过 SDK Asset Gateway 让 Dify Agent 在当前运行范围内调用 LangBot 工具、知识库和历史。
 
 ## 运行器 ID
@@ -73,3 +75,11 @@ Dify 返回新 conversation ID 后，runner 通过会话级 `state.updated` 交�
 uv run --no-sync pytest -q
 uv run --no-sync ruff check .
 ```
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the native Query.session launcher into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

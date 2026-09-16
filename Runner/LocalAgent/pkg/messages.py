@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import typing
 
@@ -37,10 +38,10 @@ def build_prompt_messages(
     if prompt_config:
         for prompt_item in prompt_config:
             if isinstance(prompt_item, dict):
-                role = prompt_item.get("role", "system")
-                content = prompt_item.get("content", "")
-                if content and isinstance(content, str):
-                    messages.append(Message(role=role, content=content))
+                # Validate the SDK message shape instead of silently dropping
+                # structured prompt content, empty messages, names or opaque fields.
+                payload = {"role": "system", "content": "", **copy.deepcopy(prompt_item)}
+                messages.append(Message.model_validate(payload))
 
     return messages
 

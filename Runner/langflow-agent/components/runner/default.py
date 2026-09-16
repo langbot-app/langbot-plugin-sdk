@@ -101,12 +101,16 @@ class DefaultRunner(Runner):
             try:
                 tweaks = json.loads(tweaks_raw) if tweaks_raw.strip() else {}
             except json.JSONDecodeError:
-                logger.warning(f"Invalid tweaks JSON: {tweaks_raw}, using empty dict")
-                tweaks = {}
-        elif isinstance(tweaks_raw, dict):
-            tweaks = tweaks_raw
+                # Tweaks may contain credentials; never echo the value or parser context.
+                raise LangflowConfigError("tweaks must be a JSON object", code="langflow.config_invalid") from None
         else:
+            tweaks = tweaks_raw
+        # Missing/null/blank remain an empty override. Whitespace-only strings
+        # are a plugin convenience, not a claim that native json.loads accepted them.
+        if tweaks is None:
             tweaks = {}
+        if not isinstance(tweaks, dict):
+            raise LangflowConfigError("tweaks must be a JSON object", code="langflow.config_invalid")
 
         return {
             "base_url": base_url,
@@ -240,6 +244,9 @@ class DefaultRunner(Runner):
             ):
                 # Extract message content from response
                 message_text = extract_message_from_response(data)
+                if not message_text and not is_stream:
+                    # Native non-streaming flows also expose structured outputs.
+                    message_text = json.dumps(data, ensure_ascii=False, indent=2)
 
                 if message_text:
                     if is_stream:

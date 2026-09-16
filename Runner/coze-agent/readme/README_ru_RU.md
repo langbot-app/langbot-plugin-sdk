@@ -1,5 +1,7 @@
 # Агент Coze
 
+`remove-think` принимает только логическое значение (по умолчанию `false`). Значение `true` скрывает рассуждения и блоки `<think>`, включая границы потоковых фрагментов, сохраняя ответ и содержимое инструментов.
+
 ## Обзор
 
 Запускает бота Coze как LangBot Runner.
@@ -21,7 +23,7 @@
 | --- | --- | --- | --- |
 | `api-key` | `secret` | Да | Пусто |
 | `bot-id` | `string` | Да | Пусто |
-| `api-base` | `select` | Да | `https://api.coze.cn` |
+| `api-base` | `string` | Да | `https://api.coze.cn` |
 | `advanced-settings` | `boolean` | Нет | false |
 | `auto-save-history` | `boolean` | Нет | true |
 | `timeout` | `number` | Нет | `120` |
@@ -50,3 +52,11 @@
 - Runner использует только ресурсы LangBot, разрешённые для текущего запуска.
 - Доступность, возможности моделей и лимиты запросов зависят от внешнего сервиса.
 - Расширенное поведение и ограничения продукта описаны в китайском README в корне и английском README_en_US.md.
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the Query launcher for Coze into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

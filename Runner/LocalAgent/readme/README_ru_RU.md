@@ -19,12 +19,13 @@
 
 | Поле | Тип | Обязательно | По умолчанию |
 | --- | --- | --- | --- |
-| `model` | `model-fallback-selector` | Да | `{fallbacks: [], primary: ''}` |
+| `model` | `model-fallback-selector` | Да | `{fallbacks: [], primary: '', reasoning: {}}` |
 | `timeout` | `integer` | Нет | `300` |
 | `prompt` | `prompt-editor` | Да | `[{content: You are a helpful assistant., role: system}]` |
 | `remove-think` | `boolean` | Нет | false |
 | `knowledge-bases` | `knowledge-base-multi-selector` | Нет | `[]` |
 | `advanced-settings` | `boolean` | Нет | `false` |
+| `date-grounding` | `boolean` | Нет | `true` |
 | `retrieval-top-k` | `integer` | Нет | `5` |
 | `rerank-model` | `rerank-model-selector` | Нет | Пусто |
 | `rerank-top-k` | `integer` | Нет | `5` |

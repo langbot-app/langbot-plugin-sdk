@@ -7,11 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from langbot_plugin.api.definition.components.runner import RunnerContext
-from langbot_plugin.api.proxies.langbot_api import LangBotAPIProxy
-
 from components.runner.community import CommunityProcessor
 from components.runner.observer import ObserverProcessor
+from langbot_plugin.api.definition.components.runner import RunnerContext
+from langbot_plugin.api.proxies.langbot_api import LangBotAPIProxy
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,9 +36,7 @@ def run_context(*, run_id, config, event):
 
 
 class ProcessorTests(unittest.IsolatedAsyncioTestCase):
-    async def execute(
-        self, filename, *, component=None, config=None, fail_lookup=False
-    ):
+    async def execute(self, filename, *, component=None, config=None, fail_lookup=False):
         component = component or CommunityProcessor()
         if not component.registered_handlers:
             await component.initialize()
@@ -52,18 +49,14 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
 
         api = SimpleNamespace(
             call_tool=AsyncMock(side_effect=call_tool),
-            list_tools=AsyncMock(
-                return_value=[{"name": "event_get_actor"}, {"name": "event_get_group"}]
-            ),
+            list_tools=AsyncMock(return_value=[{"name": "event_get_actor"}, {"name": "event_get_group"}]),
         )
         component.get_run_api = Mock(return_value=api)
         component.plugin = LangBotAPIProxy(component._plugin_runtime_handler)
         ctx = run_context(
             run_id=filename,
             config={"delay_ms": 0, **(config or {})},
-            event=SimpleNamespace(
-                data={"type": payload["event_type"], **payload["data"]}
-            ),
+            event=SimpleNamespace(data={"type": payload["event_type"], **payload["data"]}),
         )
         results = [item async for item in component.invoke(ctx)]
         return results, api
@@ -74,11 +67,7 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
             if scenario["expect_error"]:
                 continue
             with self.subTest(scenario=scenario["file"]):
-                component = (
-                    ObserverProcessor()
-                    if scenario["component"] == "observer"
-                    else CommunityProcessor()
-                )
+                component = ObserverProcessor() if scenario["component"] == "observer" else CommunityProcessor()
                 results, _ = await self.execute(scenario["file"], component=component)
                 self.assertEqual(sum(r.type == "run.completed" for r in results), 1)
 
@@ -88,12 +77,8 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
             [c.args[0] for c in api.call_tool.await_args_list],
             ["event_get_actor", "event_get_group", "event_reply"],
         )
-        starts = [
-            r.data["tool_call_id"] for r in results if r.type == "tool.call.started"
-        ]
-        ends = [
-            r.data["tool_call_id"] for r in results if r.type == "tool.call.completed"
-        ]
+        starts = [r.data["tool_call_id"] for r in results if r.type == "tool.call.started"]
+        ends = [r.data["tool_call_id"] for r in results if r.type == "tool.call.completed"]
         self.assertEqual(starts, ends)
         self.assertEqual(len(set(starts)), 3)
 
@@ -105,9 +90,7 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_departure_configuration_changes_actions(self):
         _, silent = await self.execute("02-member-left.json")
-        _, announce = await self.execute(
-            "02-member-left.json", config={"announce_departures": True}
-        )
+        _, announce = await self.execute("02-member-left.json", config={"announce_departures": True})
         silent.call_tool.assert_not_called()
         announce.call_tool.assert_awaited_once()
 
@@ -121,16 +104,12 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
         api.call_tool.assert_not_called()
         component = CommunityProcessor()
         await component.initialize()
-        component.get_run_api = Mock(
-            return_value=SimpleNamespace(call_tool=AsyncMock())
-        )
+        component.get_run_api = Mock(return_value=SimpleNamespace(call_tool=AsyncMock()))
         payload = json.loads((ROOT / "examples/06-failure.json").read_text())
         ctx = run_context(
             run_id="fail",
             config={"allow_demo_failure": True},
-            event=SimpleNamespace(
-                data={"type": payload["event_type"], **payload["data"]}
-            ),
+            event=SimpleNamespace(data={"type": payload["event_type"], **payload["data"]}),
         )
         emitted = []
         with self.assertRaisesRegex(RuntimeError, "intentional failure"):
@@ -153,9 +132,7 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
         await component.initialize()
         api = SimpleNamespace(
             call_tool=AsyncMock(return_value={"mock": True}),
-            list_tools=AsyncMock(
-                return_value=[{"name": "event_get_actor"}, {"name": "event_get_group"}]
-            ),
+            list_tools=AsyncMock(return_value=[{"name": "event_get_actor"}, {"name": "event_get_group"}]),
         )
         component.get_run_api = Mock(return_value=api)
         component.plugin = LangBotAPIProxy(component._plugin_runtime_handler)
@@ -165,18 +142,12 @@ class ProcessorTests(unittest.IsolatedAsyncioTestCase):
             ctx = run_context(
                 run_id=greeting,
                 config={"welcome_text": greeting},
-                event=SimpleNamespace(
-                    data={"type": payload["event_type"], **payload["data"]}
-                ),
+                event=SimpleNamespace(data={"type": payload["event_type"], **payload["data"]}),
             )
             return [r async for r in component.invoke(ctx)]
 
         await asyncio.gather(collect("Welcome A"), collect("Welcome B"))
-        replies = [
-            c.args[1]["text"]
-            for c in api.call_tool.await_args_list
-            if c.args[0] == "event_reply"
-        ]
+        replies = [c.args[1]["text"] for c in api.call_tool.await_args_list if c.args[0] == "event_reply"]
         self.assertCountEqual(replies, ["Alice，Welcome A", "Alice，Welcome B"])
 
 

@@ -14,6 +14,7 @@ from collections.abc import AsyncGenerator
 import httpx
 
 from pkg.errors import DeerFlowAPIError
+from pkg.http_limits import limited_body, limited_bytes, limited_post
 
 SSE_MAX_BUFFER_CHARS = 1_048_576
 
@@ -83,8 +84,10 @@ class AsyncDeerFlowClient:
 
         try:
             async with httpx.AsyncClient(trust_env=True, timeout=timeout) as http_client:
-                response = await http_client.post(
+                response = await limited_post(
+                    http_client,
                     url,
+                    DeerFlowAPIError,
                     headers=self.headers,
                     json=payload,
                 )
@@ -134,7 +137,7 @@ class AsyncDeerFlowClient:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        body = await response.aread()
+                        body = await limited_body(response, DeerFlowAPIError)
                         raise DeerFlowAPIError(
                             operation="runs/stream request",
                             status=response.status_code,
@@ -147,20 +150,19 @@ class AsyncDeerFlowClient:
                     decoder = codecs.getincrementaldecoder("utf-8")("replace")
                     buffer = ""
 
-                    async for chunk in response.aiter_bytes(8192):
+                    async for chunk in limited_bytes(response, DeerFlowAPIError):
                         buffer += _normalize_sse_newlines(decoder.decode(chunk))
 
                         while "\n\n" in buffer:
                             block, buffer = buffer.split("\n\n", 1)
+                            if len(block) > SSE_MAX_BUFFER_CHARS:
+                                raise DeerFlowAPIError("DeerFlow event exceeds the runtime limit")
                             parsed = _parse_sse_block(block)
                             if parsed is not None:
                                 yield parsed
 
                         if len(buffer) > SSE_MAX_BUFFER_CHARS:
-                            parsed = _parse_sse_block(buffer)
-                            if parsed is not None:
-                                yield parsed
-                            buffer = ""
+                            raise DeerFlowAPIError("DeerFlow event exceeds the runtime limit")
 
                     buffer += _normalize_sse_newlines(decoder.decode(b"", final=True))
                     while "\n\n" in buffer:

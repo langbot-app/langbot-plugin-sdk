@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import typing
 import uuid
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ class ToolCallRequest:
     name: str
     arguments: str
     type: str = "function"
+    provider_specific_fields: dict[str, typing.Any] | None = None
 
     @classmethod
     def from_raw(cls, raw: typing.Any) -> "ToolCallRequest":
@@ -55,6 +57,7 @@ class ToolCallRequest:
                 type=raw.type,
                 name=raw.function.name if raw.function else "",
                 arguments=raw.function.arguments if raw.function else "",
+                provider_specific_fields=copy.deepcopy(raw.provider_specific_fields),
             )
 
         if isinstance(raw, dict):
@@ -71,6 +74,7 @@ class ToolCallRequest:
                 type=str(raw.get("type") or "function"),
                 name=str(name or ""),
                 arguments=str(arguments or ""),
+                provider_specific_fields=copy.deepcopy(raw.get("provider_specific_fields")),
             )
 
         return cls(id=_new_tool_call_id(), name="", arguments="")
@@ -80,6 +84,7 @@ class ToolCallRequest:
             id=self.id,
             type=self.type,
             function=FunctionCall(name=self.name, arguments=self.arguments),
+            provider_specific_fields=copy.deepcopy(self.provider_specific_fields),
         )
 
 

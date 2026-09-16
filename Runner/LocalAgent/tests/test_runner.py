@@ -236,7 +236,9 @@ def make_context(
             ),
         ),
         runtime=AgentRuntimeContext(query_id=1, metadata=runtime_metadata or {}),
-        config=config or {},
+        # Legacy budget/prompt tests use deterministic context without a clock.
+        # Date parity tests explicitly remove this opt-out to exercise defaults.
+        config={"date-grounding": False, **(config or {})},
         adapter=AdapterContext(extra=adapter_extra or {}),
     )
 

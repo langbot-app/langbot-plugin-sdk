@@ -1,5 +1,7 @@
 # Agente Tbox
 
+`remove-think` acepta solo valores booleanos (predeterminado `false`). Con `true` oculta el razonamiento y los bloques `<think>`, incluso entre fragmentos, sin eliminar respuestas ni contenido de herramientas.
+
 ## Descripción general
 
 Ejecuta una aplicación Ant Tbox como LangBot Runner.
@@ -38,3 +40,11 @@ Ejecuta una aplicación Ant Tbox como LangBot Runner.
 - El runner solo puede usar recursos de LangBot autorizados para la ejecución actual.
 - La disponibilidad, las capacidades del modelo y los límites de uso dependen del servicio externo.
 - Consulta el README chino de la raíz o README_en_US.md para el comportamiento avanzado y las limitaciones específicas.
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-bot` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-bot` uses `conversation.bot_id` (or Host runtime `bot_id` when there is no conversation), exactly, without a prefix.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

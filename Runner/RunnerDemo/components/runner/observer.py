@@ -19,19 +19,13 @@ class ObserverProcessor(Runner):
         async def observe(ctx: RunnerContext):
             event = ctx.platform_event
             chinese = ctx.config.get("language", "zh_Hans") == "zh_Hans"
-            await ctx.log(
-                f"{'接收事件' if chinese else 'Received event'}: {event.type}"
-            )
-            fields = event.model_dump(
-                mode="json", exclude={"source_platform_object", "legacy_event"}
-            )
+            await ctx.log(f"{'接收事件' if chinese else 'Received event'}: {event.type}")
+            fields = event.model_dump(mode="json", exclude={"source_platform_object", "legacy_event"})
             summary = {
                 "type": event.type,
                 "adapter": event.adapter_name,
                 "bot_uuid": event.bot_uuid,
-                "fields": sorted(
-                    key for key, value in fields.items() if value not in (None, "", [])
-                ),
+                "fields": sorted(key for key, value in fields.items() if value not in (None, "", [])),
             }
             await ctx.log(json.dumps(summary, ensure_ascii=False), "debug")
             if ctx.config.get("include_payload", False):

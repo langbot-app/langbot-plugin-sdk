@@ -1,5 +1,7 @@
 # WeKnora Agent
 
+`agent-id` 在两种模式下均为可选项。未设置时，`chat` 使用 `builtin-quick-answer`，`agent` 使用 `builtin-smart-reasoning`；显式空值不发送智能体 ID。已保存的 ID 不会被替换。`knowledge-base-ids` 是两种模式均可使用的远端 WeKnora ID，不是 LangBot 知识库 UUID。
+
 WeKnora Agent 将 WeKnora 智能体或知识库问答应用接入 LangBot 运行器。插件支持 Agent 智能推理模式和 Knowledge Base Chat 模式，并在 LangBot 会话状态中维护外部 WeKnora session。
 
 ## 运行器 ID
@@ -22,7 +24,7 @@ WeKnora Agent 将 WeKnora 智能体或知识库问答应用接入 LangBot 运行
 | `base-url` | `string` | 是 | `http://localhost:8080/api/v1` | WeKnora API 地址，需要包含 `/api/v1` |
 | `api-key` | `secret` | 是 | 空 | WeKnora Settings 中生成的 API key |
 | `app-type` | `select` | 是 | `agent` | `agent` 智能推理或 `chat` 知识库问答 |
-| `agent-id` | `string` | 是 | `builtin-smart-reasoning` | Agent 模式使用的 Agent ID |
+| `agent-id` | `string` | 否 | `chat`: `builtin-quick-answer`; `agent`: `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | 否 | `[]` | Chat 模式使用的知识库 ID |
 | `web-search-enabled` | `boolean` | 否 | `false` | Agent 模式是否启用网络搜索 |
 | `advanced-settings` | `boolean` | 否 | `false` | 展开超时和回退提示词调优选项 |

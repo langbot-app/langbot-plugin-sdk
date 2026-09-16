@@ -1,5 +1,7 @@
 # Agente WeKnora
 
+`agent-id` es opcional en ambos modos. Si se omite, `chat` usa `builtin-quick-answer` y `agent` usa `builtin-smart-reasoning`; un valor vacío explícito no envía el ID. Los valores guardados no se sustituyen. `knowledge-base-ids` contiene IDs remotos de WeKnora para ambos modos, no UUIDs de LangBot.
+
 ## Descripción general
 
 Ejecuta un agente WeKnora o una aplicación de chat con base de conocimiento como LangBot Runner.
@@ -22,7 +24,7 @@ Ejecuta un agente WeKnora o una aplicación de chat con base de conocimiento com
 | `base-url` | `string` | Sí | `http://localhost:8080/api/v1` |
 | `api-key` | `secret` | Sí | Vacío |
 | `app-type` | `select` | Sí | `agent` |
-| `agent-id` | `string` | Sí | `builtin-smart-reasoning` |
+| `agent-id` | `string` | No | `chat`: `builtin-quick-answer`; `agent`: `builtin-smart-reasoning` |
 | `knowledge-base-ids` | `array[string]` | No | `[]` |
 | `web-search-enabled` | `boolean` | No | false |
 | `advanced-settings` | `boolean` | No | false |

@@ -1,5 +1,7 @@
 # Coze Agent
 
+`remove-think` is a strict boolean (default `false`). Set it to `true` to hide reasoning fields and `<think>` blocks, including split streaming delimiters; answer text and tool-call content are preserved.
+
 Run a Coze bot as a LangBot Runner.
 
 ## Runner ID
@@ -12,7 +14,7 @@ Run a Coze bot as a LangBot Runner.
 | --- | --- | --- | --- | --- |
 | api-key | secret | yes | '' | Coze API key |
 | bot-id | string | yes | '' | Bot ID |
-| api-base | select | yes | https://api.coze.cn | API base URL (CN or Global) |
+| api-base | string | yes | https://api.coze.cn | Trusted HTTP(S) API base URL (CN, Global, or custom path prefix) |
 | advanced-settings | boolean | no | false | Show history and timeout tuning controls |
 | auto-save-history | boolean | no | true | Auto-save conversation history |
 | timeout | number | no | 120 | Request timeout (seconds) |
@@ -90,3 +92,17 @@ langbot-assets-input-name = langbot_asset_run_token
 ## Legacy Runner
 
 Migrated from `coze-api` in LangBot.
+
+## Native migration notes
+
+Custom `api-base` values retain their HTTP(S) host, port, and path prefix; credentials, query strings, fragments, and malformed URLs are rejected without echoing their values. Only trusted administrator-configured endpoints should be used. `auto-save-history` remains `true` by default and accepts only booleans. The old `auto_save_history` runtime alias is retired; migration must explicitly map it to `auto-save-history` and resolve conflicting values. Persistent provider conversation state is retained rather than reproducing the native per-turn reset bug. The native launcher identity versus plugin actor identity remains a migration decision, not an automatic compatibility claim.
+
+`timeout` defaults to 120 seconds and must be finite and positive. Generated text (including hidden reasoning) is limited to 1 MiB characters; Coze and Tbox uploads are limited to 10 MiB per file. Existing remote conversation IDs require an explicit scoped import or reset when migrating from native runners. These source changes do not publish or install a new plugin version.
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the Query launcher for Coze into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

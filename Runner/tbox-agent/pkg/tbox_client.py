@@ -75,6 +75,9 @@ class AsyncTboxClient:
         Raises:
             TboxAPIError: If upload fails
         """
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise TboxAPIError("Upload exceeds the 10 MiB size limit", code="tbox.input_error")
+
         import os
 
         # Tbox SDK requires a file path, so we write to a temp file

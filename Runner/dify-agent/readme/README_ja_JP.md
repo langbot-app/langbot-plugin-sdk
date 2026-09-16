@@ -1,5 +1,7 @@
 # Dify Agent
 
+`remove-think`（真偽値、既定値 `false`）は未完了の内容を含む think タグ内の推論を非表示にします。`app-type` は `chatflow` もサポートします。
+
 ## 概要
 
 Dify アプリを LangBot Runner として実行します。
@@ -50,3 +52,11 @@ Dify アプリを LangBot Runner として実行します。
 - Runner が利用できるのは、現在の実行で許可された LangBot リソースだけです。
 - 外部サービスの可用性、モデル機能、レート制限は各プラットフォームに依存します。
 - 高度な動作と製品固有の制約は、ルートの中国語 README または英語版 README_en_US.md を参照してください。
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the native Query.session launcher into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

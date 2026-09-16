@@ -79,12 +79,14 @@ class DefaultRunner(Runner):
     - auth-type: Authentication type (none/basic/jwt/header)
     - basic-username: Username for basic auth
     - basic-password: Password for basic auth
+    - basic-encoding: Credential encoding (utf-8 default; latin1 for native migration)
     - jwt-secret: Secret key for JWT auth
     - jwt-algorithm: JWT algorithm (default: HS256)
     - header-name: Custom header name for header auth
     - header-value: Custom header value for header auth
     - timeout: Request timeout in seconds (default: 120)
     - output-key: Key to extract from non-streaming JSON response (default: response)
+    - response-handling: Forward the response (reply, default) or ignore its body
     - langbot-assets-enabled: Register a run-scoped LangBot asset token and inject
       it into the webhook payload (default: false)
     - langbot-assets-gateway-host/port: Bind address of the local LangBot Asset Gateway
@@ -103,6 +105,7 @@ class DefaultRunner(Runner):
         Raises N8nConfigError on missing required fields.
         """
         config = ctx.config or {}
+        self._get_user_tag(ctx)  # Validate identity before constructing any upstream client.
 
         webhook_url = config.get("webhook-url", "")
         if not webhook_url:
@@ -116,12 +119,22 @@ class DefaultRunner(Runner):
                 code="n8n.config_invalid",
             )
 
+        response_handling = config.get("response-handling", "reply")
+        if response_handling not in ("reply", "ignore"):
+            raise N8nConfigError("response-handling must be reply or ignore")
+        if auth_type == "header" and not config.get("header-name"):
+            raise N8nConfigError("header-name is required for header authentication")
+        basic_encoding = config.get("basic-encoding", "utf-8")
+        if auth_type == "basic" and basic_encoding not in ("utf-8", "latin1"):
+            raise N8nConfigError("basic-encoding must be utf-8 or latin1")
+
         return {
             "webhook_url": webhook_url,
             "auth_type": auth_type,
             "auth_config": {
                 "basic_username": config.get("basic-username", ""),
                 "basic_password": config.get("basic-password", ""),
+                "basic_encoding": basic_encoding,
                 "jwt_secret": config.get("jwt-secret", ""),
                 "jwt_algorithm": config.get("jwt-algorithm", "HS256"),
                 "header_name": config.get("header-name", ""),
@@ -129,6 +142,7 @@ class DefaultRunner(Runner):
             },
             "timeout": float(config.get("timeout", 120)),
             "output_key": config.get("output-key", "response"),
+            "response_handling": response_handling,
             "langbot_assets_enabled": _to_bool(config.get("langbot-assets-enabled"), False),
             "asset_gateway_host": str(config.get("langbot-assets-gateway-host") or "0.0.0.0"),
             "asset_gateway_port": _to_int(config.get("langbot-assets-gateway-port"), 8765),
@@ -163,6 +177,16 @@ class DefaultRunner(Runner):
 
     def _get_user_tag(self, ctx: RunnerContext) -> str:
         """Get user identifier for n8n webhook."""
+        source = ctx.config.get("user-id-source", "sender")
+        if source not in ("sender", "legacy-session"):
+            raise N8nConfigError("user-id-source is invalid", code="n8n.config_invalid")
+        if source == "legacy-session":
+            conversation = ctx.conversation
+            if conversation and conversation.launcher_type in ("group", "person"):
+                launcher_id = conversation.launcher_id
+                if isinstance(launcher_id, str) and launcher_id:
+                    return f"{conversation.launcher_type}_{launcher_id}"
+            raise N8nConfigError("user-id-source requires trusted Host identity", code="n8n.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
             return f"{actor.actor_type}_{actor.actor_id}"
@@ -210,15 +234,11 @@ class DefaultRunner(Runner):
             "conversation_id": conversation_id,
             "session_id": session_id,
             "user_id": user_tag,
+            "msg_create_time": params.get("msg_create_time", ""),
         }
 
         # Add optional fields from adapter params
         if params:
-            # msg_create_time is commonly used
-            msg_create_time = params.get("msg_create_time")
-            if msg_create_time:
-                payload["msg_create_time"] = msg_create_time
-
             # Merge other params (excluding reserved keys)
             reserved_keys = {"msg_create_time", "conversation_id", "session_id", "user_id"}
             for key, value in params.items():
@@ -246,6 +266,7 @@ class DefaultRunner(Runner):
             webhook_url=config["webhook_url"],
             timeout=config["timeout"],
             output_key=config["output_key"],
+            response_handling=config["response_handling"],
         )
 
         # Get text input
@@ -325,10 +346,12 @@ class DefaultRunner(Runner):
             )
             return
         except Exception as e:
-            logger.exception(f"n8n runner unexpected error: {e}")
+            # HTTP/auth/parser exceptions may include URLs, headers or response
+            # values. Neither logs nor chat-facing failures may echo those.
+            logger.error("n8n runner unexpected error (%s)", type(e).__name__)
             yield RunnerResult.run_failed(
                 ctx.run_id,
-                error=f"n8n runner error: {e}",
+                error="n8n runner encountered an unexpected error",
                 code="n8n.unexpected_error",
             )
             return
@@ -336,7 +359,7 @@ class DefaultRunner(Runner):
             if asset_registration is not None:
                 asset_registration.stop()
 
-        if not has_response:
+        if not has_response and config["response_handling"] != "ignore":
             yield RunnerResult.run_failed(
                 ctx.run_id,
                 error="n8n webhook returned no response",

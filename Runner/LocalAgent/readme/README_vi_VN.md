@@ -19,12 +19,13 @@ Tác nhân tích hợp hỗ trợ mô hình dự phòng, gọi công cụ và tr
 
 | Trường | Kiểu | Bắt buộc | Mặc định |
 | --- | --- | --- | --- |
-| `model` | `model-fallback-selector` | Có | `{fallbacks: [], primary: ''}` |
+| `model` | `model-fallback-selector` | Có | `{fallbacks: [], primary: '', reasoning: {}}` |
 | `timeout` | `integer` | Không | `300` |
 | `prompt` | `prompt-editor` | Có | `[{content: You are a helpful assistant., role: system}]` |
 | `remove-think` | `boolean` | Không | false |
 | `knowledge-bases` | `knowledge-base-multi-selector` | Không | `[]` |
 | `advanced-settings` | `boolean` | Không | `false` |
+| `date-grounding` | `boolean` | Không | `true` |
 | `retrieval-top-k` | `integer` | Không | `5` |
 | `rerank-model` | `rerank-model-selector` | Không | Trống |
 | `rerank-top-k` | `integer` | Không | `5` |

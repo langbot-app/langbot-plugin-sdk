@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import typing
 
 import httpx
+from pkg.http_limits import limited_body, limited_bytes, limited_lines, limited_post
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,23 @@ class DifyConfigError(Exception):
         self.message = message
         self.code = code
         super().__init__(message)
+
+
+async def _iter_sse_json(response):
+    async for line in limited_lines(response, DifyAPIError):
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data)
+        except ValueError:
+            raise DifyAPIError("Dify SSE data is not valid JSON", code="dify.response_invalid") from None
+        if not isinstance(payload, dict):
+            raise DifyAPIError("Dify SSE event is not a JSON object", code="dify.response_invalid")
+        yield payload
 
 
 class AsyncDifyClient:
@@ -90,27 +109,15 @@ class AsyncDifyClient:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        error_body = await response.aread()
+                        error_body = await limited_body(response, DifyAPIError)
                         error_text = error_body.decode("utf-8", errors="replace")
                         raise DifyAPIError(
                             f"Dify API error: {response.status_code} - {error_text[:200]}",
                             code="dify.http_error",
                         )
 
-                    async for line in response.aiter_lines():
-                        if not line or not line.strip():
-                            continue
-                        if line.startswith("data:"):
-                            data_str = line[5:].strip()
-                            if data_str:
-                                try:
-                                    yield json.loads(data_str)
-                                except json.JSONDecodeError as e:
-                                    logger.warning(f"Failed to parse Dify SSE data: {e}")
-                                    raise DifyAPIError(
-                                        f"Invalid Dify response format: {data_str[:100]}",
-                                        code="dify.response_invalid",
-                                    ) from None
+                    async for event in _iter_sse_json(response):
+                        yield event
             except httpx.TimeoutException:
                 raise DifyAPIError(
                     f"Dify API request timed out after {self.timeout}s",
@@ -157,27 +164,15 @@ class AsyncDifyClient:
                     json=payload,
                 ) as response:
                     if response.status_code != 200:
-                        error_body = await response.aread()
+                        error_body = await limited_body(response, DifyAPIError)
                         error_text = error_body.decode("utf-8", errors="replace")
                         raise DifyAPIError(
                             f"Dify API error: {response.status_code} - {error_text[:200]}",
                             code="dify.http_error",
                         )
 
-                    async for line in response.aiter_lines():
-                        if not line or not line.strip():
-                            continue
-                        if line.startswith("data:"):
-                            data_str = line[5:].strip()
-                            if data_str:
-                                try:
-                                    yield json.loads(data_str)
-                                except json.JSONDecodeError as e:
-                                    logger.warning(f"Failed to parse Dify SSE data: {e}")
-                                    raise DifyAPIError(
-                                        f"Invalid Dify response format: {data_str[:100]}",
-                                        code="dify.response_invalid",
-                                    ) from None
+                    async for event in _iter_sse_json(response):
+                        yield event
             except httpx.TimeoutException:
                 raise DifyAPIError(
                     f"Dify API request timed out after {self.timeout}s",
@@ -208,8 +203,10 @@ class AsyncDifyClient:
                 timeout=self.timeout,
                 trust_env=True,
             ) as client:
-                response = await client.post(
+                response = await limited_post(
+                    client,
                     f"/form/human_input/{form_token}",
+                    DifyAPIError,
                     headers=headers,
                     json={"inputs": inputs, "user": user, "action": action},
                 )
@@ -226,30 +223,42 @@ class AsyncDifyClient:
                     params={"user": user},
                 ) as event_response:
                     if not event_response.is_success:
-                        body = await event_response.aread()
+                        body = await limited_body(event_response, DifyAPIError)
                         raise DifyAPIError(
                             f"Dify API error: {event_response.status_code} - "
                             f"{body.decode('utf-8', errors='replace')[:200]}",
                             code="dify.http_error",
                         )
-                    async for line in event_response.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if not data_str:
-                            continue
-                        try:
-                            yield json.loads(data_str)
-                        except json.JSONDecodeError:
-                            raise DifyAPIError(
-                                f"Invalid Dify response format: {data_str[:100]}",
-                                code="dify.response_invalid",
-                            ) from None
+                    async for event in _iter_sse_json(event_response):
+                        yield event
         except httpx.TimeoutException:
             raise DifyAPIError(
                 f"Dify API request timed out after {self.timeout}s",
                 code="dify.timeout",
             ) from None
+
+    async def download_file(self, url: str) -> tuple[bytes, str]:
+        """Stage an explicitly supplied HTTP file URL, never a local path."""
+        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            raise DifyAPIError("Input file URL must use HTTP or HTTPS", code="dify.input_error")
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=True, follow_redirects=True) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    body = bytearray()
+                    async for chunk in limited_bytes(response, DifyAPIError):
+                        body.extend(chunk)
+                        if len(body) > 10 * 1024 * 1024:
+                            raise DifyAPIError("Dify input file exceeds the size limit", code="dify.input_error")
+                    mime = (
+                        response.headers.get("content-type")
+                        or mimetypes.guess_type(url)[0]
+                        or "application/octet-stream"
+                    )
+                    return bytes(body), mime
+        except httpx.HTTPError:
+            # URLs and transport exception details may contain signed credentials.
+            raise DifyAPIError("Dify input file download failed", code="dify.input_error") from None
 
     async def upload_file(
         self,
@@ -259,6 +268,8 @@ class AsyncDifyClient:
         user: str,
     ) -> dict[str, typing.Any]:
         """Upload file to Dify and return file info with id."""
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise DifyAPIError("Dify upload exceeds the size limit", code="dify.input_error")
         async with httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
@@ -268,21 +279,31 @@ class AsyncDifyClient:
             data = {"user": user}
 
             try:
-                response = await client.post(
+                response = await limited_post(
+                    client,
                     "/files/upload",
+                    DifyAPIError,
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     files=files,
                     data=data,
                 )
 
-                if response.status_code != 201:
+                if response.status_code not in (200, 201):
                     error_text = response.text[:200]
                     raise DifyAPIError(
                         f"Dify file upload failed: {response.status_code} - {error_text}",
                         code="dify.http_error",
                     )
 
-                return response.json()
+                try:
+                    payload = response.json()
+                except (ValueError, UnicodeDecodeError):
+                    raise DifyAPIError("Dify upload response is not valid JSON", code="dify.response_invalid") from None
+                if isinstance(payload, dict):
+                    payload = payload.get("data", payload)
+                if not isinstance(payload, dict) or not isinstance(payload.get("id"), str) or not payload["id"]:
+                    raise DifyAPIError("Dify upload response has no valid file id", code="dify.response_invalid")
+                return payload
             except httpx.TimeoutException:
                 raise DifyAPIError(
                     f"Dify file upload timed out after {self.timeout}s",
@@ -335,6 +356,9 @@ def process_thinking_content(content: str, remove_think: bool = False) -> tuple[
             content = re.sub(think_pattern, "", content, flags=re.DOTALL).strip()
 
     if remove_think:
+        # Never expose an unfinished reasoning block while streaming or pausing.
+        if "<think>" in content:
+            content = content.split("<think>", 1)[0].rstrip()
         return content, ""
     else:
         if thinking_content:

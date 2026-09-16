@@ -1,5 +1,7 @@
 # Langflow Agent
 
+Tweaks 必须是 JSON 对象（JSON 字符串或对象）。缺失、null、空字符串或仅空白表示无覆盖；非法 JSON 和其他值会返回 `langflow.config_invalid`，不会记录参数内容。仅空白可用是插件的便利行为，旧原生运行器不接受。`external.session_id` 保持跨轮会话历史，迁移不会恢复旧的每次新建会话行为。
+
 Langflow Agent 将 Langflow flow 接入 LangBot 运行器。插件调用 Langflow Run API，把 LangBot 输入映射到 flow，并从 Langflow 响应中提取最终消息。启用 Asset Gateway 后，还可以向 flow 注入当前运行的短期 LangBot 资产 token。
 
 ## 运行器 ID

@@ -1,5 +1,7 @@
 # Tbox Agent
 
+`remove-think` is a strict boolean (default `false`). Set it to `true` to hide reasoning fields and `<think>` blocks, including split streaming delimiters; answer text and tool-call content are preserved.
+
 ## Overview
 
 Run an Ant Tbox application as a LangBot Runner.
@@ -38,3 +40,17 @@ Run an Ant Tbox application as a LangBot Runner.
 - The runner can use only LangBot resources authorized for the current run.
 - Availability, model abilities, and rate limits depend on the external service.
 - See the full Chinese README at the package root for advanced behavior and product-specific limitations.
+
+## Native migration notes
+
+Reasoning suppression applies to streaming `thinking` and non-streaming `reasoningContent`. The default remains to show reasoning. Streaming selection follows the delivery capability unless explicitly overridden. Provider conversations remain in scoped `external.conversation_id` state. Native `user_id=bot_uuid` and plugin actor-based user IDs are not equivalent; migration must resolve this separately.
+
+`timeout` defaults to 120 seconds and must be finite and positive. Generated text (including hidden reasoning) is limited to 1 MiB characters; Coze and Tbox uploads are limited to 10 MiB per file. Existing remote conversation IDs require an explicit scoped import or reset when migrating from native runners. These source changes do not publish or install a new plugin version.
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-bot` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-bot` uses `conversation.bot_id` (or Host runtime `bot_id` when there is no conversation), exactly, without a prefix.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

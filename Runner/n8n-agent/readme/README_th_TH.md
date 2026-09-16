@@ -30,6 +30,8 @@
 | `advanced-settings` | `boolean` | ไม่ | false |
 | `timeout` | `integer` | ไม่ | `120` |
 | `output-key` | `string` | ไม่ | `response` |
+| `response-handling` (`reply` / `ignore`) | `select` | ไม่ | `reply` |
+| `basic-encoding` (`utf-8` / `latin1`) | `select` | ไม่ | `utf-8` |
 | `langbot-assets-enabled` | `boolean` | ไม่ | false |
 | `langbot-assets-gateway-host` | `string` | ไม่ | `0.0.0.0` |
 | `langbot-assets-gateway-port` | `integer` | ไม่ | `8765` |
@@ -55,3 +57,11 @@
 - Runner ใช้ได้เฉพาะทรัพยากร LangBot ที่ได้รับอนุญาตสำหรับการทำงานปัจจุบัน
 - ความพร้อมใช้งาน ความสามารถของโมเดล และขีดจำกัดอัตราขึ้นอยู่กับบริการภายนอก
 - ดูพฤติกรรมขั้นสูงและข้อจำกัดเฉพาะผลิตภัณฑ์ใน README ภาษาจีนที่รากหรือ README_en_US.md ภาษาอังกฤษ
+
+### Provider identity compatibility (`user-id-source`)
+
+Per-pipeline Runner parameter, not plugin-global configuration. `sender` remains the default.
+Explicit `legacy-session` preserves native provider identity using trusted Host run context only;
+missing identity fails before any upstream request, never falls back to the sender or business params.
+`legacy-session` uses `conversation.launcher_type` (`group`/`person`) plus `_` plus the exact `conversation.launcher_id`. Host must project the native Query.session launcher into those fields, including interaction/resume runs. Older Hosts that leave these fields empty must be upgraded.
+Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.

@@ -113,9 +113,11 @@ class LangBotModelAdapter:
 
         tool_calls = [ToolCallRequest.from_raw(tool_call) for tool_call in caller.get_tool_calls()]
         content = caller.get_accumulated_content()
+        message = build_assistant_message(content, tool_calls)
+        message.provider_specific_fields = caller.get_provider_specific_fields()
         yield ModelTurnEvent.message_end(
             ModelTurnResult(
-                message=build_assistant_message(content, tool_calls),
+                message=message,
                 tool_calls=tool_calls,
                 committed_model_id=caller.get_committed_model_id(),
                 visible_content=content,

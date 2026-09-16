@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import re
@@ -288,6 +289,7 @@ class StreamingModelCaller:
 
         self._committed_model_id: str | None = None
         self._accumulated_content = ""
+        self._provider_specific_fields: dict[str, typing.Any] = {}
         self._tool_calls_map: dict[str, dict[str, typing.Any]] = {}
         self._tool_call_id_keys: dict[str, str] = {}
         self._tool_call_position_keys: dict[str, str] = {}
@@ -308,6 +310,8 @@ class StreamingModelCaller:
                 # A normal provider stop is a valid turn with no further tool calls.
                 # Empty transport sentinels still do not commit the model.
                 return chunk
+            if chunk is not None:
+                self._accumulate_provider_fields(chunk)
 
     async def stream(
         self,
@@ -331,6 +335,7 @@ class StreamingModelCaller:
         stream_finished = False
 
         for model_id in self.model_ids:
+            self._provider_specific_fields = {}
             try:
                 # Try to get first chunk to verify stream works
                 stream_invoke = getattr(self.api, "invoke_llm_stream_events", None)
@@ -445,6 +450,8 @@ class StreamingModelCaller:
                     if hasattr(ce, "type") and ce.type == "text" and ce.text:
                         self._accumulated_content += ce.text
 
+        self._accumulate_provider_fields(raw_chunk)
+
         # Accumulate tool calls
         if raw_chunk.tool_calls:
             for position, tc in enumerate(raw_chunk.tool_calls):
@@ -459,6 +466,9 @@ class StreamingModelCaller:
                     }
                 elif tc_id:
                     self._tool_calls_map[key]["id"] = tc_id
+                if tc.provider_specific_fields:
+                    fields = self._tool_calls_map[key].setdefault("provider_specific_fields", {})
+                    fields.update(copy.deepcopy(tc.provider_specific_fields))
                 if tc.function:
                     if tc.function.name:
                         self._tool_calls_map[key]["function_name"] = tc.function.name
@@ -478,6 +488,7 @@ class StreamingModelCaller:
                     ToolCall(
                         id=tc["id"],
                         type=tc["type"],
+                        provider_specific_fields=copy.deepcopy(tc.get("provider_specific_fields")),
                         function=FunctionCall(
                             name=tc["function_name"],
                             arguments=tc["function_arguments"],
@@ -489,6 +500,7 @@ class StreamingModelCaller:
             chunk = MessageChunk(
                 role=raw_chunk.role or "assistant",
                 content=self._accumulated_content,
+                provider_specific_fields=copy.deepcopy(self._provider_specific_fields) or None,
                 tool_calls=tool_calls,
                 is_final=raw_chunk.is_final,
                 msg_sequence=self._msg_sequence,
@@ -501,6 +513,17 @@ class StreamingModelCaller:
     def get_accumulated_content(self) -> str:
         """Get accumulated content so far."""
         return self._accumulated_content
+
+    def _accumulate_provider_fields(self, raw_chunk: MessageChunk) -> None:
+        for key, value in (raw_chunk.provider_specific_fields or {}).items():
+            if key == "reasoning_content" and isinstance(value, str):
+                self._provider_specific_fields[key] = self._provider_specific_fields.get(key, "") + value
+            else:
+                self._provider_specific_fields[key] = copy.deepcopy(value)
+
+    def get_provider_specific_fields(self) -> dict[str, typing.Any] | None:
+        """Return opaque model state required on subsequent provider requests."""
+        return copy.deepcopy(self._provider_specific_fields) or None
 
     def get_tool_calls(self) -> list[dict[str, typing.Any]]:
         """Get accumulated tool calls as raw dicts."""

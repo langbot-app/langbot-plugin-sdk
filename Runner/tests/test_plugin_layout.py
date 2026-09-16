@@ -285,16 +285,15 @@ def test_runner_forms_hide_inactive_dependent_fields() -> None:
 
     weknora_runner = _load_yaml(ROOT / "weknora-agent" / "components" / "runner" / "default.yaml")
     weknora_config = {item["name"]: item for item in weknora_runner["spec"]["config"]}
-    for field_name in ("agent-id", "web-search-enabled"):
-        assert weknora_config[field_name]["show_if"] == {
-            "field": "app-type",
-            "operator": "eq",
-            "value": "agent",
-        }
-    assert weknora_config["knowledge-base-ids"]["show_if"] == {
+    # Native WeKnora applies saved agent and remote knowledge IDs in both modes.
+    # Runtime payloads (including defaults and exact ID preservation) are covered
+    # by test_weknora_agent_defaults_and_exact_remote_ids_reach_client.
+    for field_name in ("agent-id", "knowledge-base-ids"):
+        assert "show_if" not in weknora_config[field_name]
+    assert weknora_config["web-search-enabled"]["show_if"] == {
         "field": "app-type",
         "operator": "eq",
-        "value": "chat",
+        "value": "agent",
     }
 
 

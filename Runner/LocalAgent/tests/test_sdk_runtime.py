@@ -39,6 +39,7 @@ class BackendProtocolFixture:
         self.calls = []
         self.fail_primary = False
         self.use_tool = False
+        self.opaque_provider_fields = False
         self.cancelled = False
         self.stall = False
         self.stall_started = asyncio.Event()
@@ -95,7 +96,11 @@ class BackendProtocolFixture:
                 return
             message = self.reply(data)
             chunk = MessageChunk(
-                role="assistant", content=message.content, tool_calls=message.tool_calls, is_final=True
+                role="assistant",
+                content=message.content,
+                tool_calls=message.tool_calls,
+                provider_specific_fields=message.provider_specific_fields,
+                is_final=True,
             )
             yield ActionResponse.success({"chunk": chunk.model_dump(mode="json")})
             # Usage-only final response exercises the actual SDK stream decoder.
@@ -112,10 +117,16 @@ class BackendProtocolFixture:
                 {
                     "role": "assistant",
                     "content": "",
+                    "provider_specific_fields": {"opaque_state": "message-signature"}
+                    if self.opaque_provider_fields
+                    else None,
                     "tool_calls": [
                         {
                             "id": "fixture-call",
                             "type": "function",
+                            "provider_specific_fields": {"opaque_state": "tool-signature"}
+                            if self.opaque_provider_fields
+                            else None,
                             "function": {"name": "fixture_echo", "arguments": '{"text":"hello"}'},
                         }
                     ],
@@ -282,6 +293,69 @@ async def test_real_sdk_run_get_cancellation(sdk_runtime):
     assert len(results) == 1
     assert results[0].data["code"] == "cancelled"
     assert [action for action, _ in sdk_runtime.calls] == ["run_get"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_real_sdk_master_parity_request_contract(sdk_runtime, streaming):
+    sdk_runtime.fail_primary = True
+    sdk_runtime.use_tool = True
+    sdk_runtime.opaque_provider_fields = True
+    context = run_context(streaming=streaming, tools=True)
+    reasoning = {"primary": "high", "fallback": "low"}
+    context.config["model"]["reasoning"] = reasoning.copy()
+    results = await sdk_runtime.run(context)
+    assert results[-1].type == "run.completed"
+    model_calls = [data for action, data in sdk_runtime.calls if action in {"stream", "invoke"}]
+    assert [data["llm_model_uuid"] for data in model_calls] == ["primary", "fallback", "fallback"]
+    assert context.config["model"]["reasoning"] == reasoning
+    assert all(not data.get("extra_args") for data in model_calls)
+    assert all("Current date:" in data["messages"][0]["content"] for data in model_calls)
+    assistant = next(message for message in model_calls[-1]["messages"] if message["role"] == "assistant")
+    assert assistant["provider_specific_fields"] == {"opaque_state": "message-signature"}
+    assert assistant["tool_calls"][0]["provider_specific_fields"] == {"opaque_state": "tool-signature"}
+    # This proves real SDK RPC payloads only; Core separately proves Host reasoning overrides.
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_authorized_multikb_rerank_reaches_model(sdk_runtime):
+    import json
+
+    from langbot_plugin.api.entities.builtin.runner.resources import KnowledgeBaseResource, ModelResource
+
+    @sdk_runtime.host.action(PluginToRuntimeAction.RETRIEVE_KNOWLEDGE_BASE)
+    async def retrieve(data):
+        sdk_runtime.record("retrieve", data)
+        return ActionResponse.success({"results": [{"content": [{"type": "text", "text": data["kb_id"] + " fact"}]}]})
+
+    @sdk_runtime.host.action(PluginToRuntimeAction.INVOKE_RERANK)
+    async def rerank(data):
+        sdk_runtime.record("rerank", data)
+        return ActionResponse.success({"results": [{"index": 1, "relevance_score": 0.99}]})
+
+    context = run_context(streaming=False)
+    context.config.update(
+        {"knowledge-bases": ["kb-a", "foreign-kb", "kb-b"], "rerank-model": "reranker", "rerank-top-k": 1}
+    )
+    context.resources.knowledge_bases = [
+        KnowledgeBaseResource(kb_id=name, operations=["retrieve"]) for name in ["kb-a", "kb-b"]
+    ]
+    context.resources.models.append(ModelResource(model_id="reranker", model_type="rerank", operations=["rerank"]))
+    results = await sdk_runtime.run(context)
+    assert results[-1].type == "run.completed"
+    retrieval_calls = [data for action, data in sdk_runtime.calls if action == "retrieve"]
+    assert [data["kb_id"] for data in retrieval_calls] == ["kb-a", "kb-b"]
+    assert all(data["top_k"] == 5 for data in retrieval_calls)
+    rerank_call = next(data for action, data in sdk_runtime.calls if action == "rerank")
+    assert rerank_call["documents"] == ["kb-a fact", "kb-b fact"]
+    model_call = next(data for action, data in sdk_runtime.calls if action == "invoke")
+    rag = next(
+        json.loads(message["content"])
+        for message in model_call["messages"]
+        if isinstance(message.get("content"), str) and '"langbot_retrieved_context"' in message["content"]
+    )
+    assert [chunk["content"] for chunk in rag["data"]["chunks"]] == ["kb-b fact"]
+    assert model_call["messages"][-1]["content"] == "Fixture question"
 
 
 @pytest.mark.asyncio
