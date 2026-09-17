@@ -247,6 +247,7 @@ class RunnerRuntimeService:
         return {
             "plugin_author": plugin.manifest.metadata.author,
             "plugin_name": plugin.manifest.metadata.name,
+            "plugin_version": plugin.manifest.metadata.version,
             "runner_name": runner_name,
             "runner_description": manifest_data["description"],
             "manifest": manifest_data,

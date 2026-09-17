@@ -170,6 +170,7 @@ def create_mock_plugin(
     plugin.manifest.metadata = Mock()
     plugin.manifest.metadata.author = author
     plugin.manifest.metadata.name = name
+    plugin.manifest.metadata.version = "0.1.7"
 
     components = []
     for runner_name, runner_instance in runner_components:
@@ -270,6 +271,7 @@ class TestListRunners:
         assert len(runners) == 1
         assert runners[0]["plugin_author"] == "test-author"
         assert runners[0]["plugin_name"] == "test-plugin"
+        assert runners[0]["plugin_version"] == "0.1.7"
         assert runners[0]["runner_name"] == "default"
         assert "protocol_version" not in runners[0]
         assert runners[0]["manifest"]["id"] == "plugin:test-author/test-plugin/default"
