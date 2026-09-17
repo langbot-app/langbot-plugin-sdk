@@ -29,7 +29,12 @@ LANGBOT_AGENT_GATEWAY_INSTRUCTIONS = (
     "platform_tools. Inspect a tool with langbot_get_tool_detail, then invoke it "
     "with langbot_call_tool. Event-level platform tools have Host-frozen targets. "
     "Tool calls are scoped by the MCP Authorization header or by the run_token "
-    "argument."
+    "argument. When sandbox APIs are available, check langbot_get_box_status, "
+    "acquire or select a Box, and langbot_bind_box before calling sandbox tools. "
+    "Import attachments explicitly with langbot_import_box_attachments. Place "
+    "output files in the run outbox returned by binding, export them with "
+    "langbot_export_box_files, then explicitly deliver them with langbot_reply_files "
+    "when reply permission is available."
 )
 DEFAULT_RUN_TOKEN_TTL_SECONDS = 3600.0
 

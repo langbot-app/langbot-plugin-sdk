@@ -20,6 +20,9 @@ class DeliveryContext(pydantic.BaseModel):
     such as streaming, editing, reactions, and platform-specific features.
     """
 
+    automatic_reply: bool = False
+    """Whether returned messages/files are delivered by the Pipeline output stages."""
+
     surface: str
     """Output surface type (platform, webui, api, etc.)."""
 

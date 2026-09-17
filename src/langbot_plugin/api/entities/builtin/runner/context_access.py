@@ -34,6 +34,9 @@ class InlineContextPolicy(pydantic.BaseModel):
 class ContextAPICapabilities(pydantic.BaseModel):
     """Available context APIs for the runner."""
 
+    box: bool = False
+    """Whether invocation Box binding and file APIs are available."""
+
     reply_stream: bool = False
     """Whether explicit streaming replies are available (independent of model streaming)."""
 

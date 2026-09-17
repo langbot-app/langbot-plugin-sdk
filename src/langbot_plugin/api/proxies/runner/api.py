@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from langbot_plugin.api.proxies.runner.box import RunnerBoxAPIMixin
+
 from langbot_plugin.api.proxies.runner.common import AgentRunProxyBase
 from langbot_plugin.api.proxies.runner.context import RunnerContextAPIMixin
 from langbot_plugin.api.proxies.runner.ledger import AgentRunLedgerAPIMixin
@@ -16,6 +18,7 @@ from langbot_plugin.api.proxies.runner.platform import RunnerPlatformAPIMixin
 
 
 class RunnerAPIProxy(
+    RunnerBoxAPIMixin,
     RunnerPlatformAPIMixin,
     AgentRunReplyStreamAPIMixin,
     AgentRunResourceAPIMixin,

@@ -15,6 +15,9 @@ class InputAttachment(pydantic.BaseModel):
     tools. This model only carries lightweight event metadata.
     """
 
+    ref: str | None = None
+    """Host-issued reference for importing this input into the selected Box."""
+
     type: str | None = None
     """Attachment type, such as image, file, or voice."""
 

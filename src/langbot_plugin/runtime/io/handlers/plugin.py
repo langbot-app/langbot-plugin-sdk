@@ -795,6 +795,50 @@ class PluginConnectionHandler(handler.Handler):
                 PluginToRuntimeAction.HISTORY_PAGE, data, 30
             )
 
+        @self.action(PluginToRuntimeAction.GET_BOX_STATUS)
+        async def get_box_status(data: dict[str, Any]) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.GET_BOX_STATUS,
+                data,
+                LONG_RUNNING_OPERATION_TIMEOUT,
+            )
+
+        @self.action(PluginToRuntimeAction.LIST_BOXES)
+        async def list_boxes(data: dict[str, Any]) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.LIST_BOXES, data, LONG_RUNNING_OPERATION_TIMEOUT
+            )
+
+        @self.action(PluginToRuntimeAction.ACQUIRE_BOX)
+        async def acquire_box(data: dict[str, Any]) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.ACQUIRE_BOX, data, LONG_RUNNING_OPERATION_TIMEOUT
+            )
+
+        @self.action(PluginToRuntimeAction.BIND_BOX)
+        async def bind_box(data: dict[str, Any]) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.BIND_BOX, data, LONG_RUNNING_OPERATION_TIMEOUT
+            )
+
+        @self.action(PluginToRuntimeAction.IMPORT_BOX_ATTACHMENTS)
+        async def import_box_attachments(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.IMPORT_BOX_ATTACHMENTS,
+                data,
+                LONG_RUNNING_OPERATION_TIMEOUT,
+            )
+
+        @self.action(PluginToRuntimeAction.EXPORT_BOX_FILES)
+        async def export_box_files(data: dict[str, Any]) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.EXPORT_BOX_FILES,
+                data,
+                LONG_RUNNING_OPERATION_TIMEOUT,
+            )
+
         @self.action(PluginToRuntimeAction.GET_PROMPT)
         async def get_prompt(data: dict[str, Any]) -> handler.ActionResponse:
             return await forward_agent_action(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+from langbot_plugin.api.entities.builtin.runner.box import BoxBinding, BoxFile
 from langbot_plugin.api.entities.builtin.runner.result import RunnerResult
 from langbot_plugin.api.entities.builtin.runner.run_ledger import (
     AgentRun,
@@ -113,6 +114,9 @@ class RunnerContext(pydantic.BaseModel):
     runtime: AgentRuntimeContext
     """Runtime context."""
 
+    variables: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """Public invocation variables. Host-private state is never included."""
+
     config: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Current agent/runner configuration from Host."""
 
@@ -157,6 +161,24 @@ class RunnerContext(pydantic.BaseModel):
     def reply_stream(self):
         """Update one explicit reply with full text snapshots."""
         return self.api.reply_stream()
+
+    async def bind_box(self, box_id: str) -> "BoxBinding":
+        """Bind one authorized Box to this run; cannot switch after binding."""
+        return await self.api.bind_box(box_id)
+
+    async def import_box_attachments(
+        self, attachment_ids: list[str] | None = None
+    ) -> list["BoxFile"]:
+        """Import selected input refs, or all inputs, into run-specific paths."""
+        return await self.api.import_box_attachments(attachment_ids)
+
+    async def export_box_files(self) -> list["BoxFile"]:
+        """Export current-run outbox files as handles; does not send them."""
+        return await self.api.export_box_files()
+
+    async def reply_files(self, file_ids: list[str]) -> typing.Any:
+        """Explicitly reply with exported handles, subject to tool authorization."""
+        return await self.api.reply_files(file_ids)
 
     async def get_available_tools(self) -> list[dict[str, typing.Any]]:
         """List tools callable in this invocation, with names and JSON parameter schemas."""

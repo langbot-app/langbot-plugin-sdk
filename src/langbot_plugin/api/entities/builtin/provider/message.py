@@ -98,6 +98,11 @@ class Message(pydantic.BaseModel):
     conversation turns for tool calls to work correctly.
     """
 
+    attachments: platform_message.MessageChain | None = pydantic.Field(
+        default=None, exclude=True
+    )
+    """Host-resolved output attachments; never sent to the model or plugin protocol."""
+
     role: str  # user, system, assistant, tool, command, plugin
     """Role of the message"""
 
@@ -129,6 +134,18 @@ class Message(pydantic.BaseModel):
             return "Unknown message"
 
     def get_content_platform_message_chain(
+        self, prefix_text: str = ""
+    ) -> platform_message.MessageChain:
+        chain = self._get_content_platform_message_chain(prefix_text)
+        if self.attachments is None:
+            return chain
+        chain = chain or platform_message.MessageChain([])
+        if self.attachments is not None:
+            for component in self.attachments:
+                chain.append(component)
+        return chain
+
+    def _get_content_platform_message_chain(
         self, prefix_text: str = ""
     ) -> platform_message.MessageChain | None:
         """Convert the content to a platform message MessageChain object
@@ -188,6 +205,11 @@ class MessageChunk(pydantic.BaseModel):
     resp_message_id: typing.Optional[str] = None
     """消息id"""
 
+    attachments: platform_message.MessageChain | None = pydantic.Field(
+        default=None, exclude=True
+    )
+    """Host-resolved output attachments; never sent to the model or plugin protocol."""
+
     role: str  # user, system, assistant, tool, command, plugin
     """消息的角色"""
 
@@ -225,6 +247,18 @@ class MessageChunk(pydantic.BaseModel):
             return "未知消息"
 
     def get_content_platform_message_chain(
+        self, prefix_text: str = ""
+    ) -> platform_message.MessageChain:
+        chain = self._get_content_platform_message_chain(prefix_text)
+        if self.attachments is None:
+            return chain
+        chain = chain or platform_message.MessageChain([])
+        if self.attachments is not None:
+            for component in self.attachments:
+                chain.append(component)
+        return chain
+
+    def _get_content_platform_message_chain(
         self, prefix_text: str = ""
     ) -> platform_message.MessageChain | None:
         """将内容转换为平台消息 MessageChain 对象

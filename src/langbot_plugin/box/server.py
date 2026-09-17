@@ -575,6 +575,9 @@ class BoxServerHandler(Handler):
             result = await self._runtime.get_status()
             sessions = self._workspace_sessions()
             result = dict(result)
+            result["capacity"] = await self._runtime.get_capacity(
+                self._action_context()
+            )
             result["active_sessions"] = len(sessions)
             result["managed_processes"] = sum(
                 int(session.get("managed_process_count") or 0) for session in sessions

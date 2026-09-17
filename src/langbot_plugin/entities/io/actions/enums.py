@@ -33,6 +33,13 @@ class PluginToRuntimeAction(ActionType):
     """LangBot APIs"""
     GET_LANGBOT_VERSION = "get_langbot_version"
 
+    GET_BOX_STATUS = "get_box_status"
+    LIST_BOXES = "list_boxes"
+    ACQUIRE_BOX = "acquire_box"
+    BIND_BOX = "bind_box"
+    IMPORT_BOX_ATTACHMENTS = "import_box_attachments"
+    EXPORT_BOX_FILES = "export_box_files"
+
     GET_BOTS = "get_bots"
     GET_BOT_INFO = "get_bot_info"
     SEND_MESSAGE = "send_message"

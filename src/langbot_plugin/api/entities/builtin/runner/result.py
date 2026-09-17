@@ -56,6 +56,7 @@ class MessageCompletedPayload(pydantic.BaseModel):
     """Payload for message.completed."""
 
     message: Message
+    file_ids: list[str] = pydantic.Field(default_factory=list, max_length=100)
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
@@ -189,6 +190,7 @@ class RunnerResult(pydantic.BaseModel):
         run_id: str,
         message: Message,
         *,
+        file_ids: list[str] | None = None,
         sequence: int | None = None,
         timestamp: int | None = None,
     ) -> "RunnerResult":
@@ -196,7 +198,7 @@ class RunnerResult(pydantic.BaseModel):
 
         LangBot maps this to a complete Message.
         """
-        payload = MessageCompletedPayload(message=message)
+        payload = MessageCompletedPayload(message=message, file_ids=file_ids or [])
         return cls(
             run_id=run_id,
             type=RunnerResultType.MESSAGE_COMPLETED,

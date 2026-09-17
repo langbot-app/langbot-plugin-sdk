@@ -5,6 +5,7 @@ import json
 import os
 import time
 import urllib.request
+from unittest.mock import AsyncMock, MagicMock
 
 import pydantic
 import pytest
@@ -171,6 +172,52 @@ def test_agent_run_external_tools_are_run_authorization_filtered() -> None:
 
     with pytest.raises(ValueError, match="Unknown LangBot external tool"):
         asyncio.run(tools.call_tool("langbot_history_page", {"limit": 1}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,args,forwarded,kwargs",
+    [
+        ("get_box_status", {}, (), {}),
+        ("list_boxes", {}, (), {}),
+        ("acquire_box", {"reuse_key": "global"}, ("global",), {"options": {}}),
+        ("bind_box", {"box_id": "box"}, ("box",), {}),
+        (
+            "import_box_attachments",
+            {"attachment_ids": ["attachment-0"]},
+            (["attachment-0"],),
+            {},
+        ),
+        ("export_box_files", {}, (), {}),
+        ("reply_files", {"file_ids": ["file-1"]}, (["file-1"],), {}),
+    ],
+)
+async def test_external_box_tools_use_authorized_run_api(
+    method, args, forwarded, kwargs
+):
+    ctx = _authorized_ctx()
+    api = MagicMock()
+    operation = AsyncMock(return_value={"ok": True})
+    setattr(api, method, operation)
+    tools = AgentRunExternalTools(api, ctx)
+    name = f"langbot_{method}"
+    with pytest.raises(ValueError, match="Unknown LangBot external tool"):
+        await tools.call_tool(name, args)
+    operation.assert_not_called()
+    ctx.context.available_apis.box = True
+    assert name in {tool["name"] for tool in tools.mcp_tools()}
+    assert await tools.call_tool(name, args) == {"ok": True}
+    operation.assert_awaited_once_with(*forwarded, **kwargs)
+
+
+def test_external_box_file_reply_requires_reply_permission():
+    ctx = _ctx()
+    ctx.context.available_apis.box = True
+    names = {
+        tool["name"] for tool in AgentRunExternalTools(FakeRunAPI(), ctx).mcp_tools()
+    }
+    assert "langbot_bind_box" in names
+    assert "langbot_reply_files" not in names
 
 
 def test_agent_run_external_tools_call_agent_run_api() -> None:

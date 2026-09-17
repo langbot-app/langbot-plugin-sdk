@@ -21,6 +21,37 @@ class LangBotAPIProxy:
         self.plugin_runtime_handler = plugin_runtime_handler
 
     @run_scoped
+    async def get_box_status(self):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxStatus
+
+        return BoxStatus.model_validate(
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_BOX_STATUS, {}
+            )
+        )
+
+    @run_scoped
+    async def list_boxes(self):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxSession
+
+        result = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.LIST_BOXES, {}
+        )
+        return [BoxSession.model_validate(item) for item in result["items"]]
+
+    @run_scoped
+    async def acquire_box(self, reuse_key: str, options: dict | None = None):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxSession
+
+        return BoxSession.model_validate(
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.ACQUIRE_BOX,
+                {"reuse_key": reuse_key, "options": options or {}},
+                180,
+            )
+        )
+
+    @run_scoped
     async def get_langbot_version(self) -> str:
         """Get the langbot version"""
         return (

@@ -37,6 +37,9 @@ class DynamicFormItemSchema(pydantic.BaseModel):
     options: list[dict[str, typing.Any]] | None = None
     """Options for select/radio types."""
 
+    allow_custom: bool = False
+    """Allow an editable value alongside select presets."""
+
     # Allow additional properties for form item flexibility
     model_config = pydantic.ConfigDict(extra="allow")
 

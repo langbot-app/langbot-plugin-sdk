@@ -1647,6 +1647,22 @@ done
                 result["managed_process"] = managed_processes["default"]
         return result
 
+    async def get_capacity(self, action_context: ActionContext) -> dict:
+        """Return effective capacity; admission still runs atomically during create."""
+        if self.admission_required:
+            await self.require_sandbox_admission(action_context)
+        async with self._lock:
+            used = len(self._workspace_session_ids_locked(action_context))
+            limit = self.max_sessions
+            if self.admission_required:
+                limit = min(
+                    limit, self._require_admission_locked(action_context).max_sessions
+                )
+            remaining = max(
+                0, min(limit - used, self.max_sessions - len(self._sessions))
+            )
+            return {"limit": limit, "used": used, "remaining": remaining}
+
     async def get_status(self) -> dict:
         backend_info = await self.get_backend_info()
         return {
@@ -2267,6 +2283,14 @@ done
             stderr_preview=stderr_preview,
         ).model_dump(mode="json")
 
-    @staticmethod
-    def _session_to_dict(info: BoxSessionInfo) -> dict:
-        return info.model_dump(mode="json")
+    def _session_to_dict(self, info: BoxSessionInfo) -> dict:
+        result = info.model_dump(mode="json")
+        session = self._sessions.get(info.session_id)
+        result["status"] = (
+            "closing"
+            if session and session.closing
+            else "running"
+            if self._active_exec_counts.get(info.session_id, 0)
+            else "idle"
+        )
+        return result

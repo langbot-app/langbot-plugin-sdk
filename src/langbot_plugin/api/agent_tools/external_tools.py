@@ -14,11 +14,24 @@ from langbot_plugin.api.agent_tools.decorators import (
     collect_agent_tools,
 )
 from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.entities.builtin.runner.box import BoxAcquireRequest
 from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 
 class EmptyArgs(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class BindBoxArgs(EmptyArgs):
+    box_id: str = pydantic.Field(min_length=1)
+
+
+class ImportBoxArgs(EmptyArgs):
+    attachment_ids: list[str] | None = None
+
+
+class ReplyFilesArgs(EmptyArgs):
+    file_ids: list[str] = pydantic.Field(min_length=1, max_length=100)
 
 
 class ListAssetsArgs(pydantic.BaseModel):
@@ -145,6 +158,23 @@ class AgentRunExternalTools:
         names = {"langbot_get_current_event", "langbot_list_assets"}
 
         available_apis = self.ctx.context.available_apis
+        if available_apis.box:
+            names.update(
+                {
+                    "langbot_get_box_status",
+                    "langbot_list_boxes",
+                    "langbot_acquire_box",
+                    "langbot_bind_box",
+                    "langbot_import_box_attachments",
+                    "langbot_export_box_files",
+                }
+            )
+            if any(
+                item.tool_name == "event_reply"
+                and _operation_allowed(item.operations, "call")
+                for item in self.ctx.resources.tools
+            ):
+                names.add("langbot_reply_files")
         if available_apis.history_page:
             names.add("langbot_history_page")
         if any(
@@ -415,3 +445,61 @@ class AgentRunExternalTools:
             tool_name=args.tool_name,
             parameters=args.parameters,
         )
+
+    @agent_tool(
+        name="langbot_get_box_status",
+        description="Check sandbox availability, capacity and required reuse key before acquiring a Box.",
+        args_model=EmptyArgs,
+        read_only=True,
+    )
+    async def get_box_status(self, args: EmptyArgs):
+        return await self.api.get_box_status()
+
+    @agent_tool(
+        name="langbot_list_boxes",
+        description="List sandbox sessions accessible to this run.",
+        args_model=EmptyArgs,
+        read_only=True,
+    )
+    async def list_boxes(self, args: EmptyArgs):
+        return await self.api.list_boxes()
+
+    @agent_tool(
+        name="langbot_acquire_box",
+        description="Create or reuse a sandbox by reuse_key. Honor required_reuse_key from status. Reusing an existing Box is allowed when capacity is full. Bind the returned Box before using sandbox tools.",
+        args_model=BoxAcquireRequest,
+    )
+    async def acquire_box(self, args: BoxAcquireRequest):
+        return await self.api.acquire_box(args.reuse_key, options=args.options)
+
+    @agent_tool(
+        name="langbot_bind_box",
+        description="Bind a sandbox to this run before exec/read/write/edit/glob/grep. One Box per run. Returns this run's output directory.",
+        args_model=BindBoxArgs,
+    )
+    async def bind_box(self, args: BindBoxArgs):
+        return await self.api.bind_box(args.box_id)
+
+    @agent_tool(
+        name="langbot_import_box_attachments",
+        description="Import current event attachment refs into the bound Box; omit attachment_ids to import all. Returns actual file paths.",
+        args_model=ImportBoxArgs,
+    )
+    async def import_box_attachments(self, args: ImportBoxArgs):
+        return await self.api.import_box_attachments(args.attachment_ids)
+
+    @agent_tool(
+        name="langbot_export_box_files",
+        description="Export files placed in this run's outbox. Returns file IDs; does not send them to the user.",
+        args_model=EmptyArgs,
+    )
+    async def export_box_files(self, args: EmptyArgs):
+        return await self.api.export_box_files()
+
+    @agent_tool(
+        name="langbot_reply_files",
+        description="Send exported file IDs as a reply to the current event, subject to platform reply authorization.",
+        args_model=ReplyFilesArgs,
+    )
+    async def reply_files(self, args: ReplyFilesArgs):
+        return await self.api.reply_files(args.file_ids)

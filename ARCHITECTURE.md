@@ -304,6 +304,23 @@ enforce the instance file-size policy.
 
 ## Box Runtime
 
+Runner plugins own sandbox policy: enablement, reuse-key interpolation, acquisition,
+binding, and explicit file import/export. The Host exposes authenticated resource
+APIs (`get_box_status`, `list_boxes`, `acquire_box`) and run-bound operations
+(`bind_box`, `import_box_attachments`, `export_box_files`, `reply_files`). Box Runtime
+owns atomic capacity enforcement and container reuse/lifecycle. Reusing an existing
+Box is allowed when no additional capacity remains.
+
+A run binds one Box before native sandbox tools or file transfer. The Host does not
+choose a conversation scope or stage attachments before starting the Runner. Input
+references retain the original attachment metadata; import yields paths specific to
+the run. Output export reads only that run's outbox and returns opaque file handles.
+`message.completed.file_ids` attaches explicitly exported files to Pipeline output;
+Agents send them explicitly with `ctx.reply_files()`, subject to event reply permission.
+The Pipeline wrapper never scans a Box. Binding ends with the run; the reusable Box
+remains subject to Runtime idle expiry. Persistent workspace files survive expiry,
+but processes and container-local state do not.
+
 `lbp box` enters `box/server.py::main()` and serves `BoxRuntime` through action RPC.
 
 Box graph:
