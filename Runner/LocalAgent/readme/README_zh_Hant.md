@@ -56,3 +56,7 @@
 - 運行器只能使用本次執行授權的 LangBot 資源。
 - 外部服務的可用性、模型能力與速率限制由對應平台決定。
 - 完整行為、進階設定與產品特定限制請參閱根目錄中文 README 或英文 README_en_US.md。
+
+## Box
+
+`box-enabled` 控制是否使用沙箱。`box-session-id-template` 預設 `{launcher_type}_{launcher_id}` 按聊天重用；`{global}` 在工作區共用。也支援 `{sender_id}`、`{bot_id}`、`{run_id}` 與請求變數。執行器選擇 Box 並匯入附件，成功完成後明確匯出本次執行 outbox 的檔案。

@@ -56,3 +56,7 @@ Tác nhân tích hợp hỗ trợ mô hình dự phòng, gọi công cụ và tr
 - Runner chỉ được dùng tài nguyên LangBot đã cấp quyền cho lần chạy hiện tại.
 - Tính sẵn sàng, khả năng mô hình và giới hạn tốc độ phụ thuộc vào dịch vụ bên ngoài.
 - Xem hành vi nâng cao và giới hạn riêng của sản phẩm trong README tiếng Trung ở thư mục gốc hoặc README_en_US.md tiếng Anh.
+
+## Box
+
+`box-enabled` bật môi trường sandbox. `box-session-id-template` mặc định là `{launcher_type}_{launcher_id}` để tái sử dụng theo cuộc trò chuyện; `{global}` dùng chung trong không gian làm việc. Hỗ trợ `{sender_id}`, `{bot_id}`, `{run_id}` và biến yêu cầu. Runner chọn Box, nhập tệp đính kèm và xuất rõ ràng các tệp trong outbox của lần chạy khi hoàn thành thành công.

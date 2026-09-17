@@ -56,3 +56,7 @@ Agente integrado con modelos de respaldo, herramientas y recuperación de conoci
 - El runner solo puede usar recursos de LangBot autorizados para la ejecución actual.
 - La disponibilidad, las capacidades del modelo y los límites de uso dependen del servicio externo.
 - Consulta el README chino de la raíz o README_en_US.md para el comportamiento avanzado y las limitaciones específicas.
+
+## Box
+
+`box-enabled` activa el entorno aislado. `box-session-id-template` usa `{launcher_type}_{launcher_id}` para reutilizar por chat y `{global}` para compartir dentro del espacio de trabajo. Admite `{sender_id}`, `{bot_id}`, `{run_id}` y variables de la solicitud. El ejecutor selecciona el Box, importa los adjuntos y exporta explícitamente el outbox de la ejecución al finalizar correctamente.

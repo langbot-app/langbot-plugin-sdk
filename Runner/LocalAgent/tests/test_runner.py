@@ -1502,7 +1502,14 @@ class TestDefaultRunner:
         assert [option["name"] for option in tool_execution_mode["options"]] == ["parallel", "serial"]
         config = {item["name"]: item for item in manifest["spec"]["config"]}
         assert config["advanced-settings"]["default"] is False
-        basic_fields = {"model", "prompt", "knowledge-bases", "advanced-settings"}
+        basic_fields = {
+            "model",
+            "prompt",
+            "knowledge-bases",
+            "advanced-settings",
+            "box-enabled",
+            "box-session-id-template",
+        }
         advanced_fields = config_names - basic_fields
         for field_name in advanced_fields:
             assert config[field_name]["show_if"] == {

@@ -306,3 +306,7 @@ Box session isolation remain Host authority; do not copy them into plugin-global
 configuration. Legacy `knowledge-base` and string `model` need explicit migration to
 `knowledge-bases` and the model selector. Box scope/history import require Host-specific
 migration decisions; token compaction does not import old transcripts or shared files.
+
+## Box
+
+`box-enabled`: enables sandbox execution and file tools. `box-session-id-template`: defaults to `{launcher_type}_{launcher_id}` for per-chat reuse; `{global}` shares within the Workspace. Templates also support `{sender_id}`, `{bot_id}`, `{run_id}`, and public request variables. The Runner selects the Box, imports inputs, and explicitly exports the current run outbox on successful completion.

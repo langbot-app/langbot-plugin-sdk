@@ -56,3 +56,7 @@
 - Runner が利用できるのは、現在の実行で許可された LangBot リソースだけです。
 - 外部サービスの可用性、モデル機能、レート制限は各プラットフォームに依存します。
 - 高度な動作と製品固有の制約は、ルートの中国語 README または英語版 README_en_US.md を参照してください。
+
+## Box
+
+`box-enabled` でサンドボックスを有効にします。`box-session-id-template` の既定値 `{launcher_type}_{launcher_id}` はチャット単位で再利用し、`{global}` はワークスペース内で共有します。`{sender_id}`、`{bot_id}`、`{run_id}` とリクエスト変数も使えます。Runner が Box を選択し、入力をインポートし、正常終了時に今回の outbox をエクスポートします。

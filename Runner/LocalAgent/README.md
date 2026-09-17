@@ -39,6 +39,8 @@ LangBot 负责运行信封、资源授权与结果投递；Local Agent 负责 Ag
 | `prompt` | `prompt-editor` | 是 | `You are a helpful assistant.` | 默认系统提示词；Host 提供有效提示词 API 时优先使用预处理后的结果 |
 | `remove-think` | `boolean` | 否 | `false` | 请求模型适配器移除思考内容 |
 | `knowledge-bases` | `knowledge-base-multi-selector` | 否 | `[]` | 用于 RAG 的知识库 |
+| `box-enabled` | `boolean` | 否 | `true` | 启用沙箱执行和文件工具 |
+| `box-session-id-template` | `string` | 是 | `{launcher_type}_{launcher_id}` | 预设下拉选择共享范围，支持自定义插值模板 |
 | `advanced-settings` | `boolean` | 否 | `false` | 展开检索、工具、超时和上下文管理的高级参数；仅影响表单显示 |
 | `date-grounding` | `boolean` | 否 | `true` | 注入当前 UTC 日期，并提醒核实时效信息 |
 | `retrieval-top-k` | `integer` | 否 | `5` | 每个知识库请求的检索条数 |
@@ -115,6 +117,20 @@ SDK 支持的结构化提示词内容与消息元数据会保留；无效内容�
 
 保留 `tool-execution-mode=parallel` 默认以并发执行独立工具，结果仍按源顺序返回。
 **结果排列不代表执行顺序**，有副作用或依赖顺序的操作可能竞争，应选择 `serial`；
-两种模式均不能扩大 Host 授权范围。工具、MCP 附件/可见性、技能、Box 会话隔离由 Host 管理，
+两种模式均不能扩大 Host 授权范围。工具、MCP 附件/可见性、技能授权由 Host 管理，Box 复用由运行器配置控制，
 不可移到插件全局配置。旧 `knowledge-base` 和字符串 `model` 分别需要显式迁移为
 `knowledge-bases` 与模型选择器；旧历史与 Box 文件共享范围必须另行分析，压缩不等于数据导入。
+
+### Box 沙箱
+
+沙箱开关和复用范围在运行器配置中设置。默认 `{launcher_type}_{launcher_id}` 按聊天复用；
+`{global}` 在当前工作区共享，也可用 `{sender_id}`、`{bot_id}`、`{run_id}`、`{event_type}`
+和当前请求变量组合模板。变量不存在时会明确报错，不会悄悄把不同会话合并。
+托管环境要求固定共享范围时，运行器采用 Host 返回的范围限制。
+
+LocalAgent 在执行前获取并绑定 Box，再导入当前附件。生成的文件须放到提示词指定的
+本次运行 outbox 中。成功完成后，流水线把导出的文件作为回复附件发送；Agent 通过
+当前事件的回复 API 发送，仍遵守该事件允许调用的工具范围。关闭沙箱后不提供原生文件和执行工具。
+
+Box 复用不等于文件发送范围复用：每次运行的收件与发件目录独立。Box 空闲回收后会重新创建，
+工作区文件保留，容器内部进程不会保留。

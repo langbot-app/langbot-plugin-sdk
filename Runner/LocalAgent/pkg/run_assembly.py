@@ -98,7 +98,12 @@ class AgentRunAssembler:
         return parse_model_config(self.ctx.config.get("model"), allowed_model_ids)
 
     def _allowed_tool_names(self) -> set[str]:
-        return {tool.tool_name for tool in self.api.get_allowed_tools()}
+        from pkg.box import SANDBOX_TOOLS
+
+        names = {tool.tool_name for tool in self.api.get_allowed_tools()}
+        if not self.ctx.config.get("box-enabled", True):
+            names -= SANDBOX_TOOLS
+        return names
 
     def _streaming_supported(self) -> bool:
         metadata = getattr(self.ctx.runtime, "metadata", {}) or {}

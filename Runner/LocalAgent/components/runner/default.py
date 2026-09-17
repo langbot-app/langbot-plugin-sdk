@@ -28,6 +28,7 @@ from pkg.agent_core import (
     AgentLoopEventType,
     LangBotModelAdapter,
 )
+from pkg.box import LocalAgentBox
 from pkg.config import get_run_timeout_seconds
 from pkg.run_assembly import AgentRunAssembler, AgentRunAssembly, NoAuthorizedModelError
 
@@ -191,7 +192,10 @@ class DefaultRunner(Runner):
             )
             return
 
+        box = LocalAgentBox(ctx, api)
         try:
+            if box.needed():
+                await interrupt_checker.wait_for(box.prepare(), deadline=deadline)
             assembly = await interrupt_checker.wait_for(
                 AgentRunAssembler(api, ctx).assemble(),
                 deadline=deadline,
@@ -237,6 +241,8 @@ class DefaultRunner(Runner):
                 usage_tracker=usage_tracker,
             )
             async for result in _iterate_with_run_controls(results, interrupt_checker, deadline):
+                if box.binding is not None and getattr(result.type, "value", result.type) == "message.completed":
+                    result.data["file_ids"] = await interrupt_checker.wait_for(box.finish(), deadline=deadline)
                 yield result
                 if _is_terminal_result(result):
                     return

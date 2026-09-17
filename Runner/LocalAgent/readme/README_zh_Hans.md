@@ -118,3 +118,7 @@ SDK 支持的结构化提示词内容与消息元数据会保留；无效内容�
 两种模式均不能扩大 Host 授权范围。工具、MCP 附件/可见性、技能、Box 会话隔离由 Host 管理，
 不可移到插件全局配置。旧 `knowledge-base` 和字符串 `model` 分别需要显式迁移为
 `knowledge-bases` 与模型选择器；旧历史与 Box 文件共享范围必须另行分析，压缩不等于数据导入。
+
+## Box 沙箱
+
+`box-enabled` 控制是否使用沙箱。`box-session-id-template` 默认 `{launcher_type}_{launcher_id}` 按聊天复用，使用 `{global}` 可在工作区共享，也支持 `{sender_id}`、`{bot_id}`、`{run_id}` 和请求变量。运行器选择 Box 并导入当前附件；成功完成后显式导出本次运行 outbox 的文件。
