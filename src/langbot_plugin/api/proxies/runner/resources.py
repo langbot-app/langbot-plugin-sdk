@@ -6,6 +6,8 @@ import base64
 from copy import deepcopy
 from typing import Any
 
+from langbot_plugin.api.entities.builtin.provider.reasoning import ReasoningLevel
+
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.resource import tool as resource_tool
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
@@ -59,6 +61,8 @@ class AgentRunResourceAPIMixin:
         funcs: list[resource_tool.LLMTool] | None = None,
         extra_args: dict[str, Any] | None = None,
         timeout: float | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ) -> int:
         """Count model input tokens with Host provider/tokenizer settings."""
         self._validate_model_access(llm_model_uuid, "count_tokens")
@@ -69,6 +73,7 @@ class AgentRunResourceAPIMixin:
             PluginToRuntimeAction.COUNT_TOKENS,
             {
                 "run_id": self.run_id,
+                **(await self._api._reasoning_payload(reasoning_level)),
                 "llm_model_uuid": llm_model_uuid,
                 "messages": [m.model_dump() for m in messages],
                 "funcs": [f.model_dump() for f in funcs],
@@ -92,6 +97,8 @@ class AgentRunResourceAPIMixin:
         extra_args: dict[str, Any] | None = None,
         timeout: float | None = None,
         remove_think: bool | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model with permission validation."""
         result = await self.invoke_llm_with_usage(
@@ -99,6 +106,11 @@ class AgentRunResourceAPIMixin:
             messages=messages,
             funcs=funcs,
             extra_args=extra_args,
+            **(
+                {"reasoning_level": reasoning_level}
+                if reasoning_level is not None
+                else {}
+            ),
             timeout=timeout,
             remove_think=remove_think,
         )
@@ -112,6 +124,8 @@ class AgentRunResourceAPIMixin:
         extra_args: dict[str, Any] | None = None,
         timeout: float | None = None,
         remove_think: bool | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ) -> provider_message.LLMInvokeResult:
         """Invoke an LLM model and return the message plus optional provider usage."""
         self._validate_model_access(llm_model_uuid, "invoke")
@@ -119,6 +133,7 @@ class AgentRunResourceAPIMixin:
         funcs = funcs or []
         extra_args = extra_args or {}
         payload = {
+            **(await self._api._reasoning_payload(reasoning_level)),
             "run_id": self.run_id,
             "llm_model_uuid": llm_model_uuid,
             "messages": [m.model_dump() for m in messages],
@@ -151,6 +166,8 @@ class AgentRunResourceAPIMixin:
         funcs: list[resource_tool.LLMTool] | None = None,
         extra_args: dict[str, Any] | None = None,
         remove_think: bool | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ):
         """Invoke an LLM model with streaming, permission validation."""
         async for event in self.invoke_llm_stream_events(
@@ -158,6 +175,11 @@ class AgentRunResourceAPIMixin:
             messages=messages,
             funcs=funcs,
             extra_args=extra_args,
+            **(
+                {"reasoning_level": reasoning_level}
+                if reasoning_level is not None
+                else {}
+            ),
             remove_think=remove_think,
         ):
             if event.chunk is not None:
@@ -170,6 +192,8 @@ class AgentRunResourceAPIMixin:
         funcs: list[resource_tool.LLMTool] | None = None,
         extra_args: dict[str, Any] | None = None,
         remove_think: bool | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ):
         """Invoke an LLM model and yield chunks plus optional final usage events."""
         self._validate_model_access(llm_model_uuid, "stream")
@@ -177,6 +201,7 @@ class AgentRunResourceAPIMixin:
         funcs = funcs or []
         extra_args = extra_args or {}
         payload = {
+            **(await self._api._reasoning_payload(reasoning_level)),
             "run_id": self.run_id,
             "llm_model_uuid": llm_model_uuid,
             "messages": [m.model_dump() for m in messages],
