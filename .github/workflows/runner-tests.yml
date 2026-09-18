@@ -26,15 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: langbot-plugins
-      - name: Checkout plugin SDK
-        uses: actions/checkout@v4
-        with:
-          repository: langbot-app/langbot-plugin-sdk
-          # Keep consolidated Runner tests on the same SDK as LocalAgent.
-          ref: 94c098ee0d1c4535043d9bf4a74c25f90849bc41
-          path: langbot-plugin-sdk
-      - name: Record SDK revision
-        run: git -C ../../langbot-plugin-sdk rev-parse HEAD
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -48,6 +40,8 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --locked --dev
+      - name: Verify published SDK pin
+        run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b3"; print("langbot-plugin", version("langbot-plugin"))'
       # Preserve the external Runner lint scope; LocalAgent has its own Ruff config.
       # RunnerDemo did not have a Ruff gate before consolidation.
       - name: Ruff check

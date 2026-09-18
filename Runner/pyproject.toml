@@ -9,7 +9,7 @@ authors = [{ name = "LangBot Team" }]
 keywords = ["langbot", "agent", "runner", "plugin"]
 
 dependencies = [
-    "langbot-plugin>=0.1.0",
+    "langbot-plugin==0.6.0b3",
     "pydantic>=2.0.0",
 ]
 
@@ -54,9 +54,6 @@ only-include = [
     "tbox-agent",
     "weknora-agent",
 ]
-
-[tool.uv.sources]
-langbot-plugin = { path = "../../langbot-plugin-sdk", editable = true }
 
 [build-system]
 requires = ["hatchling"]

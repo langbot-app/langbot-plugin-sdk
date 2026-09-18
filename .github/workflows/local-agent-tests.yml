@@ -25,16 +25,6 @@ jobs:
         with:
           path: langbot-plugins
 
-      - name: Checkout plugin SDK
-        uses: actions/checkout@v4
-        with:
-          repository: langbot-app/langbot-plugin-sdk
-          # Runner Box APIs are developed alongside the 4.11 SDK.
-          ref: 94c098ee0d1c4535043d9bf4a74c25f90849bc41
-          path: langbot-plugin-sdk
-
-      - name: Record SDK revision
-        run: git -C langbot-plugin-sdk rev-parse HEAD
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,6 +40,10 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --locked --extra dev
+        working-directory: langbot-plugins/Runner/LocalAgent
+
+      - name: Verify published SDK pin
+        run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b3"; print("langbot-plugin", version("langbot-plugin"))'
         working-directory: langbot-plugins/Runner/LocalAgent
 
       - name: Ruff check
