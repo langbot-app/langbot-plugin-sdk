@@ -238,7 +238,7 @@ async def test_streaming_model_empty_first_stream_falls_back():
         def __init__(self):
             self.model_ids: list[str] = []
 
-        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think):
+        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think, reasoning_level):
             self.model_ids.append(llm_model_uuid)
 
             async def stream():
@@ -271,7 +271,7 @@ async def test_streaming_model_empty_final_chunk_falls_back():
         def __init__(self):
             self.model_ids: list[str] = []
 
-        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think):
+        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think, reasoning_level):
             self.model_ids.append(llm_model_uuid)
 
             async def stream():
@@ -299,7 +299,7 @@ async def test_streaming_model_empty_final_chunk_falls_back():
 @pytest.mark.asyncio
 async def test_streaming_model_all_empty_streams_fail():
     class StreamingAPI:
-        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think):
+        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think, reasoning_level):
             async def stream():
                 return
                 yield
@@ -350,7 +350,7 @@ async def test_streaming_model_empty_normal_stop_commits_and_preserves_usage():
 @pytest.mark.asyncio
 async def test_streaming_model_all_empty_final_chunks_fail():
     class StreamingAPI:
-        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think):
+        def invoke_llm_stream(self, *, llm_model_uuid, messages, funcs, remove_think, reasoning_level):
             async def stream():
                 yield MessageChunk(role="assistant", content="", is_final=True)
 

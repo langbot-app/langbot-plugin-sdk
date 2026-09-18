@@ -29,7 +29,7 @@ from pkg.agent_core import (
     LangBotModelAdapter,
 )
 from pkg.box import LocalAgentBox
-from pkg.config import get_run_timeout_seconds
+from pkg.config import get_run_timeout_seconds, model_reasoning_levels
 from pkg.run_assembly import AgentRunAssembler, AgentRunAssembly, NoAuthorizedModelError
 
 logger = logging.getLogger(__name__)
@@ -239,6 +239,7 @@ class DefaultRunner(Runner):
                 assembly=assembly,
                 interrupt_checker=interrupt_checker,
                 usage_tracker=usage_tracker,
+                reasoning_levels=model_reasoning_levels(config),
             )
             async for result in _iterate_with_run_controls(results, interrupt_checker, deadline):
                 if box.binding is not None and getattr(result.type, "value", result.type) == "message.completed":
@@ -266,10 +267,13 @@ class DefaultRunner(Runner):
         assembly: AgentRunAssembly,
         interrupt_checker: RunInterruptChecker | None = None,
         usage_tracker: RunUsageTracker | None = None,
+        reasoning_levels: dict[str, str] | None = None,
     ) -> AsyncGenerator[RunnerResult, None]:
         """Run the LangBot-native Pi-style agent loop."""
         loop = AgentLoop(
-            model_adapter=LangBotModelAdapter(api, remove_think=assembly.remove_think),
+            model_adapter=LangBotModelAdapter(
+                api, remove_think=assembly.remove_think, reasoning_levels=reasoning_levels
+            ),
             tool_executor=assembly.tool_executor,
             model_ids=assembly.model_ids,
             messages=assembly.messages,

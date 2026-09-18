@@ -351,10 +351,12 @@ class LLMContextSummarizer:
         model_id: str,
         *,
         remove_think: bool = False,
+        reasoning_level: str = "provider_default",
     ):
         self.api = api
         self.model_id = model_id
         self.remove_think = remove_think
+        self.reasoning_level = reasoning_level
 
     async def summarize(self, messages: list[Message], max_tokens: int) -> str | None:
         if not messages or max_tokens <= 0:
@@ -375,6 +377,7 @@ class LLMContextSummarizer:
                 ],
                 funcs=[],
                 remove_think=self.remove_think,
+                reasoning_level=self.reasoning_level,
             )
         except Exception:
             logger.warning("LLM context summarization failed; using deterministic fallback", exc_info=True)
@@ -390,10 +393,18 @@ class LLMContextSummarizer:
 class HostContextTokenCounter:
     """Count model input tokens through the run-scoped Host API."""
 
-    def __init__(self, api: typing.Any, model_id: str, tools: list[typing.Any] | None = None):
+    def __init__(
+        self,
+        api: typing.Any,
+        model_id: str,
+        tools: list[typing.Any] | None = None,
+        *,
+        reasoning_level: str = "provider_default",
+    ):
         self.api = api
         self.model_id = model_id
         self.tools = tools or []
+        self.reasoning_level = reasoning_level
 
     async def count(self, messages: list[Message]) -> int:
         count_tokens = getattr(self.api, "count_tokens", None)
@@ -405,6 +416,7 @@ class HostContextTokenCounter:
             llm_model_uuid=self.model_id,
             messages=messages,
             funcs=[],
+            reasoning_level=self.reasoning_level,
         )
         if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
             raise ContextTokenCounterRequiredError(f"Host count_tokens returned invalid token count: {tokens!r}")

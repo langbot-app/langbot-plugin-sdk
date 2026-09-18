@@ -45,6 +45,10 @@ class BackendProtocolFixture:
         self.stall_started = asyncio.Event()
         self.host = host
 
+        @host.action(PluginToRuntimeAction.GET_LANGBOT_VERSION)
+        async def version(data):
+            return ActionResponse.success({"version": "test", "api_features": ["llm.reasoning_level"]})
+
         @host.action(PluginToRuntimeAction.COUNT_TOKENS)
         async def count_tokens(data):
             self.record("count_tokens", data)
@@ -309,12 +313,15 @@ async def test_real_sdk_master_parity_request_contract(sdk_runtime, streaming):
     model_calls = [data for action, data in sdk_runtime.calls if action in {"stream", "invoke"}]
     assert [data["llm_model_uuid"] for data in model_calls] == ["primary", "fallback", "fallback"]
     assert context.config["model"]["reasoning"] == reasoning
+    for action, payload in sdk_runtime.calls:
+        if action in {"invoke", "stream", "count_tokens"}:
+            assert payload["reasoning_level"] == reasoning[payload["llm_model_uuid"]]
     assert all(not data.get("extra_args") for data in model_calls)
     assert all("Current date:" in data["messages"][0]["content"] for data in model_calls)
     assistant = next(message for message in model_calls[-1]["messages"] if message["role"] == "assistant")
     assert assistant["provider_specific_fields"] == {"opaque_state": "message-signature"}
     assert assistant["tool_calls"][0]["provider_specific_fields"] == {"opaque_state": "tool-signature"}
-    # This proves real SDK RPC payloads only; Core separately proves Host reasoning overrides.
+    # This proves explicit SDK RPC parameters; Core separately proves provider translation.
 
 
 @pytest.mark.asyncio

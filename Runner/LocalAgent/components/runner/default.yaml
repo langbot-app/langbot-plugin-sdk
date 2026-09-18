@@ -13,8 +13,8 @@ spec:
   config:
     - name: model
       description:
-        en_US: Primary/fallback model UUIDs and per-model reasoning levels. Host validates and applies reasoning for every request; this is per-pipeline configuration.
-        zh_Hans: 主模型/备用模型 UUID 与各模型推理等级。由 Host 对每次请求校验并应用，属于流水线独立配置。
+        en_US: Choose a primary model and optional fallback models, and set the reasoning level for each model.
+        zh_Hans: 选择主模型和备用模型，并设置各模型的推理等级。
       label:
         en_US: Model
         zh_Hans: 模型

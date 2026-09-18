@@ -57,6 +57,17 @@ def parse_model_config(
     return candidates
 
 
+def model_reasoning_levels(config: dict[str, typing.Any]) -> dict[str, str]:
+    """Read per-model call options owned by this Runner."""
+    selection = config.get("model")
+    if not isinstance(selection, dict):
+        return {}
+    levels = selection.get("reasoning", {})
+    if not isinstance(levels, dict):
+        raise ValueError("Model reasoning settings must be an object")
+    return dict(levels)
+
+
 def _normalize_model_id(model_id: typing.Any) -> str | None:
     """Normalize model ID, returning None for invalid/empty values."""
     if not isinstance(model_id, str):

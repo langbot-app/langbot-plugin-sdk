@@ -87,9 +87,12 @@ def _prefix_chunk_content(chunk: MessageChunk, prefix: str) -> MessageChunk:
 class LangBotModelAdapter:
     """Model invocation adapter that keeps all model access behind Host APIs."""
 
-    def __init__(self, api: RunnerAPIProxy, *, remove_think: bool = False):
+    def __init__(
+        self, api: RunnerAPIProxy, *, remove_think: bool = False, reasoning_levels: dict[str, str] | None = None
+    ):
         self.api = api
         self.remove_think = remove_think
+        self.reasoning_levels = dict(reasoning_levels or {})
 
     async def stream_turn(
         self,
@@ -105,6 +108,7 @@ class LangBotModelAdapter:
             messages=messages,
             tools=tools,
             remove_think=self.remove_think,
+            reasoning_levels=self.reasoning_levels,
         )
 
         async for chunk, _is_delta in caller.stream():
@@ -138,6 +142,7 @@ class LangBotModelAdapter:
             messages=messages,
             tools=tools,
             remove_think=self.remove_think,
+            reasoning_levels=self.reasoning_levels,
         )
         response = call_result.message
         tool_calls = [ToolCallRequest.from_raw(tool_call) for tool_call in response.tool_calls or []]
@@ -165,6 +170,7 @@ class LangBotModelAdapter:
                 messages=messages,
                 funcs=tools,
                 remove_think=self.remove_think,
+                reasoning_level=self.reasoning_levels.get(committed_model_id, "provider_default"),
             )
         except Exception as e:
             if is_deadline_exceeded_error(e):

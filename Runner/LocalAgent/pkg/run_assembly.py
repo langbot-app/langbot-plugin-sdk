@@ -16,6 +16,7 @@ from pkg.config import (
     get_max_tool_result_chars,
     get_remove_think,
     get_tool_execution_mode,
+    model_reasoning_levels,
     parse_model_config,
 )
 from pkg.context_pipeline import ContextAssembler, ContextBudget, HostContextTokenCounter, LLMContextSummarizer
@@ -60,9 +61,12 @@ class AgentRunAssembler:
         tool_execution_mode = get_tool_execution_mode(self.ctx.config)
         remove_think = get_remove_think(self.ctx.config)
         context_budget = ContextBudget.from_context(self.ctx)
-        summarizer = LLMContextSummarizer(self.api, model_ids[0], remove_think=remove_think)
+        reasoning_level = model_reasoning_levels(self.ctx.config).get(model_ids[0], "provider_default")
+        summarizer = LLMContextSummarizer(
+            self.api, model_ids[0], remove_think=remove_think, reasoning_level=reasoning_level
+        )
         tools = await self._build_tools(allowed_tools)
-        token_counter = HostContextTokenCounter(self.api, model_ids[0], tools)
+        token_counter = HostContextTokenCounter(self.api, model_ids[0], tools, reasoning_level=reasoning_level)
 
         context_assembly = await ContextAssembler(
             self.api,

@@ -128,8 +128,9 @@ async def test_reasoning_config_preserved_through_fallback_and_committed_tool_ro
     results = [result async for result in runner.run(ctx)]
     assert results[-1].type.value == "run.completed"
     assert [call["llm_model_uuid"] for call in calls] == ["primary", "fallback", "fallback"]
-    assert ctx.config == original  # Host reads this descriptor-declared config at binding time.
-    assert all(not call.get("extra_args") for call in calls)  # No vendor arguments or wire extensions.
+    assert ctx.config == original
+    assert [call["reasoning_level"] for call in calls] == ["high", "low", "low"]
+    assert all(not call.get("extra_args") for call in calls)  # No vendor-specific arguments.
     assert calls[-1]["messages"][-1].role == "tool"
     api.call_tool.assert_awaited_once_with(tool_name="echo", parameters={})
 

@@ -183,6 +183,7 @@ async def invoke_with_fallback(
     messages: list[Message],
     tools: list[LLMTool] | None = None,
     remove_think: bool = False,
+    reasoning_levels: dict[str, str] | None = None,
 ) -> tuple[Message, str]:
     """Invoke LLM with sequential fallback on failure.
 
@@ -209,6 +210,7 @@ async def invoke_with_fallback(
                 messages=messages,
                 funcs=tools or [],
                 remove_think=remove_think,
+                reasoning_level=(reasoning_levels or {}).get(model_id, "provider_default"),
             )
             return response, model_id
         except Exception as e:
@@ -233,6 +235,7 @@ async def invoke_with_fallback_result(
     messages: list[Message],
     tools: list[LLMTool] | None = None,
     remove_think: bool = False,
+    reasoning_levels: dict[str, str] | None = None,
 ) -> tuple[LLMCallResult, str]:
     if not model_ids:
         raise ModelCallError("No model configured", retryable=False)
@@ -248,6 +251,7 @@ async def invoke_with_fallback_result(
                 messages=messages,
                 funcs=tools or [],
                 remove_think=remove_think,
+                reasoning_level=(reasoning_levels or {}).get(model_id, "provider_default"),
             )
             return normalize_llm_call_result(response), model_id
         except Exception as e:
@@ -280,12 +284,14 @@ class StreamingModelCaller:
         messages: list[Message],
         tools: list[LLMTool] | None = None,
         remove_think: bool = False,
+        reasoning_levels: dict[str, str] | None = None,
     ):
         self.api = api
         self.model_ids = model_ids
         self.messages = messages
         self.tools = tools or []
         self.remove_think = remove_think
+        self.reasoning_levels = dict(reasoning_levels or {})
 
         self._committed_model_id: str | None = None
         self._accumulated_content = ""
@@ -346,6 +352,7 @@ class StreamingModelCaller:
                     messages=self.messages,
                     funcs=self.tools,
                     remove_think=self.remove_think,
+                    reasoning_level=self.reasoning_levels.get(model_id, "provider_default"),
                 )
                 first_chunk = await self._next_model_chunk(stream)
                 # First chunk received - model is now committed
