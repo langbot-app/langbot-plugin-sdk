@@ -81,7 +81,9 @@ def normalized_zip_digest(archive: bytes) -> str:
     return hashlib.sha256(_without_zip_comment(archive)).hexdigest()
 
 
-def create_envelope(archive: bytes, key_id: str, signer: Signer) -> CertificationEnvelope:
+def create_envelope(
+    archive: bytes, key_id: str, signer: Signer
+) -> CertificationEnvelope:
     """Create a signed envelope bound to the archive digest and manifest identity."""
     identity = _read_manifest_identity(archive)
     unsigned = CertificationEnvelope(
@@ -96,13 +98,19 @@ def create_envelope(archive: bytes, key_id: str, signer: Signer) -> Certificatio
     return sign_envelope(unsigned, signer)
 
 
-def sign_envelope(envelope: CertificationEnvelope, signer: Signer) -> CertificationEnvelope:
+def sign_envelope(
+    envelope: CertificationEnvelope, signer: Signer
+) -> CertificationEnvelope:
     """Apply a caller-provided signature to the canonical unsigned envelope."""
-    _validate_envelope(envelope, allow_unsupported_schema=False, require_signature=False)
+    _validate_envelope(
+        envelope, allow_unsupported_schema=False, require_signature=False
+    )
     signature = signer(canonical_json(envelope.unsigned_dict()))
     if not isinstance(signature, bytes) or not signature:
         raise ValueError("signer must return non-empty bytes")
-    return dataclasses.replace(envelope, signature=base64.b64encode(signature).decode("ascii"))
+    return dataclasses.replace(
+        envelope, signature=base64.b64encode(signature).decode("ascii")
+    )
 
 
 def read_envelope(archive: bytes) -> CertificationEnvelope | None:
@@ -156,7 +164,9 @@ def write_envelope(archive: bytes, envelope: CertificationEnvelope) -> bytes:
     return _replace_zip_comment(archive, comment)
 
 
-def verify_archive(archive: bytes, key_resolver: KeyResolver) -> CertificationVerification:
+def verify_archive(
+    archive: bytes, key_resolver: KeyResolver
+) -> CertificationVerification:
     """Verify a certified plugin archive without extracting its payload."""
     try:
         envelope = read_envelope(archive)
@@ -170,11 +180,16 @@ def verify_archive(archive: bytes, key_resolver: KeyResolver) -> CertificationVe
         if normalized_zip_digest(archive) != envelope.digest:
             return CertificationVerification("digest_mismatch", envelope)
         identity = _read_manifest_identity(archive)
-    except (EnvelopeFormatError, ValueError, struct.error, zipfile.BadZipFile, yaml.YAMLError):
+    except (
+        EnvelopeFormatError,
+        ValueError,
+        struct.error,
+        zipfile.BadZipFile,
+        yaml.YAMLError,
+    ):
         return CertificationVerification("manifest_mismatch", envelope)
     if (
-        envelope.plugin_id
-        != {"author": identity["author"], "name": identity["name"]}
+        envelope.plugin_id != {"author": identity["author"], "name": identity["name"]}
         or envelope.version != identity["version"]
         or envelope.shared_runtime != identity["shared_runtime"]
     ):
@@ -202,7 +217,10 @@ def _validate_envelope(
         raise EnvelopeFormatError("certification envelope schema is unsupported")
     _required_string(envelope.schema, "schema")
     _required_string(envelope.key_id, "key_id")
-    if not isinstance(envelope.plugin_id, dict) or set(envelope.plugin_id) != {"author", "name"}:
+    if not isinstance(envelope.plugin_id, dict) or set(envelope.plugin_id) != {
+        "author",
+        "name",
+    }:
         raise EnvelopeFormatError("certification envelope plugin_id is invalid")
     _required_string(envelope.plugin_id["author"], "plugin_id.author")
     _required_string(envelope.plugin_id["name"], "plugin_id.name")
@@ -221,7 +239,9 @@ def _validate_envelope(
             if not base64.b64decode(envelope.signature.encode("ascii"), validate=True):
                 raise ValueError
         except (UnicodeEncodeError, ValueError) as exc:
-            raise EnvelopeFormatError("certification envelope signature is invalid") from exc
+            raise EnvelopeFormatError(
+                "certification envelope signature is invalid"
+            ) from exc
 
 
 def _required_string(value: Any, field_name: str) -> str:
@@ -232,7 +252,9 @@ def _required_string(value: Any, field_name: str) -> str:
 
 def _read_manifest_identity(archive: bytes) -> ManifestIdentity:
     with zipfile.ZipFile(io.BytesIO(archive), "r") as package:
-        manifests = [info for info in package.infolist() if info.filename == "manifest.yaml"]
+        manifests = [
+            info for info in package.infolist() if info.filename == "manifest.yaml"
+        ]
         if len(manifests) != 1 or manifests[0].file_size > _MAX_MANIFEST_BYTES:
             raise EnvelopeFormatError("plugin manifest is unavailable")
         try:
@@ -260,7 +282,9 @@ def _read_manifest_identity(archive: bytes) -> ManifestIdentity:
     return {
         "author": _required_string(metadata.get("author"), "manifest metadata.author"),
         "name": _required_string(metadata.get("name"), "manifest metadata.name"),
-        "version": _required_string(metadata.get("version"), "manifest metadata.version"),
+        "version": _required_string(
+            metadata.get("version"), "manifest metadata.version"
+        ),
         "shared_runtime": shared_runtime,
     }
 
@@ -293,4 +317,6 @@ def _locate_zip_eocd(archive: bytes) -> tuple[int, int]:
             if position + 22 + comment_length == len(archive):
                 return position, comment_length
         position = archive.rfind(b"PK\x05\x06", start, position)
-    raise EnvelopeFormatError("archive has no valid ZIP end-of-central-directory record")
+    raise EnvelopeFormatError(
+        "archive has no valid ZIP end-of-central-directory record"
+    )
