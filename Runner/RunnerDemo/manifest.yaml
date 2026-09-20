@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: RunnerDemo
-  version: 0.1.3
+  version: 0.1.4
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/RunnerDemo
   label:
     en_US: Runner Workshop
