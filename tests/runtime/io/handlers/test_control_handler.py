@@ -495,6 +495,29 @@ async def test_control_handler_rejects_tenant_action_without_complete_binding():
     assert handler.context.workspace_binding is None
 
 
+async def test_control_handler_allows_pinned_legacy_file_chunks_only_in_oss_profile():
+    oss_handler, _ = _handler()
+    shared_handler, _ = _handler(runtime_config=TEST_SHARED_RUNTIME_CONFIG)
+    legacy_binding = ActionContext(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=4,
+        installation_uuid="installation-1",
+    )
+    oss_handler.context.bind_workspace(legacy_binding)
+
+    assert (
+        oss_handler.validate_inbound_action_context(
+            CommonAction.FILE_CHUNK.value, legacy_binding
+        )
+        == legacy_binding.without_installation()
+    )
+    with pytest.raises(ValueError, match="complete InstallationBinding"):
+        shared_handler.validate_inbound_action_context(
+            CommonAction.FILE_CHUNK.value, legacy_binding
+        )
+
+
 async def test_control_handler_rejects_cross_instance_and_cross_workspace_actions():
     handler, _manager = _handler()
 

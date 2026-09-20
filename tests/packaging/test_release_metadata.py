@@ -11,5 +11,5 @@ def test_certified_plugin_beta_release_metadata_is_consistent() -> None:
         (root / "src/langbot_plugin/version.py").read_text(encoding="utf-8").strip()
     )
 
-    assert project["project"]["version"] == "0.6.0b4"
-    assert source_version == '__version__ = "0.6.0b4"'
+    assert project["project"]["version"] == "0.6.0b5"
+    assert source_version == '__version__ = "0.6.0b5"'
