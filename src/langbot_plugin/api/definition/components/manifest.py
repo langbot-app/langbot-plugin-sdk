@@ -107,6 +107,23 @@ class Execution(pydantic.BaseModel):
     python: PythonExecution
     """Python执行"""
 
+    shared_runtime: typing.Literal["shared-runtime-v1"] | None = pydantic.Field(
+        default=None,
+        alias="sharedRuntime",
+    )
+    """Certified shared runtime profile; absent manifests use a dedicated runtime."""
+
+    @pydantic.model_validator(mode="before")
+    @classmethod
+    def _require_supported_shared_runtime_when_present(cls, values: typing.Any):
+        if (
+            isinstance(values, dict)
+            and "sharedRuntime" in values
+            and values["sharedRuntime"] != "shared-runtime-v1"
+        ):
+            raise ValueError("sharedRuntime must be shared-runtime-v1 when present")
+        return values
+
 
 class ComponentManifest(pydantic.BaseModel):
     """组件清单"""
