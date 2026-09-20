@@ -75,6 +75,15 @@ automatically when changing output language.
 Observer settings: output language and payload logging (off by default). Payload
 logging includes typed event data but excludes the raw platform object.
 
+## Shared-runtime certification profile
+
+RunnerDemo declares `execution.sharedRuntime: shared-runtime-v1` and keeps its
+runtime modules free of process-wide or mutable module state; configuration and
+per-run data stay on `RunnerContext`. A local `lbp build` archive is still
+unsigned and has no certification comment. Space approval is the separate gate
+that may issue and sign a certification envelope; this repository does not claim
+that approval or certificate.
+
 ## Development and repeatable verification
 
 ```bash
