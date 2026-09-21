@@ -299,6 +299,12 @@ def test_dify_interaction_resume_submits_mapped_values_and_clears_continuation()
         action_id="action_1",
         values={"field_1": "high"},
     )
+    # Persist through the real contract: owner scope, expiry and pending status.
+    asyncio.run(
+        runner._store_interaction_continuation(
+            _ctx(), json.loads(storage.values[module._interaction_storage_key(interaction_id)])
+        )
+    )
     results = asyncio.run(_collect_async(runner._resume_workflow(_ctx(), FakeClient(), submission, False)))
 
     assert captured == {
@@ -352,6 +358,12 @@ def test_dify_field_submission_advances_to_action_without_calling_provider() -> 
             raise AssertionError("provider must not resume before the action step")
 
     submission = InteractionSubmission(interaction_id=interaction_id, values={"field_1": "high"})
+    # Persist through the real contract: owner scope, expiry and pending status.
+    asyncio.run(
+        runner._store_interaction_continuation(
+            _ctx(), json.loads(storage.values[module._interaction_storage_key(interaction_id)])
+        )
+    )
     results = asyncio.run(_collect_async(runner._resume_workflow(_ctx(), ProviderMustNotRun(), submission, False)))
 
     assert [_type(result) for result in results] == ["action.requested"]
@@ -460,6 +472,12 @@ def test_dify_interaction_resume_can_pause_again() -> None:
             }
 
     submission = InteractionSubmission(interaction_id=interaction_id, action_id="continue")
+    # Persist through the real contract: owner scope, expiry and pending status.
+    asyncio.run(
+        runner._store_interaction_continuation(
+            _ctx(), json.loads(storage.values[module._interaction_storage_key(interaction_id)])
+        )
+    )
     results = asyncio.run(_collect_async(runner._resume_workflow(_ctx(), FakeClient(), submission, False)))
 
     assert [_type(result) for result in results] == ["action.requested"]

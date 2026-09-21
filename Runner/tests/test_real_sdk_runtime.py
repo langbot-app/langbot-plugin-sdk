@@ -7,7 +7,6 @@ production module isolation. Optional RUNNER_EVIDENCE_DIR retains raw RPC logs.
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import os
 import subprocess
@@ -15,7 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from packaging.requirements import Requirement
+from test_sdk_release_pin import CODING_PLUGINS
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = {
@@ -33,6 +32,12 @@ PLUGINS = {
 }
 
 
+def plugin_python(plugin):
+    # Coding payloads still pin b3. Verify their real RPC/dependencies there,
+    # while aggregate compatibility and the HTTP release use the b5 environment.
+    return os.environ.get("CODING_RUNNER_TEST_PYTHON", sys.executable) if plugin in CODING_PLUGINS else sys.executable
+
+
 @pytest.fixture(scope="module", params=sorted(PLUGINS))
 def runtime_evidence(request, tmp_path_factory):
     plugin = request.param
@@ -46,7 +51,7 @@ def runtime_evidence(request, tmp_path_factory):
             env.pop(key)
     env["NO_PROXY"] = "127.0.0.1,localhost"
     result = subprocess.run(
-        [sys.executable, str(ROOT / "tests/fixtures/real_sdk_runtime_probe.py"), str(destination)],
+        [plugin_python(plugin), str(ROOT / "tests/fixtures/real_sdk_runtime_probe.py"), str(destination)],
         cwd=ROOT / plugin,
         env=env,
         text=True,
@@ -91,11 +96,25 @@ def test_real_sdk_dispatches_local_vendor_fixture(runtime_evidence):
 
 @pytest.mark.parametrize("plugin", sorted(PLUGINS))
 def test_installed_real_dependencies_satisfy_plugin_requirements(plugin):
-    for line in (ROOT / plugin / "requirements.txt").read_text().splitlines():
-        if not line.strip() or line.startswith("#"):
-            continue
-        requirement = Requirement(line)
-        if requirement.marker and not requirement.marker.evaluate():
-            continue
-        version = importlib.metadata.version(requirement.name)
-        assert version in requirement.specifier, f"{plugin}: installed {requirement.name}=={version} violates {line}"
+    # Resolve every declared dependency inside the same interpreter used by RPC.
+    code = """
+import importlib.metadata
+from pathlib import Path
+from packaging.requirements import Requirement
+for line in Path("requirements.txt").read_text().splitlines():
+    if not line.strip() or line.startswith("#"):
+        continue
+    requirement = Requirement(line)
+    if requirement.marker and not requirement.marker.evaluate():
+        continue
+    version = importlib.metadata.version(requirement.name)
+    assert version in requirement.specifier, f"{requirement.name}=={version} violates {line}"
+"""
+    result = subprocess.run(
+        [plugin_python(plugin), "-c", code],
+        cwd=ROOT / plugin,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"{plugin}: {result.stdout}{result.stderr}"

@@ -231,59 +231,32 @@ async def probe(destination):
                             }
                         )
                         CALLS.append({"boundary": "local subprocess ACP JSON-RPC fixture", "script": str(cli)})
-                    elif PLUGIN == "dashscope-agent":
-                        from dashscope import Application
-                        from dashscope.app.application import ApplicationResponse
-
-                        def application_fixture(**kwargs):
-                            CALLS.append(
-                                {
-                                    "boundary": "vendor Application.call fixture with REAL ApplicationResponse",
-                                    "keys": sorted(kwargs),
-                                }
+                    elif PLUGIN in {"dashscope-agent", "tbox-agent"}:
+                        client_module = importlib.import_module("pkg." + PLUGIN.removesuffix("-agent") + "_client")
+                        transport = importlib.import_module("pkg.vendor_process")
+                        worker = Path(client_module.__file__).with_name("vendor_worker.py")
+                        wrapper = Path(work) / "vendor_fixture.py"
+                        fixture = ROOT / "http-certification-tests/fixtures/worker_transport_fixture.py"
+                        wrapper.write_text(
+                            "import runpy, socket, sys\n"
+                            + "def guard(event, args):\n"
+                            + " if event == 'socket.connect' and args[0].family in (socket.AF_INET, socket.AF_INET6):\n"
+                            + "  raise AssertionError('Vendor fixture must not connect to a network')\n"
+                            + "sys.addaudithook(guard)\n"
+                            + f'runpy.run_path({str(fixture)!r}, init_globals={{"WORKER":{str(worker)!r},"PLUGIN":{PLUGIN!r}}})\n'
+                        )
+                        original = transport.vendor_stream
+                        patches.append(
+                            patch.object(
+                                client_module,
+                                "vendor_stream",
+                                lambda payload, timeout: original(payload, timeout=timeout, worker=wrapper),
                             )
-                            return iter(
-                                [
-                                    ApplicationResponse(
-                                        status_code=200,
-                                        request_id="fixture",
-                                        output={
-                                            "text": "FIXTURE_OK",
-                                            "session_id": "fixture-session",
-                                            "finish_reason": "stop",
-                                        },
-                                        usage={"input_tokens": 1, "output_tokens": 1},
-                                    )
-                                ]
-                            )
-
-                        patches.append(patch.object(Application, "call", side_effect=application_fixture))
-                    elif PLUGIN == "tbox-agent":
-                        from tboxsdk.tbox import TboxClient
-
-                        # Keep the real TboxClient constructor, File types and chat method;
-                        # replace only its synchronous HTTP transport boundary.
-                        original_init = TboxClient.__init__
-
-                        def tbox_init(client, *args, **kwargs):
-                            original_init(client, *args, **kwargs)
-
-                            def post_fixture(path, **params):
-                                CALLS.append(
-                                    {"boundary": "real tboxsdk HTTP transport fixture", "path": path, "params": params}
-                                )
-                                return {
-                                    "errorCode": "0",
-                                    "data": {
-                                        "conversationId": "fixture-conversation",
-                                        "result": [{"chunk": "FIXTURE_OK"}],
-                                    },
-                                }
-
-                            client.http_client.post = post_fixture
-
-                        patches.append(patch.object(TboxClient, "__init__", tbox_init))
-                        config["streaming"] = False
+                        )
+                        config["streaming"] = False if PLUGIN == "tbox-agent" else True
+                        CALLS.append(
+                            {"boundary": "real vendor SDK in killable subprocess, simulated transport", "live": False}
+                        )
                     for item in patches:
                         item.start()
                     try:

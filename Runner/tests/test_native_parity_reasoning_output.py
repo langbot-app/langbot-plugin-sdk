@@ -340,6 +340,20 @@ def test_response_limit_counts_suppressed_reasoning(parity_module_loader, monkey
     assert events[-1].data["code"] == f"{name}.response_limit"
 
 
+def mock_vendor(module, call, monkeypatch):
+    """Substitute child transport, retaining real client parsing and runner logic."""
+
+    async def stream(payload, **kwargs):
+        result = call(**payload["kwargs"])
+        if isinstance(result, dict):
+            yield result
+        else:
+            for item in result:
+                yield item
+
+    monkeypatch.setattr(module, "vendor_stream", stream)
+
+
 @pytest.mark.parametrize("name", ["coze", "tbox"])
 def test_upload_rejects_native_oversize_before_network(parity_module_loader, monkeypatch, name):
     parity_module_loader(name)
@@ -353,9 +367,7 @@ def test_upload_rejects_native_oversize_before_network(parity_module_loader, mon
     if name == "coze":
         monkeypatch.setattr(module.aiohttp, "ClientSession", forbidden)
     else:
-        monkeypatch.setattr(
-            client, "_get_client", lambda: (_ for _ in ()).throw(AssertionError("SDK must not be reached"))
-        )
+        monkeypatch.setattr(module, "vendor_stream", forbidden)
     with pytest.raises(Exception) as exc:
         asyncio.run(client.upload_file(b"x" * (10 * 1024 * 1024 + 1), "fixture.png"))
     assert getattr(exc.value, "code", None) == f"{name}.input_error"
@@ -400,7 +412,7 @@ def test_dashscope_native_workflow_text_fallback_and_client_inputs(parity_module
             ]
         )
 
-    monkeypatch.setattr(client_module.Application, "call", call)
+    mock_vendor(client_module, call, monkeypatch)
     ctx = context(
         {
             "api-key": "fixture",
@@ -410,7 +422,7 @@ def test_dashscope_native_workflow_text_fallback_and_client_inputs(parity_module
             "references_quote": "Source:",
         }
     )
-    # Use the real client thread iterator; only the vendor call is substituted.
+    # Use the real async client; only the process transport is substituted.
     events = asyncio.run(collect(object.__new__(module.DefaultRunner).run(ctx)))
     assert event_type(events[-1]) == "run.completed"
     assert messages(events)[-1]["content"] == "answer (Source: manual)"
@@ -429,7 +441,7 @@ def test_dashscope_real_client_disable_request_thought_flags(parity_module_loade
         captured.update(kwargs)
         return iter([{"status_code": 200, "output": {"text": "answer", "finish_reason": "stop"}}])
 
-    monkeypatch.setattr(client_module.Application, "call", call)
+    mock_vendor(client_module, call, monkeypatch)
     events = asyncio.run(
         collect(
             object.__new__(module.DefaultRunner).run(
@@ -579,7 +591,7 @@ def test_tbox_actual_client_request_fields(parity_module_loader, monkeypatch, st
                 ]
             )
 
-    monkeypatch.setattr(module.AsyncTboxClient, "_get_client", lambda self: SDKClient())
+    mock_vendor(sys.modules["pkg.tbox_client"], SDKClient().chat, monkeypatch)
     ctx = context({"api-key": "fixture", "app-id": "exact-app", "remove-think": True}, streaming=streaming)
     events = asyncio.run(collect(object.__new__(module.DefaultRunner).run(ctx)))
     assert event_type(events[-1]) == "run.completed"

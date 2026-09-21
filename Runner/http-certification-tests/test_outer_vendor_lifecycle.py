@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from test_isolation import context, load
 
 
@@ -42,7 +41,9 @@ def test_outer_runner_owns_vendor_until_reaped(name, mode, scenario, tmp_path, m
         worker = tmp_path / "vendor_fixture.py"
         worker.write_text(fixture + f"runpy.run_path({str(actual_worker)!r},run_name='__main__')\n")
         original = transport.vendor_stream
-        monkeypatch.setattr(client, "vendor_stream", lambda payload, timeout: original(payload, timeout=timeout, worker=worker))
+        monkeypatch.setattr(
+            client, "vendor_stream", lambda payload, timeout: original(payload, timeout=timeout, worker=worker)
+        )
         spawn = asyncio.create_subprocess_exec
         processes, directories = [], []
 
@@ -67,7 +68,9 @@ def test_outer_runner_owns_vendor_until_reaped(name, mode, scenario, tmp_path, m
 
             monkeypatch.setattr(asyncio, "create_subprocess_exec", record)
             ctx = context()
-            ctx.config.update({"api-key": "fixture", "app-id": "fixture", "app-type": mode, "streaming": True, "timeout": 5})
+            ctx.config.update(
+                {"api-key": "fixture", "app-id": "fixture", "app-type": mode, "streaming": True, "timeout": 5}
+            )
             runner.get_run_api = lambda ctx: SimpleNamespace()
             gen = runner.invoke(ctx)
             closing = None

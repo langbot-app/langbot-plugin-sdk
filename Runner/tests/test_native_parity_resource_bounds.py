@@ -12,6 +12,7 @@ from test_native_parity_reasoning_output import (
     drive,
     event_type,
     messages,
+    mock_vendor,
 )
 from test_native_parity_reasoning_output import (
     parity_module_loader as _parity_module_loader,
@@ -214,9 +215,7 @@ def test_dashscope_rendered_citations_are_bounded(parity_module_loader, monkeypa
     output = {"text": "<ref>[1]</ref>" * 3, "doc_references": [{"index_id": "1", "doc_name": "x" * (TEXT_LIMIT // 2)}]}
     if finished:
         output["finish_reason"] = "stop"
-    monkeypatch.setattr(
-        client_module.Application, "call", lambda **kwargs: iter([{"status_code": 200, "output": output}])
-    )
+    mock_vendor(client_module, lambda **kwargs: iter([{"status_code": 200, "output": output}]), monkeypatch)
     events = asyncio.run(
         collect(
             object.__new__(module.DefaultRunner).run(context({"api-key": "fixture", "app-id": "app", "app-type": mode}))

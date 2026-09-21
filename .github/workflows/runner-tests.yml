@@ -41,7 +41,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --dev
       - name: Verify published SDK pin
-        run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b3"; print("langbot-plugin", version("langbot-plugin"))'
+        run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b5"; print("langbot-plugin", version("langbot-plugin"))'
+      - name: Prepare isolated legacy coding Runner SDK environment
+        run: |
+          uv venv "$RUNNER_TEMP/coding-b3"
+          uv pip install --python "$RUNNER_TEMP/coding-b3/bin/python" -r acp-agent-runner/requirements.txt -r claude-code-agent/requirements.txt -r codex-agent/requirements.txt pytest pyyaml packaging
+          "$RUNNER_TEMP/coding-b3/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b3"'
+          printf 'CODING_RUNNER_TEST_PYTHON=%s/coding-b3/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Prepare isolated certified LocalAgent SDK environment
         run: |
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/localagent-b5" uv sync --project LocalAgent --locked --extra dev
@@ -50,15 +56,18 @@ jobs:
       # Preserve the external Runner lint scope; LocalAgent has its own Ruff config.
       # RunnerDemo did not have a Ruff gate before consolidation.
       - name: Ruff check
-        run: uv run --no-sync ruff check tests ./*-agent acp-agent-runner
+        run: uv run --no-sync ruff check tests http-certification-tests ./*-agent acp-agent-runner
       - name: Ruff format check
-        run: uv run --no-sync ruff format --check tests ./*-agent acp-agent-runner
+        run: uv run --no-sync ruff format --check tests http-certification-tests ./*-agent acp-agent-runner
       - name: LocalAgent Ruff check
         run: uv run --no-sync ruff check LocalAgent
       - name: LocalAgent Ruff format check
         run: uv run --no-sync ruff format --check LocalAgent
       - name: All Runner tests, including isolated LocalAgent and RunnerDemo suites
         run: uv run --no-sync python -m pytest --junitxml="${RUNNER_EVIDENCE_DIR}/runner.xml"
+      # Generic pkg/test module names require a fresh pytest interpreter.
+      - name: HTTP Runner certification regressions
+        run: uv run --no-sync python -m pytest http-certification-tests -q --junitxml="${RUNNER_EVIDENCE_DIR}/http-certification.xml"
       - name: Certified RunnerDemo SDK admission and package tests
         run: |
           uv run --no-project --with langbot-plugin==0.6.0b5 --with pyyaml python certification-tests/test_runner_demo_dependency_admission.py -v

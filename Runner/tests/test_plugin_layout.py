@@ -2186,34 +2186,35 @@ def test_dify_runner_injects_langbot_asset_run_token(monkeypatch) -> None:
         def stop(self):
             calls["stopped"] = True
 
-    class FakeGateway:
-        def register_run(self, api, ctx, *, ttl_seconds):
-            calls["api"] = api
-            calls["ctx"] = ctx
-            calls["ttl_seconds"] = ttl_seconds
-            return FakeRegistration()
-
-    def fake_default_gateway(*, host, port, request_timeout):
-        calls["host"] = host
-        calls["port"] = port
-        calls["request_timeout"] = request_timeout
-        return FakeGateway()
+    async def fake_register_assets(owner, api, ctx, config):
+        assert owner is runner
+        calls.update(
+            host=config["asset_gateway_host"],
+            port=config["asset_gateway_port"],
+            request_timeout=config["asset_gateway_request_timeout"],
+            api=api,
+            ctx=ctx,
+            ttl_seconds=config["asset_gateway_token_ttl"],
+        )
+        return FakeRegistration()
 
     runner = object.__new__(module.DefaultRunner)
     runner.get_run_api = lambda ctx: "run-api"
     ctx = types.SimpleNamespace(adapter=types.SimpleNamespace(extra={"params": {"existing": "value"}}))
 
-    monkeypatch.setattr(module, "get_default_agent_asset_gateway", fake_default_gateway)
-    registration, inputs = runner._prepare_dify_inputs(
-        ctx,
-        {
-            "langbot_assets_enabled": True,
-            "asset_gateway_host": "0.0.0.0",
-            "asset_gateway_port": 8765,
-            "asset_gateway_request_timeout": 12.0,
-            "asset_gateway_token_ttl": 120.0,
-            "asset_gateway_input_name": "langbot_asset_run_token",
-        },
+    monkeypatch.setattr(module, "register_assets", fake_register_assets)
+    registration, inputs = asyncio.run(
+        runner._prepare_dify_inputs(
+            ctx,
+            {
+                "langbot_assets_enabled": True,
+                "asset_gateway_host": "0.0.0.0",
+                "asset_gateway_port": 8765,
+                "asset_gateway_request_timeout": 12.0,
+                "asset_gateway_token_ttl": 120.0,
+                "asset_gateway_input_name": "langbot_asset_run_token",
+            },
+        )
     )
 
     assert isinstance(registration, FakeRegistration)
