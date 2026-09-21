@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import typing
+from contextlib import aclosing
 
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
@@ -269,11 +270,10 @@ class DefaultRunner(Runner):
             asset_biz_params[config["asset_gateway_input_name"]] = asset_registration.token
 
         try:
-            if app_type == "workflow":
-                async for result in self._run_workflow(ctx, client, input_text, session_id, asset_biz_params):
-                    yield result
-            else:
-                async for result in self._run_runner(ctx, client, input_text, session_id, asset_biz_params):
+            run = self._run_workflow if app_type == "workflow" else self._run_runner
+            # Own every delegated generator through downstream backpressure/close.
+            async with aclosing(run(ctx, client, input_text, session_id, asset_biz_params)) as results:
+                async for result in results:
                     yield result
         except DashScopeAPIError as e:
             yield RunnerResult.run_failed(
@@ -324,88 +324,89 @@ class DefaultRunner(Runner):
         # Match native request flags as well as filtering provider output.
         enable_thinking = not remove_think
 
-        async for chunk in client.iter_agent(
+        async with aclosing(client.iter_agent(
             prompt=input_text,
             session_id=session_id,
             enable_thinking=enable_thinking,
             biz_params=extra_biz_params or None,
-        ):
-            if not chunk:
-                continue
-            # Check for API errors
-            status_code = chunk.get("status_code")
-            if status_code != 200:
-                raise DashScopeAPIError(
-                    f"DashScope API error: status_code={status_code} "
-                    f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
-                    code="dashscope.api_error",
-                )
+        )) as chunks:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                # Check for API errors
+                status_code = chunk.get("status_code")
+                if status_code != 200:
+                    raise DashScopeAPIError(
+                        f"DashScope API error: status_code={status_code} "
+                        f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
+                        code="dashscope.api_error",
+                    )
 
-            if not chunk:
-                continue
+                if not chunk:
+                    continue
 
-            stream_output = chunk.get("output", {})
-            usage = _usage_from_payload(chunk, stream_output) or usage
+                stream_output = chunk.get("output", {})
+                usage = _usage_from_payload(chunk, stream_output) or usage
 
-            # Track session_id for stateful session
-            if stream_output.get("session_id"):
-                final_session_id = stream_output["session_id"]
+                # Track session_id for stateful session
+                if stream_output.get("session_id"):
+                    final_session_id = stream_output["session_id"]
 
-            # Handle thinking/reasoning content
-            stream_think = stream_output.get("thoughts") or []
-            budget.add(stream_output.get("text", ""), *(item.get("thought", "") for item in stream_think))
-            if stream_think and stream_think[0].get("thought"):
-                saw_output = True
-            if not remove_think and stream_think and stream_think[0].get("thought"):
-                if not think_start:
-                    think_start = True
-                    pending_content += f"{THINK_START}\n{stream_think[0].get('thought')}"
-                else:
-                    # Continue outputting reasoning_content
-                    pending_content += stream_think[0].get("thought")
-            elif think_start and (not stream_think or stream_think[0].get("thought") == "") and not think_end:
-                think_end = True
-                pending_content += f"\n{THINK_END}\n"
+                # Handle thinking/reasoning content
+                stream_think = stream_output.get("thoughts") or []
+                budget.add(stream_output.get("text", ""), *(item.get("thought", "") for item in stream_think))
+                if stream_think and stream_think[0].get("thought"):
+                    saw_output = True
+                if not remove_think and stream_think and stream_think[0].get("thought"):
+                    if not think_start:
+                        think_start = True
+                        pending_content += f"{THINK_START}\n{stream_think[0].get('thought')}"
+                    else:
+                        # Continue outputting reasoning_content
+                        pending_content += stream_think[0].get("thought")
+                elif think_start and (not stream_think or stream_think[0].get("thought") == "") and not think_end:
+                    think_end = True
+                    pending_content += f"\n{THINK_END}\n"
 
-            # Handle text content
-            if stream_output.get("text"):
-                saw_output = True
-                pending_content += text_filter.feed(stream_output["text"])
+                # Handle text content
+                if stream_output.get("text"):
+                    saw_output = True
+                    pending_content += text_filter.feed(stream_output["text"])
 
-            # Check if this is the final chunk
-            finish_reason = stream_output.get("finish_reason")
-            is_final = finish_reason != "null" if finish_reason else False
-            if is_final:
-                pending_content += text_filter.feed("", final=True)
-
-            # Extract and accumulate references
-            chunk_refs = extract_references_from_chunk(stream_output)
-            references_dict.update(chunk_refs)
-
-            # Replace references in content
-            if references_dict:
-                pending_content = replace_references(
-                    pending_content,
-                    references_dict,
-                    client.references_quote,
-                )
-
-            budget.check_rendered(pending_content)
-
-            # Yield periodically or on final chunk
-            if pending_content or (is_final and saw_output):
-                has_response = True
-                last_final = is_final
-                yield RunnerResult.message_delta(
-                    ctx.run_id,
-                    MessageChunk(
-                        role="assistant",
-                        content=pending_content,
-                        is_final=is_final,
-                    ),
-                )
+                # Check if this is the final chunk
+                finish_reason = stream_output.get("finish_reason")
+                is_final = finish_reason != "null" if finish_reason else False
                 if is_final:
-                    pending_content = ""
+                    pending_content += text_filter.feed("", final=True)
+
+                # Extract and accumulate references
+                chunk_refs = extract_references_from_chunk(stream_output)
+                references_dict.update(chunk_refs)
+
+                # Replace references in content
+                if references_dict:
+                    pending_content = replace_references(
+                        pending_content,
+                        references_dict,
+                        client.references_quote,
+                    )
+
+                budget.check_rendered(pending_content)
+
+                # Yield periodically or on final chunk
+                if pending_content or (is_final and saw_output):
+                    has_response = True
+                    last_final = is_final
+                    yield RunnerResult.message_delta(
+                        ctx.run_id,
+                        MessageChunk(
+                            role="assistant",
+                            content=pending_content,
+                            is_final=is_final,
+                        ),
+                    )
+                    if is_final:
+                        pending_content = ""
 
         # Providers may omit finish_reason; emit a final snapshot at EOF,
         # including an empty snapshot when only hidden reasoning was received.
@@ -463,79 +464,80 @@ class DefaultRunner(Runner):
         if extra_biz_params:
             biz_params = {**biz_params, **extra_biz_params}
 
-        async for chunk in client.iter_workflow(
+        async with aclosing(client.iter_workflow(
             prompt=input_text,
             session_id=session_id,
             biz_params=biz_params,
-        ):
-            if not chunk:
-                continue
-            # Check for API errors
-            status_code = chunk.get("status_code")
-            if status_code != 200:
-                raise DashScopeAPIError(
-                    f"DashScope API error: status_code={status_code} "
-                    f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
-                    code="dashscope.api_error",
-                )
+        )) as chunks:
+            async for chunk in chunks:
+                if not chunk:
+                    continue
+                # Check for API errors
+                status_code = chunk.get("status_code")
+                if status_code != 200:
+                    raise DashScopeAPIError(
+                        f"DashScope API error: status_code={status_code} "
+                        f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
+                        code="dashscope.api_error",
+                    )
 
-            if not chunk:
-                continue
+                if not chunk:
+                    continue
 
-            stream_output = chunk.get("output", {})
-            usage = _usage_from_payload(chunk, stream_output) or usage
+                stream_output = chunk.get("output", {})
+                usage = _usage_from_payload(chunk, stream_output) or usage
 
-            # Track session_id for stateful session
-            if stream_output.get("session_id"):
-                final_session_id = stream_output["session_id"]
+                # Track session_id for stateful session
+                if stream_output.get("session_id"):
+                    final_session_id = stream_output["session_id"]
 
-            # Handle workflow message format output
-            workflow_message = stream_output.get("workflow_message")
-            if workflow_message is not None:
-                content = (workflow_message.get("message") or {}).get("content", "")
-            else:
-                # Native non-streaming workflows use output.text. Do not add
-                # both representations when a provider includes both.
-                content = stream_output.get("text", "")
-            if content:
-                budget.add(content)
-                saw_output = True
-                pending_content += text_filter.feed(content)
+                # Handle workflow message format output
+                workflow_message = stream_output.get("workflow_message")
+                if workflow_message is not None:
+                    content = (workflow_message.get("message") or {}).get("content", "")
+                else:
+                    # Native non-streaming workflows use output.text. Do not add
+                    # both representations when a provider includes both.
+                    content = stream_output.get("text", "")
+                if content:
+                    budget.add(content)
+                    saw_output = True
+                    pending_content += text_filter.feed(content)
 
-            # Check if this is the final chunk
-            finish_reason = stream_output.get("finish_reason")
-            is_final = finish_reason != "null" if finish_reason else False
-            if is_final:
-                pending_content += text_filter.feed("", final=True)
-
-            # Extract and accumulate references
-            chunk_refs = extract_references_from_chunk(stream_output)
-            references_dict.update(chunk_refs)
-
-            # Replace references in content
-            if references_dict:
-                pending_content = replace_references(
-                    pending_content,
-                    references_dict,
-                    client.references_quote,
-                )
-
-            budget.check_rendered(pending_content)
-
-            # Yield periodically or on final chunk
-            if pending_content or (is_final and saw_output):
-                has_response = True
-                last_final = is_final
-                yield RunnerResult.message_delta(
-                    ctx.run_id,
-                    MessageChunk(
-                        role="assistant",
-                        content=pending_content,
-                        is_final=is_final,
-                    ),
-                )
+                # Check if this is the final chunk
+                finish_reason = stream_output.get("finish_reason")
+                is_final = finish_reason != "null" if finish_reason else False
                 if is_final:
-                    pending_content = ""
+                    pending_content += text_filter.feed("", final=True)
+
+                # Extract and accumulate references
+                chunk_refs = extract_references_from_chunk(stream_output)
+                references_dict.update(chunk_refs)
+
+                # Replace references in content
+                if references_dict:
+                    pending_content = replace_references(
+                        pending_content,
+                        references_dict,
+                        client.references_quote,
+                    )
+
+                budget.check_rendered(pending_content)
+
+                # Yield periodically or on final chunk
+                if pending_content or (is_final and saw_output):
+                    has_response = True
+                    last_final = is_final
+                    yield RunnerResult.message_delta(
+                        ctx.run_id,
+                        MessageChunk(
+                            role="assistant",
+                            content=pending_content,
+                            is_final=is_final,
+                        ),
+                    )
+                    if is_final:
+                        pending_content = ""
 
         # Providers may omit finish_reason; emit a final snapshot at EOF,
         # including an empty snapshot when only hidden reasoning was received.

@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 import typing
+from contextlib import aclosing
 
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
@@ -354,10 +355,12 @@ class DefaultRunner(Runner):
             # degrade to text-only when provider upload fails.
             files = await self._upload_input_files(ctx, client)
 
-            async for result in self._run_chat(
+            # Own every delegated generator through downstream backpressure/close.
+            async with aclosing(self._run_chat(
                 ctx, client, app_id, user_id, input_text, conversation_id, files, is_stream
-            ):
-                yield result
+            )) as results:
+                async for result in results:
+                    yield result
         except TboxAPIError as e:
             yield RunnerResult.run_failed(
                 ctx.run_id,
@@ -401,120 +404,121 @@ class DefaultRunner(Runner):
         think_end = False
         usage: dict[str, typing.Any] | None = None
 
-        async for chunk in client.chat(
+        async with aclosing(client.chat(
             app_id=app_id,
             user_id=user_id,
             query=input_text,
             stream=is_stream,
             conversation_id=conversation_id,
             files=files if files else None,
-        ):
-            chunk_type = chunk.get("type", "")
-            usage = _usage_from_payload(chunk, chunk.get("payload"), chunk.get("data")) or usage
+        )) as chunks:
+            async for chunk in chunks:
+                chunk_type = chunk.get("type", "")
+                usage = _usage_from_payload(chunk, chunk.get("payload"), chunk.get("data")) or usage
 
-            if is_stream:
-                # Handle streaming chunks
-                if chunk_type == "chunk":
-                    """
-                    Tbox chunk structure:
-                    {'lane': 'default', 'payload': {'conversationId': '...', 'messageId': '...', 'text': '...'}, 'type': 'chunk'}
-                    """
-                    # If thinking started but not ended, add closing tag
-                    if think_start and not think_end:
-                        pending_content += "\n viewport\n"
-                        think_end = True
+                if is_stream:
+                    # Handle streaming chunks
+                    if chunk_type == "chunk":
+                        """
+                        Tbox chunk structure:
+                        {'lane': 'default', 'payload': {'conversationId': '...', 'messageId': '...', 'text': '...'}, 'type': 'chunk'}
+                        """
+                        # If thinking started but not ended, add closing tag
+                        if think_start and not think_end:
+                            pending_content += "\n viewport\n"
+                            think_end = True
 
-                    payload = chunk.get("payload", {})
-                    if not final_conversation_id:
-                        final_conversation_id = payload.get("conversationId")
+                        payload = chunk.get("payload", {})
+                        if not final_conversation_id:
+                            final_conversation_id = payload.get("conversationId")
 
-                    budget.add(payload.get("text", ""))
-                    if payload.get("text"):
-                        idx_msg += 1
-                        has_response = True
-                        pending_content += text_filter.feed(payload.get("text"))
-
-                elif chunk_type == "thinking":
-                    """
-                    Tbox thinking chunk structure:
-                    {'payload': '{"ext_data":{"text":"..."},"event":"flow.node.llm.thinking",...}', 'type': 'thinking'}
-                    """
-                    try:
-                        payload = json.loads(chunk.get("payload", "{}"))
-                        budget.add(payload.get("ext_data", {}).get("text", ""))
-                        if payload.get("ext_data", {}).get("text"):
-                            has_response = True
-                            if remove_think:
-                                continue
+                        budget.add(payload.get("text", ""))
+                        if payload.get("text"):
                             idx_msg += 1
-                            content = payload.get("ext_data", {}).get("text")
-                            if not think_start:
-                                think_start = True
-                                pending_content += f"<tool_call>\n{content}"
-                            else:
-                                pending_content += content
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse Tbox thinking payload: {chunk}")
+                            has_response = True
+                            pending_content += text_filter.feed(payload.get("text"))
 
-                elif chunk_type == "error":
-                    raise TboxAPIError(
-                        f"Tbox API error: status_code={chunk.get('status_code')} "
-                        f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
-                        code="tbox.api_error",
+                    elif chunk_type == "thinking":
+                        """
+                        Tbox thinking chunk structure:
+                        {'payload': '{"ext_data":{"text":"..."},"event":"flow.node.llm.thinking",...}', 'type': 'thinking'}
+                        """
+                        try:
+                            payload = json.loads(chunk.get("payload", "{}"))
+                            budget.add(payload.get("ext_data", {}).get("text", ""))
+                            if payload.get("ext_data", {}).get("text"):
+                                has_response = True
+                                if remove_think:
+                                    continue
+                                idx_msg += 1
+                                content = payload.get("ext_data", {}).get("text")
+                                if not think_start:
+                                    think_start = True
+                                    pending_content += f"<tool_call>\n{content}"
+                                else:
+                                    pending_content += content
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse Tbox thinking payload: {chunk}")
+
+                    elif chunk_type == "error":
+                        raise TboxAPIError(
+                            f"Tbox API error: status_code={chunk.get('status_code')} "
+                            f"message={chunk.get('message')} request_id={chunk.get('request_id')}",
+                            code="tbox.api_error",
+                        )
+
+                    budget.check_rendered(pending_content)
+
+                    # Yield periodic updates (every 8 chunks)
+                    if idx_msg > 0 and idx_msg % 8 == 0:
+                        has_response = True
+                        yield RunnerResult.message_delta(
+                            ctx.run_id,
+                            MessageChunk(
+                                role="assistant",
+                                content=pending_content,
+                                is_final=False,
+                            ),
+                        )
+
+                else:
+                    # Handle non-streaming response
+                    """
+                    Tbox non-stream response:
+                    {'errorCode': '0', 'data': {'conversationId': '...', 'reasoningContent': [...], 'result': [...]}}
+                    """
+                    if chunk.get("errorCode") != "0":
+                        raise TboxAPIError(
+                            f"Tbox API request failed: {chunk.get('errorMsg', '')}",
+                            code="tbox.api_error",
+                        )
+
+                    payload = chunk.get("data", {})
+                    final_conversation_id = payload.get("conversationId", "")
+
+                    budget.add(
+                        *(item.get("text", "") for item in payload.get("reasoningContent", [])),
+                        *(item.get("chunk", "") for item in payload.get("result", [])),
                     )
+                    result = ""
+                    thinking_content = payload.get("reasoningContent", [])
+                    if thinking_content and not remove_think:
+                        result += f"<tool_call>\n{thinking_content[0].get('text', '')}\n viewport\n"
 
-                budget.check_rendered(pending_content)
+                    content = payload.get("result", [])
+                    if content:
+                        result += text_filter.feed(content[0].get("chunk", ""), final=True)
 
-                # Yield periodic updates (every 8 chunks)
-                if idx_msg > 0 and idx_msg % 8 == 0:
+                    budget.check_rendered(result)
                     has_response = True
                     yield RunnerResult.message_delta(
                         ctx.run_id,
                         MessageChunk(
                             role="assistant",
-                            content=pending_content,
-                            is_final=False,
+                            content=result,
+                            is_final=True,
                         ),
                     )
-
-            else:
-                # Handle non-streaming response
-                """
-                Tbox non-stream response:
-                {'errorCode': '0', 'data': {'conversationId': '...', 'reasoningContent': [...], 'result': [...]}}
-                """
-                if chunk.get("errorCode") != "0":
-                    raise TboxAPIError(
-                        f"Tbox API request failed: {chunk.get('errorMsg', '')}",
-                        code="tbox.api_error",
-                    )
-
-                payload = chunk.get("data", {})
-                final_conversation_id = payload.get("conversationId", "")
-
-                budget.add(
-                    *(item.get("text", "") for item in payload.get("reasoningContent", [])),
-                    *(item.get("chunk", "") for item in payload.get("result", [])),
-                )
-                result = ""
-                thinking_content = payload.get("reasoningContent", [])
-                if thinking_content and not remove_think:
-                    result += f"<tool_call>\n{thinking_content[0].get('text', '')}\n viewport\n"
-
-                content = payload.get("result", [])
-                if content:
-                    result += text_filter.feed(content[0].get("chunk", ""), final=True)
-
-                budget.check_rendered(result)
-                has_response = True
-                yield RunnerResult.message_delta(
-                    ctx.run_id,
-                    MessageChunk(
-                        role="assistant",
-                        content=result,
-                        is_final=True,
-                    ),
-                )
 
         # Flush literal partial delimiters only at EOF. Hidden-only responses
         # still complete successfully with an empty final chunk.
