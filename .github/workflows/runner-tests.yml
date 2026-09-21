@@ -54,6 +54,11 @@ jobs:
         run: uv run --no-sync ruff format --check LocalAgent
       - name: All Runner tests, including isolated LocalAgent and RunnerDemo suites
         run: uv run --no-sync python -m pytest --junitxml="${RUNNER_EVIDENCE_DIR}/runner.xml"
+      - name: Certified RunnerDemo SDK admission and package tests
+        run: |
+          uv run --no-project --with langbot-plugin==0.6.0b5 --with pyyaml python certification-tests/test_runner_demo_dependency_admission.py -v
+          cd RunnerDemo
+          uv run --no-project --with langbot-plugin==0.6.0b5 --with pyyaml python -m unittest discover -s tests -v
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@v4

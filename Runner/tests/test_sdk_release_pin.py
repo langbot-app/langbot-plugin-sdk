@@ -13,7 +13,9 @@ PLUGINS = sorted(p.parent for p in ROOT.glob("*/manifest.yaml"))
 @pytest.mark.parametrize("plugin", PLUGINS, ids=lambda p: p.name)
 def test_plugin_requirements_pin_released_sdk(plugin):
     requirements = (plugin / "requirements.txt").read_text().splitlines()
-    assert SDK_REQUIREMENT in requirements
+    # Certified RunnerDemo is exercised separately against the deployed b5 Runtime.
+    expected = "langbot-plugin==0.6.0b5" if plugin.name == "RunnerDemo" else SDK_REQUIREMENT
+    assert expected in requirements
     assert sum(line.startswith("langbot-plugin") for line in requirements) == 1
 
 
