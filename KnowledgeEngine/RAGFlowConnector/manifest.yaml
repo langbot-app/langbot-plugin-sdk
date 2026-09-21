@@ -4,7 +4,7 @@ metadata:
   author: langbot-team
   name: RAGFlowConnector
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/KnowledgeEngine/RAGFlowConnector
-  version: 0.1.4
+  version: 0.1.5
   description:
     en_US: Retrieve knowledge from or store files into RAGFlow knowledge bases
     zh_Hans: 从 RAGFlow 知识库中检索知识或存入文件
@@ -32,6 +32,7 @@ spec:
       fromFiles:
       - components/knowledge_engine/ragflow.yaml
 execution:
+  sharedRuntime: shared-runtime-v1
   python:
     path: main.py
     attr: RAGFlowConnector

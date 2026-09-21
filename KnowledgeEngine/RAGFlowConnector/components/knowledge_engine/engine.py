@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from components.shared_state import ConfigStore, serialized
+
 import httpx
 
 from langbot_plugin.api.definition.components.knowledge_engine import KnowledgeEngine, KnowledgeEngineCapability
@@ -18,17 +20,12 @@ from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 logger = logging.getLogger(__name__)
 
 
-class RAGFlowConnector(KnowledgeEngine):
+class RAGFlowConnector(ConfigStore, KnowledgeEngine):
     """Knowledge Engine powered by RAGFlow.
 
     Supports retrieval, document ingestion (upload + parse), and deletion
     via the RAGFlow HTTP API.
     """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Cache knowledge-base configs keyed by kb_id for use in delete_document
-        self._kb_configs: dict[str, dict] = {}
 
     @classmethod
     def get_capabilities(cls) -> list[str]:
@@ -36,10 +33,11 @@ class RAGFlowConnector(KnowledgeEngine):
 
     # ========== Lifecycle Hooks ==========
 
+    @serialized
     async def on_knowledge_base_create(self, kb_id: str, config: dict) -> None:
-        """Cache knowledge-base configuration and validate dataset IDs."""
+        """Persist installation-bound configuration and validate dataset IDs."""
         logger.info(f"[RAGFlowKnowledgeEngine] Knowledge base created: {kb_id}")
-        self._kb_configs[kb_id] = config
+        await self._save_config(kb_id, config)
 
         # Validate dataset IDs
         api_base_url = config.get("api_base_url", "http://localhost:9380").rstrip("/")
@@ -54,7 +52,7 @@ class RAGFlowConnector(KnowledgeEngine):
             return
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 resp = await client.get(
                     f"{api_base_url}/api/v1/datasets",
                     headers={"Authorization": f"Bearer {api_key}"},
@@ -82,10 +80,11 @@ class RAGFlowConnector(KnowledgeEngine):
         except Exception as e:
             logger.warning(f"[RAGFlowKnowledgeEngine] Dataset validation failed: {e}")
 
+    @serialized
     async def on_knowledge_base_delete(self, kb_id: str) -> None:
-        """Remove cached configuration for the deleted knowledge base."""
+        """Tombstone the stored configuration for the deleted knowledge base."""
         logger.info(f"[RAGFlowKnowledgeEngine] Knowledge base deleted: {kb_id}")
-        self._kb_configs.pop(kb_id, None)
+        await self._save_config(kb_id, None)
 
     async def retrieve(self, context: RetrievalContext) -> RetrievalResponse:
         """Execute retrieval against RAGFlow API."""
@@ -138,7 +137,7 @@ class RAGFlowConnector(KnowledgeEngine):
 
         results: list[RetrievalResultEntry] = []
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 response = await client.post(url, json=payload, headers=headers, timeout=30.0)
                 response.raise_for_status()
                 data = response.json()
@@ -185,6 +184,7 @@ class RAGFlowConnector(KnowledgeEngine):
 
         return RetrievalResponse(results=results, total_found=len(results))
 
+    @serialized
     async def ingest(self, context: IngestionContext) -> IngestionResult:
         """Upload a file to RAGFlow and trigger parsing."""
         doc_id = context.file_object.metadata.document_id
@@ -218,6 +218,8 @@ class RAGFlowConnector(KnowledgeEngine):
         # Use the first dataset as the ingestion target
         target_dataset_id = dataset_ids[0]
 
+        await self._save_config(context.get_collection_id(), config)
+
         # 1. Read file content from Host
         try:
             file_bytes = await self.plugin.get_knowledge_file_stream(context.file_object.storage_path)
@@ -232,7 +234,7 @@ class RAGFlowConnector(KnowledgeEngine):
         headers = {"Authorization": f"Bearer {api_key}"}
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 # 2. Upload file to RAGFlow dataset
                 upload_url = f"{api_base_url}/api/v1/datasets/{target_dataset_id}/documents"
                 files = {"file": (filename, file_bytes)}
@@ -360,12 +362,13 @@ class RAGFlowConnector(KnowledgeEngine):
                 error_message=str(e),
             )
 
+    @serialized
     async def delete_document(self, kb_id: str, document_id: str) -> bool:
         """Delete a document from RAGFlow."""
-        config = self._kb_configs.get(kb_id)
+        config = await self._load_config(kb_id)
         if not config:
             logger.error(
-                f"[RAGFlowKnowledgeEngine] No cached config for kb_id={kb_id}, "
+                f"[RAGFlowKnowledgeEngine] No stored config for kb_id={kb_id}, "
                 "cannot delete document"
             )
             return False
@@ -390,7 +393,7 @@ class RAGFlowConnector(KnowledgeEngine):
         target_dataset_id = dataset_ids[0]
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 url = f"{api_base_url}/api/v1/datasets/{target_dataset_id}/documents"
                 headers = {
                     "Authorization": f"Bearer {api_key}",

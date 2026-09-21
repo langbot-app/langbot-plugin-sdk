@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 from .base import IndexStrategy
+from components.offload import BoundedOffload
 from ..chunker import chunk_text, chunk_sections, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 
 
@@ -32,10 +33,11 @@ class ChunkStrategy(IndexStrategy):
         chunk_size = creation_settings.get("chunk_size") or DEFAULT_CHUNK_SIZE
         overlap = creation_settings.get("overlap") or DEFAULT_CHUNK_OVERLAP
         doc_fields = self._build_doc_meta_fields(doc_metadata)
+        offload = getattr(plugin, "offload", None) or BoundedOffload()
 
         if sections:
             # Section-aware path
-            s_chunks = chunk_sections(sections, chunk_size, overlap)
+            s_chunks = await offload.run(chunk_sections, sections, chunk_size, overlap)
             chunks_text: list[str] = []
             ids: list[str] = []
             metadatas: list[dict] = []
@@ -62,7 +64,7 @@ class ChunkStrategy(IndexStrategy):
             yield chunks_text, ids, metadatas
         else:
             # Fallback: flat text chunking (original behaviour)
-            chunks = chunk_text(text, chunk_size, overlap)
+            chunks = await offload.run(chunk_text, text, chunk_size, overlap)
 
             ids = []
             metadatas = []

@@ -49,6 +49,14 @@ LangRAG now prefers parser output provided by LangBot Host:
 
 This means LangRAG works best when paired with an external parser plugin.
 
+Parsed-input admission is capped at **4 MiB of UTF-8 bytes**, inclusive: both
+flat text and the aggregate content of all sections must independently fit this
+budget. These alternative representations are not added together. The check runs
+after parsing, before any strategy chunking/offload, LLM, embedding, or vector
+work, for `chunk`, `parent_child`, and `qa`. Over-budget ingestion returns a failed
+result without processing partial sections. This is an input-content limit, not
+a bound on generated Q&A, metadata, or total runtime memory.
+
 ## Configuration
 
 ### Knowledge Base Creation
@@ -117,10 +125,11 @@ retrieval, delete, and embedding events, plus production-oriented diagnostics:
 - privacy-conscious event data: query text is not stored; query, document, and
   collection identifiers are represented with hashes where possible
 
-Telemetry is appended to `data/observability/langrag-events.jsonl` by default so
-recent diagnostics survive plugin restarts. Override the directory with
-`LANGRAG_OBSERVABILITY_DIR`, or set `LANGRAG_INSTANCE_ID` to label a specific
-runtime instance.
+Recent diagnostics are stored through the SDK's installation-scoped plugin
+storage and survive plugin restarts. The retained history is bounded to 100
+events and 192 KiB; it is diagnostic history, not an accounting ledger.
+This version does not load the old local JSONL history or honor
+`LANGRAG_OBSERVABILITY_DIR`. Knowledge documents and vectors are unaffected.
 
 The Page backend also exposes `/snapshot`, `/export`, `/clear`, and `/metrics`
 through the LangBot Page API. `/metrics` returns Prometheus text format so the
@@ -182,3 +191,18 @@ We welcome contributions! Feel free to:
 - Share your ideas and feedback
 
 Star the repo if you find it useful!
+
+## Shared runtime (SDK 0.6.0b5)
+
+This version opts into `shared-runtime-v1`; Space-issued certificate admission is
+a separate release gate. Engine and Page telemetry now belong to the installation
+and persist through SDK plugin storage (100 events, at most 192 KiB), not the
+read-only artifact directory. Old local JSONL history is not imported; documents
+and vectors remain unchanged in Host storage. `LANGRAG_OBSERVABILITY_DIR` no longer
+controls runtime persistence.
+
+Internal parsing accepts up to 16 MiB; parsed text accepts up to 4 MiB. Parsing and
+chunk splitting use two bounded off-loop jobs per installation. Ingest/delete
+retain serialization through caller cancellation. Ambiguous vector/storage
+mutations are fenced and require Host quiescence/reconciliation before restart.
+This does not replace the Runtime's process/cgroup limits.

@@ -1,4 +1,4 @@
-langbot-plugin>=0.3.0
+langbot-plugin==0.6.0b5
 PyPDF2>=3.0.0
 python-docx>=0.8.11
 chardet>=5.0.0

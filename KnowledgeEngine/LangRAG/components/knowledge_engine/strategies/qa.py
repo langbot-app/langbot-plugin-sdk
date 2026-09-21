@@ -23,6 +23,7 @@ from collections.abc import AsyncGenerator
 from langbot_plugin.api.entities.builtin.provider.message import Message
 
 from .base import IndexStrategy
+from components.offload import BoundedOffload
 from ..chunker import (
     chunk_text,
     chunk_sections,
@@ -132,6 +133,7 @@ class QAStrategy(IndexStrategy):
             creation_settings.get("questions_per_chunk") or DEFAULT_QUESTIONS_PER_CHUNK
         )
         doc_fields = self._build_doc_meta_fields(doc_metadata)
+        offload = getattr(plugin, "offload", None) or BoundedOffload()
 
         if not qa_llm_uuid:
             raise ValueError(
@@ -140,7 +142,7 @@ class QAStrategy(IndexStrategy):
 
         # Build chunk list — section-aware or flat
         if sections:
-            s_chunks = chunk_sections(sections, chunk_size, overlap)
+            s_chunks = await offload.run(chunk_sections, sections, chunk_size, overlap)
             # Wrap into a uniform structure for the loop below
             chunk_items = [
                 {
@@ -155,7 +157,7 @@ class QAStrategy(IndexStrategy):
                 for sc in s_chunks
             ]
         else:
-            flat_chunks = chunk_text(text, chunk_size, overlap)
+            flat_chunks = await offload.run(chunk_text, text, chunk_size, overlap)
             chunk_items = [{"text": c} for c in flat_chunks]
 
         logger.info(

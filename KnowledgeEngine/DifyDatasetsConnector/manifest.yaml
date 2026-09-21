@@ -4,7 +4,7 @@ metadata:
   author: langbot-team
   name: DifyDatasetsConnector
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/KnowledgeEngine/DifyDatasetsConnector
-  version: 0.1.5
+  version: 0.1.6
   description:
     en_US: Retrieve knowledge from or store files into Dify knowledge bases
     zh_Hans: 从 Dify 知识库中检索知识或向其中存入文件
@@ -32,6 +32,7 @@ spec:
       fromFiles:
       - components/knowledge_engine/dify.yaml
 execution:
+  sharedRuntime: shared-runtime-v1
   python:
     path: main.py
     attr: DifyDatasetsConnector

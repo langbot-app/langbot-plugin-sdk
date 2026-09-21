@@ -242,6 +242,8 @@ async def _run_experiment(
     knowledge_base_id = f"bench_{name}"
     engine = LangRAG()
     plugin = LocalBenchmarkPlugin()
+    from benchmarks.state_fixture import attach_installation_state
+    await attach_installation_state(plugin)
     engine.plugin = plugin
     parser_mode = experiment.get("parser_mode", "preparsed")
 

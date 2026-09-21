@@ -5,7 +5,7 @@ from benchmarks.sdk_stubs import install_stubs
 install_stubs()
 
 from components.knowledge_engine.langrag import LangRAG
-from components.observability import telemetry
+from benchmarks.state_fixture import attach_installation_state
 from langbot_plugin.api.entities.builtin.rag import (
     DocumentStatus,
     FileMetadata,
@@ -80,6 +80,7 @@ class LangRAGTests(unittest.IsolatedAsyncioTestCase):
     async def test_ingest_uses_external_parse_result_without_reading_file(self):
         engine = LangRAG()
         plugin = RecordingIngestPlugin()
+        await attach_installation_state(plugin)
         engine.plugin = plugin
 
         context = IngestionContext(
@@ -167,9 +168,9 @@ class LangRAGTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_retrieve_uses_host_rerank_model_with_overfetched_candidates(self):
-        telemetry.clear()
         engine = LangRAG()
         plugin = RecordingRetrievePlugin()
+        await attach_installation_state(plugin)
         engine.plugin = plugin
 
         response = await engine.retrieve(
@@ -200,7 +201,7 @@ class LangRAGTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("vector_search", {span["name"] for span in response.metadata["trace_spans"]})
 
-        recent = telemetry.snapshot()["recent"]["retrieval"][0]
+        recent = (await plugin.telemetry.snapshot())["recent"]["retrieval"][0]
         self.assertEqual(recent["trace_id"], response.metadata["trace_id"])
         self.assertEqual(recent["trace_spans"], response.metadata["trace_spans"])
 

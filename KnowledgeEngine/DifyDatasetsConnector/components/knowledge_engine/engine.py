@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 
+from components.shared_state import ConfigStore, serialized
+
 import httpx
 
 from langbot_plugin.api.definition.components.knowledge_engine import KnowledgeEngine, KnowledgeEngineCapability
@@ -19,18 +21,12 @@ from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 logger = logging.getLogger(__name__)
 
 
-class DifyDatasetsConnector(KnowledgeEngine):
+class DifyDatasetsConnector(ConfigStore, KnowledgeEngine):
     """Knowledge Engine powered by Dify Datasets.
 
     Supports retrieval, document ingestion (file upload), and deletion
     via the Dify Dataset API.
     """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Cache creation_settings keyed by kb_id so that delete_document
-        # (which does not receive settings) can look up API credentials.
-        self._kb_configs: dict[str, dict] = {}
 
     @classmethod
     def get_capabilities(cls) -> list[str]:
@@ -38,14 +34,16 @@ class DifyDatasetsConnector(KnowledgeEngine):
 
     # ========== Lifecycle Hooks ==========
 
+    @serialized
     async def on_knowledge_base_create(self, kb_id: str, config: dict) -> None:
-        """Cache the knowledge-base config for later use by delete_document."""
-        self._kb_configs[kb_id] = config
+        """Persist the knowledge-base config for deletion after worker restart."""
+        await self._save_config(kb_id, config)
         logger.info(f"[DifyDatasetsConnector] Knowledge base created: {kb_id}")
 
+    @serialized
     async def on_knowledge_base_delete(self, kb_id: str) -> None:
-        """Remove cached config when a knowledge base is deleted."""
-        self._kb_configs.pop(kb_id, None)
+        """Tombstone the stored config when a knowledge base is deleted."""
+        await self._save_config(kb_id, None)
         logger.info(f"[DifyDatasetsConnector] Knowledge base deleted: {kb_id}")
 
     # ========== Helper Methods ==========
@@ -57,7 +55,7 @@ class DifyDatasetsConnector(KnowledgeEngine):
         url = f"{api_base_url}/datasets/{dataset_id}"
         headers = {"Authorization": f"Bearer {api_key}"}
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 response = await client.get(url, headers=headers, timeout=15.0)
                 response.raise_for_status()
                 data = response.json()
@@ -134,7 +132,7 @@ class DifyDatasetsConnector(KnowledgeEngine):
 
         results: list[RetrievalResultEntry] = []
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 response = await client.post(url, json=payload, headers=headers, timeout=30.0)
                 response.raise_for_status()
                 data = response.json()
@@ -177,6 +175,7 @@ class DifyDatasetsConnector(KnowledgeEngine):
 
         return RetrievalResponse(results=results, total_found=len(results))
 
+    @serialized
     async def ingest(self, context: IngestionContext) -> IngestionResult:
         """Upload a file to a Dify dataset for indexing."""
         doc_id = context.file_object.metadata.document_id
@@ -198,9 +197,9 @@ class DifyDatasetsConnector(KnowledgeEngine):
                 error_message="Missing required config: dify_apikey or dataset_id.",
             )
 
-        # Cache config keyed by kb_id for later use in delete_document
+        # Persist config for deletion after worker restart
         kb_id = context.get_collection_id()
-        self._kb_configs[kb_id] = config
+        await self._save_config(kb_id, config)
 
         # 1. Read file content from Host
         try:
@@ -225,7 +224,7 @@ class DifyDatasetsConnector(KnowledgeEngine):
                 "process_rule": {"mode": "automatic"},
             })
 
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 response = await client.post(
                     url,
                     headers=headers,
@@ -268,12 +267,13 @@ class DifyDatasetsConnector(KnowledgeEngine):
                 error_message=str(e),
             )
 
+    @serialized
     async def delete_document(self, kb_id: str, document_id: str) -> bool:
         """Delete a document from a Dify dataset."""
-        config = self._kb_configs.get(kb_id)
+        config = await self._load_config(kb_id)
         if not config:
             logger.warning(
-                f"[DifyDatasetsConnector] No cached config for kb_id={kb_id}. "
+                f"[DifyDatasetsConnector] No stored config for kb_id={kb_id}. "
                 "Cannot delete document without API credentials."
             )
             return False
@@ -295,7 +295,7 @@ class DifyDatasetsConnector(KnowledgeEngine):
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self.http_client() as client:
                 response = await client.delete(url, headers=headers, timeout=30.0)
                 if response.status_code == 204:
                     logger.info(

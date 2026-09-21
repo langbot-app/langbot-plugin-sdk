@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from langbot_plugin.api.definition.plugin import BasePlugin
+from components.observability.installation import InstallationTelemetry
+from components.offload import BoundedOffload
 
 class LangRAG(BasePlugin):
 
+    def __init__(self):
+        super().__init__()
+        self.offload = BoundedOffload()
+        self.telemetry = InstallationTelemetry(self)
+
     async def initialize(self) -> None:
-        pass
+        await self.telemetry.initialize()
 
     def __del__(self) -> None:
         pass

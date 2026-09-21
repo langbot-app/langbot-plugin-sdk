@@ -125,10 +125,11 @@ class TelemetryTests(unittest.TestCase):
 
 class ObservabilityPageTests(unittest.IsolatedAsyncioTestCase):
     async def test_snapshot_and_clear_endpoints(self):
-        from components.observability import telemetry
-
-        telemetry.clear()
-        telemetry.record_delete(
+        from benchmarks.state_fixture import attach_installation_state
+        from types import SimpleNamespace
+        plugin = await attach_installation_state(SimpleNamespace())
+        telemetry = plugin.telemetry
+        await telemetry.record_delete(
             collection_id="kb1",
             document_id="doc1",
             status="completed",
@@ -138,6 +139,7 @@ class ObservabilityPageTests(unittest.IsolatedAsyncioTestCase):
         )
 
         page = LangRAGObservabilityPage()
+        page.plugin = plugin
         response = await page.handle_api(
             PageRequest(endpoint="/snapshot", method="GET")
         )
@@ -157,7 +159,11 @@ class ObservabilityPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.data["counters"], {})
 
     async def test_unknown_endpoint_fails(self):
-        response = await LangRAGObservabilityPage().handle_api(
+        from benchmarks.state_fixture import attach_installation_state
+        from types import SimpleNamespace
+        page = LangRAGObservabilityPage()
+        page.plugin = await attach_installation_state(SimpleNamespace())
+        response = await page.handle_api(
             PageRequest(endpoint="/missing", method="GET")
         )
 

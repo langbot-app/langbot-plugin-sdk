@@ -39,13 +39,6 @@ def _duration_ms(started_at: float) -> float:
     return round((time.perf_counter() - started_at) * 1000, 2)
 
 
-def _default_persist_path() -> Path:
-    base = os.getenv("LANGRAG_OBSERVABILITY_DIR")
-    if not base:
-        base = os.path.join(os.getcwd(), "data", "observability")
-    return Path(base) / "langrag-events.jsonl"
-
-
 def _instance_id() -> str:
     configured = os.getenv("LANGRAG_INSTANCE_ID")
     if configured:
@@ -525,8 +518,8 @@ class LangRAGTelemetry:
                 },
             }
 
-    def prometheus(self) -> str:
-        snapshot = self.snapshot()
+    def prometheus(self, snapshot: dict | None = None) -> str:
+        snapshot = self.snapshot() if snapshot is None else snapshot
         instance = self.instance_id
         lines = [
             "# HELP langrag_info LangRAG observability instance information",
@@ -1050,4 +1043,5 @@ class LangRAGTelemetry:
         return f"{seconds // 60}m" if seconds < 3600 else f"{seconds // 3600}h"
 
 
-telemetry = LangRAGTelemetry(persist_path=_default_persist_path())
+# Compatibility name for stateless timing helpers; runtime state lives on BasePlugin.
+telemetry = LangRAGTelemetry

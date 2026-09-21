@@ -16,6 +16,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from .base import IndexStrategy
+from components.offload import BoundedOffload
 from ..chunker import (
     chunk_text,
     chunk_sections,
@@ -64,6 +65,7 @@ class ParentChildStrategy(IndexStrategy):
         )
         overlap = creation_settings.get("overlap") or DEFAULT_CHUNK_OVERLAP
         doc_fields = self._build_doc_meta_fields(doc_metadata)
+        offload = getattr(plugin, "offload", None) or BoundedOffload()
 
         texts_to_embed: list[str] = []
         ids: list[str] = []
@@ -71,11 +73,11 @@ class ParentChildStrategy(IndexStrategy):
 
         if sections:
             # Section-aware: use sections as parent boundaries
-            parent_chunks = chunk_sections(sections, parent_size, 0)
+            parent_chunks = await offload.run(chunk_sections, sections, parent_size, 0)
 
             for p_idx, parent_sc in enumerate(parent_chunks):
                 parent_text = parent_sc.text
-                child_chunks = chunk_text(parent_text, child_size, overlap)
+                child_chunks = await offload.run(chunk_text, parent_text, child_size, overlap)
                 for c_idx, child in enumerate(child_chunks):
                     texts_to_embed.append(child)
                     ids.append(f"{doc_id}_p{p_idx}_c{c_idx}")
@@ -98,10 +100,10 @@ class ParentChildStrategy(IndexStrategy):
                     metadatas.append(meta)
         else:
             # Fallback: flat text chunking (original behaviour)
-            parent_chunks_text = chunk_text(text, parent_size, 0)
+            parent_chunks_text = await offload.run(chunk_text, text, parent_size, 0)
 
             for p_idx, parent in enumerate(parent_chunks_text):
-                child_chunks = chunk_text(parent, child_size, overlap)
+                child_chunks = await offload.run(chunk_text, parent, child_size, overlap)
                 for c_idx, child in enumerate(child_chunks):
                     texts_to_embed.append(child)
                     ids.append(f"{doc_id}_p{p_idx}_c{c_idx}")

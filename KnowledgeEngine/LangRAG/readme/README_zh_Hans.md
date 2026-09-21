@@ -115,7 +115,7 @@ LangRAG 提供名为 **Observability** 的 WebUI 页面，用于查看最近的�
 - 活跃告警，包括高错误率、检索零结果过高、p95 延迟过高、持久化异常等
 - 隐私友好的事件数据：不会存储原始 query 文本；query、document、collection 标识会尽量使用 hash 表示
 
-默认情况下，遥测事件会追加写入 `data/observability/langrag-events.jsonl`，因此插件重启后仍可保留近期诊断数据。可以通过 `LANGRAG_OBSERVABILITY_DIR` 覆盖目录，或通过 `LANGRAG_INSTANCE_ID` 标记具体运行实例。
+近期诊断数据通过 SDK 的安装隔离存储保存，插件重启后仍可保留。历史记录最多保留 100 条事件、192 KiB，仅用于诊断，不作为计费或审计账本。本版本不读取旧的本地 JSONL 历史，`LANGRAG_OBSERVABILITY_DIR` 不再生效；知识文档和向量不受影响。
 
 页面后端还通过 LangBot Page API 暴露 `/snapshot`、`/export`、`/clear` 和 `/metrics`。其中 `/metrics` 返回 Prometheus text format，便于接入外部监控系统。
 

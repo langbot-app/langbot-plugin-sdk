@@ -4,7 +4,7 @@ metadata:
   author: langbot-team
   name: FastGPTConnector
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/KnowledgeEngine/FastGPTConnector
-  version: 0.1.3
+  version: 0.1.4
   description:
     en_US: Retrieve knowledge from FastGPT knowledge bases
     zh_Hans: 集成 FastGPT 知识库
@@ -32,6 +32,7 @@ spec:
       fromFiles:
       - components/knowledge_engine/fastgpt.yaml
 execution:
+  sharedRuntime: shared-runtime-v1
   python:
     path: main.py
     attr: FastGPTConnector

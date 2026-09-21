@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import io
 import re
-import asyncio
+from components.offload import BoundedOffload
 import logging
 from typing import Union, Callable, Any
 
@@ -33,12 +33,15 @@ class FileParser:
     directly rather than relying on Host's storage manager.
     """
 
+    def __init__(self, offload=None):
+        self.offload = offload or BoundedOffload()
+
     async def _run_sync(self, sync_func: Callable, *args: Any, **kwargs: Any) -> Any:
         """
         Runs a synchronous function in a separate thread to prevent blocking the event loop.
         """
         try:
-            return await asyncio.to_thread(sync_func, *args, **kwargs)
+            return await self.offload.run(sync_func, *args, **kwargs)
         except Exception as e:
             logger.error(f'Error running synchronous function {sync_func.__name__}: {e}')
             raise
@@ -54,6 +57,8 @@ class FileParser:
         Returns:
             Union[str, None]: The extracted text content as a single string, or None if parsing fails.
         """
+        if len(file_bytes) > 16 * 1024 * 1024:
+            raise ValueError("File exceeds the 16 MiB internal parser limit")
         # Extract extension from filename
         if '.' in filename:
             file_extension = filename.rsplit('.', 1)[-1].lower()
@@ -65,7 +70,7 @@ class FileParser:
         if parser_method is None:
             logger.warning(f'Unsupported file format: {file_extension} for file {filename}, trying as text')
             # Fallback: try to decode as text
-            return self._decode_text(file_bytes)
+            return await self._run_sync(self._decode_text, file_bytes)
 
         try:
             return await parser_method(file_bytes, filename)
@@ -84,7 +89,7 @@ class FileParser:
     async def _parse_txt(self, file_bytes: bytes, filename: str) -> str:
         """Parses a TXT file and returns its content."""
         logger.info(f'Parsing TXT file: {filename}')
-        return self._decode_text(file_bytes)
+        return await self._run_sync(self._decode_text, file_bytes)
 
     async def _parse_pdf(self, file_bytes: bytes, filename: str) -> str:
         """Parses a PDF file and returns its text content."""

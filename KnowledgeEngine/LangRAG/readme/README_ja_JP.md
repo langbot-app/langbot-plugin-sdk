@@ -115,7 +115,7 @@ LangRAG には **Observability** という WebUI ページがあります。最�
 - アクティブなアラート。高エラー率、検索ゼロ結果の増加、p95 レイテンシ悪化、永続化問題などを検出します
 - プライバシーに配慮したイベントデータ。元の query テキストは保存せず、query、document、collection の識別子は可能な限り hash で表します
 
-デフォルトでは、テレメトリーイベントは `data/observability/langrag-events.jsonl` に追記されます。そのため、プラグイン再起動後も直近の診断データを保持できます。保存ディレクトリは `LANGRAG_OBSERVABILITY_DIR` で上書きできます。また、`LANGRAG_INSTANCE_ID` を設定すると特定の実行インスタンスを識別できます。
+直近の診断データは SDK のインストール単位のストレージに保存され、プラグインの再起動後も保持されます。履歴は最大 100 件、192 KiB に制限され、診断専用です。課金や監査の台帳には使用しないでください。このバージョンでは以前のローカル JSONL 履歴を読み込まず、`LANGRAG_OBSERVABILITY_DIR` も使用しません。ナレッジのドキュメントやベクトルには影響しません。
 
 ページバックエンドは LangBot Page API 経由で `/snapshot`、`/export`、`/clear`、`/metrics` も提供します。`/metrics` は Prometheus text format を返すため、外部監視スタックへ接続できます。
 

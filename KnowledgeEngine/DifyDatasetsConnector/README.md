@@ -56,3 +56,16 @@ This plugin uses the Dify Dataset API:
 - Document upload: `POST /v1/datasets/{dataset_id}/document/create-by-file`
 - Document delete: `DELETE /v1/datasets/{dataset_id}/documents/{document_id}`
 - Documentation: https://docs.dify.ai/
+
+## Shared runtime (SDK 0.6.0b5)
+
+This version opts into `shared-runtime-v1`. Runtime admission still requires a
+valid Space-issued certificate; the source declaration alone is not certification.
+KB deletion credentials now use installation-bound SDK plugin storage and survive
+worker restarts. Create/ingest and delete are serialized; ambiguous storage
+failures fence further mutations until Host activity is reconciled. Retrieval
+keeps credentials request-local, with bounded HTTP concurrency and a total deadline.
+Existing versions' in-memory credentials cannot be migrated: an existing KB needs
+a create/ingest call before deletion can recover its configuration after upgrade.
+External datasets are isolated only as far as their configured provider credentials
+and dataset IDs; do not share those across Workspaces that must remain separated.
