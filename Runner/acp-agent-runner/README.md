@@ -332,3 +332,43 @@ In addition to the common fields described above, the current runner exposes:
 ## Scope
 
 This plugin intentionally does not implement an agent platform, task board, workspace manager, or provider-specific CLI behavior. Provider setup, login, model selection, and tool permission semantics still belong to the ACP agent executable being launched.
+
+
+## Shared-worker candidate / daemon upgrade
+
+This version declares `shared-runtime-v1` and pins `langbot-plugin==0.6.0b5`.
+It is a candidate, not a certificate or proof of vendor execution. Local,
+remote-SSH and daemon modes remain available. Native children use the worker's
+nsjail/cgroup policy, not the separate Box managed-process quota.
+
+- Shared native mode defaults to **`/data/workspace`**, an installation-private
+  writable directory. Explicit native paths must exist and be writable inside
+  the jail; `/plugin` is read-only. Dedicated/OSS defaults are unchanged.
+- Shared daemon listeners require a **different random token per installation**
+  (at least 32 characters, at least 12 distinct characters; generate with
+  `python -c 'import secrets; print(secrets.token_urlsafe(32))'`). Length checks
+  cannot prove randomness or cross-installation uniqueness: provision unique
+  secrets, do not reuse the example/config default. Loopback is shared between
+  workers. Assign a unique explicit `daemon-port` per installation and configure
+  TLS routing for remote clients; port conflicts fail with configuration guidance.
+- Upgrade **both `daemon.py` and its entire `pkg/` directory** from this exact
+  plugin version on the target. Stock b5/older clients are rejected: the bundled
+  plugin-owned relay negotiates `coding-relay-v1`. No installed SDK is patched.
+- A daemon ID cannot replace a connected socket. Jobs/events/MCP/finish belong
+  to the accepted socket incarnation. Cancellation revokes run tools and waits
+  for client process-group cleanup before acknowledging, or fences that daemon.
+  A disconnect cancels and awaits the client's jobs before any reconnect.
+- Unresolved shared jobs retain `.pending` markers under
+  `/data/.coding-relay-v1/<runner-prefix>/`; worker restart does **not** clear
+  them. Stop and verify all remote jobs on that target before an operator removes
+  its marker and reconnects. Never rename the target to bypass a fence. An
+  already dispatched MCP/SSH/upstream side effect is not rolled back by cancel.
+- Remote SSH/daemon accounts are **trusted execution targets**, not independent
+  tenant sandboxes. Terminating local SSH does not prove remote process-tree
+  exit; use a controlled target and verify remote quiescence before reuse.
+  POSIX cleanup covers descendants that remain in the launched process group;
+  deliberately detached processes require target-owner cleanup.
+- Install reviewed CLI/SSH binaries at jail-visible locations and provision
+  installation-owned credentials. These are functional prerequisites, separate
+  from certification, signing, and two-Workspace live acceptance. Do not relax
+  global Box policy or use unreviewed automatic installers to satisfy them.

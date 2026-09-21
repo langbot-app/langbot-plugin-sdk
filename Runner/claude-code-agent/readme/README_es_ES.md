@@ -59,3 +59,6 @@ Ejecuta Claude Code CLI como LangBot Runner.
 - Claude Code usa `--dangerously-skip-permissions` por defecto porque LangBot aún no ofrece un flujo de aprobación interactivo. Úsalo solo con espacios de trabajo de confianza y una cuenta del sistema restringida; configúralo en false para restaurar las comprobaciones normales de permisos.
 - La disponibilidad, las capacidades del modelo y los límites de uso dependen del servicio externo.
 - Consulta el README chino de la raíz o README_en_US.md para el comportamiento avanzado y las limitaciones específicas.
+
+
+> Shared runtime / daemon upgrade: [required setup and safety contract](../README.md#shared-worker-candidate--daemon-upgrade). Shared 模式必须配置独立强 token 和端口；默认本地工作目录为 `/data/workspace`。请同时升级 daemon.py 与完整 pkg 目录；旧客户端不兼容。

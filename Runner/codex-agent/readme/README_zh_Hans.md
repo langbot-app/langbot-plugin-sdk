@@ -72,3 +72,6 @@ runner 会在工作区下准备隔离的每次运行 `CODEX_HOME`，链接用户
 uv run --no-sync pytest -q
 uv run --no-sync ruff check .
 ```
+
+
+> Shared runtime / daemon upgrade: [required setup and safety contract](../README.md#shared-worker-candidate--daemon-upgrade). Shared 模式必须配置独立强 token 和端口；默认本地工作目录为 `/data/workspace`。请同时升级 daemon.py 与完整 pkg 目录；旧客户端不兼容。

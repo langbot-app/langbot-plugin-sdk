@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: ClaudeCodeAgent
-  version: 0.1.10
+  version: 0.1.11
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/claude-code-agent
   label:
     en_US: Claude Code Agent
@@ -60,6 +60,7 @@ spec:
         - path: components/runner/
   pages: []
 execution:
+  sharedRuntime: shared-runtime-v1
   python:
     path: main.py
     attr: ClaudeCodeAgentPlugin

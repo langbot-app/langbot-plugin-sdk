@@ -18,8 +18,8 @@ import shlex
 import time
 import typing
 
-from langbot_plugin.api.agent_tools.daemon import AgentRuntimeDaemonClient, LocalMCPProxy
 from pkg.acp_client import AcpError, AcpStdioClient
+from pkg.daemon_relay import AgentRuntimeDaemonClient, LocalMCPProxy
 from pkg.prompt import acp_prompt_blocks, has_acp_prompt_input, prompt_capabilities
 from pkg.session import CLAUDE_ENV_VARS_TO_UNSET, build_session_params
 

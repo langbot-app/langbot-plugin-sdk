@@ -59,3 +59,6 @@
 - По умолчанию Claude Code запускается с `--dangerously-skip-permissions`, поскольку в LangBot пока нет интерактивного подтверждения. Используйте этот режим только в доверенном рабочем каталоге и под ограниченной системной учётной записью; задайте false, чтобы вернуть обычную проверку разрешений.
 - Доступность, возможности моделей и лимиты запросов зависят от внешнего сервиса.
 - Расширенное поведение и ограничения продукта описаны в китайском README в корне и английском README_en_US.md.
+
+
+> Shared runtime / daemon upgrade: [required setup and safety contract](../README.md#shared-worker-candidate--daemon-upgrade). Shared 模式必须配置独立强 token 和端口；默认本地工作目录为 `/data/workspace`。请同时升级 daemon.py 与完整 pkg 目录；旧客户端不兼容。

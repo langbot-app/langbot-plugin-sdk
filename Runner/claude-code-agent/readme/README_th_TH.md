@@ -59,3 +59,6 @@
 - Claude Code ใช้ `--dangerously-skip-permissions` เป็นค่าเริ่มต้น เพราะ LangBot ยังไม่มีขั้นตอนอนุมัติแบบโต้ตอบ ใช้เฉพาะกับ workspace ที่เชื่อถือได้และบัญชีระบบที่ถูกจำกัด หรือกำหนดเป็น false เพื่อคืนค่าการตรวจสอบสิทธิ์ตามปกติ
 - ความพร้อมใช้งาน ความสามารถของโมเดล และขีดจำกัดอัตราขึ้นอยู่กับบริการภายนอก
 - ดูพฤติกรรมขั้นสูงและข้อจำกัดเฉพาะผลิตภัณฑ์ใน README ภาษาจีนที่รากหรือ README_en_US.md ภาษาอังกฤษ
+
+
+> Shared runtime / daemon upgrade: [required setup and safety contract](../README.md#shared-worker-candidate--daemon-upgrade). Shared 模式必须配置独立强 token 和端口；默认本地工作目录为 `/data/workspace`。请同时升级 daemon.py 与完整 pkg 目录；旧客户端不兼容。

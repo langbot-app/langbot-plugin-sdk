@@ -16,12 +16,6 @@ import typing
 import uuid
 from pathlib import Path
 
-from langbot_plugin.api.agent_tools.daemon import (
-    AgentRuntimeDaemonClient,
-    AgentRuntimeDaemonError,
-    agent_runtime_daemon_config_from_plugin_config,
-    get_agent_runtime_daemon_hub,
-)
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_access import AgentRunMCPAccess
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
@@ -36,6 +30,13 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerResult,
 )
 
+from pkg.daemon_relay import (
+    AgentRuntimeDaemonClient,
+    AgentRuntimeDaemonError,
+    agent_runtime_daemon_config_from_plugin_config,
+    get_agent_runtime_daemon_hub,
+)
+from pkg.runtime_support import local_workspace, serialize_codex_session, terminate_process_group
 from pkg.steering import run_with_steering
 
 SESSION_STATE_KEY = "external.codex_session_id"
@@ -755,7 +756,8 @@ class NativeCodexRunner(Runner):
         location = str(data.get("location", "local") or "local").strip()
         if location not in SUPPORTED_LOCATIONS:
             raise NativeCliError("location must be local, remote-ssh, or daemon", code="codex.config_invalid")
-        workspace = str(data.get("workspace") or "").strip() or os.getcwd()
+        workspace = str(data.get("workspace") or "").strip()
+        workspace = local_workspace(workspace) if location == "local" else workspace or os.getcwd()
         ssh_target = str(data.get("ssh-target") or data.get("ssh_target") or "").strip()
         if location == "remote-ssh" and not ssh_target:
             raise NativeCliError("ssh-target is required when location=remote-ssh", code="codex.config_invalid")
@@ -949,7 +951,7 @@ class NativeCodexRunner(Runner):
                 args = ssh_args
             else:
                 env, cwd = _prepare_local_codex_home(config["workspace"], session_id or ctx.run_id, env, mcp_toml)
-            async for result in _run_cli_process(
+            async with contextlib.aclosing(_run_cli_process(
                 ctx,
                 command,
                 args,
@@ -964,8 +966,9 @@ class NativeCodexRunner(Runner):
                 sandbox_mode=config["sandbox_mode"],
                 approval_grant=approval_grant,
                 initial_stdin=initial_stdin,
-            ):
-                yield result
+            )) as event_stream:
+                async for result in event_stream:
+                    yield result
         finally:
             if access is not None:
                 access.stop()
@@ -980,12 +983,11 @@ class NativeCodexRunner(Runner):
         approval_grant: dict[str, str] | None = None,
     ) -> typing.AsyncGenerator[RunnerResult, None]:
         hub = get_agent_runtime_daemon_hub("codex", error_code_prefix="codex")
-        if not hub.is_running:
-            await hub.start(
-                host=config["daemon_hub"]["host"],
-                port=config["daemon_hub"]["port"],
-                token=config["daemon_hub"]["token"],
-            )
+        await hub.start(
+            host=config["daemon_hub"]["host"],
+            port=config["daemon_hub"]["port"],
+            token=config["daemon_hub"]["token"],
+        )
         tools = AgentRunExternalTools(self.get_run_api(ctx), ctx) if config["langbot_assets_enabled"] else None
         await hub.wait_for_daemon(config["daemon_id"], config["daemon_connect_timeout"])
         payload = {
@@ -1006,14 +1008,15 @@ class NativeCodexRunner(Runner):
             },
             "approval_grant": approval_grant,
         }
-        async for event in hub.run_job(
+        async with contextlib.aclosing(hub.run_job(
             daemon_id=config["daemon_id"],
             payload=payload,
             tools=tools,
             timeout=config["timeout"],
-        ):
-            event.setdefault("run_id", ctx.run_id)
-            yield RunnerResult.model_validate(event)
+        )) as event_stream:
+            async for event in event_stream:
+                event.setdefault("run_id", ctx.run_id)
+                yield RunnerResult.model_validate(event)
 
 
 class NativeCodexDaemon(AgentRuntimeDaemonClient):
@@ -1047,7 +1050,7 @@ class NativeCodexDaemon(AgentRuntimeDaemonClient):
                 mcp_toml,
             )
             try:
-                async for event in _run_cli_process_events(
+                async with contextlib.aclosing(_run_cli_process_events(
                     argv[0],
                     argv[1:],
                     cwd=cwd,
@@ -1063,8 +1066,9 @@ class NativeCodexDaemon(AgentRuntimeDaemonClient):
                         dict(payload["approval_grant"]) if isinstance(payload.get("approval_grant"), dict) else None
                     ),
                     initial_stdin=b"",
-                ):
-                    await self.emit_event(job_id, event)
+                )) as event_stream:
+                    async for event in event_stream:
+                        await self.emit_event(job_id, event)
             except NativeCliError as exc:
                 await self.emit_event(
                     job_id,
@@ -1096,7 +1100,7 @@ async def _run_cli_process(
     initial_stdin: bytes = b"",
 ) -> typing.AsyncGenerator[RunnerResult, None]:
     try:
-        async for event in _run_cli_process_events(
+        async with contextlib.aclosing(_run_cli_process_events(
             command,
             args,
             cwd=cwd,
@@ -1110,9 +1114,10 @@ async def _run_cli_process(
             sandbox_mode=sandbox_mode,
             approval_grant=approval_grant,
             initial_stdin=initial_stdin,
-        ):
-            event.setdefault("run_id", ctx.run_id)
-            yield RunnerResult.model_validate(event)
+        )) as event_stream:
+            async for event in event_stream:
+                event.setdefault("run_id", ctx.run_id)
+                yield RunnerResult.model_validate(event)
     except NativeCliError as exc:
         yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
 
@@ -1540,6 +1545,7 @@ class _CodexAppServerClient:
                     await get_task
 
 
+@serialize_codex_session
 async def _run_cli_process_events(
     command: str,
     args: list[str],
@@ -1565,6 +1571,7 @@ async def _run_cli_process_events(
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name != "nt",
             limit=CODEX_STDIO_LIMIT_BYTES,
         )
     except FileNotFoundError as exc:
@@ -1669,7 +1676,7 @@ async def _run_cli_process_events(
             result_sequence += 1
         yield {"type": "run.completed", "sequence": result_sequence, "data": {"finish_reason": "stop"}}
     except NativeCliError as exc:
-        await process.wait()
+        await terminate_process_group(process)
         stderr = _redact_secrets((await stderr_task).decode("utf-8", errors="replace").strip())
         if exc.code == "codex.process_exited":
             detail = stderr or f"exit status {process.returncode}"
@@ -1683,12 +1690,12 @@ async def _run_cli_process_events(
         process.kill()
         raise NativeCliError("Codex app-server run timed out", code="codex.timeout", retryable=True) from exc
     finally:
-        if process.returncode is None:
-            process.kill()
+        await terminate_process_group(process)
         if not stderr_task.done():
             stderr_task.cancel()
         if not reader_task.done():
             reader_task.cancel()
+        await asyncio.gather(stderr_task, reader_task, return_exceptions=True)
 
 
 async def _shutdown_app_server(process: asyncio.subprocess.Process, reader_task: asyncio.Task[None]) -> None:

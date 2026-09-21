@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from langbot_plugin.api.agent_tools.daemon import (
+from langbot_plugin.api.definition.plugin import BasePlugin
+from pkg.daemon_relay import (
     agent_runtime_daemon_config_from_plugin_config,
     get_agent_runtime_daemon_hub,
 )
-from langbot_plugin.api.definition.plugin import BasePlugin
 
 
 class ClaudeCodeAgentPlugin(BasePlugin):

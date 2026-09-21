@@ -1,9 +1,11 @@
-"""Real SDK b5 blocker probes, NOT a shared-runtime certification pass.
+"""HISTORICAL RED reproducer, excluded from normal pytest discovery.
 
-Default mode marks known unsafe safety assertions strict XFAIL. Set
-CODING_RUNNER_ENFORCE_SHARED_SAFETY=1 to expose the RED release gate.
-Only loopback daemons, synthetic credentials and disposable files are used.
-Run separately from legacy SDK-stub tests to avoid module contamination.
+Preserved from 35f75ee; this is not an acceptance suite. Its same-interpreter
+cross-installation, inherited worker-secret and shared Codex-account assertions
+were overgeneralized. See topology-reassessment.md in the retained evidence.
+The current replacement suites are test_coding_relay_v1.py and
+ test_coding_native_lifecycle.py (no xfail). Explicitly running this historical
+file reproduces the old model, not candidate certification results.
 """
 
 from __future__ import annotations

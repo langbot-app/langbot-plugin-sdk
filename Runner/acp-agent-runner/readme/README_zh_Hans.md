@@ -119,3 +119,6 @@ uv run --no-sync ruff check .
 ```
 
 使用本地 SDK 联调时应保留 editable 安装，并避免 `uv sync` 将其替换成缺少 Runner/daemon/MCP bridge API 的旧版 wheel。
+
+
+> Shared runtime / daemon upgrade: [required setup and safety contract](../README.md#shared-worker-candidate--daemon-upgrade). Shared 模式必须配置独立强 token 和端口；默认本地工作目录为 `/data/workspace`。请同时升级 daemon.py 与完整 pkg 目录；旧客户端不兼容。

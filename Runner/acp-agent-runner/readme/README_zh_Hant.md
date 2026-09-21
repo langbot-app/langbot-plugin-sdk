@@ -70,3 +70,6 @@
 - 運行器只能使用本次執行授權的 LangBot 資源。
 - 外部服務的可用性、模型能力與速率限制由對應平台決定。
 - 完整行為、進階設定與產品特定限制請參閱根目錄中文 README 或英文 README_en_US.md。
+
+
+> Shared runtime / daemon upgrade: [required setup and safety contract](../README.md#shared-worker-candidate--daemon-upgrade). Shared 模式必须配置独立强 token 和端口；默认本地工作目录为 `/data/workspace`。请同时升级 daemon.py 与完整 pkg 目录；旧客户端不兼容。

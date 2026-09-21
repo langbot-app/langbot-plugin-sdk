@@ -15,12 +15,6 @@ import typing
 import uuid
 
 import pydantic
-from langbot_plugin.api.agent_tools.daemon import (
-    AgentRuntimeDaemonClient,
-    AgentRuntimeDaemonError,
-    agent_runtime_daemon_config_from_plugin_config,
-    get_agent_runtime_daemon_hub,
-)
 from langbot_plugin.api.agent_tools.decorators import agent_tool
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_access import AgentRunMCPAccess
@@ -36,6 +30,13 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerResult,
 )
 
+from pkg.daemon_relay import (
+    AgentRuntimeDaemonClient,
+    AgentRuntimeDaemonError,
+    agent_runtime_daemon_config_from_plugin_config,
+    get_agent_runtime_daemon_hub,
+)
+from pkg.runtime_support import local_workspace, terminate_process_group
 from pkg.steering import run_with_steering
 
 SESSION_STATE_KEY = "external.claude_code_session_id"
@@ -458,7 +459,8 @@ class NativeClaudeCodeRunner(Runner):
         location = str(data.get("location", "local") or "local").strip()
         if location not in SUPPORTED_LOCATIONS:
             raise NativeCliError("location must be local, remote-ssh, or daemon", code="claude_code.config_invalid")
-        workspace = str(data.get("workspace") or "").strip() or os.getcwd()
+        workspace = str(data.get("workspace") or "").strip()
+        workspace = local_workspace(workspace) if location == "local" else workspace or os.getcwd()
         ssh_target = str(data.get("ssh-target") or data.get("ssh_target") or "").strip()
         if location == "remote-ssh" and not ssh_target:
             raise NativeCliError("ssh-target is required when location=remote-ssh", code="claude_code.config_invalid")
@@ -648,7 +650,7 @@ class NativeClaudeCodeRunner(Runner):
                 )
                 command = "ssh"
                 args = ssh_args
-            async for result in _run_cli_process(
+            async with contextlib.aclosing(_run_cli_process(
                 ctx,
                 command,
                 args,
@@ -658,8 +660,9 @@ class NativeClaudeCodeRunner(Runner):
                 streaming=config["streaming"],
                 expected_session_id=session_id,
                 initial_stdin=initial_stdin,
-            ):
-                yield result
+            )) as event_stream:
+                async for result in event_stream:
+                    yield result
         finally:
             if mcp_config_path and mcp_config_path != _MCP_CONFIG_ARG_PLACEHOLDER:
                 with contextlib.suppress(OSError):
@@ -675,12 +678,11 @@ class NativeClaudeCodeRunner(Runner):
         resume: bool,
     ) -> typing.AsyncGenerator[RunnerResult, None]:
         hub = get_agent_runtime_daemon_hub("claude-code", error_code_prefix="claude_code")
-        if not hub.is_running:
-            await hub.start(
-                host=config["daemon_hub"]["host"],
-                port=config["daemon_hub"]["port"],
-                token=config["daemon_hub"]["token"],
-            )
+        await hub.start(
+            host=config["daemon_hub"]["host"],
+            port=config["daemon_hub"]["port"],
+            token=config["daemon_hub"]["token"],
+        )
         tools = ClaudeCodeExternalTools(
             self.get_run_api(ctx),
             ctx,
@@ -703,14 +705,15 @@ class NativeClaudeCodeRunner(Runner):
                 "langbot_assets_enabled": config["langbot_assets_enabled"],
             },
         }
-        async for event in hub.run_job(
+        async with contextlib.aclosing(hub.run_job(
             daemon_id=config["daemon_id"],
             payload=payload,
             tools=tools,
             timeout=config["timeout"],
-        ):
-            event.setdefault("run_id", ctx.run_id)
-            yield RunnerResult.model_validate(event)
+        )) as event_stream:
+            async for event in event_stream:
+                event.setdefault("run_id", ctx.run_id)
+                yield RunnerResult.model_validate(event)
 
 
 class NativeClaudeCodeDaemon(AgentRuntimeDaemonClient):
@@ -743,7 +746,7 @@ class NativeClaudeCodeDaemon(AgentRuntimeDaemonClient):
                 # See NativeClaudeCodeRunner._argv: resume continues, session-id creates.
                 argv.extend(["--resume", session_id] if payload.get("resume") else ["--session-id", session_id])
             try:
-                async for event in _run_cli_process_events(
+                async with contextlib.aclosing(_run_cli_process_events(
                     argv[0],
                     argv[1:],
                     cwd=str(config.get("workspace") or os.getcwd()),
@@ -752,8 +755,9 @@ class NativeClaudeCodeDaemon(AgentRuntimeDaemonClient):
                     streaming=bool(config.get("streaming", True)),
                     expected_session_id=session_id,
                     initial_stdin=_prompt_stdin(str(payload.get("prompt") or "")),
-                ):
-                    await self.emit_event(job_id, event)
+                )) as event_stream:
+                    async for event in event_stream:
+                        await self.emit_event(job_id, event)
             except NativeCliError as exc:
                 await self.emit_event(
                     job_id,
@@ -784,7 +788,7 @@ async def _run_cli_process(
     initial_stdin: bytes = b"",
 ) -> typing.AsyncGenerator[RunnerResult, None]:
     try:
-        async for event in _run_cli_process_events(
+        async with contextlib.aclosing(_run_cli_process_events(
             command,
             args,
             cwd=cwd,
@@ -793,9 +797,10 @@ async def _run_cli_process(
             streaming=streaming,
             expected_session_id=expected_session_id,
             initial_stdin=initial_stdin,
-        ):
-            event.setdefault("run_id", ctx.run_id)
-            yield RunnerResult.model_validate(event)
+        )) as event_stream:
+            async for event in event_stream:
+                event.setdefault("run_id", ctx.run_id)
+                yield RunnerResult.model_validate(event)
     except NativeCliError as exc:
         yield RunnerResult.run_failed(ctx.run_id, error=exc.message, code=exc.code, retryable=exc.retryable)
 
@@ -820,6 +825,7 @@ async def _run_cli_process_events(
             stdin=asyncio.subprocess.PIPE if initial_stdin else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name != "nt",
         )
     except FileNotFoundError as exc:
         raise NativeCliError(f"Claude Code command not found: {command}", code="claude_code.command_not_found") from exc
@@ -939,8 +945,10 @@ async def _run_cli_process_events(
             yield {"type": "message.completed", "data": {"message": final_message}}
         yield {"type": "run.completed", "data": {"finish_reason": "stop"}}
     finally:
+        await terminate_process_group(process)
         if not stderr_task.done():
             stderr_task.cancel()
+        await asyncio.gather(stderr_task, return_exceptions=True)
 
 
 def _parse_cli_event(line: str) -> dict[str, typing.Any]:

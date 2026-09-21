@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: CodexAgent
-  version: 0.1.16
+  version: 0.1.17
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/codex-agent
   label:
     en_US: Codex Agent
@@ -60,6 +60,7 @@ spec:
         - path: components/runner/
   pages: []
 execution:
+  sharedRuntime: shared-runtime-v1
   python:
     path: main.py
     attr: CodexAgentPlugin

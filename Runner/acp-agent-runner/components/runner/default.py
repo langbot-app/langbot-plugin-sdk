@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -9,11 +10,6 @@ import shlex
 import time
 import typing
 
-from langbot_plugin.api.agent_tools.daemon import (
-    AgentRuntimeDaemonError,
-    agent_runtime_daemon_config_from_plugin_config,
-    get_agent_runtime_daemon_hub,
-)
 from langbot_plugin.api.agent_tools.external_tools import AgentRunExternalTools
 from langbot_plugin.api.agent_tools.mcp_access import AgentRunMCPAccess
 from langbot_plugin.api.agent_tools.mcp_config import AgentMCPServerConfig
@@ -25,7 +21,13 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerResult,
 )
 from pkg.acp_client import AcpError, AcpStdioClient
+from pkg.daemon_relay import (
+    AgentRuntimeDaemonError,
+    agent_runtime_daemon_config_from_plugin_config,
+    get_agent_runtime_daemon_hub,
+)
 from pkg.prompt import acp_prompt_blocks, has_acp_prompt_input, prompt_capabilities
+from pkg.runtime_support import local_workspace
 from pkg.session import CLAUDE_ENV_VARS_TO_UNSET, build_session_params
 from pkg.steering import run_with_steering
 
@@ -386,6 +388,9 @@ class DefaultRunner(Runner):
                 workspace = _first_config_value(config, LOCAL_WORKSPACE_CONFIG_KEYS) or os.getcwd()
         if location == "remote-ssh" and not workspace:
             raise AcpError("workspace is required when location=remote-ssh", code="acp.config_invalid")
+
+        if location == "local":
+            workspace = local_workspace(_first_config_value(config, WORKSPACE_CONFIG_KEYS) or _first_config_value(config, LOCAL_WORKSPACE_CONFIG_KEYS))
 
         ssh_target = _first_config_value(config, SSH_TARGET_CONFIG_KEYS)
         if location == "remote-ssh" and not ssh_target:
@@ -781,24 +786,24 @@ class DefaultRunner(Runner):
         stored_session_id: str,
     ) -> typing.AsyncGenerator[RunnerResult, None]:
         hub = get_agent_runtime_daemon_hub("acp", error_code_prefix="acp")
-        if not hub.is_running:
-            await hub.start(
-                host=config["daemon_hub"]["host"],
-                port=config["daemon_hub"]["port"],
-                token=config["daemon_hub"]["token"],
-            )
+        await hub.start(
+            host=config["daemon_hub"]["host"],
+            port=config["daemon_hub"]["port"],
+            token=config["daemon_hub"]["token"],
+        )
 
         await hub.wait_for_daemon(config["daemon_id"], config["daemon_connect_timeout"])
         tools = AgentRunExternalTools(self.get_run_api(ctx), ctx) if config["mcp_bridge_enabled"] else None
         payload = self._daemon_payload(ctx, config, prompt_text, stored_session_id)
-        async for event in hub.run_job(
+        async with contextlib.aclosing(hub.run_job(
             daemon_id=config["daemon_id"],
             payload=payload,
             tools=tools,
             timeout=config["timeout"],
-        ):
-            event.setdefault("run_id", ctx.run_id)
-            yield RunnerResult.model_validate(event)
+        )) as event_stream:
+            async for event in event_stream:
+                event.setdefault("run_id", ctx.run_id)
+                yield RunnerResult.model_validate(event)
 
     async def run(self, ctx: RunnerContext) -> typing.AsyncGenerator[RunnerResult, None]:
         try:

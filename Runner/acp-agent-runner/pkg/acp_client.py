@@ -7,8 +7,9 @@ import contextlib
 import json
 import os
 import re
-import signal
 import typing
+
+from pkg.runtime_support import terminate_process_group
 
 _AUTH_ASSIGNMENT_RE = re.compile(r"(?i)(\bAuthorization\b[\"']?\s*[:=]\s*[\"']?)(?:Bearer\s+)?[^\"'\s,}\]]+")
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
@@ -185,29 +186,7 @@ class AcpStdioClient:
                     await task
 
     async def _close_posix_process_group(self, process: asyncio.subprocess.Process) -> None:
-        process_group_id = process.pid
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process_group_id, signal.SIGTERM)
-
-        if not await self._wait_for_process_group_exit(process_group_id, timeout=5):
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process_group_id, signal.SIGKILL)
-            await self._wait_for_process_group_exit(process_group_id, timeout=1)
-
-        if process.returncode is None:
-            await process.wait()
-
-    async def _wait_for_process_group_exit(self, process_group_id: int, *, timeout: float) -> bool:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        while True:
-            try:
-                os.killpg(process_group_id, 0)
-            except ProcessLookupError:
-                return True
-            if loop.time() >= deadline:
-                return False
-            await asyncio.sleep(0.05)
+        await terminate_process_group(process)
 
     async def initialize(self, timeout: float | None = None) -> dict[str, typing.Any]:
         result = await self.request(
