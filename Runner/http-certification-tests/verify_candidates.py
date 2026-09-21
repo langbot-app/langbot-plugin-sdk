@@ -23,6 +23,7 @@ from langbot_plugin.entities.io.context import PluginWorkerPolicy
 from langbot_plugin.runtime.plugin.artifact import PluginArtifactStore
 from langbot_plugin.runtime.plugin.dependency_environment import PluginDependencyEnvironmentStore
 from langbot_plugin.runtime.plugin.worker_launcher import PluginWorkerLauncher
+from langbot_plugin.runtime.security import PLUGIN_FILE_STORAGE_DIR_ENV
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +109,7 @@ async def main(destination):
             k: v for k, v in os.environ.items() if not any(x in k.upper() for x in ["TOKEN", "KEY", "SECRET", "PROXY"])
         }
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env[PLUGIN_FILE_STORAGE_DIR_ENV] = str(destination / "rpc-files" / folder)
         env["PYTHONPATH"] = str(environment.site_packages_path)
         output = destination / (folder + "-rpc.json")
         run = subprocess.run(
