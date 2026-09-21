@@ -127,6 +127,7 @@ async def verify(out):
         }
         child_env.update(
             HOME=str(home),
+            LANGBOT_PLUGIN_FILE_STORAGE_DIR=str(home / "file-transfer"),
             PYTHONDONTWRITEBYTECODE="1",
             PYTHONPATH=os.pathsep.join([str(dist.locate_file("")), str(env.site_packages_path)]),
         )
