@@ -110,3 +110,110 @@ TboxClient.upload_file=upload
                 os.kill(first["pid"], 0)
 
         asyncio.run(run())
+
+
+def test_dashscope_real_sdk_does_not_follow_redirects():
+    from aiohttp import web
+
+    async def run():
+        visits = []
+
+        async def redirect(request):
+            visits.append(request.path)
+            return web.Response(status=307, headers={"Location": "/sink"})
+
+        async def sink(request):
+            visits.append("sink")
+            return web.json_response({"output": {"text": "forbidden"}})
+
+        app = web.Application()
+        app.router.add_route("*", "/sink", sink)
+        app.router.add_route("*", "/{path:.*}", redirect)
+        server = web.AppRunner(app)
+        await server.setup()
+        site = web.TCPSite(server, "127.0.0.1", 0)
+        await site.start()
+        base = "http://127.0.0.1:" + str(site._server.sockets[0].getsockname()[1])
+        try:
+            with load("dashscope"):
+                transport = importlib.import_module("pkg.vendor_process")
+                gen = transport.vendor_stream(
+                    {
+                        "kwargs": {
+                            "app_id": "fixture",
+                            "api_key": "fixture",
+                            "prompt": "hello",
+                            "stream": True,
+                            "base_address": base,
+                        }
+                    },
+                    timeout=5,
+                )
+                try:
+                    async for _ in gen:
+                        pass
+                except RuntimeError:
+                    pass
+                finally:
+                    await gen.aclose()
+            assert visits and "sink" not in visits
+        finally:
+            await server.cleanup()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode", ["success", "cancel", "timeout"])
+def test_tbox_actual_sdk_upload_temp_lifecycle(mode, tmp_path, monkeypatch):
+    import json
+
+    with load("tbox"):
+        module = importlib.import_module("pkg.tbox_client")
+        transport = importlib.import_module("pkg.vendor_process")
+        worker = Path(module.__file__).with_name("vendor_worker.py")
+        proof = tmp_path / "upload.json"
+        wrapper = tmp_path / "upload_fixture.py"
+        wrapper.write_text(
+            "import os,json,time,runpy\nfrom pathlib import Path\nfrom tboxsdk.core.httpclient import HttpClient\n"
+            + "def post_file(self,path,files,**kwargs):\n"
+            + " assert path=='/api/file/upload'\n file=files['file'][1]\n assert file.read()==b'fixture-file'\n"
+            + f" Path({str(proof)!r}).write_text(json.dumps({{'pid':os.getpid(),'file':file.name,'directory':os.environ['TMPDIR']}}))\n"
+            + (" time.sleep(60)\n" if mode != "success" else "")
+            + " return {'errorCode':'0','data':'fixture-file-id'}\nHttpClient.post_file=post_file\n"
+            + f"runpy.run_path({str(worker)!r},run_name='__main__')\n"
+        )
+
+        async def stream(payload, **kwargs):
+            gen = transport.vendor_stream(payload, worker=wrapper, **kwargs)
+            try:
+                async for item in gen:
+                    yield item
+            finally:
+                await gen.aclose()
+
+        monkeypatch.setattr(module, "vendor_stream", stream)
+
+        async def run():
+            client = module.AsyncTboxClient("fixture", timeout=2 if mode == "timeout" else 10)
+            task = asyncio.create_task(client.upload_file(b"fixture-file", "image.png"))
+            async with asyncio.timeout(4):
+                while not proof.exists():
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+            info = json.loads(proof.read_text())
+            if mode == "cancel":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            elif mode == "timeout":
+                with pytest.raises(module.TboxAPIError, match="timed out"):
+                    await task
+            else:
+                assert await task == "fixture-file-id"
+            assert not Path(info["file"]).exists()
+            assert not Path(info["directory"]).exists()
+            with pytest.raises(ProcessLookupError):
+                os.kill(info["pid"], 0)
+
+        asyncio.run(run())

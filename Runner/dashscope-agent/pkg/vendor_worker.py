@@ -33,12 +33,21 @@ def emit(item):
 
 try:
     with contextlib.redirect_stdout(sys.stderr):
+        import requests
         from dashscope import Application
 
+        class NoRedirectSession(requests.Session):
+            def request(self, method, url, **kwargs):
+                kwargs["allow_redirects"] = False
+                return super().request(method, url, **kwargs)
+
+        # A private session: never forward prompts/credentials across redirects.
         # Call arguments are invocation-owned; no module-global api_key mutation.
-        response = Application.call(**payload["kwargs"])
-        for chunk in response:
-            emit(dict(chunk))
+        with NoRedirectSession() as session:
+            session.trust_env = False
+            response = Application.call(**payload["kwargs"], session=session)
+            for chunk in response:
+                emit(dict(chunk))
 except BaseException as exc:
     output.write(json.dumps({"error": "timeout" if "timeout" in type(exc).__name__.lower() else "vendor"}) + "\n")
     output.flush()
