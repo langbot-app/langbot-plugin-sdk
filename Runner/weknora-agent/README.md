@@ -46,3 +46,8 @@ Run a WeKnora agent or knowledge-base chat app as a LangBot Runner.
 - The runner can use only LangBot resources authorized for the current run.
 - Availability, model abilities, and rate limits depend on the external service.
 - See the full Chinese README at the package root for advanced behavior and product-specific limitations.
+
+
+## SDK 0.6.0b5 shared-runtime candidate
+
+See [shared-runtime boundaries and upgrade notes](SHARED_RUNTIME.md) before upgrading.

@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: LangflowAgent
-  version: 0.1.8
+  version: 0.1.9
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/langflow-agent
   label:
     en_US: Langflow Agent
@@ -35,3 +35,4 @@ execution:
   python:
     path: main.py
     attr: LangflowAgentPlugin
+  sharedRuntime: shared-runtime-v1

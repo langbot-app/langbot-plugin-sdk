@@ -17,6 +17,7 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerResult,
 )
 from pkg.errors import WeKnoraAPIError, WeKnoraConfigError
+from pkg.scoped_identity import scoped_identity
 from pkg.weknora_client import AsyncWeKnoraClient
 
 logger = logging.getLogger(__name__)
@@ -78,8 +79,8 @@ class DefaultRunner(Runner):
     def _get_user_tag(self, ctx: RunnerContext) -> str:
         actor = ctx.actor
         if actor and actor.actor_id:
-            return f"{actor.actor_type}_{actor.actor_id}"
-        return f"user_{ctx.run_id}"
+            return scoped_identity(self, ctx, f"{actor.actor_type}_{actor.actor_id}")
+        return scoped_identity(self, ctx, f"user_{ctx.run_id}")
 
     def _get_input_text(self, ctx: RunnerContext, base_prompt: str) -> str:
         text = ctx.input.to_text()

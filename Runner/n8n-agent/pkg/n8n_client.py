@@ -13,6 +13,8 @@ import typing
 
 import httpx
 
+from pkg.endpoint import endpoint
+
 logger = logging.getLogger(__name__)
 
 # Same response character bound as the native n8n runner.
@@ -55,7 +57,7 @@ class AsyncN8nClient:
     ):
         if response_handling not in ("reply", "ignore"):
             raise N8nConfigError("response-handling must be reply or ignore")
-        self.webhook_url = webhook_url
+        self.webhook_url = endpoint(webhook_url, query=True)
         self.timeout = timeout
         self.output_key = output_key
         self.response_handling = response_handling
@@ -77,7 +79,7 @@ class AsyncN8nClient:
 
         async with httpx.AsyncClient(
             timeout=self.timeout,
-            trust_env=True,
+            trust_env=False,
         ) as client:
             headers = self._build_headers(auth_type, auth_config)
             auth = self._build_auth(auth_type, auth_config)

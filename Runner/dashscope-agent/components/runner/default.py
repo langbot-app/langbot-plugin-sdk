@@ -8,13 +8,13 @@ from __future__ import annotations
 import logging
 import typing
 
-from langbot_plugin.api.agent_tools.asset_gateway import get_default_agent_asset_gateway
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
 from langbot_plugin.api.entities.builtin.runner import (
     RunnerContext,
     RunnerResult,
 )
+from pkg.asset_gateway import register_assets
 from pkg.dashscope_client import (
     DashScopeAPIError,
     DashScopeClient,
@@ -198,7 +198,7 @@ class DefaultRunner(Runner):
             ),
         }
 
-    def _create_asset_gateway_registration(
+    async def _create_asset_gateway_registration(
         self,
         ctx: RunnerContext,
         config: dict[str, typing.Any],
@@ -209,16 +209,7 @@ class DefaultRunner(Runner):
         reference it and pass it as the ``run_token`` argument on LangBot Asset
         Gateway MCP tool calls. The registration must be stopped when the run ends.
         """
-        gateway = get_default_agent_asset_gateway(
-            host=config["asset_gateway_host"],
-            port=config["asset_gateway_port"],
-            request_timeout=config["asset_gateway_request_timeout"],
-        )
-        return gateway.register_run(
-            self.get_run_api(ctx),
-            ctx,
-            ttl_seconds=config["asset_gateway_token_ttl"],
-        )
+        return await register_assets(self, self.get_run_api(ctx), ctx, config)
 
     def _get_session_id(self, ctx: RunnerContext) -> str:
         """Get session ID from state for multi-turn conversation.
@@ -274,7 +265,7 @@ class DefaultRunner(Runner):
         asset_registration = None
         asset_biz_params: dict[str, typing.Any] = {}
         if config["langbot_assets_enabled"]:
-            asset_registration = self._create_asset_gateway_registration(ctx, config)
+            asset_registration = await self._create_asset_gateway_registration(ctx, config)
             asset_biz_params[config["asset_gateway_input_name"]] = asset_registration.token
 
         try:
@@ -302,7 +293,7 @@ class DefaultRunner(Runner):
             return
         finally:
             if asset_registration is not None:
-                asset_registration.stop()
+                await asset_registration.stop()
 
     async def _run_runner(
         self,

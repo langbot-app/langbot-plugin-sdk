@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: N8nAgent
-  version: 0.1.8
+  version: 0.1.9
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/n8n-agent
   label:
     en_US: N8n Agent
@@ -35,3 +35,4 @@ execution:
   python:
     path: main.py
     attr: N8nAgentPlugin
+  sharedRuntime: shared-runtime-v1

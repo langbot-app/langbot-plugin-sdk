@@ -11,6 +11,8 @@ import mimetypes
 import typing
 
 import httpx
+from pkg.deadline import deadline
+from pkg.endpoint import endpoint
 from pkg.http_limits import limited_body, limited_bytes, limited_lines, limited_post
 
 logger = logging.getLogger(__name__)
@@ -67,9 +69,10 @@ class AsyncDifyClient:
         timeout: float = 30.0,
     ):
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = endpoint(base_url).rstrip("/")
         self.timeout = timeout
 
+    @deadline
     async def chat_messages(
         self,
         inputs: dict[str, typing.Any],
@@ -87,7 +90,7 @@ class AsyncDifyClient:
         async with httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
-            trust_env=True,
+            trust_env=False,
         ) as client:
             payload = {
                 "inputs": inputs,
@@ -129,6 +132,7 @@ class AsyncDifyClient:
                     code="dify.http_error",
                 ) from None
 
+    @deadline
     async def workflow_run(
         self,
         inputs: dict[str, typing.Any],
@@ -144,7 +148,7 @@ class AsyncDifyClient:
         async with httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
-            trust_env=True,
+            trust_env=False,
         ) as client:
             payload = {
                 "inputs": inputs,
@@ -184,6 +188,7 @@ class AsyncDifyClient:
                     code="dify.http_error",
                 ) from None
 
+    @deadline
     async def workflow_submit(
         self,
         form_token: str,
@@ -201,7 +206,7 @@ class AsyncDifyClient:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout,
-                trust_env=True,
+                trust_env=False,
             ) as client:
                 response = await limited_post(
                     client,
@@ -237,12 +242,14 @@ class AsyncDifyClient:
                 code="dify.timeout",
             ) from None
 
+    @deadline
     async def download_file(self, url: str) -> tuple[bytes, str]:
         """Stage an explicitly supplied HTTP file URL, never a local path."""
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             raise DifyAPIError("Input file URL must use HTTP or HTTPS", code="dify.input_error")
+        endpoint(url, query=True)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, trust_env=True, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False, follow_redirects=False) as client:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()
                     body = bytearray()
@@ -260,6 +267,7 @@ class AsyncDifyClient:
             # URLs and transport exception details may contain signed credentials.
             raise DifyAPIError("Dify input file download failed", code="dify.input_error") from None
 
+    @deadline
     async def upload_file(
         self,
         file_name: str,
@@ -273,7 +281,7 @@ class AsyncDifyClient:
         async with httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
-            trust_env=True,
+            trust_env=False,
         ) as client:
             files = {"file": (file_name, file_bytes, content_type)}
             data = {"user": user}

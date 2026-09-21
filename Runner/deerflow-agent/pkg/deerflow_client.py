@@ -13,6 +13,8 @@ from collections.abc import AsyncGenerator
 
 import httpx
 
+from pkg.deadline import deadline
+from pkg.endpoint import endpoint
 from pkg.errors import DeerFlowAPIError
 from pkg.http_limits import limited_body, limited_bytes, limited_post
 
@@ -70,20 +72,21 @@ class AsyncDeerFlowClient:
         api_key: str = "",
         auth_header: str = "",
     ) -> None:
-        self.api_base = api_base.rstrip("/")
+        self.api_base = endpoint(api_base).rstrip("/")
         self.headers: dict[str, str] = {}
         if auth_header:
             self.headers["Authorization"] = auth_header
         elif api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
 
+    @deadline
     async def create_thread(self, timeout: float = 20) -> dict[str, typing.Any]:
         """Create a new LangGraph thread."""
         url = f"{self.api_base}/api/langgraph/threads"
         payload = {"metadata": {}}
 
         try:
-            async with httpx.AsyncClient(trust_env=True, timeout=timeout) as http_client:
+            async with httpx.AsyncClient(trust_env=False, timeout=timeout) as http_client:
                 response = await limited_post(
                     http_client,
                     url,
@@ -109,6 +112,7 @@ class AsyncDeerFlowClient:
             )
         return response.json()
 
+    @deadline
     async def stream_run(
         self,
         thread_id: str,
@@ -125,7 +129,7 @@ class AsyncDeerFlowClient:
         )
 
         try:
-            async with httpx.AsyncClient(trust_env=True, timeout=stream_timeout) as http_client:
+            async with httpx.AsyncClient(trust_env=False, timeout=stream_timeout) as http_client:
                 async with http_client.stream(
                     "POST",
                     url,

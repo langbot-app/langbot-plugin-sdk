@@ -9,18 +9,19 @@ import logging
 import typing
 import uuid
 
-from langbot_plugin.api.agent_tools.asset_gateway import get_default_agent_asset_gateway
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
 from langbot_plugin.api.entities.builtin.runner import (
     RunnerContext,
     RunnerResult,
 )
+from pkg.asset_gateway import register_assets
 from pkg.n8n_client import (
     AsyncN8nClient,
     N8nAPIError,
     N8nConfigError,
 )
+from pkg.scoped_identity import scoped_identity
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ class DefaultRunner(Runner):
             ),
         }
 
-    def _create_asset_gateway_registration(
+    async def _create_asset_gateway_registration(
         self,
         ctx: RunnerContext,
         config: dict[str, typing.Any],
@@ -164,16 +165,7 @@ class DefaultRunner(Runner):
         can pass it as the ``run_token`` argument on LangBot Asset Gateway MCP
         tool calls. The registration must be stopped when the run ends.
         """
-        gateway = get_default_agent_asset_gateway(
-            host=config["asset_gateway_host"],
-            port=config["asset_gateway_port"],
-            request_timeout=config["asset_gateway_request_timeout"],
-        )
-        return gateway.register_run(
-            self.get_run_api(ctx),
-            ctx,
-            ttl_seconds=config["asset_gateway_token_ttl"],
-        )
+        return await register_assets(self, self.get_run_api(ctx), ctx, config)
 
     def _get_user_tag(self, ctx: RunnerContext) -> str:
         """Get user identifier for n8n webhook."""
@@ -185,12 +177,12 @@ class DefaultRunner(Runner):
             if conversation and conversation.launcher_type in ("group", "person"):
                 launcher_id = conversation.launcher_id
                 if isinstance(launcher_id, str) and launcher_id:
-                    return f"{conversation.launcher_type}_{launcher_id}"
+                    return scoped_identity(self, ctx, f"{conversation.launcher_type}_{launcher_id}")
             raise N8nConfigError("user-id-source requires trusted Host identity", code="n8n.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
-            return f"{actor.actor_type}_{actor.actor_id}"
-        return f"user_{ctx.run_id}"
+            return scoped_identity(self, ctx, f"{actor.actor_type}_{actor.actor_id}")
+        return scoped_identity(self, ctx, f"user_{ctx.run_id}")
 
     def _get_or_create_state_id(
         self,
@@ -302,7 +294,7 @@ class DefaultRunner(Runner):
         # webhook request. The token is stopped in finally when the run ends.
         asset_registration = None
         if config["langbot_assets_enabled"]:
-            asset_registration = self._create_asset_gateway_registration(ctx, config)
+            asset_registration = await self._create_asset_gateway_registration(ctx, config)
             payload[config["asset_gateway_input_name"]] = asset_registration.token
 
         try:
@@ -357,7 +349,7 @@ class DefaultRunner(Runner):
             return
         finally:
             if asset_registration is not None:
-                asset_registration.stop()
+                await asset_registration.stop()
 
         if not has_response and config["response_handling"] != "ignore":
             yield RunnerResult.run_failed(

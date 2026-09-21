@@ -12,6 +12,8 @@ import typing
 
 import aiohttp
 
+from pkg.endpoint import endpoint
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,7 @@ class AsyncCozeClient:
         timeout: float = 120.0,
     ):
         self.api_key = api_key
-        self.api_base = api_base.rstrip("/")
+        self.api_base = endpoint(api_base).rstrip("/")
         self.timeout = timeout
         self._session: aiohttp.ClientSession | None = None
 
@@ -137,7 +139,8 @@ class AsyncCozeClient:
                 async with upload_session.post(
                     url,
                     data=form,
-                    timeout=aiohttp.ClientTimeout(total=60),
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    allow_redirects=False,
                 ) as response:
                     if response.status == 401:
                         raise CozeAPIError(
@@ -241,6 +244,7 @@ class AsyncCozeClient:
                 url,
                 json=payload,
                 params=params,
+                allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
                 if response.status == 401:

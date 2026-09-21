@@ -10,13 +10,13 @@ import logging
 import typing
 import uuid
 
-from langbot_plugin.api.agent_tools.asset_gateway import get_default_agent_asset_gateway
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import Message, MessageChunk
 from langbot_plugin.api.entities.builtin.runner import (
     RunnerContext,
     RunnerResult,
 )
+from pkg.asset_gateway import register_assets
 from pkg.langflow_client import (
     AsyncLangflowClient,
     LangflowAPIError,
@@ -130,7 +130,7 @@ class DefaultRunner(Runner):
             ),
         }
 
-    def _create_asset_gateway_registration(
+    async def _create_asset_gateway_registration(
         self,
         ctx: RunnerContext,
         config: dict[str, typing.Any],
@@ -143,16 +143,7 @@ class DefaultRunner(Runner):
         ``run_token`` argument on LangBot Asset Gateway MCP tool calls. The
         registration must be stopped when the run ends.
         """
-        gateway = get_default_agent_asset_gateway(
-            host=config["asset_gateway_host"],
-            port=config["asset_gateway_port"],
-            request_timeout=config["asset_gateway_request_timeout"],
-        )
-        return gateway.register_run(
-            self.get_run_api(ctx),
-            ctx,
-            ttl_seconds=config["asset_gateway_token_ttl"],
-        )
+        return await register_assets(self, self.get_run_api(ctx), ctx, config)
 
     def _get_session_id(self, ctx: RunnerContext) -> str:
         """Get or generate session ID for Langflow.
@@ -221,7 +212,7 @@ class DefaultRunner(Runner):
         tweaks = config["tweaks"]
         asset_registration = None
         if config["langbot_assets_enabled"]:
-            asset_registration = self._create_asset_gateway_registration(ctx, config)
+            asset_registration = await self._create_asset_gateway_registration(ctx, config)
             tweaks = {
                 **tweaks,
                 config["asset_gateway_input_name"]: {"input_value": asset_registration.token},
@@ -327,4 +318,4 @@ class DefaultRunner(Runner):
             return
         finally:
             if asset_registration is not None:
-                asset_registration.stop()
+                await asset_registration.stop()

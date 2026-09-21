@@ -5,14 +5,12 @@ This module provides a minimal DashScope API client using the official dashscope
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import queue
 import re
-import threading
 import typing
+from contextlib import aclosing
 
-from dashscope import Application
+from pkg.vendor_process import vendor_stream
 
 logger = logging.getLogger(__name__)
 
@@ -105,26 +103,18 @@ class DashScopeClient:
         self.references_quote = references_quote
         self.timeout = timeout
 
-    def call_agent(
-        self,
-        prompt: str,
-        session_id: str = "",
-        enable_thinking: bool = True,
-        biz_params: dict[str, typing.Any] | None = None,
-    ) -> typing.Any:
-        """Call DashScope agent application.
+    async def _call(self, kwargs):
+        try:
+            async with aclosing(vendor_stream({"kwargs": kwargs}, timeout=self.timeout)) as stream:
+                async for chunk in stream:
+                    yield chunk
+        except TimeoutError:
+            raise DashScopeAPIError("DashScope request timed out", code="dashscope.timeout", retryable=True) from None
+        except (RuntimeError, ValueError):
+            raise DashScopeAPIError("DashScope vendor worker failed") from None
 
-        Args:
-            prompt: User input text
-            session_id: Session ID for multi-turn conversation
-            enable_thinking: Whether to enable thinking/reasoning
-            biz_params: Optional business parameters passed to the 百炼 app
-                (e.g. a LangBot asset run token referenced by the app)
-
-        Yields:
-            Response chunks from DashScope API
-        """
-        call_kwargs: dict[str, typing.Any] = dict(
+    async def iter_agent(self, prompt, session_id="", enable_thinking=True, biz_params=None):
+        kwargs = dict(
             api_key=self.api_key,
             app_id=self.app_id,
             prompt=prompt,
@@ -135,125 +125,22 @@ class DashScopeClient:
             has_thoughts=enable_thinking,
         )
         if biz_params:
-            call_kwargs["biz_params"] = biz_params
+            kwargs["biz_params"] = biz_params
+        async with aclosing(self._call(kwargs)) as stream:
+            async for chunk in stream:
+                yield chunk
 
-        response = Application.call(**call_kwargs)
-
-        yield from response
-
-    def call_workflow(
-        self,
-        prompt: str,
-        session_id: str = "",
-        biz_params: dict[str, typing.Any] | None = None,
-    ) -> typing.Any:
-        """Call DashScope workflow application.
-
-        Args:
-            prompt: User input text
-            session_id: Session ID for multi-turn conversation
-            biz_params: Business parameters for workflow
-
-        Yields:
-            Response chunks from DashScope API
-        """
-        biz_params = biz_params or {}
-
-        response = Application.call(
+    async def iter_workflow(self, prompt, session_id="", biz_params=None):
+        kwargs = dict(
             api_key=self.api_key,
             app_id=self.app_id,
             prompt=prompt,
             stream=True,
             incremental_output=True,
             session_id=session_id,
-            biz_params=biz_params,
+            biz_params=biz_params or {},
             flow_stream_mode="message_format",
         )
-
-        yield from response
-
-    async def iter_agent(
-        self,
-        prompt: str,
-        session_id: str = "",
-        enable_thinking: bool = True,
-        biz_params: dict[str, typing.Any] | None = None,
-    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
-        async for chunk in _iterate_sync_in_thread(
-            lambda: self.call_agent(
-                prompt=prompt,
-                session_id=session_id,
-                enable_thinking=enable_thinking,
-                biz_params=biz_params,
-            ),
-            timeout=self.timeout,
-        ):
-            yield chunk
-
-    async def iter_workflow(
-        self,
-        prompt: str,
-        session_id: str = "",
-        biz_params: dict[str, typing.Any] | None = None,
-    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
-        async for chunk in _iterate_sync_in_thread(
-            lambda: self.call_workflow(prompt=prompt, session_id=session_id, biz_params=biz_params),
-            timeout=self.timeout,
-        ):
-            yield chunk
-
-
-def _is_timeout_error(exc: BaseException) -> bool:
-    return isinstance(exc, TimeoutError) or "timeout" in exc.__class__.__name__.lower()
-
-
-async def _iterate_sync_in_thread(
-    factory: typing.Callable[[], typing.Iterable[dict[str, typing.Any]]],
-    *,
-    timeout: float,
-) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
-    """Iterate a blocking provider stream without blocking the event loop."""
-    sentinel = object()
-    output: queue.Queue[typing.Any] = queue.Queue()
-
-    def _worker() -> None:
-        try:
-            for item in factory():
-                output.put(item)
-        except BaseException as exc:
-            output.put(exc)
-        finally:
-            output.put(sentinel)
-
-    thread = threading.Thread(target=_worker, daemon=True)
-    thread.start()
-
-    async def _next_item():
-        # Cancelling to_thread(queue.get) cannot stop its blocking worker and
-        # can hang asyncio shutdown forever when the vendor stops producing.
-        while True:
-            try:
-                return output.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-
-    while True:
-        try:
-            item = await asyncio.wait_for(_next_item(), timeout=timeout)
-        except TimeoutError:
-            raise DashScopeAPIError(
-                f"DashScope API request timed out after {timeout}s",
-                code="dashscope.timeout",
-                retryable=True,
-            ) from None
-        if item is sentinel:
-            break
-        if isinstance(item, BaseException):
-            if _is_timeout_error(item):
-                raise DashScopeAPIError(
-                    f"DashScope API request timed out after {timeout}s",
-                    code="dashscope.timeout",
-                    retryable=True,
-                ) from None
-            raise item
-        yield item
+        async with aclosing(self._call(kwargs)) as stream:
+            async for chunk in stream:
+                yield chunk

@@ -9,10 +9,11 @@ import base64
 import json
 import logging
 import re
+import time
 import typing
 import uuid
+from contextlib import aclosing
 
-from langbot_plugin.api.agent_tools.asset_gateway import get_default_agent_asset_gateway
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.api.entities.builtin.provider.message import MessageChunk
 from langbot_plugin.api.entities.builtin.runner import (
@@ -23,6 +24,7 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerContext,
     RunnerResult,
 )
+from pkg.asset_gateway import register_assets
 from pkg.dify_client import (
     AsyncDifyClient,
     DifyAPIError,
@@ -30,6 +32,7 @@ from pkg.dify_client import (
     extract_text_from_output,
     process_thinking_content,
 )
+from pkg.scoped_identity import scoped_identity
 
 logger = logging.getLogger(__name__)
 
@@ -391,12 +394,12 @@ class DefaultRunner(Runner):
             if conversation and conversation.launcher_type in ("group", "person"):
                 launcher_id = conversation.launcher_id
                 if isinstance(launcher_id, str) and launcher_id:
-                    return f"{conversation.launcher_type}_{launcher_id}"
+                    return scoped_identity(self, ctx, f"{conversation.launcher_type}_{launcher_id}")
             raise DifyConfigError("user-id-source requires trusted Host identity", code="dify.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
-            return f"{actor.actor_type}_{actor.actor_id}"
-        return f"user_{ctx.run_id}"
+            return scoped_identity(self, ctx, f"{actor.actor_type}_{actor.actor_id}")
+        return scoped_identity(self, ctx, f"user_{ctx.run_id}")
 
     def _get_external_conversation_id(self, ctx: RunnerContext) -> str:
         """Get external conversation ID from state or context.
@@ -433,23 +436,14 @@ class DefaultRunner(Runner):
         """
         return _get_adapter_params(ctx)
 
-    def _create_asset_gateway_registration(
+    async def _create_asset_gateway_registration(
         self,
         ctx: RunnerContext,
         config: dict[str, typing.Any],
     ):
-        gateway = get_default_agent_asset_gateway(
-            host=config["asset_gateway_host"],
-            port=config["asset_gateway_port"],
-            request_timeout=config["asset_gateway_request_timeout"],
-        )
-        return gateway.register_run(
-            self.get_run_api(ctx),
-            ctx,
-            ttl_seconds=config["asset_gateway_token_ttl"],
-        )
+        return await register_assets(self, self.get_run_api(ctx), ctx, config)
 
-    def _prepare_dify_inputs(
+    async def _prepare_dify_inputs(
         self,
         ctx: RunnerContext,
         config: dict[str, typing.Any],
@@ -458,7 +452,7 @@ class DefaultRunner(Runner):
         if not config["langbot_assets_enabled"]:
             return None, inputs
 
-        registration = self._create_asset_gateway_registration(ctx, config)
+        registration = await self._create_asset_gateway_registration(ctx, config)
         inputs = dict(inputs)
         inputs[config["asset_gateway_input_name"]] = registration.token
         return registration, inputs
@@ -553,6 +547,8 @@ class DefaultRunner(Runner):
         continuation: dict[str, typing.Any],
     ) -> None:
         interaction_id = str(continuation["interaction_id"])
+        continuation = dict(continuation, owner=self._continuation_owner(ctx))
+        continuation.setdefault("expires_at", time.time() + 3600)
         payload = json.dumps(continuation, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         await self.get_run_api(ctx).set_plugin_storage(_interaction_storage_key(interaction_id), payload)
 
@@ -564,7 +560,7 @@ class DefaultRunner(Runner):
         try:
             payload = await self.get_run_api(ctx).get_plugin_storage(_interaction_storage_key(interaction_id))
             continuation = json.loads(payload.decode("utf-8"))
-        except Exception as exc:
+        except KeyError as exc:
             raise DifyAPIError(
                 "The Dify human-input request is no longer pending",
                 code="dify.interaction_not_found",
@@ -579,7 +575,28 @@ class DefaultRunner(Runner):
                 "The Dify human-input continuation version is unsupported",
                 code="dify.interaction_invalid",
             )
+        if continuation.get("consumed") or continuation.get("expires_at", 0) < time.time():
+            raise DifyAPIError("Dify continuation expired or already consumed", code="dify.interaction_not_found")
+        if continuation.get("owner") != self._continuation_owner(ctx):
+            raise DifyAPIError("Dify continuation belongs to another context", code="dify.interaction_invalid")
         return continuation
+
+    def _continuation_owner(self, ctx):
+        conversation = ctx.conversation
+        return scoped_identity(
+            self,
+            ctx,
+            json.dumps(
+                [
+                    getattr(conversation, "conversation_id", None),
+                    getattr(conversation, "launcher_type", None),
+                    getattr(conversation, "launcher_id", None),
+                    getattr(ctx.actor, "actor_id", None),
+                    (ctx.config or {}).get("base-url"),
+                ],
+                separators=(",", ":"),
+            ),
+        )
 
     async def _delete_interaction_continuation(self, ctx: RunnerContext, interaction_id: str) -> None:
         await self.get_run_api(ctx).delete_plugin_storage(_interaction_storage_key(interaction_id))
@@ -853,7 +870,7 @@ class DefaultRunner(Runner):
 
             # Get inputs from params (read-only, do not modify), optionally adding
             # the run-scoped LangBot asset token expected by Dify MCP tools.
-            asset_registration, inputs = self._prepare_dify_inputs(ctx, config)
+            asset_registration, inputs = await self._prepare_dify_inputs(ctx, config)
 
             # Get conversation_id from state (not from config!)
             conversation_id = self._get_external_conversation_id(ctx)
@@ -887,7 +904,7 @@ class DefaultRunner(Runner):
             return
         finally:
             if asset_registration is not None:
-                asset_registration.stop()
+                await asset_registration.stop()
 
     async def _run_chat_or_agent(
         self,
@@ -1287,7 +1304,22 @@ class DefaultRunner(Runner):
 
         yield RunnerResult.run_completed(ctx.run_id, usage=usage)
 
-    async def _resume_workflow(
+    async def _resume_workflow(self, ctx, client, submission, remove_think):
+        active = getattr(self, "_active_resumes", None)
+        if active is None:
+            active = self._active_resumes = set()
+        key = (self._continuation_owner(ctx), str(submission.interaction_id))
+        if key in active:
+            raise DifyAPIError("Dify continuation is already being resumed", code="dify.interaction_invalid")
+        active.add(key)
+        try:
+            async with aclosing(self._resume_workflow_once(ctx, client, submission, remove_think)) as stream:
+                async for result in stream:
+                    yield result
+        finally:
+            active.remove(key)
+
+    async def _resume_workflow_once(
         self,
         ctx: RunnerContext,
         client: AsyncDifyClient,
@@ -1313,6 +1345,10 @@ class DefaultRunner(Runner):
                 code="dify.interaction_invalid",
             )
         action = action_map[action_id]
+        # Persist consumption BEFORE the external effect. An ambiguous failure
+        # remains consumed, never silently retries an approval at the vendor.
+        continuation["consumed"] = True
+        await self._store_interaction_continuation(ctx, continuation)
 
         pending_content = ""
         has_response = False
@@ -1332,10 +1368,15 @@ class DefaultRunner(Runner):
                     f"Dify workflow error: {event.get('message', 'Unknown error')}",
                     code="dify.api_error",
                 )
-            if event_type in {"message", "agent_message"}:
-                pending_content += str(event.get("answer") or "")
-            elif event_type == "text_chunk":
-                pending_content += str(event.get("data", {}).get("text") or "")
+            if event_type in {"message", "agent_message", "text_chunk"}:
+                chunk = (
+                    str(event.get("answer") or "")
+                    if event_type != "text_chunk"
+                    else str(event.get("data", {}).get("text") or "")
+                )
+                if len(pending_content) + len(chunk) > 1024 * 1024:
+                    raise DifyAPIError("Dify response exceeds the runtime limit", code="dify.response_limit")
+                pending_content += chunk
             elif event_type == "node_finished":
                 data = event.get("data", {})
                 if data.get("node_type") == "answer":

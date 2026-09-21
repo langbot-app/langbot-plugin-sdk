@@ -12,6 +12,8 @@ import uuid
 
 import httpx
 
+from pkg.deadline import deadline
+from pkg.endpoint import endpoint
 from pkg.http_limits import limited_body, limited_lines, limited_post
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,7 @@ class AsyncLangflowClient:
         timeout: float = 120.0,
     ):
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = endpoint(base_url).rstrip("/")
         self.timeout = timeout
 
     def _get_headers(self) -> dict[str, str]:
@@ -85,6 +87,7 @@ class AsyncLangflowClient:
 
         return payload
 
+    @deadline
     async def run_flow(
         self,
         flow_id: str,
@@ -120,7 +123,7 @@ class AsyncLangflowClient:
             session_id=session_id,
         )
 
-        async with httpx.AsyncClient(timeout=self.timeout, trust_env=True) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
             try:
                 if stream:
                     async with client.stream(

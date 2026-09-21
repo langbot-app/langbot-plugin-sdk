@@ -11,6 +11,8 @@ import typing
 
 import httpx
 
+from pkg.deadline import deadline
+from pkg.endpoint import endpoint
 from pkg.errors import WeKnoraAPIError
 from pkg.http_limits import limited_body, limited_lines, limited_post
 
@@ -24,7 +26,7 @@ class AsyncWeKnoraClient:
         base_url: str = "http://localhost:8080/api/v1",
     ) -> None:
         self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = endpoint(base_url).rstrip("/")
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -35,6 +37,7 @@ class AsyncWeKnoraClient:
     def _url(self, path: str) -> str:
         return f"{self.base_url}/{path.lstrip('/')}"
 
+    @deadline
     async def create_session(
         self,
         title: str = "",
@@ -49,7 +52,7 @@ class AsyncWeKnoraClient:
             payload["description"] = description
 
         try:
-            async with httpx.AsyncClient(trust_env=True, timeout=timeout) as http_client:
+            async with httpx.AsyncClient(trust_env=False, timeout=timeout) as http_client:
                 response = await limited_post(
                     http_client,
                     self._url("/sessions"),
@@ -86,6 +89,7 @@ class AsyncWeKnoraClient:
             )
         return session_id
 
+    @deadline
     async def agent_chat(
         self,
         session_id: str,
@@ -119,6 +123,7 @@ class AsyncWeKnoraClient:
         ):
             yield data
 
+    @deadline
     async def knowledge_chat(
         self,
         session_id: str,
@@ -156,7 +161,7 @@ class AsyncWeKnoraClient:
         timeout: float,
     ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
         try:
-            async with httpx.AsyncClient(trust_env=True, timeout=timeout) as http_client:
+            async with httpx.AsyncClient(trust_env=False, timeout=timeout) as http_client:
                 async with http_client.stream(
                     "POST",
                     self._url(path),

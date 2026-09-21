@@ -100,3 +100,8 @@ does not create or update the flow's MCP component.
 ## Legacy Runner
 
 Migrated from `langflow-api` in LangBot.
+
+
+## SDK 0.6.0b5 shared-runtime candidate
+
+See [shared-runtime boundaries and upgrade notes](SHARED_RUNTIME.md) before upgrading.

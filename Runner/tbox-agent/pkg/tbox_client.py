@@ -5,12 +5,12 @@ This module provides an async wrapper around tboxsdk for use with the Runner plu
 
 from __future__ import annotations
 
-import asyncio
+import base64
 import logging
-import queue
-import tempfile
-import threading
-import typing
+from contextlib import aclosing
+from pathlib import Path
+
+from pkg.vendor_process import vendor_stream
 
 logger = logging.getLogger(__name__)
 
@@ -35,200 +35,49 @@ class TboxConfigError(Exception):
 
 
 class AsyncTboxClient:
-    """Async wrapper for tboxsdk.TboxClient.
+    """Run the official synchronous SDK in a killable, bounded child process."""
 
-    Provides async methods for:
-    - chat: Send messages to Tbox app (streaming or non-streaming)
-    - upload_file: Upload files (images) to Tbox
-
-    The underlying tboxsdk is synchronous, so we run blocking calls in a thread pool.
-    """
-
-    def __init__(self, api_key: str, timeout: float = 120.0):
-        """Initialize the Tbox client.
-
-        Args:
-            api_key: Tbox authorization token
-        """
+    def __init__(self, api_key, timeout=120.0):
         self.api_key = api_key
         self.timeout = timeout
-        self._sync_client = None
 
-    def _get_client(self):
-        """Lazily initialize the sync TboxClient."""
-        if self._sync_client is None:
-            from tboxsdk.tbox import TboxClient
-
-            self._sync_client = TboxClient(authorization=self.api_key)
-        return self._sync_client
-
-    async def upload_file(self, file_bytes: bytes, file_name: str) -> str:
-        """Upload a file to Tbox.
-
-        Args:
-            file_bytes: File content as bytes
-            file_name: Name of the file (used to determine extension)
-
-        Returns:
-            Tbox file ID
-
-        Raises:
-            TboxAPIError: If upload fails
-        """
+    async def upload_file(self, file_bytes, file_name):
         if len(file_bytes) > 10 * 1024 * 1024:
             raise TboxAPIError("Upload exceeds the 10 MiB size limit", code="tbox.input_error")
-
-        import os
-
-        # Tbox SDK requires a file path, so we write to a temp file
-        loop = asyncio.get_running_loop()
-
-        def _upload_sync():
-            client = self._get_client()
-            # Create temp file with proper extension
-            ext = os.path.splitext(file_name)[1] or ".bin"
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp.write(file_bytes)
-                tmp_path = tmp.name
-
-            try:
-                result = client.upload_file(tmp_path)
-                return result.get("data", "")
-            finally:
-                # Clean up temp file
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-
+        suffix = Path(file_name).suffix
+        if len(suffix) > 32 or not all(c.isalnum() or c == "." for c in suffix):
+            suffix = ".bin"
+        payload = dict(
+            operation="upload",
+            api_key=self.api_key,
+            data=base64.b64encode(file_bytes).decode(),
+            suffix=suffix or ".bin",
+        )
         try:
-            file_id = await asyncio.wait_for(loop.run_in_executor(None, _upload_sync), timeout=self.timeout)
-            return file_id
+            async with aclosing(vendor_stream(payload, timeout=self.timeout)) as stream:
+                result = await anext(stream)
+                file_id = result.get("data", "")
+                if not isinstance(file_id, str) or not file_id:
+                    raise TboxAPIError("Upload returned no file id", code="tbox.upload_error")
+                return file_id
         except TimeoutError:
-            raise TboxAPIError(
-                f"Tbox file upload timed out after {self.timeout}s",
-                code="tbox.timeout",
-                retryable=True,
-            ) from None
-        except Exception as e:
-            if _is_timeout_error(e):
-                raise TboxAPIError(
-                    f"Tbox file upload timed out after {self.timeout}s",
-                    code="tbox.timeout",
-                    retryable=True,
-                ) from None
-            raise TboxAPIError(f"Tbox file upload failed: {e}", code="tbox.upload_error") from e
+            raise TboxAPIError("Tbox upload timed out", code="tbox.timeout", retryable=True) from None
+        except (RuntimeError, ValueError):
+            raise TboxAPIError("Tbox upload worker failed", code="tbox.upload_error") from None
 
-    async def chat(
-        self,
-        app_id: str,
-        user_id: str,
-        query: str,
-        stream: bool = True,
-        conversation_id: str | None = None,
-        files: list[dict[str, typing.Any]] | None = None,
-    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
-        """Send a chat message to Tbox.
-
-        Args:
-            app_id: Tbox application ID
-            user_id: User identifier
-            query: Text message content
-            stream: Whether to stream the response
-            conversation_id: Existing conversation ID (for stateful sessions)
-            files: List of file dicts with file_id and type
-
-        Yields:
-            For streaming: chunks with type 'chunk', 'thinking', or 'error'
-            For non-streaming: single chunk with full response
-
-        Raises:
-            TboxAPIError: If chat request fails
-        """
-        from tboxsdk.model.file import File, FileType
-
-        # Convert file dicts to Tbox File objects
-        tbox_files = None
-        if files:
-            tbox_files = []
-            for f in files:
-                file_type = FileType.IMAGE if f.get("type") == "image" else FileType.IMAGE
-                tbox_files.append(File(file_id=f["file_id"], type=file_type))
-
-        def _chat_sync():
-            client = self._get_client()
-            return client.chat(
-                app_id=app_id,
-                user_id=user_id,
-                query=query,
-                stream=stream,
-                conversation_id=conversation_id,
-                files=tbox_files,
-            )
-
+    async def chat(self, app_id, user_id, query, stream=True, conversation_id=None, files=None):
+        payload = dict(
+            operation="chat",
+            api_key=self.api_key,
+            kwargs=dict(
+                app_id=app_id, user_id=user_id, query=query, stream=stream, conversation_id=conversation_id, files=files
+            ),
+        )
         try:
-            if stream:
-                async for chunk in _iterate_sync_in_thread(_chat_sync, timeout=self.timeout):
+            async with aclosing(vendor_stream(payload, timeout=self.timeout)) as chunks:
+                async for chunk in chunks:
                     yield chunk
-            else:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(_chat_sync),
-                    timeout=self.timeout,
-                )
-                yield response
-
         except TimeoutError:
-            raise TboxAPIError(
-                f"Tbox chat request timed out after {self.timeout}s",
-                code="tbox.timeout",
-                retryable=True,
-            ) from None
-        except Exception as e:
-            if _is_timeout_error(e):
-                raise TboxAPIError(
-                    f"Tbox chat request timed out after {self.timeout}s",
-                    code="tbox.timeout",
-                    retryable=True,
-                ) from None
-            raise TboxAPIError(f"Tbox chat request failed: {e}", code="tbox.chat_error") from e
-
-
-def _is_timeout_error(exc: BaseException) -> bool:
-    return isinstance(exc, TimeoutError) or "timeout" in exc.__class__.__name__.lower()
-
-
-async def _iterate_sync_in_thread(
-    factory: typing.Callable[[], typing.Iterable[dict[str, typing.Any]]],
-    *,
-    timeout: float,
-) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
-    """Iterate a blocking provider stream without blocking the event loop."""
-    sentinel = object()
-    output: queue.Queue[typing.Any] = queue.Queue()
-
-    def _worker() -> None:
-        try:
-            for item in factory():
-                output.put(item)
-        except BaseException as exc:
-            output.put(exc)
-        finally:
-            output.put(sentinel)
-
-    thread = threading.Thread(target=_worker, daemon=True)
-    thread.start()
-
-    async def _next_item():
-        # Cancelling to_thread(queue.get) cannot stop its blocking worker and
-        # can hang asyncio shutdown forever when the vendor stops producing.
-        while True:
-            try:
-                return output.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-
-    while True:
-        item = await asyncio.wait_for(_next_item(), timeout=timeout)
-        if item is sentinel:
-            break
-        if isinstance(item, BaseException):
-            raise item
-        yield item
+            raise TboxAPIError("Tbox chat timed out", code="tbox.timeout", retryable=True) from None
+        except (RuntimeError, ValueError):
+            raise TboxAPIError("Tbox chat worker failed", code="tbox.chat_error") from None

@@ -17,6 +17,7 @@ from langbot_plugin.api.entities.builtin.runner import (
     RunnerResult,
 )
 from pkg.reasoning import ResponseBudget, ThinkingFilter, positive_timeout, strict_bool
+from pkg.scoped_identity import scoped_identity
 from pkg.tbox_client import (
     AsyncTboxClient,
     TboxAPIError,
@@ -224,12 +225,12 @@ class DefaultRunner(Runner):
             conversation = ctx.conversation
             bot_id = conversation.bot_id if conversation else ctx.runtime.metadata.get("bot_id")
             if isinstance(bot_id, str) and bot_id:
-                return bot_id
+                return scoped_identity(self, ctx, bot_id)
             raise TboxConfigError("user-id-source requires trusted Host identity", code="tbox.identity_unavailable")
         actor = ctx.actor
         if actor and actor.actor_id:
-            return f"{actor.actor_type}_{actor.actor_id}"
-        return f"user_{ctx.run_id}"
+            return scoped_identity(self, ctx, f"{actor.actor_type}_{actor.actor_id}")
+        return scoped_identity(self, ctx, f"user_{ctx.run_id}")
 
     def _get_external_conversation_id(self, ctx: RunnerContext) -> str | None:
         """Get external conversation ID from state.
