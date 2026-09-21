@@ -24,7 +24,7 @@ def test_migrated_runner_suite(plugin, tmp_path):
     evidence_dir.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
-            sys.executable,
+            os.environ.get("LOCALAGENT_TEST_PYTHON", sys.executable) if plugin == "LocalAgent" else sys.executable,
             "-m",
             "pytest",
             "tests",
