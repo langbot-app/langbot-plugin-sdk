@@ -229,6 +229,8 @@ class AgentRuntimeDaemonHub:
             await asyncio.sleep(0.05)
 
     def _check_fence(self, daemon_id):
+        if any(s["daemon_id"] == daemon_id and s["cancelling"] for s in self._jobs.values()):
+            raise self._error(f"daemon {daemon_id} is cancelling; await cleanup before reuse", "daemon_cancelling")
         if daemon_id in self._fenced:
             raise self._error(
                 f"daemon {daemon_id} fenced: cleanup unconfirmed; stop remote jobs before restarting this worker",

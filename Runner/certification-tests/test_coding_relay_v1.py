@@ -358,3 +358,29 @@ async def test_bind_conflict_is_actionable():
     finally:
         await first.stop()
         await second.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_refuses_target_reuse():
+    m = load(FOLDERS[0])
+    hub = m.AgentRuntimeDaemonHub()
+    hub.cancel_timeout = 0.1
+    await hub.start(host="127.0.0.1", port=0, token=TOKEN)
+    ws = await connect(hub, "busy")
+    task = asyncio.create_task(collect(hub.run_job(daemon_id="busy", payload={}, tools=None, timeout=10)))
+    second = None
+    try:
+        await ws.recv()
+        task.cancel()
+        cancel = json.loads(await ws.recv())
+        assert cancel["type"] == "run.cancel"
+        second = asyncio.create_task(collect(hub.run_job(daemon_id="busy", payload={}, tools=None, timeout=0.01)))
+        with pytest.raises(m.AgentRuntimeDaemonError, match="cancelling|fenced"):
+            await second
+    finally:
+        task.cancel()
+        if second is not None:
+            second.cancel()
+        await asyncio.gather(task, *([second] if second is not None else []), return_exceptions=True)
+        await ws.close()
+        await hub.stop()
