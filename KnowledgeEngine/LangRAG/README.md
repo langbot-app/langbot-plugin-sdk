@@ -57,6 +57,15 @@ work, for `chunk`, `parent_child`, and `qa`. Over-budget ingestion returns a fai
 result without processing partial sections. This is an input-content limit, not
 a bound on generated Q&A, metadata, or total runtime memory.
 
+## Document Deletion
+
+Deletion confirms success only after Host `vector_delete` returns a nonnegative
+integer count. Zero is a successful no-op: a document may have no chunks, or its
+vectors may already have been deleted before a failed Host file-record commit.
+Errors, missing acknowledgements, and malformed counts are not proof of absence;
+they propagate and fence further mutations until reconciliation. This does not
+make vector deletion and Host file-record deletion one atomic transaction.
+
 ## Configuration
 
 ### Knowledge Base Creation

@@ -885,14 +885,18 @@ class LangRAG(KnowledgeEngine):
         count = None
         try:
             try:
-                count = await self.plugin.vector_delete(
+                result_count = await self.plugin.vector_delete(
                     collection_id=kb_id,
                     file_ids=[document_id],
                 )
+                if type(result_count) is not int or result_count < 0:
+                    raise ValueError("Host vector_delete must return a nonnegative integer count")
+                count = result_count
             except BaseException:
                 self._state.fenced = True
                 raise
-            deleted = count > 0
+            # An authoritative no-op also confirms absence (empty ingest or retry).
+            deleted = True
             status = "completed"
             return deleted
         except Exception as e:
