@@ -951,22 +951,24 @@ class NativeCodexRunner(Runner):
                 args = ssh_args
             else:
                 env, cwd = _prepare_local_codex_home(config["workspace"], session_id or ctx.run_id, env, mcp_toml)
-            async with contextlib.aclosing(_run_cli_process(
-                ctx,
-                command,
-                args,
-                cwd=cwd,
-                env=env,
-                timeout=config["timeout"],
-                streaming=config["streaming"],
-                resume_session_id=session_id,
-                prompt=prompt,
-                agent_cwd=config["workspace"],
-                approval_policy=config["approval_policy"],
-                sandbox_mode=config["sandbox_mode"],
-                approval_grant=approval_grant,
-                initial_stdin=initial_stdin,
-            )) as event_stream:
+            async with contextlib.aclosing(
+                _run_cli_process(
+                    ctx,
+                    command,
+                    args,
+                    cwd=cwd,
+                    env=env,
+                    timeout=config["timeout"],
+                    streaming=config["streaming"],
+                    resume_session_id=session_id,
+                    prompt=prompt,
+                    agent_cwd=config["workspace"],
+                    approval_policy=config["approval_policy"],
+                    sandbox_mode=config["sandbox_mode"],
+                    approval_grant=approval_grant,
+                    initial_stdin=initial_stdin,
+                )
+            ) as event_stream:
                 async for result in event_stream:
                     yield result
         finally:
@@ -1008,12 +1010,14 @@ class NativeCodexRunner(Runner):
             },
             "approval_grant": approval_grant,
         }
-        async with contextlib.aclosing(hub.run_job(
-            daemon_id=config["daemon_id"],
-            payload=payload,
-            tools=tools,
-            timeout=config["timeout"],
-        )) as event_stream:
+        async with contextlib.aclosing(
+            hub.run_job(
+                daemon_id=config["daemon_id"],
+                payload=payload,
+                tools=tools,
+                timeout=config["timeout"],
+            )
+        ) as event_stream:
             async for event in event_stream:
                 event.setdefault("run_id", ctx.run_id)
                 yield RunnerResult.model_validate(event)
@@ -1050,23 +1054,25 @@ class NativeCodexDaemon(AgentRuntimeDaemonClient):
                 mcp_toml,
             )
             try:
-                async with contextlib.aclosing(_run_cli_process_events(
-                    argv[0],
-                    argv[1:],
-                    cwd=cwd,
-                    env=env,
-                    timeout=float(config.get("timeout") or DEFAULT_TIMEOUT_SECONDS),
-                    streaming=bool(config.get("streaming", True)),
-                    resume_session_id=session_id,
-                    prompt=str(payload.get("prompt") or ""),
-                    agent_cwd=cwd,
-                    approval_policy=config.get("approval_policy"),
-                    sandbox_mode=config.get("sandbox_mode"),
-                    approval_grant=(
-                        dict(payload["approval_grant"]) if isinstance(payload.get("approval_grant"), dict) else None
-                    ),
-                    initial_stdin=b"",
-                )) as event_stream:
+                async with contextlib.aclosing(
+                    _run_cli_process_events(
+                        argv[0],
+                        argv[1:],
+                        cwd=cwd,
+                        env=env,
+                        timeout=float(config.get("timeout") or DEFAULT_TIMEOUT_SECONDS),
+                        streaming=bool(config.get("streaming", True)),
+                        resume_session_id=session_id,
+                        prompt=str(payload.get("prompt") or ""),
+                        agent_cwd=cwd,
+                        approval_policy=config.get("approval_policy"),
+                        sandbox_mode=config.get("sandbox_mode"),
+                        approval_grant=(
+                            dict(payload["approval_grant"]) if isinstance(payload.get("approval_grant"), dict) else None
+                        ),
+                        initial_stdin=b"",
+                    )
+                ) as event_stream:
                     async for event in event_stream:
                         await self.emit_event(job_id, event)
             except NativeCliError as exc:
@@ -1100,21 +1106,23 @@ async def _run_cli_process(
     initial_stdin: bytes = b"",
 ) -> typing.AsyncGenerator[RunnerResult, None]:
     try:
-        async with contextlib.aclosing(_run_cli_process_events(
-            command,
-            args,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            streaming=streaming,
-            resume_session_id=resume_session_id,
-            prompt=prompt,
-            agent_cwd=agent_cwd,
-            approval_policy=approval_policy,
-            sandbox_mode=sandbox_mode,
-            approval_grant=approval_grant,
-            initial_stdin=initial_stdin,
-        )) as event_stream:
+        async with contextlib.aclosing(
+            _run_cli_process_events(
+                command,
+                args,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                streaming=streaming,
+                resume_session_id=resume_session_id,
+                prompt=prompt,
+                agent_cwd=agent_cwd,
+                approval_policy=approval_policy,
+                sandbox_mode=sandbox_mode,
+                approval_grant=approval_grant,
+                initial_stdin=initial_stdin,
+            )
+        ) as event_stream:
             async for event in event_stream:
                 event.setdefault("run_id", ctx.run_id)
                 yield RunnerResult.model_validate(event)

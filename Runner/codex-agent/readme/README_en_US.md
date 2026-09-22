@@ -120,3 +120,11 @@ nsjail/cgroup policy, not the separate Box managed-process quota.
   installation-owned credentials. These are functional prerequisites, separate
   from certification, signing, and two-Workspace live acceptance. Do not relax
   global Box policy or use unreviewed automatic installers to satisfy them.
+
+Codex retains authentication and resume files in the installation's own
+`$HOME/.codex` (or explicitly configured `CODEX_HOME`). Per-run MCP configuration
+remains separate; persisted sessions/auth intentionally remain available across
+turns. Concurrent writes to the same resumed session are serialized by a
+POSIX file lock in its shared sessions directory. Different accounts/session IDs
+remain independent. This is continuity within an installation, not a claim that
+Agent configurations sharing an external account are separate security tenants.

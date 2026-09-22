@@ -650,17 +650,19 @@ class NativeClaudeCodeRunner(Runner):
                 )
                 command = "ssh"
                 args = ssh_args
-            async with contextlib.aclosing(_run_cli_process(
-                ctx,
-                command,
-                args,
-                cwd=cwd,
-                env=env,
-                timeout=config["timeout"],
-                streaming=config["streaming"],
-                expected_session_id=session_id,
-                initial_stdin=initial_stdin,
-            )) as event_stream:
+            async with contextlib.aclosing(
+                _run_cli_process(
+                    ctx,
+                    command,
+                    args,
+                    cwd=cwd,
+                    env=env,
+                    timeout=config["timeout"],
+                    streaming=config["streaming"],
+                    expected_session_id=session_id,
+                    initial_stdin=initial_stdin,
+                )
+            ) as event_stream:
                 async for result in event_stream:
                     yield result
         finally:
@@ -705,12 +707,14 @@ class NativeClaudeCodeRunner(Runner):
                 "langbot_assets_enabled": config["langbot_assets_enabled"],
             },
         }
-        async with contextlib.aclosing(hub.run_job(
-            daemon_id=config["daemon_id"],
-            payload=payload,
-            tools=tools,
-            timeout=config["timeout"],
-        )) as event_stream:
+        async with contextlib.aclosing(
+            hub.run_job(
+                daemon_id=config["daemon_id"],
+                payload=payload,
+                tools=tools,
+                timeout=config["timeout"],
+            )
+        ) as event_stream:
             async for event in event_stream:
                 event.setdefault("run_id", ctx.run_id)
                 yield RunnerResult.model_validate(event)
@@ -746,16 +750,18 @@ class NativeClaudeCodeDaemon(AgentRuntimeDaemonClient):
                 # See NativeClaudeCodeRunner._argv: resume continues, session-id creates.
                 argv.extend(["--resume", session_id] if payload.get("resume") else ["--session-id", session_id])
             try:
-                async with contextlib.aclosing(_run_cli_process_events(
-                    argv[0],
-                    argv[1:],
-                    cwd=str(config.get("workspace") or os.getcwd()),
-                    env={**os.environ, **{str(k): str(v) for k, v in dict(config.get("env") or {}).items()}},
-                    timeout=float(config.get("timeout") or 300.0),
-                    streaming=bool(config.get("streaming", True)),
-                    expected_session_id=session_id,
-                    initial_stdin=_prompt_stdin(str(payload.get("prompt") or "")),
-                )) as event_stream:
+                async with contextlib.aclosing(
+                    _run_cli_process_events(
+                        argv[0],
+                        argv[1:],
+                        cwd=str(config.get("workspace") or os.getcwd()),
+                        env={**os.environ, **{str(k): str(v) for k, v in dict(config.get("env") or {}).items()}},
+                        timeout=float(config.get("timeout") or 300.0),
+                        streaming=bool(config.get("streaming", True)),
+                        expected_session_id=session_id,
+                        initial_stdin=_prompt_stdin(str(payload.get("prompt") or "")),
+                    )
+                ) as event_stream:
                     async for event in event_stream:
                         await self.emit_event(job_id, event)
             except NativeCliError as exc:
@@ -788,16 +794,18 @@ async def _run_cli_process(
     initial_stdin: bytes = b"",
 ) -> typing.AsyncGenerator[RunnerResult, None]:
     try:
-        async with contextlib.aclosing(_run_cli_process_events(
-            command,
-            args,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-            streaming=streaming,
-            expected_session_id=expected_session_id,
-            initial_stdin=initial_stdin,
-        )) as event_stream:
+        async with contextlib.aclosing(
+            _run_cli_process_events(
+                command,
+                args,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                streaming=streaming,
+                expected_session_id=expected_session_id,
+                initial_stdin=initial_stdin,
+            )
+        ) as event_stream:
             async for event in event_stream:
                 event.setdefault("run_id", ctx.run_id)
                 yield RunnerResult.model_validate(event)

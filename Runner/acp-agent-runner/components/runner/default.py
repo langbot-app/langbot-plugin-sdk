@@ -390,7 +390,10 @@ class DefaultRunner(Runner):
             raise AcpError("workspace is required when location=remote-ssh", code="acp.config_invalid")
 
         if location == "local":
-            workspace = local_workspace(_first_config_value(config, WORKSPACE_CONFIG_KEYS) or _first_config_value(config, LOCAL_WORKSPACE_CONFIG_KEYS))
+            workspace = local_workspace(
+                _first_config_value(config, WORKSPACE_CONFIG_KEYS)
+                or _first_config_value(config, LOCAL_WORKSPACE_CONFIG_KEYS)
+            )
 
         ssh_target = _first_config_value(config, SSH_TARGET_CONFIG_KEYS)
         if location == "remote-ssh" and not ssh_target:
@@ -795,12 +798,14 @@ class DefaultRunner(Runner):
         await hub.wait_for_daemon(config["daemon_id"], config["daemon_connect_timeout"])
         tools = AgentRunExternalTools(self.get_run_api(ctx), ctx) if config["mcp_bridge_enabled"] else None
         payload = self._daemon_payload(ctx, config, prompt_text, stored_session_id)
-        async with contextlib.aclosing(hub.run_job(
-            daemon_id=config["daemon_id"],
-            payload=payload,
-            tools=tools,
-            timeout=config["timeout"],
-        )) as event_stream:
+        async with contextlib.aclosing(
+            hub.run_job(
+                daemon_id=config["daemon_id"],
+                payload=payload,
+                tools=tools,
+                timeout=config["timeout"],
+            )
+        ) as event_stream:
             async for event in event_stream:
                 event.setdefault("run_id", ctx.run_id)
                 yield RunnerResult.model_validate(event)

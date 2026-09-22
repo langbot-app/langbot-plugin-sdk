@@ -356,9 +356,9 @@ class DefaultRunner(Runner):
             files = await self._upload_input_files(ctx, client)
 
             # Own every delegated generator through downstream backpressure/close.
-            async with aclosing(self._run_chat(
-                ctx, client, app_id, user_id, input_text, conversation_id, files, is_stream
-            )) as results:
+            async with aclosing(
+                self._run_chat(ctx, client, app_id, user_id, input_text, conversation_id, files, is_stream)
+            ) as results:
                 async for result in results:
                     yield result
         except TboxAPIError as e:
@@ -404,14 +404,16 @@ class DefaultRunner(Runner):
         think_end = False
         usage: dict[str, typing.Any] | None = None
 
-        async with aclosing(client.chat(
-            app_id=app_id,
-            user_id=user_id,
-            query=input_text,
-            stream=is_stream,
-            conversation_id=conversation_id,
-            files=files if files else None,
-        )) as chunks:
+        async with aclosing(
+            client.chat(
+                app_id=app_id,
+                user_id=user_id,
+                query=input_text,
+                stream=is_stream,
+                conversation_id=conversation_id,
+                files=files if files else None,
+            )
+        ) as chunks:
             async for chunk in chunks:
                 chunk_type = chunk.get("type", "")
                 usage = _usage_from_payload(chunk, chunk.get("payload"), chunk.get("data")) or usage

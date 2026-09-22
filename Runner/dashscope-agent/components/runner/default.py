@@ -324,12 +324,14 @@ class DefaultRunner(Runner):
         # Match native request flags as well as filtering provider output.
         enable_thinking = not remove_think
 
-        async with aclosing(client.iter_agent(
-            prompt=input_text,
-            session_id=session_id,
-            enable_thinking=enable_thinking,
-            biz_params=extra_biz_params or None,
-        )) as chunks:
+        async with aclosing(
+            client.iter_agent(
+                prompt=input_text,
+                session_id=session_id,
+                enable_thinking=enable_thinking,
+                biz_params=extra_biz_params or None,
+            )
+        ) as chunks:
             async for chunk in chunks:
                 if not chunk:
                     continue
@@ -464,11 +466,13 @@ class DefaultRunner(Runner):
         if extra_biz_params:
             biz_params = {**biz_params, **extra_biz_params}
 
-        async with aclosing(client.iter_workflow(
-            prompt=input_text,
-            session_id=session_id,
-            biz_params=biz_params,
-        )) as chunks:
+        async with aclosing(
+            client.iter_workflow(
+                prompt=input_text,
+                session_id=session_id,
+                biz_params=biz_params,
+            )
+        ) as chunks:
             async for chunk in chunks:
                 if not chunk:
                     continue

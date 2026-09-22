@@ -18,10 +18,7 @@ HTTP_PLUGINS = {
     "tbox-agent",
     "weknora-agent",
 }
-EXPECTED_SDK = {
-    **dict.fromkeys(CODING_PLUGINS, "langbot-plugin==0.6.0b3"),
-    **dict.fromkeys(HTTP_PLUGINS | {"LocalAgent", "RunnerDemo"}, SDK_REQUIREMENT),
-}
+EXPECTED_SDK = dict.fromkeys(CODING_PLUGINS | HTTP_PLUGINS | {"LocalAgent", "RunnerDemo"}, SDK_REQUIREMENT)
 PLUGINS = sorted(p.parent for p in ROOT.glob("*/manifest.yaml"))
 
 
