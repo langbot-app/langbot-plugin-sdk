@@ -42,12 +42,12 @@ jobs:
         run: uv sync --locked --dev
       - name: Verify published SDK pin
         run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b5"; print("langbot-plugin", version("langbot-plugin"))'
-      - name: Prepare isolated legacy coding Runner SDK environment
+      - name: Prepare isolated certified coding Runner SDK environment
         run: |
-          uv venv "$RUNNER_TEMP/coding-b3"
-          uv pip install --python "$RUNNER_TEMP/coding-b3/bin/python" -r acp-agent-runner/requirements.txt -r claude-code-agent/requirements.txt -r codex-agent/requirements.txt pytest pyyaml packaging
-          "$RUNNER_TEMP/coding-b3/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b3"'
-          printf 'CODING_RUNNER_TEST_PYTHON=%s/coding-b3/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          uv venv "$RUNNER_TEMP/coding-b5"
+          uv pip install --python "$RUNNER_TEMP/coding-b5/bin/python" -r acp-agent-runner/requirements.txt -r claude-code-agent/requirements.txt -r codex-agent/requirements.txt pytest pyyaml packaging
+          "$RUNNER_TEMP/coding-b5/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b5"'
+          printf 'CODING_RUNNER_TEST_PYTHON=%s/coding-b5/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Prepare isolated certified LocalAgent SDK environment
         run: |
           UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/localagent-b5" uv sync --project LocalAgent --locked --extra dev
