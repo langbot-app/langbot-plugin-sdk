@@ -743,6 +743,22 @@ class ControlConnectionHandler(handler.Handler):
                 "use installation desired state"
             )
 
+        # Legacy OSS Runtime-to-Core file transfer predates installation bindings.
+        # It may use the one Workspace tuple already pinned by registration; do
+        # not let an unbound transfer choose that Workspace, and never permit it
+        # in shared Runtime.
+        if (
+            action == CommonAction.FILE_CHUNK.value
+            and self.context.runtime_profile == "oss_dev"
+            and isinstance(action_context, ActionContext)
+            and not isinstance(action_context, InstallationBinding)
+        ):
+            if self.context.workspace_binding is None:
+                raise ValueError(
+                    "Legacy FILE_CHUNK requires a pinned Workspace binding"
+                )
+            return self.context.bind_workspace(action_context)
+
         if action in {
             LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
             LangBotToRuntimeAction.REMOVE_PLUGIN_INSTALLATION.value,

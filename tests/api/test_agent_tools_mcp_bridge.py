@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import os
 import time
@@ -755,6 +756,44 @@ def test_asset_gateway_cleans_expired_registrations() -> None:
             assert response["result"]["isError"] is True
             assert "run_token" in response["result"]["content"][0]["text"]
         finally:
+            gateway.stop()
+
+    asyncio.run(run_probe())
+
+
+def test_asset_gateway_http_rejects_oversized_and_times_out_slow_requests() -> None:
+    async def run_probe() -> None:
+        gateway = AgentAssetGateway(request_timeout=0.1)
+        registration = gateway.register_run(
+            FakeRunAPI(), _authorized_ctx(), token="bounded-token"
+        )
+        try:
+            assert gateway._server is not None
+            port = gateway._server.server_address[1]
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            try:
+                connection.putrequest("POST", "/mcp")
+                connection.putheader("Content-Length", str(1024 * 1024 + 1))
+                connection.endheaders()
+                assert connection.getresponse().status == 413
+            finally:
+                connection.close()
+
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+            try:
+                connection.putrequest("POST", "/mcp")
+                connection.putheader("Content-Length", "100")
+                connection.endheaders()
+                connection.send(b"{")
+                with pytest.raises(http.client.RemoteDisconnected):
+                    connection.getresponse()
+            finally:
+                connection.close()
+
+            await asyncio.sleep(0.05)
+            assert gateway.active_handler_count == 0
+        finally:
+            registration.stop()
             gateway.stop()
 
     asyncio.run(run_probe())
