@@ -21,7 +21,7 @@ cached_event_contexts: weakref.WeakValueDictionary[int, EventContext] = (
 class EventContext(WorkspaceExecutionScope):
     """事件上下文, 保存此次事件运行的信息"""
 
-    query_id: int
+    query_id: int = 0
     """请求ID"""
 
     query_uuid: str | None = None
@@ -91,7 +91,8 @@ class EventContext(WorkspaceExecutionScope):
     @classmethod
     def from_event(cls, event: BaseEventModel) -> EventContext:
         global global_eid_index
-        query_id = event.query.query_id
+        query = event.query
+        query_id = query.query_id if query else 0
         eid = global_eid_index
         event = event
         event_name = event.__class__.__name__
@@ -99,11 +100,13 @@ class EventContext(WorkspaceExecutionScope):
         is_prevent_postorder = False
 
         obj = cls(
-            instance_uuid=event.query.instance_uuid,
-            workspace_uuid=event.query.workspace_uuid,
-            placement_generation=event.query.placement_generation,
+            instance_uuid=query.instance_uuid if query else event.instance_uuid,
+            workspace_uuid=query.workspace_uuid if query else event.workspace_uuid,
+            placement_generation=(
+                query.placement_generation if query else event.placement_generation
+            ),
             query_id=query_id,
-            query_uuid=event.query.query_uuid,
+            query_uuid=query.query_uuid if query else event.query_uuid,
             eid=eid,
             event_name=event_name,
             event=event,

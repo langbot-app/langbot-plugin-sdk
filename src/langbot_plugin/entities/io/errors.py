@@ -86,8 +86,9 @@ class DependencyVerificationError(Exception):
 class ActionCallError(Exception):
     """The action call failed."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, data: dict | None = None):
         self.message = message
+        self.data = data or {}
 
     def __str__(self):
         return self.message

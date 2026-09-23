@@ -1573,3 +1573,35 @@ async def test_completed_process_diagnostics_are_globally_bounded(logger):
 
         assert set(runtime._sessions["bounded"].managed_processes) == {"two"}
         await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_capacity_and_reuse_are_atomic_at_full_capacity(logger):
+    from langbot_plugin.box.tenancy import namespace_session_id
+
+    context = ActionContext(
+        instance_uuid="instance", workspace_uuid="workspace", placement_generation=1
+    )
+    backend = FakeBackend(logger)
+    runtime = BoxRuntime(logger=logger, backends=[backend], max_sessions=1)
+    await runtime.initialize()
+    try:
+        spec = BoxSpec(session_id=namespace_session_id(context, "shared"))
+        first, second = await asyncio.gather(
+            runtime.create_session(spec, action_context=context),
+            runtime.create_session(spec, action_context=context),
+        )
+        assert first["backend_session_id"] == second["backend_session_id"]
+        assert await runtime.get_capacity(context) == {
+            "limit": 1,
+            "used": 1,
+            "remaining": 0,
+        }
+        await runtime.create_session(spec, action_context=context)
+        with pytest.raises(BoxCapacityExceededError):
+            await runtime.create_session(
+                BoxSpec(session_id=namespace_session_id(context, "another")),
+                action_context=context,
+            )
+    finally:
+        await runtime.shutdown()

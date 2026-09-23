@@ -148,6 +148,22 @@ def page_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def runner_component_input_post_process(values: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "runner_name": values["runner_name"],
+        "runner_label": values["runner_name"],
+        "runner_description": values["runner_description"],
+        "runner_attr": values["runner_name"],
+    }
+
+    python_attr_valid_name = "".join(
+        word.capitalize() for word in values["runner_name"].split("_")
+    )
+    result["runner_label"] = python_attr_valid_name
+    result["runner_attr"] = python_attr_valid_name
+    return result
+
+
 component_types = [
     ComponentType(
         type_name="EventListener",
@@ -389,5 +405,54 @@ component_types = [
             },
         ],
         input_post_process=page_component_input_post_process,
+    ),
+    ComponentType(
+        type_name="Runner",
+        target_dir="components/runner",
+        template_files=[
+            "{runner_name}.yaml",
+            "{runner_name}.py",
+        ],
+        form_fields=[
+            {
+                "name": "runner_name",
+                "label": {
+                    "en_US": "Runner name",
+                    "zh_Hans": "Runner 名称",
+                    "zh_Hant": "Runner 名稱",
+                    "ja_JP": "Runner名",
+                    "th_TH": "ชื่อ Runner",
+                    "vi_VN": "Tên Runner",
+                    "es_ES": "Nombre de Runner",
+                },
+                "required": True,
+                "format": {
+                    "regexp": NUMBER_LOWER_UNDERSCORE_REGEXP,
+                    "error": {
+                        "en_US": "Invalid Runner name, please use a valid name, which only contains lowercase letters, numbers, underscores and hyphens, and start with a letter.",
+                        "zh_Hans": "无效的 Runner 名称，请使用一个有效的名称，只能包含小写字母、数字、下划线和连字符，且以字母开头。",
+                        "zh_Hant": "無效的 Runner 名稱，請使用一個有效的名稱，只能包含小寫字母、數字、下劃線和連字符，且以字母開頭。",
+                        "ja_JP": "無効なRunner名です。有効な名前を使用してください。小文字、数字、アンダースコア、ハイフンのみを使用し、先頭は文字でなければなりません。",
+                        "th_TH": "ชื่อ Runner ไม่ถูกต้อง กรุณาใช้ชื่อที่ถูกต้อง ซึ่งประกอบด้วยตัวอักษรพิมพ์เล็ก ตัวเลข ขีดล่าง และขีดกลาง และขึ้นต้นด้วยตัวอักษร",
+                        "vi_VN": "Tên Runner không hợp lệ, vui lòng sử dụng tên hợp lệ, chỉ chứa chữ thường, số, dấu gạch dưới và dấu gạch ngang, bắt đầu bằng chữ cái.",
+                        "es_ES": "Nombre de Runner no válido, por favor use un nombre válido que solo contenga letras minúsculas, números, guiones bajos y guiones, comenzando con una letra.",
+                    },
+                },
+            },
+            {
+                "name": "runner_description",
+                "label": {
+                    "en_US": "Runner description",
+                    "zh_Hans": "Runner 描述",
+                    "zh_Hant": "Runner 描述",
+                    "ja_JP": "Runnerの説明",
+                    "th_TH": "คำอธิบาย Runner",
+                    "vi_VN": "Mô tả Runner",
+                    "es_ES": "Descripción de Runner",
+                },
+                "required": True,
+            },
+        ],
+        input_post_process=runner_component_input_post_process,
     ),
 ]

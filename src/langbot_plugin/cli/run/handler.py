@@ -8,6 +8,7 @@ import logging
 from copy import deepcopy
 from pathlib import Path
 
+from langbot_plugin.utils.deadline import anext_with_deadline
 from langbot_plugin.api.entities.builtin.pipeline.query import provider_session
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.resp import ActionResponse
@@ -83,6 +84,55 @@ def _resolve_asset_path(file_key: str) -> Path | None:
             return resolved
 
     return None
+
+
+async def _iter_runner_results_with_deadline(
+    runner_instance: typing.Any,
+    run_context: typing.Any,
+) -> typing.AsyncGenerator[typing.Any, None]:
+    """Iterate runner results and cancel the runner when the run deadline expires."""
+    from langbot_plugin.api.entities.builtin.runner.result import RunnerResult
+
+    result_gen = runner_instance.invoke(run_context)
+    sequence = 0
+    try:
+        while True:
+            try:
+                result = await anext_with_deadline(
+                    result_gen,
+                    run_context.runtime.deadline_at,
+                )
+            except StopAsyncIteration:
+                break
+
+            sequence += 1
+            if hasattr(result, "model_copy"):
+                result = result.model_copy(update={"sequence": sequence})
+            yield result
+    except asyncio.TimeoutError:
+        sequence += 1
+        yield RunnerResult.run_failed(
+            run_id=run_context.run_id,
+            error="Agent runner timed out",
+            code="runner.timeout",
+            retryable=True,
+            sequence=sequence,
+        )
+    except Exception as e:
+        sequence += 1
+        yield RunnerResult.run_failed(
+            run_id=run_context.run_id,
+            error=f"Error running agent: {e}",
+            code="runner.exception",
+            sequence=sequence,
+        )
+    finally:
+        try:
+            await result_gen.aclose()
+        except Exception as exc:
+            logger.debug(
+                "Failed to close Runner result generator: %s", exc, exc_info=True
+            )
 
 
 class PluginRuntimeHandler(Handler):
@@ -344,6 +394,106 @@ class PluginRuntimeHandler(Handler):
             else:
                 yield ActionResponse.error(
                     f"Command {command_context.command} not found"
+                )
+
+        @self.action(RuntimeToPluginAction.RUN_RUNNER)
+        async def run_runner(
+            data: dict[str, typing.Any],
+        ) -> typing.AsyncGenerator[ActionResponse, None]:
+            """Run a Runner component."""
+            from langbot_plugin.api.definition.components.runner.runner import (
+                Runner,
+            )
+            from langbot_plugin.api.entities.builtin.runner.context import (
+                RunnerContext,
+            )
+            from langbot_plugin.api.entities.builtin.runner.result import (
+                RunnerResult,
+            )
+
+            runner_name = data["runner_name"]
+            context_data = data["context"]
+            run_id = (
+                context_data.get("run_id", "unknown")
+                if isinstance(context_data, dict)
+                else "unknown"
+            )
+
+            # Validate context
+            try:
+                run_context = RunnerContext.model_validate(context_data)
+            except Exception as e:
+                yield ActionResponse.success(
+                    RunnerResult.run_failed(
+                        run_id=run_id,
+                        error=f"Context validation failed: {e}",
+                        code="runner.context_invalid",
+                        sequence=1,
+                    ).model_dump(mode="json")
+                )
+                return
+
+            # Find the Runner component
+            component_kind = run_context.runtime.metadata.get(
+                "component_kind", "Runner"
+            )
+            if component_kind not in {"Runner"}:
+                raise ValueError("Unsupported processor component kind")
+            runner_component = None
+            for component in self.plugin_container.components:
+                if component.manifest.kind == component_kind:
+                    if component.manifest.metadata.name == runner_name:
+                        runner_component = component
+                        break
+
+            if runner_component is None:
+                yield ActionResponse.success(
+                    RunnerResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"Runner {runner_name} not found",
+                        code="runner.not_found",
+                        sequence=1,
+                    ).model_dump(mode="json")
+                )
+                return
+
+            # Check if initialized
+            if isinstance(runner_component.component_instance, NoneComponent):
+                yield ActionResponse.success(
+                    RunnerResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"Runner {runner_name} not initialized",
+                        code="runner.not_initialized",
+                        sequence=1,
+                    ).model_dump(mode="json")
+                )
+                return
+
+            runner_instance = runner_component.component_instance
+            assert isinstance(runner_instance, Runner)
+
+            # Run the agent and stream results
+            last_sequence = 0
+            try:
+                async for result in _iter_runner_results_with_deadline(
+                    runner_instance,
+                    run_context,
+                ):
+                    result_sequence = getattr(result, "sequence", None)
+                    if isinstance(result_sequence, int) and result_sequence > 0:
+                        last_sequence = result_sequence
+                    else:
+                        last_sequence += 1
+                    yield ActionResponse.success(result.model_dump(mode="json"))
+            except Exception as e:
+                logger.exception("Runner %s failed", runner_name)
+                yield ActionResponse.success(
+                    RunnerResult.run_failed(
+                        run_id=run_context.run_id,
+                        error=f"Error running agent: {e}",
+                        code="runner.exception",
+                        sequence=last_sequence + 1,
+                    ).model_dump(mode="json")
                 )
 
         @self.action(RuntimeToPluginAction.RETRIEVE_KNOWLEDGE)

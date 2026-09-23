@@ -16,6 +16,7 @@ from langbot_plugin.runtime.bounded_executor import (
     configure_bounded_default_executor_from_env,
     run_blocking_atomic,
     run_blocking_cleanup,
+    run_blocking_with_backpressure,
 )
 
 
@@ -197,6 +198,45 @@ def test_blocking_cleanup_waits_for_capacity_instead_of_leaking_work():
         loop.run_until_complete(exercise())
         assert cleaned.is_set()
         assert executor.snapshot()["global_rejected_total"] >= 1
+    finally:
+        release.set()
+        executor.shutdown()
+        loop.close()
+
+
+def test_transport_backpressure_waits_for_workspace_capacity():
+    loop = asyncio.new_event_loop()
+    executor = configure_bounded_default_executor(
+        loop,
+        max_workers=2,
+        max_pending=2,
+        max_inflight_per_scope=1,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def block() -> None:
+        started.set()
+        release.wait(timeout=5)
+
+    async def exercise() -> None:
+        with blocking_work_scope("workspace-a"):
+            blocker = asyncio.create_task(asyncio.to_thread(block))
+            while not started.is_set():
+                await asyncio.sleep(0)
+            waiting = asyncio.create_task(
+                run_blocking_with_backpressure(lambda: "admitted")
+            )
+
+        await asyncio.sleep(0.03)
+        assert not waiting.done()
+        release.set()
+        await blocker
+        assert await waiting == "admitted"
+
+    try:
+        loop.run_until_complete(exercise())
+        assert executor.snapshot()["scope_rejected_total"] >= 1
     finally:
         release.set()
         executor.shutdown()

@@ -7,6 +7,21 @@ import pydantic
 import sys
 
 
+class InvalidRunnerManifest(ValueError):
+    """A Runner must explicitly declare its supported product usages."""
+
+
+class RunnerUsageSpec(pydantic.BaseModel):
+    usages: list[typing.Literal["agent", "event"]] = pydantic.Field(min_length=1)
+    events: list[str] = pydantic.Field(default_factory=list)
+
+    @pydantic.model_validator(mode="after")
+    def validate_events(self) -> RunnerUsageSpec:
+        if "event" in self.usages and not self.events:
+            raise ValueError("Event usage requires an explicit spec.events declaration")
+        return self
+
+
 class I18nString(pydantic.BaseModel):
     """Internationalized string"""
 
@@ -142,6 +157,13 @@ class ComponentManifest(pydantic.BaseModel):
         )
         self._metadata = Metadata(**manifest["metadata"])
         self._spec = manifest["spec"]
+        if manifest.get("kind") == "Runner":
+            try:
+                RunnerUsageSpec.model_validate(self._spec)
+            except pydantic.ValidationError as exc:
+                raise InvalidRunnerManifest(
+                    f"Invalid Runner manifest {rel_path}: {exc}"
+                ) from exc
         self._rel_dir = os.path.dirname(rel_path)
         self._execution = (
             Execution(**manifest["execution"]) if "execution" in manifest else None

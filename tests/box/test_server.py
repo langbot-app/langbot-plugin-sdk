@@ -138,6 +138,9 @@ def mock_runtime():
             "session_ttl_sec": 300,
         }
     )
+    runtime.get_capacity = mock.AsyncMock(
+        return_value={"limit": 10, "used": 0, "remaining": 10}
+    )
     runtime.execute = mock.AsyncMock()
     runtime.create_session = mock.AsyncMock(return_value={"session_id": "s1"})
     runtime.get_session = mock.MagicMock(return_value={"session_id": "s1"})
