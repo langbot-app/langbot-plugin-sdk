@@ -73,6 +73,26 @@ async def run_blocking_atomic(
         raise
 
 
+async def run_blocking_with_backpressure(
+    fn: Callable[..., Any],
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Wait for bounded capacity instead of failing transport-critical work."""
+
+    retry_delay = _CLEANUP_RETRY_INITIAL_SECONDS
+    while True:
+        try:
+            return await asyncio.to_thread(fn, *args, **kwargs)
+        except BlockingWorkCapacityError:
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(
+                retry_delay * 2,
+                _CLEANUP_RETRY_MAX_SECONDS,
+            )
+
+
 async def run_blocking_cleanup(
     fn: Callable[..., Any],
     /,

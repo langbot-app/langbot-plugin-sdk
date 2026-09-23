@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -958,6 +959,61 @@ async def test_control_handler_install_plugin_marketplace_does_not_read_local_fi
         {"current_action": "plugin installed"},
         {},
     ]
+
+
+async def test_status_reads_remain_available_during_plugin_apply(monkeypatch):
+    """A long desired-state apply must not serialize unrelated status reads."""
+
+    handler, manager = _handler()
+    install_started = asyncio.Event()
+    release_install = asyncio.Event()
+
+    async def slow_apply(
+        binding,
+        *,
+        artifact_package=None,
+        enabled=True,
+    ):
+        del binding, artifact_package, enabled
+        install_started.set()
+        await release_install.wait()
+        return {"installation_uuid": "installation-1", "state": "starting"}
+
+    monkeypatch.setattr(manager, "apply_plugin_installation", slow_apply)
+
+    async with ProtocolSession(handler) as session:
+        await session.connection.send_peer_request(
+            LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
+            {"enabled": True},
+            seq_id=41,
+            action_context=TEST_INSTALLATION_BINDING,
+        )
+        try:
+            await asyncio.wait_for(install_started.wait(), timeout=1)
+
+            ping_response = await asyncio.wait_for(
+                session.request(
+                    CommonAction.PING.value,
+                    seq_id=42,
+                    action_context=None,
+                ),
+                timeout=0.5,
+            )
+            list_response = await asyncio.wait_for(
+                session.request(
+                    LangBotToRuntimeAction.LIST_PLUGINS.value,
+                    seq_id=43,
+                ),
+                timeout=0.5,
+            )
+
+            assert ping_response["seq_id"] == 42
+            assert ping_response["code"] == 0
+            assert list_response["seq_id"] == 43
+            assert list_response["code"] == 0
+            assert len(list_response["data"]["plugins"]) == 1
+        finally:
+            release_install.set()
 
 
 async def test_shared_control_handler_rejects_legacy_plugin_lifecycle_before_io(

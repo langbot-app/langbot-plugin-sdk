@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import pathlib
 from unittest import mock
 
@@ -279,7 +280,7 @@ def test_build_nsjail_args_basic(backend, tmp_base):
 
     # Writable mounts should reference session directories.
     rw_binds = [args[i + 1] for i, a in enumerate(args) if a == "--bindmount"]
-    workspace_mount = f"{session_dir}/workspace:/workspace"
+    workspace_mount = f"{session_dir / 'workspace'}:/workspace"
     assert workspace_mount in rw_binds
 
     # Custom env should be present.
@@ -643,7 +644,7 @@ def test_detect_cgroup_v2_subtree_writable():
     """
 
     def fake_exists(self):
-        path = str(self)
+        path = str(self).replace("\\", "/")
         return path in (
             "/sys/fs/cgroup",
             "/sys/fs/cgroup/cgroup.controllers",
@@ -701,6 +702,10 @@ def test_detect_cgroup_v2_rejects_partial_controller_delegation():
         assert NsjailBackend._detect_cgroup_v2() is False
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="NsJail is Linux-only and Windows may not permit symlinks",
+)
 def test_readonly_system_symlink_is_recreated_without_bind_mount(
     backend, tmp_path, monkeypatch
 ):
@@ -808,6 +813,7 @@ async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
     assert current_dir.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="NsJail process cleanup is Linux-only")
 def test_kill_orphaned_processes_scans_proc_once(
     backend,
     tmp_base,

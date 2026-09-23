@@ -577,6 +577,9 @@ class BoxServerHandler(Handler):
             result = await self._runtime.get_status()
             sessions = self._workspace_sessions()
             result = dict(result)
+            result["capacity"] = await self._runtime.get_capacity(
+                self._action_context()
+            )
             result["active_sessions"] = len(sessions)
             result["managed_processes"] = sum(
                 int(session.get("managed_process_count") or 0) for session in sessions
@@ -686,6 +689,11 @@ class BoxServerHandler(Handler):
             self._require_host_control()
             info = await self._runtime.get_backend_info()
             return ActionResponse.success(info)
+
+        @self.action(LangBotToBoxAction.GET_STORAGE_ANALYSIS)
+        async def get_storage_analysis(data: dict[str, Any]) -> ActionResponse:
+            result = await self._runtime.get_storage_analysis(self._action_context())
+            return ActionResponse.success(result)
 
         @self.action(LangBotToBoxAction.UPSERT_SANDBOX_ADMISSION_GRANT)
         async def upsert_sandbox_admission_grant(

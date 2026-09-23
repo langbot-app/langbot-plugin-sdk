@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import Any, get_args
+
+from langbot_plugin.api.entities.builtin.provider.reasoning import ReasoningLevel
+
+from langbot_plugin.api.proxies.invocation import run_scoped
 
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
@@ -18,6 +22,55 @@ class LangBotAPIProxy:
     def __init__(self, plugin_runtime_handler: Handler):
         self.plugin_runtime_handler = plugin_runtime_handler
 
+    async def _reasoning_payload(self, level: ReasoningLevel | None) -> dict[str, Any]:
+        """Keep legacy calls unchanged and reject unsupported explicit options."""
+        if level is None:
+            return {}
+        if level not in get_args(ReasoningLevel):
+            raise ValueError("Unsupported reasoning level")
+        if not getattr(self, "_supports_reasoning_level", False):
+            info = await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_LANGBOT_VERSION, {}
+            )
+            if "llm.reasoning_level" not in info.get("api_features", []):
+                raise RuntimeError(
+                    "This LangBot Host does not support reasoning_level; upgrade LangBot or omit the parameter."
+                )
+            self._supports_reasoning_level = True
+        return {"reasoning_level": level}
+
+    @run_scoped
+    async def get_box_status(self):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxStatus
+
+        return BoxStatus.model_validate(
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.GET_BOX_STATUS, {}
+            )
+        )
+
+    @run_scoped
+    async def list_boxes(self):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxSession
+
+        result = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.LIST_BOXES, {}
+        )
+        return [BoxSession.model_validate(item) for item in result["items"]]
+
+    @run_scoped
+    async def acquire_box(self, reuse_key: str, options: dict | None = None):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxSession
+
+        return BoxSession.model_validate(
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.ACQUIRE_BOX,
+                {"reuse_key": reuse_key, "options": options or {}},
+                180,
+            )
+        )
+
+    @run_scoped
     async def get_langbot_version(self) -> str:
         """Get the langbot version"""
         return (
@@ -42,13 +95,14 @@ class LangBotAPIProxy:
             )
         )["bot"]
 
+    @run_scoped
     async def send_message(
         self,
         bot_uuid: str,
         target_type: str,
         target_id: str,
         message_chain: platform_message.MessageChain,
-    ) -> None:
+    ) -> Any:
         """Send a message to a bot
 
         Args:
@@ -57,16 +111,44 @@ class LangBotAPIProxy:
             target_id: The ID of the target
             message_chain: The message chain to send
         """
-        await self.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.SEND_MESSAGE,
-            {
-                "bot_uuid": bot_uuid,
-                "target_type": target_type,
-                "target_id": target_id,
-                "message_chain": message_chain.model_dump(),
-            },
-        )
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.SEND_MESSAGE,
+                {
+                    "bot_uuid": bot_uuid,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                    "message_chain": message_chain.model_dump(),
+                },
+            )
+        ).get("result")
 
+    @run_scoped
+    async def call_platform_api(
+        self,
+        bot_uuid: str,
+        action: str,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        """Call a bot adapter API.
+
+        Args:
+            bot_uuid: The UUID of the bot
+            action: Adapter API name, such as "get_group_info" or "call_platform_api"
+            params: Parameters passed to the adapter API
+        """
+        return (
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.CALL_PLATFORM_API,
+                {
+                    "bot_uuid": bot_uuid,
+                    "action": action,
+                    "params": params or {},
+                },
+            )
+        )["result"]
+
+    @run_scoped
     async def get_llm_models(self) -> list[str]:
         """Get all LLM models"""
         return (
@@ -75,6 +157,7 @@ class LangBotAPIProxy:
             )
         )["llm_models"]
 
+    @run_scoped
     async def invoke_llm(
         self,
         llm_model_uuid: str,
@@ -82,6 +165,8 @@ class LangBotAPIProxy:
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
         timeout: float | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ) -> provider_message.Message:
         """Invoke an LLM model"""
         result = await self.invoke_llm_with_usage(
@@ -89,10 +174,16 @@ class LangBotAPIProxy:
             messages=messages,
             funcs=funcs,
             extra_args=extra_args,
+            **(
+                {"reasoning_level": reasoning_level}
+                if reasoning_level is not None
+                else {}
+            ),
             timeout=timeout,
         )
         return result.message
 
+    @run_scoped
     async def invoke_llm_with_usage(
         self,
         llm_model_uuid: str,
@@ -100,12 +191,15 @@ class LangBotAPIProxy:
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
         timeout: float | None = None,
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ) -> provider_message.LLMInvokeResult:
         """Invoke an LLM model and return the message plus optional provider usage."""
         effective_timeout = timeout if timeout is not None else 120.0
         resp = await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.INVOKE_LLM,
             {
+                **(await self._reasoning_payload(reasoning_level)),
                 "llm_model_uuid": llm_model_uuid,
                 "messages": [m.model_dump() for m in messages],
                 "funcs": [f.model_dump() for f in funcs],
@@ -122,44 +216,46 @@ class LangBotAPIProxy:
             }
         )
 
+    @run_scoped
     async def invoke_llm_stream(
         self,
         llm_model_uuid: str,
         messages: list[provider_message.Message],
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ):
-        """Invoke an LLM model with streaming response
-
-        Args:
-            llm_model_uuid: The UUID of the LLM model to use
-            messages: List of conversation messages
-            funcs: List of tools available to the LLM
-            extra_args: Extra arguments for the LLM provider
-
-        Yields:
-            MessageChunk: Streamed message chunks from the LLM
-        """
+        """Invoke an LLM model with streaming response."""
         async for event in self.invoke_llm_stream_events(
             llm_model_uuid=llm_model_uuid,
             messages=messages,
             funcs=funcs,
             extra_args=extra_args,
+            **(
+                {"reasoning_level": reasoning_level}
+                if reasoning_level is not None
+                else {}
+            ),
         ):
             if event.chunk is not None:
                 yield event.chunk
 
+    @run_scoped
     async def invoke_llm_stream_events(
         self,
         llm_model_uuid: str,
         messages: list[provider_message.Message],
         funcs: list[resource_tool.LLMTool] = [],
         extra_args: dict[str, Any] = {},
+        *,
+        reasoning_level: ReasoningLevel | None = None,
     ):
         """Invoke an LLM model and yield chunks plus optional final usage events."""
         async for chunk_data in self.plugin_runtime_handler.call_action_generator(
             PluginToRuntimeAction.INVOKE_LLM_STREAM,
             {
+                **(await self._reasoning_payload(reasoning_level)),
                 "llm_model_uuid": llm_model_uuid,
                 "messages": [m.model_dump() for m in messages],
                 "funcs": [f.model_dump() for f in funcs],
@@ -175,6 +271,7 @@ class LangBotAPIProxy:
                 event_data["chunk"] = chunk_data["chunk"]
             yield provider_message.LLMStreamEvent.model_validate(event_data)
 
+    @run_scoped
     async def set_plugin_storage(self, key: str, value: bytes) -> None:
         """Set a plugin storage value"""
         encoded = base64.b64encode(value).decode("utf-8")
@@ -183,6 +280,7 @@ class LangBotAPIProxy:
             {"key": key, "value_base64": encoded},
         )
 
+    @run_scoped
     async def get_plugin_storage(self, key: str) -> bytes:
         """Get a plugin storage value"""
         resp = (
@@ -193,6 +291,7 @@ class LangBotAPIProxy:
 
         return base64.b64decode(resp)
 
+    @run_scoped
     async def get_plugin_storage_keys(self) -> list[str]:
         """Get all plugin storage keys"""
         return (
@@ -201,12 +300,14 @@ class LangBotAPIProxy:
             )
         )["keys"]
 
+    @run_scoped
     async def delete_plugin_storage(self, key: str) -> None:
         """Delete a plugin storage value"""
         await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.DELETE_PLUGIN_STORAGE, {"key": key}
         )
 
+    @run_scoped
     async def set_workspace_storage(self, key: str, value: bytes) -> None:
         """Set a workspace storage value"""
         encoded = base64.b64encode(value).decode("utf-8")
@@ -215,6 +316,7 @@ class LangBotAPIProxy:
             {"key": key, "value_base64": encoded},
         )
 
+    @run_scoped
     async def get_workspace_storage(self, key: str) -> bytes:
         """Get a workspace storage value"""
         resp = (
@@ -225,6 +327,7 @@ class LangBotAPIProxy:
 
         return base64.b64decode(resp)
 
+    @run_scoped
     async def get_workspace_storage_keys(self) -> list[str]:
         """Get all workspace storage keys"""
         return (
@@ -233,6 +336,7 @@ class LangBotAPIProxy:
             )
         )["keys"]
 
+    @run_scoped
     async def delete_workspace_storage(self, key: str) -> None:
         """Delete a workspace storage value"""
         await self.plugin_runtime_handler.call_action(
@@ -272,6 +376,7 @@ class LangBotAPIProxy:
             )
         )["commands"]
 
+    @run_scoped
     async def list_tools(self) -> list[dict[str, Any]]:
         """List all available tools.
 
@@ -289,6 +394,7 @@ class LangBotAPIProxy:
             )
         )["tools"]
 
+    @run_scoped
     async def get_tool_detail(self, tool_name: str) -> dict[str, Any]:
         """Get detailed information about a specific tool.
 
@@ -307,12 +413,13 @@ class LangBotAPIProxy:
             )
         )["tool"]
 
+    @run_scoped
     async def call_tool(
         self,
         tool_name: str,
         parameters: dict[str, Any],
-        session: dict[str, Any],
-        query_id: int,
+        session: dict[str, Any] | None = None,
+        query_id: int | None = None,
     ) -> dict[str, Any]:
         """Call a specific tool.
 
@@ -325,6 +432,10 @@ class LangBotAPIProxy:
         Returns:
             Tool response dict.
         """
+        if session is None or query_id is None:
+            raise ValueError(
+                "session and query_id are required outside a Runner invocation"
+            )
         return (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.CALL_TOOL,
@@ -340,6 +451,7 @@ class LangBotAPIProxy:
 
     # ================= RAG Capability APIs =================
 
+    @run_scoped
     async def invoke_embedding(
         self, embedding_model_uuid: str, texts: list[str]
     ) -> list[list[float]]:
@@ -360,6 +472,7 @@ class LangBotAPIProxy:
             )
         )["vectors"]
 
+    @run_scoped
     async def invoke_rerank(
         self,
         rerank_model_uuid: str,
@@ -552,6 +665,7 @@ class LangBotAPIProxy:
 
     # ================= Knowledge Base APIs =================
 
+    @run_scoped
     async def list_knowledge_bases(self) -> list[dict[str, Any]]:
         """List all knowledge bases available in the LangBot instance.
 
@@ -571,6 +685,7 @@ class LangBotAPIProxy:
             )
         )["knowledge_bases"]
 
+    @run_scoped
     async def retrieve_knowledge(
         self,
         kb_id: str,
