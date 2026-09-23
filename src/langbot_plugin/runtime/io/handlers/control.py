@@ -98,7 +98,7 @@ class ControlConnectionHandler(handler.Handler):
     def __init__(
         self, connection: connection.Connection, context: context_module.RuntimeContext
     ):
-        super().__init__(connection)
+        super().__init__(connection, cancel_active_tasks_on_close=True)
         self.name = "FromLangBot"
         self.context = context
         self._runtime_configured = False
