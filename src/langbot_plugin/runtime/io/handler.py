@@ -38,7 +38,11 @@ from langbot_plugin.runtime.security import (
     PLUGIN_FILE_STORAGE_DIR_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
-from langbot_plugin.runtime.bounded_executor import blocking_work_scope
+from langbot_plugin.runtime.bounded_executor import (
+    blocking_work_scope,
+    run_blocking_cleanup,
+    run_blocking_with_backpressure,
+)
 
 logger = logging.getLogger(__name__)
 _ORIGINAL_ASYNCIO_TO_THREAD = asyncio.to_thread
@@ -111,6 +115,7 @@ class Handler(abc.ABC):
         *,
         file_storage_dir: str | os.PathLike[str] | None = None,
         max_file_bytes: int | None = None,
+        cancel_active_tasks_on_close: bool = False,
     ):
         self.conn = connection
         self.actions = {}
@@ -118,8 +123,12 @@ class Handler(abc.ABC):
         self.resp_waiters = {}
         self.resp_queues = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        self._active_tasks: set[asyncio.Task[None]] = set()
         # Reserved tasks remain in the common set for cancellation and accounting.
         self._reserved_action_tasks: set[asyncio.Task[None]] = set()
+        # Kept for source compatibility; every connection-owned action is
+        # cancelled when the transport terminates.
+        self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
         self._closed = False
         self._close_error: ConnectionClosedError | None = None
         self._bound_action_context = None
@@ -226,7 +235,7 @@ class Handler(abc.ABC):
         """Parse peer JSON outside the shared event loop with tenant fairness."""
 
         with blocking_work_scope(self._message_blocking_scope()):
-            return await _run_small_protocol_work(json.loads, message)
+            return await run_blocking_with_backpressure(json.loads, message)
 
     async def _encode_message(
         self,
@@ -239,11 +248,10 @@ class Handler(abc.ABC):
         with blocking_work_scope(
             self._message_blocking_scope(action_context),
         ):
-            return await _run_small_protocol_work(
-                lambda value: json.dumps(
-                    value.model_dump() if hasattr(value, "model_dump") else value
-                ),
-                payload,
+            return await run_blocking_with_backpressure(
+                lambda: json.dumps(
+                    payload.model_dump() if hasattr(payload, "model_dump") else payload
+                )
             )
 
     async def _validate_message_model(
@@ -254,7 +262,9 @@ class Handler(abc.ABC):
         """Run potentially deep Pydantic validation outside the event loop."""
 
         with blocking_work_scope(self._message_blocking_scope()):
-            return await _run_small_protocol_work(model_type.model_validate, payload)
+            return await run_blocking_with_backpressure(
+                model_type.model_validate, payload
+            )
 
     async def _send_message(
         self,
@@ -284,7 +294,7 @@ class Handler(abc.ABC):
             return f"{exc.__class__.__name__}: {message}"
 
         with blocking_work_scope(self._message_blocking_scope()):
-            return await _run_small_protocol_work(render)
+            return await run_blocking_with_backpressure(render)
 
     def set_disconnect_callback(
         self,
@@ -305,8 +315,10 @@ class Handler(abc.ABC):
                     # a replacement connection, even when the handler itself is
                     # reused by a reconnect callback.
                     self._fail_pending(exc)
-                    # Do not let old inbound work reply on a replacement transport.
-                    await self._cancel_action_tasks()
+                    # Do not let old inbound work reply on a replacement transport
+                    # when this handler owns connection-scoped task cancellation.
+                    if self._cancel_active_tasks_on_close:
+                        await self._cancel_action_tasks()
                     if self._disconnect_callback is not None:
                         reconnected = await self._disconnect_callback(self)
                         if reconnected:
@@ -351,11 +363,15 @@ class Handler(abc.ABC):
                 if reserved:
                     self._reserved_action_tasks.add(task)
                 task.add_done_callback(self._action_task_done)
+                if self._cancel_active_tasks_on_close:
+                    self._active_tasks.add(task)
+                    task.add_done_callback(self._active_tasks.discard)
         finally:
             self._closed = True
             self._close_error = disconnect_error
             self._fail_pending(disconnect_error)
-            await self._cancel_action_tasks()
+            if self._cancel_active_tasks_on_close:
+                await self._cancel_action_tasks()
             await self._cleanup_owned_transfers()
 
     async def close(self) -> None:
@@ -369,7 +385,8 @@ class Handler(abc.ABC):
         try:
             await self.conn.close()
         finally:
-            await self._cancel_action_tasks()
+            if self._cancel_active_tasks_on_close:
+                await self._cancel_action_tasks()
             await self._cleanup_owned_transfers()
 
     async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
@@ -507,6 +524,7 @@ class Handler(abc.ABC):
             await asyncio.gather(*tasks, return_exceptions=True)
         self._action_tasks.clear()
         self._reserved_action_tasks.clear()
+        self._active_tasks.clear()
 
     def cancel_inflight_messages(self) -> None:
         """Cancel peer requests already accepted by this handler."""
@@ -542,7 +560,7 @@ class Handler(abc.ABC):
             )
             response = await asyncio.wait_for(future, timeout)
             if response.code != 0:
-                raise ActionCallError(f"{response.message}")
+                raise ActionCallError(f"{response.message}", response.data)
             return response.data
         except asyncio.TimeoutError:
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
@@ -593,7 +611,7 @@ class Handler(abc.ABC):
                     if isinstance(response, BaseException):
                         raise response
                     if response.code != 0:
-                        raise ActionCallError(f"{response.message}")
+                        raise ActionCallError(f"{response.message}", response.data)
 
                     if response.chunk_status == ChunkStatus.CONTINUE:
                         yield response.data
@@ -713,7 +731,7 @@ class Handler(abc.ABC):
         """Resolve and validate the envelope for an outbound request."""
 
         if action_context is None:
-            return self._bound_action_context
+            return self._current_action_context.get() or self._bound_action_context
 
         context = parse_action_envelope_context(action_context)
         bound = self._bound_action_context
@@ -777,7 +795,13 @@ class Handler(abc.ABC):
         return decorator
 
     # ====== file transfer ======
-    async def send_file(self, file_bytes: bytes, file_extension: str) -> str:
+    async def send_file(
+        self,
+        file_bytes: bytes,
+        file_extension: str,
+        *,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+    ) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
         if self.max_file_bytes is not None and len(file_bytes) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
@@ -819,30 +843,36 @@ class Handler(abc.ABC):
                     "chunk_amount": chunk_amount,
                     "chunk_size": len(chunk_bytes),
                 },
+                action_context=action_context,
             )
         return file_key
 
     async def read_local_file(self, file_key: str) -> bytes:
         file_path = _file_storage_path(file_key, self.file_storage_dir)
-        if self.max_file_bytes is not None:
-            try:
+
+        def read_file() -> bytes:
+            if self.max_file_bytes is not None:
                 file_size = os.path.getsize(file_path)
-            except FileNotFoundError:
-                raise
-            if file_size > self.max_file_bytes:
-                raise ValueError("File transfer exceeds the configured size limit")
-        with open(file_path, "rb") as f:
-            content = f.read(
-                self.max_file_bytes + 1 if self.max_file_bytes is not None else -1
-            )
+                if file_size > self.max_file_bytes:
+                    raise ValueError("File transfer exceeds the configured size limit")
+            with open(file_path, "rb") as file:
+                return file.read(
+                    self.max_file_bytes + 1 if self.max_file_bytes is not None else -1
+                )
+
+        content = await run_blocking_with_backpressure(read_file)
         if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
+        await run_blocking_with_backpressure(os.path.getsize, file_path)
         return content
 
     async def delete_local_file(self, file_key: str) -> None:
         async with self._file_transfer_lock:
             try:
-                os.remove(_file_storage_path(file_key, self.file_storage_dir))
+                await run_blocking_with_backpressure(
+                    os.remove,
+                    _file_storage_path(file_key, self.file_storage_dir),
+                )
             except FileNotFoundError:
                 pass
             finally:
@@ -854,7 +884,10 @@ class Handler(abc.ABC):
             self._owned_transfer_files.clear()
             for file_key in file_keys:
                 try:
-                    os.remove(_file_storage_path(file_key, self.file_storage_dir))
+                    await run_blocking_cleanup(
+                        os.remove,
+                        _file_storage_path(file_key, self.file_storage_dir),
+                    )
                 except FileNotFoundError:
                     pass
                 except OSError as exc:
