@@ -8,6 +8,7 @@ import pytest
 
 from langbot_plugin.api.definition.components.manifest import (
     ComponentManifest,
+    Execution,
     I18nString,
     Metadata,
     PythonExecution,
@@ -44,6 +45,27 @@ def test_metadata_fills_optional_description_and_icon_defaults():
 def test_python_execution_strips_current_directory_prefix():
     execution = PythonExecution(path="./components/weather.py", attr="Weather")
     assert execution.path == "components/weather.py"
+
+
+def test_execution_accepts_only_the_certified_shared_runtime_profile():
+    shared = Execution(
+        python={"path": "main.py", "attr": "Plugin"},
+        sharedRuntime="shared-runtime-v1",
+    )
+    dedicated = Execution(python={"path": "main.py", "attr": "Plugin"})
+
+    assert shared.shared_runtime == "shared-runtime-v1"
+    assert dedicated.shared_runtime is None
+    with pytest.raises(ValueError):
+        Execution(
+            python={"path": "main.py", "attr": "Plugin"},
+            sharedRuntime="other-profile",
+        )
+    with pytest.raises(ValueError):
+        Execution(
+            python={"path": "main.py", "attr": "Plugin"},
+            sharedRuntime=None,
+        )
 
 
 def test_component_manifest_properties_and_plain_dict():
