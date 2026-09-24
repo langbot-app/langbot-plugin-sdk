@@ -26,6 +26,7 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
+from langbot_plugin.runtime.plugin.runner_service import RunnerRuntimeService
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
@@ -182,12 +183,18 @@ class PluginManager:
 
     wait_for_control_connection: asyncio.Future[None] | None = None
 
+    runner_runtime: RunnerRuntimeService
+
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_handlers = []
         self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
+        self.runner_runtime = RunnerRuntimeService(
+            plugins=self.plugins_for_current_scope,
+            find_plugin=self.find_plugin,
+        )
         self._control_connection_ready = asyncio.Event()
         self._plugin_supervisors: dict[str, asyncio.Task[None]] = {}
         self._desired_plugin_paths: set[str] = set()
@@ -2665,6 +2672,27 @@ class PluginManager:
             retriever_name, retrieval_context
         )
         return resp
+
+    # Runner methods (Protocol v1)
+    async def list_runners(
+        self, include_plugins: list[str] | None = None
+    ) -> list[dict[str, typing.Any]]:
+        return await self.runner_runtime.list_runners(include_plugins)
+
+    async def run_runner(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        runner_name: str,
+        context: dict[str, typing.Any],
+    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
+        async for result in self.runner_runtime.run_runner(
+            plugin_author,
+            plugin_name,
+            runner_name,
+            context,
+        ):
+            yield result
 
     # ================= Knowledge Engine Methods =================
 
