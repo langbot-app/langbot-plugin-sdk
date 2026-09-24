@@ -26,6 +26,7 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
+from langbot_plugin.runtime.plugin.runner_service import RunnerRuntimeService
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
@@ -83,6 +84,7 @@ _PLUGIN_RESTART_INITIAL_DELAY_SEC = 1.0
 _PLUGIN_RESTART_MAX_DELAY_SEC = 60.0
 _PLUGIN_STABLE_WINDOW_SEC = 60.0
 _PLUGIN_READY_TIMEOUT_SEC = 30.0
+_PLUGIN_WORKER_STOP_TIMEOUT_SEC = 5.0
 
 
 class PluginInstallSource(enum.Enum):
@@ -181,12 +183,18 @@ class PluginManager:
 
     wait_for_control_connection: asyncio.Future[None] | None = None
 
+    runner_runtime: RunnerRuntimeService
+
     def __init__(self, context: context_module.RuntimeContext):
         self.context = context
         self.plugin_handlers = []
         self.plugins = []
         self.plugin_run_tasks = []
         self.wait_for_control_connection = None
+        self.runner_runtime = RunnerRuntimeService(
+            plugins=self.plugins_for_current_scope,
+            find_plugin=self.find_plugin,
+        )
         self._control_connection_ready = asyncio.Event()
         self._plugin_supervisors: dict[str, asyncio.Task[None]] = {}
         self._desired_plugin_paths: set[str] = set()
@@ -547,6 +555,29 @@ class PluginManager:
             if key.upper() in _WINDOWS_PLUGIN_ENV_ALLOWLIST
         }
 
+    def _legacy_plugin_environment(
+        self,
+        plugin_path: str,
+        registration_capability: str,
+    ) -> dict[str, str]:
+        """Build a minimal environment with trusted SDK and plugin dependencies."""
+        child_env = (
+            self._windows_plugin_environment() if get_platform() == "win32" else {}
+        )
+        python_paths = [str(self.worker_launcher.runtime_import_root)]
+        plugin_site_packages = pkgmgr_helper.get_plugin_site_packages(plugin_path)
+        if plugin_site_packages is not None:
+            python_paths.append(plugin_site_packages)
+        child_env.update(
+            {
+                PLUGIN_REGISTRATION_CAPABILITY_ENV: registration_capability,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPATH": os.pathsep.join(python_paths),
+                "PYTHONUNBUFFERED": "1",
+            }
+        )
+        return child_env
+
     def get_plugin_path(self, plugin_author: str, plugin_name: str) -> str:
         return f"data/plugins/{plugin_author}__{plugin_name}"
 
@@ -849,6 +880,10 @@ class PluginManager:
                 # See also: https://docs.python.org/zh-cn/3.13/library/asyncio-platforms.html
                 # We have to launch plugin via cmd but communicate via ws.
                 python_path = sys.executable
+                child_env = self._legacy_plugin_environment(
+                    plugin_path,
+                    registration_capability,
+                )
 
                 cmd_args = [
                     python_path,
@@ -858,11 +893,9 @@ class PluginManager:
                     "--prod",
                 ]
 
-                child_env = self._windows_plugin_environment()
                 child_env["RUNTIME_WS_URL"] = (
                     f"ws://localhost:{self.context.ws_debug_port}/plugin/ws"
                 )
-                child_env[PLUGIN_REGISTRATION_CAPABILITY_ENV] = registration_capability
 
                 process: asyncio.subprocess.Process = (
                     await asyncio.create_subprocess_exec(
@@ -886,6 +919,10 @@ class PluginManager:
                             )
             else:
                 python_path = sys.executable
+                child_env = self._legacy_plugin_environment(
+                    plugin_path,
+                    registration_capability,
+                )
 
                 args = [
                     "-m",
@@ -898,7 +935,7 @@ class PluginManager:
                 ctrl = stdio_client_controller.StdioClientController(
                     command=python_path,
                     args=args,
-                    env={PLUGIN_REGISTRATION_CAPABILITY_ENV: registration_capability},
+                    env=child_env,
                     working_dir=plugin_path,
                 )
 
@@ -1565,8 +1602,19 @@ class PluginManager:
         task = runtime.launch_task
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            done, _ = await asyncio.wait(
+                {task},
+                timeout=_PLUGIN_WORKER_STOP_TIMEOUT_SEC,
+            )
+            if task in done:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            else:
+                logger.error(
+                    "Plugin installation supervisor did not stop within %.1f seconds: %s",
+                    _PLUGIN_WORKER_STOP_TIMEOUT_SEC,
+                    runtime.binding.installation_uuid,
+                )
         if runtime.launch_task is task:
             runtime.launch_task = None
 
@@ -1575,8 +1623,10 @@ class PluginManager:
         handler: runtime_plugin_handler_cls.PluginConnectionHandler,
     ):
         self.plugin_handlers.append(handler)
-
-        await handler.run()
+        try:
+            await handler.run()
+        finally:
+            await self.remove_plugin_handler(handler)
 
     async def remove_plugin_handler(
         self,
@@ -1638,7 +1688,7 @@ class PluginManager:
             if staging_path is not None:
                 shutil.rmtree(staging_path, ignore_errors=True)
             raise
-        return str(staging_path), plugin_author, plugin_name, plugin_version
+        return staging_path.as_posix(), plugin_author, plugin_name, plugin_version
 
     def _validate_install_target(
         self, plugin_author: str, plugin_name: str, plugin_version: str
@@ -1967,6 +2017,7 @@ class PluginManager:
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
             container_data
         )
+        self._normalize_component_owners(plugin_container)
         plugin_author = str(plugin_container.manifest.metadata.author or "").strip()
         plugin_name = str(plugin_container.manifest.metadata.name or "").strip()
         if not plugin_author or not plugin_name:
@@ -2099,6 +2150,7 @@ class PluginManager:
             refreshed = runtime_plugin_container.PluginContainer.from_dict(
                 plugin_container_data
             )
+            self._normalize_component_owners(refreshed)
             refreshed_author = str(refreshed.manifest.metadata.author or "").strip()
             refreshed_name = str(refreshed.manifest.metadata.name or "").strip()
             if (refreshed_author, refreshed_name) != (plugin_author, plugin_name):
@@ -2113,6 +2165,17 @@ class PluginManager:
         except Exception:
             await self.remove_plugin_container(plugin_container)
             raise
+
+    @staticmethod
+    def _normalize_component_owners(
+        plugin_container: runtime_plugin_container.PluginContainer,
+    ) -> None:
+        plugin_id = (
+            f"{plugin_container.manifest.metadata.author}/"
+            f"{plugin_container.manifest.metadata.name}"
+        )
+        for component in plugin_container.components:
+            component.manifest.owner = plugin_id
 
     async def remove_plugin_container(
         self,
@@ -2241,7 +2304,26 @@ class PluginManager:
                     yield {"current_action": "plugin deleted"}
                     break
         else:
-            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+            plugin_path = self.get_plugin_path(plugin_author, plugin_name)
+            if not os.path.isdir(plugin_path):
+                raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+
+            installed_identity = self._installed_plugin_identity(plugin_path)
+            if installed_identity != (plugin_author, plugin_name):
+                raise ValueError(
+                    f"Plugin {plugin_author}/{plugin_name} installation identity mismatch"
+                )
+
+            self._desired_plugin_paths.discard(plugin_path)
+            yield {"current_action": "stopping plugin supervisor"}
+            await self.stop_plugin_supervisor(plugin_path)
+            yield {"current_action": "deleting plugin files"}
+            await bounded_executor.run_blocking_cleanup(
+                shutil.rmtree,
+                plugin_path,
+            )
+            self._dependency_errors.pop(plugin_path, None)
+            yield {"current_action": "plugin deleted"}
 
     async def upgrade_plugin(
         self,
@@ -2653,6 +2735,27 @@ class PluginManager:
             retriever_name, retrieval_context
         )
         return resp
+
+    # Runner methods (Protocol v1)
+    async def list_runners(
+        self, include_plugins: list[str] | None = None
+    ) -> list[dict[str, typing.Any]]:
+        return await self.runner_runtime.list_runners(include_plugins)
+
+    async def run_runner(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        runner_name: str,
+        context: dict[str, typing.Any],
+    ) -> typing.AsyncGenerator[dict[str, typing.Any], None]:
+        async for result in self.runner_runtime.run_runner(
+            plugin_author,
+            plugin_name,
+            runner_name,
+            context,
+        ):
+            yield result
 
     # ================= Knowledge Engine Methods =================
 
