@@ -43,7 +43,7 @@ async def main(destination):
         "Commit final source first"
     )
     distribution = importlib.metadata.distribution("langbot-plugin")
-    assert distribution.version == "0.6.0b5"
+    assert distribution.version == "0.6.1"
     checked = 0
     for entry in distribution.files:
         if str(entry).startswith("langbot_plugin/") and str(entry).endswith(".py") and entry.hash:

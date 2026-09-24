@@ -1,4 +1,4 @@
-langbot-plugin==0.6.0b5
+langbot-plugin==0.6.1
 pydantic>=2.0.0
 httpx>=0.28.1
 pyjwt>=2.8.0

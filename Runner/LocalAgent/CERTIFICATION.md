@@ -1,6 +1,6 @@
 # LocalAgent shared-runtime candidate
 
-Version 0.1.9 targets the runtime-provided `langbot-plugin==0.6.0b5` and declares
+Version 0.1.10 targets the runtime-provided `langbot-plugin==0.6.1` and declares
 `shared-runtime-v1`. This declaration is **not a certificate**. Publication,
 independent exact-package review, signing and live acceptance remain separate gates.
 
@@ -28,7 +28,7 @@ not introduce unnecessary changes to the existing invocation-local algorithm.
 
 ## Verification
 
-Run from this plugin directory with the actual b5 interpreter:
+Run from this plugin directory with the actual 0.6.1 interpreter:
 
 ```sh
 python -m pytest tests -q
@@ -64,7 +64,7 @@ From the repository, verify the frozen package:
 
 ```sh
 python Runner/certification-tests/verify_localagent_candidate.py \
-  --package /absolute/external/candidate-directory/langbot-team-LocalAgent-0.1.9.lbpkg \
+  --package /absolute/external/candidate-directory/langbot-team-LocalAgent-0.1.10.lbpkg \
   --evidence /absolute/external/new-evidence-directory
 ```
 

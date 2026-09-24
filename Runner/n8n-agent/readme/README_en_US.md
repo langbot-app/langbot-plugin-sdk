@@ -180,6 +180,6 @@ missing identity fails before any upstream request, never falls back to the send
 Provider conversation/session persistence remains Runner-owned. Configuration migration does not import old conversation IDs, threads, transcripts, pending forms or files; finish/cancel pending work or perform a separately authorized state migration. Changing identity on an existing stored provider conversation requires an explicit reset/migration decision.
 
 
-## SDK 0.6.0b5 shared-runtime candidate
+## SDK 0.6.1 shared-runtime candidate
 
 See [shared-runtime boundaries and upgrade notes](SHARED_RUNTIME.md) before upgrading.

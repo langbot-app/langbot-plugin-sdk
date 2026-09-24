@@ -41,18 +41,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --dev
       - name: Verify published SDK pin
-        run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b5"; print("langbot-plugin", version("langbot-plugin"))'
+        run: uv run --no-sync python -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.1"; print("langbot-plugin", version("langbot-plugin"))'
       - name: Prepare isolated certified coding Runner SDK environment
         run: |
-          uv venv "$RUNNER_TEMP/coding-b5"
-          uv pip install --python "$RUNNER_TEMP/coding-b5/bin/python" -r acp-agent-runner/requirements.txt -r claude-code-agent/requirements.txt -r codex-agent/requirements.txt pytest pyyaml packaging
-          "$RUNNER_TEMP/coding-b5/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b5"'
-          printf 'CODING_RUNNER_TEST_PYTHON=%s/coding-b5/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          uv venv "$RUNNER_TEMP/coding-061"
+          uv pip install --python "$RUNNER_TEMP/coding-061/bin/python" -r acp-agent-runner/requirements.txt -r claude-code-agent/requirements.txt -r codex-agent/requirements.txt pytest pyyaml packaging
+          "$RUNNER_TEMP/coding-061/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.1"'
+          printf 'CODING_RUNNER_TEST_PYTHON=%s/coding-061/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Prepare isolated certified LocalAgent SDK environment
         run: |
-          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/localagent-b5" uv sync --project LocalAgent --locked --extra dev
-          "$RUNNER_TEMP/localagent-b5/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.0b5"'
-          printf 'LOCALAGENT_TEST_PYTHON=%s/localagent-b5/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/localagent-061" uv sync --project LocalAgent --locked --extra dev
+          "$RUNNER_TEMP/localagent-061/bin/python" -c 'from importlib.metadata import version; assert version("langbot-plugin") == "0.6.1"'
+          printf 'LOCALAGENT_TEST_PYTHON=%s/localagent-061/bin/python\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       # Preserve the external Runner lint scope; LocalAgent has its own Ruff config.
       # RunnerDemo did not have a Ruff gate before consolidation.
       - name: Ruff check
@@ -70,9 +70,9 @@ jobs:
         run: uv run --no-sync python -m pytest http-certification-tests -q --junitxml="${RUNNER_EVIDENCE_DIR}/http-certification.xml"
       - name: Certified RunnerDemo SDK admission and package tests
         run: |
-          uv run --no-project --with langbot-plugin==0.6.0b5 --with pyyaml python certification-tests/test_runner_demo_dependency_admission.py -v
+          uv run --no-project --with langbot-plugin==0.6.1 --with pyyaml python certification-tests/test_runner_demo_dependency_admission.py -v
           cd RunnerDemo
-          uv run --no-project --with langbot-plugin==0.6.0b5 --with pyyaml python -m unittest discover -s tests -v
+          uv run --no-project --with langbot-plugin==0.6.1 --with pyyaml python -m unittest discover -s tests -v
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@v4

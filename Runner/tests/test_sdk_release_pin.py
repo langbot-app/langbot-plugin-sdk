@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SDK_REQUIREMENT = "langbot-plugin==0.6.0b5"
+SDK_REQUIREMENT = "langbot-plugin==0.6.1"
 CODING_PLUGINS = {"acp-agent-runner", "claude-code-agent", "codex-agent"}
 HTTP_PLUGINS = {
     "coze-agent",

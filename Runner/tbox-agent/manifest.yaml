@@ -3,7 +3,7 @@ kind: Plugin
 metadata:
   author: langbot-team
   name: TboxAgent
-  version: 0.1.7
+  version: 0.1.8
   repository: https://github.com/langbot-app/langbot-plugins/tree/main/Runner/tbox-agent
   label:
     en_US: Tbox Agent

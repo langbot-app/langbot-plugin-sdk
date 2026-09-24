@@ -84,7 +84,7 @@ matching retry; a different command or file change requires a new approval.
 
 ## Shared-worker candidate / daemon upgrade
 
-This version declares `shared-runtime-v1` and pins `langbot-plugin==0.6.0b5`.
+This version declares `shared-runtime-v1` and pins `langbot-plugin==0.6.1`.
 It is a candidate, not a certificate or proof of vendor execution. Local,
 remote-SSH and daemon modes remain available. Native children use the worker's
 nsjail/cgroup policy, not the separate Box managed-process quota.

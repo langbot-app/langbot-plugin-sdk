@@ -51,6 +51,6 @@ Run a DeerFlow LangGraph agent as a LangBot Runner.
 - See the full Chinese README at the package root for advanced behavior and product-specific limitations.
 
 
-## SDK 0.6.0b5 shared-runtime candidate
+## SDK 0.6.1 shared-runtime candidate
 
 See [shared-runtime boundaries and upgrade notes](SHARED_RUNTIME.md) before upgrading.

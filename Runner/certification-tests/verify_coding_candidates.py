@@ -30,7 +30,7 @@ FOLDERS = ("acp-agent-runner", "claude-code-agent", "codex-agent")
 
 async def verify(out):
     assert not out.exists(), "Use a fresh evidence directory; never overwrite frozen candidates"
-    assert importlib.metadata.version("langbot-plugin") == "0.6.0b5"
+    assert importlib.metadata.version("langbot-plugin") == "0.6.1"
     assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT).strip(), "Commit before freezing"
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     out.mkdir(parents=True)
