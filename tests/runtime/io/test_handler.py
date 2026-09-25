@@ -992,6 +992,62 @@ async def test_file_chunk_action_reassembles_file_and_read_delete_roundtrip(
 
 
 @pytest.mark.asyncio
+async def test_file_transfer_owner_uses_effective_context_and_denies_sibling(
+    tmp_path,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    binding_b = binding_a.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+    token = handler._current_action_context.set(binding_a)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "private.bin",
+                "chunk_base64": base64.b64encode(b"A-secret").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    token = handler._current_action_context.set(binding_b)
+    try:
+        with pytest.raises(ValueError, match="ownership"):
+            await handler.read_local_file("private.bin")
+        with pytest.raises(ValueError, match="ownership"):
+            await handler.delete_local_file("private.bin")
+        with pytest.raises(ValueError, match="ownership"):
+            await handler.actions[CommonAction.FILE_CHUNK.value](
+                {
+                    "file_key": "private.bin",
+                    "chunk_base64": base64.b64encode(b"overwrite").decode("ascii"),
+                    "chunk_index": 0,
+                    "chunk_amount": 1,
+                }
+            )
+    finally:
+        handler._current_action_context.reset(token)
+
+    assert (
+        await handler.read_local_file("private.bin", action_context=binding_a)
+        == b"A-secret"
+    )
+
+
+@pytest.mark.asyncio
 async def test_file_transfer_io_uses_backpressure_aware_executor(tmp_path, monkeypatch):
     handler = Handler(
         ProtocolConnection(),

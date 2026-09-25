@@ -18,6 +18,7 @@ from langbot_plugin.api.entities.builtin.provider import session as provider_ses
 from langbot_plugin.cli.run import controller as controller_module
 from langbot_plugin.cli.run.controller import PluginRuntimeController
 from langbot_plugin.entities.io.errors import ConnectionClosedError
+from langbot_plugin.entities.io.context import InstallationBinding
 from langbot_plugin.runtime.plugin.container import RuntimeContainerStatus
 
 
@@ -348,12 +349,89 @@ async def test_shared_worker_keeps_separate_instances_and_config_per_slot(monkey
     assert slot_a.plugin_instance is not slot_b.plugin_instance
     assert slot_a.plugin_instance.config == {"tenant": "a"}
     assert slot_b.plugin_instance.config == {"tenant": "b"}
-    assert slot_a.components[0].component_instance is not slot_b.components[0].component_instance
+    assert (
+        slot_a.components[0].component_instance
+        is not slot_b.components[0].component_instance
+    )
 
     await controller.detach_slot("installation-a")
 
     assert controller.plugin_container_for_slot("installation-a") is None
     assert controller.plugin_container_for_slot("installation-b") is slot_b
+
+
+@pytest.mark.asyncio
+async def test_shared_worker_overlapping_slot_initialization_keeps_object_graphs_isolated(
+    monkeypatch,
+):
+    controller = _controller()
+    controller.handler = object()
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started: set[str] = set()
+
+    class BarrierPlugin(BasePlugin):
+        async def initialize(self) -> None:
+            started.add(self.config["tenant"])
+            if started == {"a", "b"}:
+                both_started.set()
+            await release.wait()
+
+    component_classes = {
+        "Plugin": BarrierPlugin,
+        "Tool": DemoTool,
+        "EventListener": DemoEventListener,
+    }
+
+    monkeypatch.setattr(
+        ComponentManifest,
+        "get_python_component_class",
+        lambda self: component_classes[self.kind],
+    )
+    digest = "a" * 64
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest=digest,
+    )
+    binding_b = binding_a.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+
+    tasks = [
+        asyncio.create_task(
+            controller.initialize_slot(
+                binding_a,
+                {"enabled": True, "priority": 1, "plugin_config": {"tenant": "a"}},
+            )
+        ),
+        asyncio.create_task(
+            controller.initialize_slot(
+                binding_b,
+                {"enabled": True, "priority": 2, "plugin_config": {"tenant": "b"}},
+            )
+        ),
+    ]
+    await asyncio.wait_for(both_started.wait(), timeout=1)
+    release.set()
+    slot_a, slot_b = await asyncio.gather(*tasks)
+
+    assert slot_a is controller.plugin_container_for_slot("installation-a")
+    assert slot_b is controller.plugin_container_for_slot("installation-b")
+    assert slot_a is not slot_b
+    assert slot_a.plugin_instance is not slot_b.plugin_instance
+    assert slot_a.plugin_instance.config == {"tenant": "a"}
+    assert slot_b.plugin_instance.config == {"tenant": "b"}
+    assert slot_a.plugin_instance.plugin_runtime_handler._binding == binding_a
+    assert slot_b.plugin_instance.plugin_runtime_handler._binding == binding_b
+    assert slot_a.components[0].component_instance.plugin is slot_a.plugin_instance
+    assert slot_b.components[0].component_instance.plugin is slot_b.plugin_instance
 
 
 @pytest.mark.asyncio

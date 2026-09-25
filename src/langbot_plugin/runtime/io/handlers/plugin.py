@@ -127,9 +127,10 @@ class PluginConnectionHandler(handler.Handler):
                 for key, value in data.items()
                 if key not in _UNTRUSTED_SCOPE_FIELDS
             }
-            binding: ActionContext | None = self.bound_action_context
+            binding: ActionContext | None = self.resolve_effective_action_context()
             if require_workspace:
-                binding = self.require_bound_action_context()
+                if binding is None:
+                    raise ValueError("Plugin Runtime is not bound to a Workspace")
 
             if binding is None:
                 # Compatibility for non-Workspace APIs used with an older
@@ -147,7 +148,7 @@ class PluginConnectionHandler(handler.Handler):
             )
 
         def scoped_plugins():
-            binding = self.bound_action_context
+            binding = self.resolve_effective_action_context()
             if isinstance(binding, InstallationBinding) and hasattr(
                 self.context.plugin_mgr,
                 "plugins_for_binding",
@@ -400,8 +401,9 @@ class PluginConnectionHandler(handler.Handler):
                 if key not in _UNTRUSTED_SCOPE_FIELDS
             }
             kwargs: dict[str, Any] = {"timeout": float(timeout)}
-            if self.bound_action_context is not None:
-                kwargs["action_context"] = self.bound_action_context
+            binding = self.resolve_effective_action_context()
+            if binding is not None:
+                kwargs["action_context"] = binding
             async for chunk in self.context.control_handler.call_action_generator(
                 PluginToRuntimeAction.INVOKE_LLM_STREAM,
                 payload,
@@ -501,8 +503,14 @@ class PluginConnectionHandler(handler.Handler):
             file_key = result.get("file_key", "")
             if file_key:
                 control_handler = self.context.control_handler
-                file_bytes = await control_handler.read_local_file(file_key)
-                await control_handler.delete_local_file(file_key)
+                binding = self.resolve_effective_action_context()
+                assert control_handler is not None
+                file_bytes = await control_handler.read_local_file(
+                    file_key, action_context=binding
+                )
+                await control_handler.delete_local_file(
+                    file_key, action_context=binding
+                )
                 # Forward to plugin subprocess via chunked transfer
                 plugin_file_key = await self.send_file(file_bytes, "")
                 return handler.ActionResponse.success({"file_key": plugin_file_key})
@@ -642,7 +650,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SET_WORKSPACE_STORAGE)
         async def set_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -658,7 +668,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE)
         async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -676,7 +688,9 @@ class PluginConnectionHandler(handler.Handler):
         async def get_workspace_storage_keys(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -694,7 +708,9 @@ class PluginConnectionHandler(handler.Handler):
         async def delete_workspace_storage(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -727,7 +743,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.bound_action_context
+            binding = self.resolve_effective_action_context()
             if isinstance(binding, InstallationBinding):
                 commands = await self.context.plugin_mgr.list_commands(binding=binding)
             else:
@@ -738,7 +754,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.bound_action_context
+            binding = self.resolve_effective_action_context()
             if isinstance(binding, InstallationBinding):
                 tools = await self.context.plugin_mgr.list_tools(binding=binding)
             else:
@@ -1059,7 +1075,9 @@ class PluginConnectionHandler(handler.Handler):
         if self.shared_pool_digest is not None and action_context is None:
             current = self.context.plugin_mgr._current_control_binding()
             if current not in self._shared_pool_bindings:
-                raise ValueError("Shared pool outbound action requires an attached binding")
+                raise ValueError(
+                    "Shared pool outbound action requires an attached binding"
+                )
             return current
         return super().resolve_outbound_action_context(action_context)
 

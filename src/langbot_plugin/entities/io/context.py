@@ -16,7 +16,7 @@ class PluginExecutionMode(str, Enum):
     """Process placement selected by the trusted control plane."""
 
     DEDICATED = "dedicated"
-    SHARED_CERTIFIED = "shared_certified"
+    SHARED_CERTIFIED = "shared-runtime-v1"
 
 
 class RuntimeIdentity(pydantic.BaseModel):

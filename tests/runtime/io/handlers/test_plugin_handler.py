@@ -181,6 +181,45 @@ async def test_bound_plugin_handler_accepts_legacy_api_call_without_context():
     assert control.calls == [(PluginToRuntimeAction.GET_LLM_MODELS, {}, 15.0, binding)]
 
 
+async def test_shared_plugin_handler_forwards_validated_current_binding_to_host():
+    binding = _installation_binding()
+    handler, manager, control = _handler(runtime_profile="shared")
+    manager.plugins_for_binding = (
+        lambda candidate: [FakePluginContainer(runtime_handler=handler)]
+        if candidate == binding
+        else []
+    )
+    handler.context.is_current_installation_binding = (
+        lambda candidate: candidate == binding
+    )
+    handler.set_shared_pool_bindings(binding.artifact_digest, {binding})
+
+    async with ProtocolSession(handler) as session:
+        host_response = await session.request(
+            PluginToRuntimeAction.GET_BOTS.value,
+            {},
+            action_context=binding,
+        )
+        storage_response = await session.request(
+            PluginToRuntimeAction.GET_WORKSPACE_STORAGE.value,
+            {"key": "shared"},
+            seq_id=2,
+            action_context=binding,
+        )
+
+    assert host_response["code"] == 0
+    assert storage_response["code"] == 0
+    assert control.calls == [
+        (PluginToRuntimeAction.GET_BOTS, {}, 15.0, binding),
+        (
+            RuntimeToLangBotAction.GET_BINARY_STORAGE,
+            {"key": "shared", "owner_type": "workspace", "owner": "workspace-a"},
+            15.0,
+            binding,
+        ),
+    ]
+
+
 async def test_debug_handler_rejects_actions_after_credential_expiry():
     binding = ActionContext(
         instance_uuid="i", workspace_uuid="w", placement_generation=1
@@ -792,12 +831,12 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
         "file_key": "host-file"
     }
 
-    async def fake_read_control_file(file_key):
-        file_ops.append(("control-read", file_key))
+    async def fake_read_control_file(file_key, *, action_context=None):
+        file_ops.append(("control-read", file_key, action_context))
         return b"file-bytes"
 
-    async def fake_delete_control_file(file_key):
-        file_ops.append(("control-delete", file_key))
+    async def fake_delete_control_file(file_key, *, action_context=None):
+        file_ops.append(("control-delete", file_key, action_context))
 
     async def reject_plugin_storage_read(file_key):
         raise AssertionError(
@@ -820,8 +859,8 @@ async def test_plugin_handler_get_knowledge_file_stream_repackages_file(monkeypa
         )
 
     assert file_ops == [
-        ("control-read", "host-file"),
-        ("control-delete", "host-file"),
+        ("control-read", "host-file", None),
+        ("control-delete", "host-file", None),
         ("send", b"file-bytes", ""),
     ]
     assert response["data"] == {"file_key": "plugin-file"}

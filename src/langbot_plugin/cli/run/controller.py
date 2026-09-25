@@ -59,7 +59,9 @@ class _SlotHandlerProxy:
 
     def call_action_generator(self, action, data, timeout=15.0, **kwargs):
         kwargs["action_context"] = self._binding
-        return self._handler.call_action_generator(action, data, timeout=timeout, **kwargs)
+        return self._handler.call_action_generator(
+            action, data, timeout=timeout, **kwargs
+        )
 
     async def send_file(self, file_bytes, file_extension, **kwargs):
         kwargs["action_context"] = self._binding
@@ -332,18 +334,30 @@ class PluginRuntimeController:
         )
         logger.debug(f"plugin_settings: {plugin_settings}")
 
-        self.plugin_container.enabled = plugin_settings["enabled"]
-        self.plugin_container.priority = plugin_settings["priority"]
-        self.plugin_container.plugin_config = plugin_settings["plugin_config"]
-        # initialize plugin instance
-        plugin_cls = self.plugin_container.manifest.get_python_component_class()
-        assert isinstance(plugin_cls, type(BasePlugin))
-        self.plugin_container.plugin_instance = plugin_cls()
-        self.plugin_container.plugin_instance.config = (
-            self.plugin_container.plugin_config
+        await self._initialize_container(
+            self.plugin_container,
+            self.handler,
+            plugin_settings,
         )
-        self.plugin_container.plugin_instance.plugin_runtime_handler = self.handler
-        await self.plugin_container.plugin_instance.initialize()
+
+    async def _initialize_container(
+        self,
+        plugin_container: PluginContainer,
+        runtime_handler: typing.Any,
+        plugin_settings: dict[str, typing.Any],
+    ) -> None:
+        """Initialize one object graph without mutating controller-global routing."""
+
+        plugin_container.enabled = plugin_settings["enabled"]
+        plugin_container.priority = plugin_settings["priority"]
+        plugin_container.plugin_config = plugin_settings["plugin_config"]
+        # initialize plugin instance
+        plugin_cls = plugin_container.manifest.get_python_component_class()
+        assert isinstance(plugin_cls, type(BasePlugin))
+        plugin_container.plugin_instance = plugin_cls()
+        plugin_container.plugin_instance.config = plugin_container.plugin_config
+        plugin_container.plugin_instance.plugin_runtime_handler = runtime_handler
+        await plugin_container.plugin_instance.initialize()
 
         preinitialize_component_classes: list[type[BaseComponent]] = [
             EventListener,
@@ -356,7 +370,7 @@ class PluginRuntimeController:
         ]
 
         for component_cls in preinitialize_component_classes:
-            for component_container in self.plugin_container.components:
+            for component_container in plugin_container.components:
                 logger.debug(
                     f"Checking component {component_container.manifest.metadata.name}: "
                     f"kind={component_container.manifest.kind}, expected={component_cls.__kind__}"
@@ -377,15 +391,15 @@ class PluginRuntimeController:
                             component_impl_cls,
                         )
                         component_container.component_instance.bind_runtime(
-                            plugin_runtime_handler=self.handler,
-                            plugin_config=self.plugin_container.plugin_config,
+                            plugin_runtime_handler=runtime_handler,
+                            plugin_config=plugin_container.plugin_config,
                             plugin_identity=(
-                                f"{self.plugin_container.manifest.metadata.author}/"
-                                f"{self.plugin_container.manifest.metadata.name}"
+                                f"{plugin_container.manifest.metadata.author}/"
+                                f"{plugin_container.manifest.metadata.name}"
                             ),
                         )
                     component_container.component_instance.plugin = (
-                        self.plugin_container.plugin_instance
+                        plugin_container.plugin_instance
                     )
                     await component_container.component_instance.initialize()
                     logger.info(
@@ -397,7 +411,7 @@ class PluginRuntimeController:
             f"Plugin {self.plugin_container.manifest.metadata.author}/{self.plugin_container.manifest.metadata.name} initialized"
         )
 
-        self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
+        plugin_container.status = RuntimeContainerStatus.INITIALIZED
 
     async def initialize_slot(
         self,
@@ -411,25 +425,18 @@ class PluginRuntimeController:
             if isinstance(installation_uuid, InstallationBinding)
             else installation_uuid
         )
-        previous = self.plugin_container
-        previous_handler = self.handler
-        slot = PluginContainer.from_dict(copy.deepcopy(previous.model_dump()))
+        slot = PluginContainer.from_dict(
+            copy.deepcopy(self.plugin_container.model_dump())
+        )
         slot.plugin_instance = NonePlugin()
         for component in slot.components:
             component.component_instance = NoneComponent()
-        self.plugin_container = slot
+        runtime_handler: typing.Any = self.handler
         if isinstance(installation_uuid, InstallationBinding):
-            self.handler = typing.cast(
-                PluginRuntimeHandler,
-                _SlotHandlerProxy(previous_handler, installation_uuid),
-            )
-        try:
-            await self.initialize(plugin_settings)
-            self._slot_containers[slot_key] = slot
-            return slot
-        finally:
-            self.plugin_container = previous
-            self.handler = previous_handler
+            runtime_handler = _SlotHandlerProxy(self.handler, installation_uuid)
+        await self._initialize_container(slot, runtime_handler, plugin_settings)
+        self._slot_containers[slot_key] = slot
+        return slot
 
     def plugin_container_for_slot(
         self,

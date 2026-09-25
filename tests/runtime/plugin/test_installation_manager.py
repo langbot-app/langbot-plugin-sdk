@@ -176,8 +176,12 @@ async def test_certified_same_digest_installations_share_one_pool_worker(
             site_packages_path=site_packages,
         )
 
-    monkeypatch.setattr(manager.worker_launcher, "prepare_dependency_environment", prepare)
-    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: scheduled.append(worker))
+    monkeypatch.setattr(
+        manager.worker_launcher, "prepare_dependency_environment", prepare
+    )
+    monkeypatch.setattr(
+        manager, "_schedule_shared_worker", lambda worker: scheduled.append(worker)
+    )
 
     await manager.apply_plugin_installation(
         binding_a,
@@ -302,7 +306,9 @@ async def test_shared_revision_fence_detaches_only_stale_slot(tmp_path, monkeypa
     assert context.is_current_installation_binding(binding_b)
 
 
-async def test_shared_config_update_does_not_restart_sibling_worker(tmp_path, monkeypatch):
+async def test_shared_config_update_does_not_restart_sibling_worker(
+    tmp_path, monkeypatch
+):
     _, manager = _manager(tmp_path)
     package = _package()
     digest = hashlib.sha256(package).hexdigest()
@@ -339,9 +345,118 @@ async def test_shared_config_update_does_not_restart_sibling_worker(tmp_path, mo
     assert worker.launch_task is worker_task
     assert not worker_task.cancelled()
     assert manager.installation_runtimes[binding_b].shared_worker is worker
+    await asyncio.sleep(0)
     assert attached == [manager.installation_runtimes[binding_a]]
     worker_task.cancel()
     await asyncio.gather(worker_task, return_exceptions=True)
+
+
+async def test_shared_slot_attach_is_joined_and_revalidated_after_settings_await(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: None)
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding_a].shared_worker
+    settings_started = asyncio.Event()
+    release_settings = asyncio.Event()
+    initialized = []
+
+    class Control:
+        async def call_action(self, action, data, *, action_context):
+            settings_started.set()
+            await release_settings.wait()
+            return {"plugin_config": {}}
+
+    class Handler:
+        async def initialize_plugin_slot(self, binding, settings):
+            initialized.append(binding)
+
+        def cancel_inflight_messages_for_context(self, binding):
+            pass
+
+        async def detach_plugin_slot(self, binding):
+            pass
+
+        def set_shared_pool_bindings(self, digest, bindings):
+            pass
+
+    context.control_handler = Control()
+    worker.plugin_handler = Handler()
+    worker.ready_event.set()
+
+    manager._schedule_shared_slot_attach(manager.installation_runtimes[binding_a])
+    await asyncio.wait_for(settings_started.wait(), timeout=1)
+    remove_task = asyncio.create_task(manager.remove_plugin_installation(binding_a))
+    await asyncio.sleep(0)
+    release_settings.set()
+    await remove_task
+
+    assert initialized == []
+    assert set(worker.slots) == {binding_b}
+    assert not worker.attach_tasks
+
+
+async def test_shared_worker_supervisor_survives_representative_detach(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    supervisor_started = asyncio.Event()
+    release_supervisor = asyncio.Event()
+
+    async def supervise(worker):
+        supervisor_started.set()
+        await release_supervisor.wait()
+
+    monkeypatch.setattr(manager, "_supervise_shared_worker", supervise)
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding_a].shared_worker
+    await asyncio.wait_for(supervisor_started.wait(), timeout=1)
+    supervisor = worker.launch_task
+
+    await manager.remove_plugin_installation(binding_a)
+
+    assert worker.launch_task is supervisor
+    assert not supervisor.done()
+    assert set(worker.slots) == {binding_b}
+    release_supervisor.set()
+    await supervisor
 
 
 async def test_shared_worker_registration_attaches_all_slots_with_exact_settings(
@@ -418,7 +533,9 @@ async def test_shared_worker_registration_attaches_all_slots_with_exact_settings
 
         async def get_plugin_slot_container(self, binding):
             return base_container.model_copy(
-                update={"status": runtime_plugin_container.RuntimeContainerStatus.INITIALIZED}
+                update={
+                    "status": runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+                }
             ).model_dump()
 
     context.control_handler = Control()

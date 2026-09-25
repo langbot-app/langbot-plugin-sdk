@@ -163,9 +163,9 @@ for these bindings.
 In the `shared` profile, `PluginManager` indexes desired state by the complete
 installation binding. Each desired-state entry has an additive
 `execution_mode`: omission or `dedicated` preserves the historical one-process
-per installation behavior, while `shared_certified` opts a certified
+per installation behavior, while `shared-runtime-v1` opts a certified
 `shared-runtime-v1` installation into a digest-scoped worker pool. Core is
-responsible for selecting `shared_certified` only after certification succeeds;
+responsible for selecting `shared-runtime-v1` only after certification succeeds;
 the Runtime never infers shared authority from tenant-controlled manifest data.
 The instance-scoped `RECONCILE_PLUGIN_INSTALLATIONS`
 action replays the authoritative set, while tenant-scoped

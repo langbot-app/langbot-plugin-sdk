@@ -157,9 +157,7 @@ class Handler(abc.ABC):
         self.max_file_bytes = max_file_bytes
         self._file_transfer_lock = asyncio.Lock()
         self._owned_transfer_files: set[str] = set()
-        self._owned_transfer_contexts: dict[
-            str, ActionEnvelopeContext | None
-        ] = {}
+        self._owned_transfer_contexts: dict[str, ActionEnvelopeContext | None] = {}
 
         self._disconnect_callback = disconnect_callback
 
@@ -194,14 +192,21 @@ class Handler(abc.ABC):
             if len(chunk_bytes) > FILE_CHUNK_LENGTH:
                 raise ValueError("File transfer chunk exceeds the protocol limit")
             async with self._file_transfer_lock:
+                transfer_context = self.resolve_effective_action_context()
+                if (
+                    data["file_key"] in self._owned_transfer_contexts
+                    and self._owned_transfer_contexts[data["file_key"]]
+                    != transfer_context
+                ):
+                    raise ValueError(
+                        "File transfer ownership does not match action context"
+                    )
                 if (
                     data["file_key"] not in self._owned_transfer_files
                     and len(self._owned_transfer_files) >= MAX_ACTIVE_FILE_TRANSFERS
                 ):
                     raise ValueError("Active file transfer capacity reached")
-                transfer_context = self.current_action_context
-                if self._owned_transfer_contexts.get(data["file_key"]) != transfer_context:
-                    self._owned_transfer_contexts[data["file_key"]] = transfer_context
+                self._owned_transfer_contexts[data["file_key"]] = transfer_context
                 self._owned_transfer_files.add(data["file_key"])
                 # The first chunk replaces stale partial data for the same
                 # opaque transfer id; later chunks append. Runtime-side
@@ -778,6 +783,16 @@ class Handler(abc.ABC):
                 )
         return context
 
+    def resolve_effective_action_context(
+        self,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+    ) -> ActionEnvelopeContext | None:
+        """Resolve explicit, task-local, then connection-bound authority."""
+
+        if action_context is not None:
+            return self.resolve_outbound_action_context(action_context)
+        return self._current_action_context.get() or self._bound_action_context
+
     # decorator to register an action
     def action(
         self, name: ActionType
@@ -878,14 +893,9 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> bytes:
-        transfer_context = (
-            parse_action_envelope_context(action_context)
-            if action_context is not None
-            else self.current_action_context
-        )
+        transfer_context = self.resolve_effective_action_context(action_context)
         if (
-            action_context is not None
-            and file_key in self._owned_transfer_contexts
+            file_key in self._owned_transfer_contexts
             and self._owned_transfer_contexts[file_key] != transfer_context
         ):
             raise ValueError("File transfer ownership does not match action context")
@@ -913,14 +923,9 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> None:
-        transfer_context = (
-            parse_action_envelope_context(action_context)
-            if action_context is not None
-            else self.current_action_context
-        )
+        transfer_context = self.resolve_effective_action_context(action_context)
         if (
-            action_context is not None
-            and file_key in self._owned_transfer_contexts
+            file_key in self._owned_transfer_contexts
             and self._owned_transfer_contexts[file_key] != transfer_context
         ):
             raise ValueError("File transfer ownership does not match action context")
