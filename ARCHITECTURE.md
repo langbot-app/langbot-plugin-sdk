@@ -250,8 +250,12 @@ Core mechanics:
 - `Handler.call_action_generator()` consumes streamed responses.
 - Streaming emits `chunk_status: "continue"` chunks and ends with `"end"`.
 - File transfer uses `CommonAction.FILE_CHUNK` with 16KB base64 chunks stored
-  under `data/temp/lbp/`. Transfer keys are high-entropy opaque basenames; the
-  receiver rejects absolute paths, separators, `..`, and unsafe extensions.
+  under `data/temp/lbp/`. New transfer keys are high-entropy opaque capabilities;
+  the receiver durably binds each capability to its exact authority namespace so
+  a later read can recover that namespace after the action or handler ends. An
+  explicit current context must still match, and the receiver never scans other
+  namespaces. Legacy opaque basenames remain supported. Absolute paths,
+  separators, `..`, and unsafe extensions are rejected.
 
 Action enums are the protocol contract:
 

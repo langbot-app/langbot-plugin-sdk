@@ -1114,6 +1114,193 @@ async def test_file_transfer_owner_survives_handler_recreation_and_failed_cleanu
 
 
 @pytest.mark.asyncio
+async def test_transfer_capability_recovers_exact_owner_without_current_context(
+    tmp_path,
+):
+    sender = Handler(ProtocolConnection(), file_storage_dir=tmp_path / "sender")
+    sent_chunks = []
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+
+    async def capture_chunk(action, data, timeout=15.0, action_context=None):
+        assert action is CommonAction.FILE_CHUNK
+        sent_chunks.append((data, action_context))
+        return {}
+
+    sender.call_action = capture_chunk
+    file_key = await sender.send_file(
+        b"capability payload", "bin", action_context=binding
+    )
+    assert file_key.startswith("ft1_")
+
+    receiver = Handler(ProtocolConnection(), file_storage_dir=tmp_path / "receiver")
+    token = receiver._current_action_context.set(binding)
+    try:
+        for chunk, chunk_context in sent_chunks:
+            assert chunk_context == binding
+            await receiver.actions[CommonAction.FILE_CHUNK.value](chunk)
+    finally:
+        receiver._current_action_context.reset(token)
+
+    assert await receiver.read_local_file(file_key) == b"capability payload"
+    await receiver.delete_local_file(file_key)
+    with pytest.raises(FileNotFoundError):
+        await receiver.read_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_owner_survives_handler_recreation(tmp_path):
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    file_key = f"ft1_{'1' * 64}.bin"
+    first = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = first._current_action_context.set(binding)
+    try:
+        await first.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"restart payload").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        first._current_action_context.reset(token)
+
+    restarted = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    assert await restarted.read_local_file(file_key) == b"restart payload"
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_cleanup_removes_owner_record(tmp_path):
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    file_key = f"ft1_{'4' * 64}.bin"
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = handler._current_action_context.set(binding)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"cleanup payload").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    await handler._cleanup_owned_transfers()
+    assert not owner_records[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_rejects_cross_slot_read_write_and_delete(tmp_path):
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    binding_b = binding_a.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+    file_key = f"ft1_{'2' * 64}.bin"
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = handler._current_action_context.set(binding_a)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"A-secret").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    token = handler._current_action_context.set(binding_b)
+    try:
+        with pytest.raises(FileNotFoundError):
+            await handler.read_local_file(file_key)
+        await handler.delete_local_file(file_key)
+        with pytest.raises(ValueError, match="Invalid file transfer capability"):
+            await handler.actions[CommonAction.FILE_CHUNK.value](
+                {
+                    "file_key": file_key,
+                    "chunk_base64": base64.b64encode(b"B-overwrite").decode("ascii"),
+                    "chunk_index": 0,
+                    "chunk_amount": 1,
+                }
+            )
+    finally:
+        handler._current_action_context.reset(token)
+
+    assert (
+        await handler.read_local_file(file_key, action_context=binding_a) == b"A-secret"
+    )
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_corrupt_owner_record_fails_closed(tmp_path):
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    file_key = f"ft1_{'3' * 64}.bin"
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = handler._current_action_context.set(binding)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"protected").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    owner_records[0].write_text("{}")
+    restarted = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await restarted.read_local_file(file_key)
+
+
+@pytest.mark.asyncio
 async def test_file_transfer_io_uses_backpressure_aware_executor(tmp_path, monkeypatch):
     handler = Handler(
         ProtocolConnection(),
