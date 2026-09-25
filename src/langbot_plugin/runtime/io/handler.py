@@ -21,6 +21,9 @@ import contextvars
 import re
 import logging
 import stat
+import threading
+import weakref
+from contextlib import contextmanager
 from langbot_plugin.runtime.io import connection
 from langbot_plugin.entities.io.req import ActionRequest
 from langbot_plugin.entities.io.context import (
@@ -63,6 +66,10 @@ _TRANSFER_CAPABILITY_PATTERN = re.compile(
 )
 _TRANSFER_OWNER_DIR = ".transfer-owners"
 
+_TRANSFER_LOCKS_GUARD = threading.Lock()
+_TRANSFER_LOCKS: dict[tuple[str, str], tuple[threading.RLock, int]] = {}
+_ACTIVE_TRANSFER_HANDLERS: dict[tuple[str, str], weakref.ReferenceType[Any]] = {}
+
 
 async def _run_small_protocol_work(fn: Callable[..., Any], *args: Any) -> Any:
     if asyncio.to_thread is _ORIGINAL_ASYNCIO_TO_THREAD:
@@ -70,15 +77,7 @@ async def _run_small_protocol_work(fn: Callable[..., Any], *args: Any) -> Any:
     return await asyncio.to_thread(fn, *args)
 
 
-def _file_storage_path(
-    file_key: str,
-    file_storage_dir: str | os.PathLike[str] = FILE_STORAGE_DIR,
-    *,
-    action_context: ActionEnvelopeContext | None = None,
-    create_namespace: bool = False,
-) -> str:
-    """Resolve one opaque key inside its durable authority namespace."""
-
+def _validate_file_key(file_key: str) -> str:
     if not isinstance(file_key, str):
         raise ValueError("Invalid file transfer key")
     key = file_key.strip()
@@ -93,19 +92,208 @@ def _file_storage_path(
         or _SAFE_FILE_KEY_PATTERN.fullmatch(key) is None
     ):
         raise ValueError("Invalid file transfer key")
+    return key
+
+
+def _transfer_namespace(action_context: ActionEnvelopeContext | None) -> str:
     if action_context is None:
-        namespace = "unbound"
-    else:
-        serialized_context = json.dumps(
-            action_context.model_dump(mode="json"),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        namespace = hashlib.sha256(serialized_context).hexdigest()
+        return "unbound"
+    serialized_context = json.dumps(
+        action_context.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(serialized_context).hexdigest()
+
+
+def _transfer_owner_record_name(file_key: str) -> str | None:
+    if _TRANSFER_CAPABILITY_PATTERN.fullmatch(file_key) is None:
+        return None
+    return hashlib.sha256(file_key.encode("ascii")).hexdigest() + ".json"
+
+
+@contextmanager
+def _locked_transfer(root: str, file_key: str):
+    """Serialize one capability across every handler sharing a process/root."""
+
+    lock_key = (root, file_key)
+    with _TRANSFER_LOCKS_GUARD:
+        entry = _TRANSFER_LOCKS.get(lock_key)
+        if entry is None:
+            lock = threading.RLock()
+            references = 0
+        else:
+            lock, references = entry
+        _TRANSFER_LOCKS[lock_key] = (lock, references + 1)
+    lock.acquire()
+    try:
+        yield lock_key
+    finally:
+        lock.release()
+        with _TRANSFER_LOCKS_GUARD:
+            current_lock, references = _TRANSFER_LOCKS[lock_key]
+            if current_lock is lock and references == 1:
+                del _TRANSFER_LOCKS[lock_key]
+            else:
+                _TRANSFER_LOCKS[lock_key] = (current_lock, references - 1)
+
+
+def _active_transfer_handler(lock_key: tuple[str, str]) -> Handler | None:
+    with _TRANSFER_LOCKS_GUARD:
+        reference = _ACTIVE_TRANSFER_HANDLERS.get(lock_key)
+        active = None if reference is None else reference()
+        if reference is not None and active is None:
+            _ACTIVE_TRANSFER_HANDLERS.pop(lock_key, None)
+        return active
+
+
+def _is_active_transfer_handler(lock_key: tuple[str, str], handler: Any) -> bool:
+    return _active_transfer_handler(lock_key) is handler
+
+
+def _set_active_transfer_handler(lock_key: tuple[str, str], active: Any | None) -> None:
+    with _TRANSFER_LOCKS_GUARD:
+        if active is None:
+            _ACTIVE_TRANSFER_HANDLERS.pop(lock_key, None)
+        else:
+            _ACTIVE_TRANSFER_HANDLERS[lock_key] = weakref.ref(active)
+
+
+def _clear_active_transfer_handler(lock_key: tuple[str, str], expected: Any) -> None:
+    with _TRANSFER_LOCKS_GUARD:
+        reference = _ACTIVE_TRANSFER_HANDLERS.get(lock_key)
+        if reference is not None and reference() is expected:
+            del _ACTIVE_TRANSFER_HANDLERS[lock_key]
+
+
+def _open_transfer_directory(
+    root: str,
+    directory_name: str,
+    *,
+    create: bool,
+) -> tuple[int, int]:
+    """Open root/child by descriptor without following a child symlink."""
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    root_fd = os.open(root, directory_flags | no_follow)
+    try:
+        try:
+            directory_fd = os.open(
+                directory_name,
+                directory_flags | no_follow,
+                dir_fd=root_fd,
+            )
+        except FileNotFoundError:
+            if not create:
+                raise
+            try:
+                os.mkdir(directory_name, mode=0o700, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            directory_fd = os.open(
+                directory_name,
+                directory_flags | no_follow,
+                dir_fd=root_fd,
+            )
+        directory_stat = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            os.close(directory_fd)
+            raise ValueError("Invalid file transfer capability")
+        return root_fd, directory_fd
+    except OSError as exc:
+        os.close(root_fd)
+        if isinstance(exc, FileNotFoundError):
+            raise
+        raise ValueError("Invalid file transfer capability") from None
+
+
+def _read_regular_at(
+    root: str,
+    directory_name: str,
+    file_name: str,
+    *,
+    private: bool = False,
+    max_bytes: int | None = None,
+) -> bytes:
+    root_fd, directory_fd = _open_transfer_directory(root, directory_name, create=False)
+    try:
+        try:
+            descriptor = os.open(
+                file_name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError):
+                raise
+            raise ValueError("Invalid file transfer capability") from None
+        try:
+            file_stat = os.fstat(descriptor)
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ValueError("Invalid file transfer capability")
+            if private and file_stat.st_mode & 0o077:
+                raise ValueError("Invalid file transfer capability")
+            if max_bytes is not None and file_stat.st_size > max_bytes:
+                raise ValueError("File transfer exceeds the configured size limit")
+            with os.fdopen(descriptor, "rb", closefd=False) as file:
+                return file.read(max_bytes + 1 if max_bytes is not None else -1)
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(directory_fd)
+        os.close(root_fd)
+
+
+def _remove_regular_at(
+    root: str,
+    directory_name: str,
+    file_name: str,
+    *,
+    missing_ok: bool,
+) -> bool:
+    try:
+        root_fd, directory_fd = _open_transfer_directory(
+            root, directory_name, create=False
+        )
+    except FileNotFoundError:
+        if missing_ok:
+            return False
+        raise
+    try:
+        try:
+            file_stat = os.stat(file_name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if missing_ok:
+                return False
+            raise
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("Invalid file transfer capability")
+        os.remove(file_name, dir_fd=directory_fd)
+        return True
+    finally:
+        os.close(directory_fd)
+        os.close(root_fd)
+
+
+def _file_storage_path(
+    file_key: str,
+    file_storage_dir: str | os.PathLike[str] = FILE_STORAGE_DIR,
+    *,
+    action_context: ActionEnvelopeContext | None = None,
+    create_namespace: bool = False,
+) -> str:
+    """Resolve one opaque key inside its durable authority namespace."""
+
+    key = _validate_file_key(file_key)
+    namespace = _transfer_namespace(action_context)
     namespace_path = os.path.join(os.fspath(file_storage_dir), namespace)
     if create_namespace:
-        os.makedirs(namespace_path, mode=0o700, exist_ok=True)
-        os.chmod(namespace_path, 0o700)
+        root_fd, namespace_fd = _open_transfer_directory(
+            os.fspath(file_storage_dir), namespace, create=True
+        )
+        os.close(namespace_fd)
+        os.close(root_fd)
     return os.path.join(namespace_path, key)
 
 
@@ -115,12 +303,11 @@ def _transfer_owner_record_path(
 ) -> str | None:
     """Return the exact durable owner record for an opaque transfer capability."""
 
-    if (
-        not isinstance(file_key, str)
-        or _TRANSFER_CAPABILITY_PATTERN.fullmatch(file_key) is None
-    ):
+    if not isinstance(file_key, str):
         return None
-    record_name = hashlib.sha256(file_key.encode("ascii")).hexdigest() + ".json"
+    record_name = _transfer_owner_record_name(file_key)
+    if record_name is None:
+        return None
     return os.path.join(os.fspath(file_storage_dir), _TRANSFER_OWNER_DIR, record_name)
 
 
@@ -183,7 +370,7 @@ class Handler(abc.ABC):
                 if runtime_profile == "shared"
                 else FILE_STORAGE_DIR
             )
-        self.file_storage_dir = os.fspath(file_storage_dir)
+        self.file_storage_dir = os.path.realpath(os.fspath(file_storage_dir))
         if max_file_bytes is not None and (
             isinstance(max_file_bytes, bool)
             or not isinstance(max_file_bytes, int)
@@ -194,14 +381,13 @@ class Handler(abc.ABC):
         self._file_transfer_lock = asyncio.Lock()
         self._owned_transfer_files: set[str] = set()
         self._owned_transfer_records: set[str] = set()
+        self._owned_transfer_contexts: dict[str, ActionEnvelopeContext | None] = {}
+        self._owned_transfer_claims: dict[str, str | None] = {}
 
         self._disconnect_callback = disconnect_callback
 
         os.makedirs(self.file_storage_dir, mode=0o700, exist_ok=True)
         os.chmod(self.file_storage_dir, 0o700)
-        self._transfer_owner_dir = os.path.join(
-            self.file_storage_dir, _TRANSFER_OWNER_DIR
-        )
 
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
@@ -228,49 +414,15 @@ class Handler(abc.ABC):
                 raise ValueError("File transfer chunk exceeds the protocol limit")
             async with self._file_transfer_lock:
                 transfer_context = self.resolve_effective_action_context()
-                file_key = data["file_key"]
-                await self._claim_transfer_capability(file_key, transfer_context)
-                owner_record = _transfer_owner_record_path(
-                    file_key, self.file_storage_dir
-                )
-                if owner_record is not None:
-                    self._owned_transfer_records.add(owner_record)
-                file_path = _file_storage_path(
+                file_key = _validate_file_key(data["file_key"])
+                await _run_small_protocol_work(
+                    self._write_file_chunk,
                     file_key,
-                    self.file_storage_dir,
-                    action_context=transfer_context,
-                    create_namespace=True,
+                    transfer_context,
+                    chunk_bytes,
+                    chunk_index,
+                    chunk_amount,
                 )
-                if (
-                    file_path not in self._owned_transfer_files
-                    and len(self._owned_transfer_files) >= MAX_ACTIVE_FILE_TRANSFERS
-                ):
-                    raise ValueError("Active file transfer capacity reached")
-                self._owned_transfer_files.add(file_path)
-                # The first chunk replaces stale partial data for the same
-                # opaque transfer id; later chunks append. Runtime-side
-                # installation handlers cap the aggregate bytes written on
-                # behalf of an untrusted worker so protocol transfer cannot
-                # bypass the worker's per-file policy.
-                mode = "wb" if chunk_index == 0 else "ab"
-                existing_size = 0
-                if mode == "ab":
-                    try:
-                        existing_size = os.path.getsize(file_path)
-                    except FileNotFoundError:
-                        pass
-                resulting_size = (
-                    len(chunk_bytes)
-                    if mode == "wb"
-                    else existing_size + len(chunk_bytes)
-                )
-                if (
-                    self.max_file_bytes is not None
-                    and resulting_size > self.max_file_bytes
-                ):
-                    raise ValueError("File transfer exceeds the configured size limit")
-                with open(file_path, mode) as f:
-                    f.write(chunk_bytes)
             return ActionResponse.success({})
 
     def _message_blocking_scope(
@@ -886,62 +1038,237 @@ class Handler(abc.ABC):
             separators=(",", ":"),
         ).encode("utf-8")
 
+    @classmethod
+    def _serialize_transfer_record(
+        cls,
+        transfer_context: ActionEnvelopeContext | None,
+        claim_id: str,
+    ) -> bytes:
+        return json.dumps(
+            {
+                "claim_id": claim_id,
+                "owner": None
+                if transfer_context is None
+                else transfer_context.model_dump(mode="json"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    @staticmethod
+    def _parse_transfer_record(
+        raw_owner: bytes,
+    ) -> tuple[ActionEnvelopeContext | None, str | None]:
+        stored_data = json.loads(raw_owner)
+        if (
+            isinstance(stored_data, dict)
+            and set(stored_data) == {"claim_id", "owner"}
+            and isinstance(stored_data["claim_id"], str)
+            and stored_data["claim_id"]
+        ):
+            owner_data = stored_data["owner"]
+            return (
+                None
+                if owner_data is None
+                else parse_action_envelope_context(owner_data),
+                stored_data["claim_id"],
+            )
+        return (
+            None if stored_data is None else parse_action_envelope_context(stored_data),
+            None,
+        )
+
+    @staticmethod
+    def _context_can_access_transfer(
+        effective_context: ActionEnvelopeContext | None,
+        stored_context: ActionEnvelopeContext | None,
+    ) -> bool:
+        return (
+            effective_context is None
+            or effective_context == stored_context
+            or (
+                isinstance(stored_context, InstallationBinding)
+                and not isinstance(effective_context, InstallationBinding)
+                and stored_context.model_dump(
+                    exclude={"runtime_revision", "artifact_digest"}
+                )
+                == effective_context.model_dump()
+            )
+        )
+
     @staticmethod
     def _read_private_file(path: str) -> bytes:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        try:
-            file_stat = os.fstat(descriptor)
-            if not stat.S_ISREG(file_stat.st_mode):
-                raise ValueError("Invalid file transfer capability")
-            if file_stat.st_mode & 0o077:
-                raise ValueError("Invalid file transfer capability")
-            with os.fdopen(descriptor, "rb", closefd=False) as file:
-                return file.read()
-        finally:
-            os.close(descriptor)
+        return _read_regular_at(
+            os.path.dirname(os.path.dirname(path)),
+            os.path.basename(os.path.dirname(path)),
+            os.path.basename(path),
+            private=True,
+        )
 
-    async def _claim_transfer_capability(
+    def _claim_transfer_capability_sync(
         self,
         file_key: str,
         transfer_context: ActionEnvelopeContext | None,
-    ) -> None:
-        record_path = _transfer_owner_record_path(file_key, self.file_storage_dir)
-        if record_path is None:
-            return
+    ) -> bool:
+        record_name = _transfer_owner_record_name(file_key)
+        if record_name is None:
+            return False
         expected_owner = self._serialize_transfer_owner(transfer_context)
-
-        def claim() -> None:
-            os.makedirs(self._transfer_owner_dir, mode=0o700, exist_ok=True)
-            os.chmod(self._transfer_owner_dir, 0o700)
+        root_fd, owner_dir_fd = _open_transfer_directory(
+            self.file_storage_dir, _TRANSFER_OWNER_DIR, create=True
+        )
+        try:
             try:
                 descriptor = os.open(
-                    record_path,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    record_name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                     0o600,
+                    dir_fd=owner_dir_fd,
                 )
             except FileExistsError:
+                current_owner = _read_regular_at(
+                    self.file_storage_dir,
+                    _TRANSFER_OWNER_DIR,
+                    record_name,
+                    private=True,
+                )
                 try:
-                    current_owner = self._read_private_file(record_path)
-                except (OSError, ValueError):
+                    stored_context, claim_id = self._parse_transfer_record(
+                        current_owner
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
                     raise ValueError("Invalid file transfer capability") from None
-                if current_owner != expected_owner:
+                if self._serialize_transfer_owner(stored_context) != expected_owner:
                     raise ValueError("Invalid file transfer capability")
-                return
+                file_path = os.path.join(
+                    self.file_storage_dir,
+                    _transfer_namespace(transfer_context),
+                    file_key,
+                )
+                self._owned_transfer_claims[file_path] = claim_id
+                return False
+            except OSError:
+                raise ValueError("Invalid file transfer capability") from None
             try:
+                claim_id = uuid.uuid4().hex
                 with os.fdopen(descriptor, "wb", closefd=False) as file:
-                    file.write(expected_owner)
+                    file.write(
+                        self._serialize_transfer_record(transfer_context, claim_id)
+                    )
                     file.flush()
                     os.fsync(descriptor)
             finally:
                 os.close(descriptor)
+            file_path = os.path.join(
+                self.file_storage_dir,
+                _transfer_namespace(transfer_context),
+                file_key,
+            )
+            self._owned_transfer_claims[file_path] = claim_id
+            return True
+        finally:
+            os.close(owner_dir_fd)
+            os.close(root_fd)
 
-        await _run_small_protocol_work(claim)
+    def _write_file_chunk(
+        self,
+        file_key: str,
+        transfer_context: ActionEnvelopeContext | None,
+        chunk_bytes: bytes,
+        chunk_index: int,
+        chunk_amount: int,
+    ) -> None:
+        root = self.file_storage_dir
+        namespace = _transfer_namespace(transfer_context)
+        file_path = os.path.join(root, namespace, file_key)
+        owner_record = _transfer_owner_record_path(file_key, root)
+
+        with _locked_transfer(root, file_key) as lock_key:
+            active = _active_transfer_handler(lock_key)
+            if chunk_index == 0:
+                if active is not None and active is not self:
+                    raise ValueError("Invalid file transfer capability")
+            elif active is not None and active is not self:
+                raise ValueError("Invalid file transfer capability")
+
+            new_transfer = file_path not in self._owned_transfer_files
+            if (
+                new_transfer
+                and len(self._owned_transfer_files) >= MAX_ACTIVE_FILE_TRANSFERS
+            ):
+                raise ValueError("Active file transfer capacity reached")
+
+            created_owner = False
+            try:
+                created_owner = self._claim_transfer_capability_sync(
+                    file_key, transfer_context
+                )
+                root_fd, namespace_fd = _open_transfer_directory(
+                    root, namespace, create=True
+                )
+                try:
+                    flags = (
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | getattr(os, "O_NOFOLLOW", 0)
+                        | (os.O_TRUNC if chunk_index == 0 else os.O_APPEND)
+                    )
+                    try:
+                        descriptor = os.open(
+                            file_key,
+                            flags,
+                            0o600,
+                            dir_fd=namespace_fd,
+                        )
+                    except OSError:
+                        raise ValueError("Invalid file transfer capability") from None
+                    try:
+                        file_stat = os.fstat(descriptor)
+                        if not stat.S_ISREG(file_stat.st_mode):
+                            raise ValueError("Invalid file transfer capability")
+                        resulting_size = (
+                            len(chunk_bytes)
+                            if chunk_index == 0
+                            else file_stat.st_size + len(chunk_bytes)
+                        )
+                        if (
+                            self.max_file_bytes is not None
+                            and resulting_size > self.max_file_bytes
+                        ):
+                            raise ValueError(
+                                "File transfer exceeds the configured size limit"
+                            )
+                        os.write(descriptor, chunk_bytes)
+                    finally:
+                        os.close(descriptor)
+                finally:
+                    os.close(namespace_fd)
+                    os.close(root_fd)
+            except Exception:
+                if created_owner and owner_record is not None:
+                    with contextlib.suppress(FileNotFoundError):
+                        _remove_regular_at(
+                            root,
+                            _TRANSFER_OWNER_DIR,
+                            os.path.basename(owner_record),
+                            missing_ok=True,
+                        )
+                if new_transfer:
+                    self._owned_transfer_claims.pop(file_path, None)
+                raise
+
+            self._owned_transfer_files.add(file_path)
+            self._owned_transfer_contexts[file_path] = transfer_context
+            if owner_record is not None:
+                self._owned_transfer_records.add(owner_record)
+            _set_active_transfer_handler(lock_key, self)
 
     async def _resolve_transfer_context(
         self,
         file_key: str,
         action_context: ActionEnvelopeContext | dict[str, Any] | None,
     ) -> ActionEnvelopeContext | None:
+        file_key = _validate_file_key(file_key)
         effective_context = self.resolve_effective_action_context(action_context)
         record_path = _transfer_owner_record_path(file_key, self.file_storage_dir)
         if record_path is None:
@@ -950,27 +1277,14 @@ class Handler(abc.ABC):
             raw_owner = await _run_small_protocol_work(
                 self._read_private_file, record_path
             )
-            stored_data = json.loads(raw_owner)
-            stored_context = (
-                None
-                if stored_data is None
-                else parse_action_envelope_context(stored_data)
-            )
+            stored_context, _claim_id = self._parse_transfer_record(raw_owner)
         except FileNotFoundError:
             raise FileNotFoundError(file_key) from None
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             raise ValueError("Invalid file transfer capability") from None
-        if (
-            effective_context is not None
-            and effective_context != stored_context
-            and not (
-                isinstance(stored_context, InstallationBinding)
-                and not isinstance(effective_context, InstallationBinding)
-                and stored_context.model_dump(
-                    exclude={"runtime_revision", "artifact_digest"}
-                )
-                == effective_context.model_dump()
-            )
+        if not self._context_can_access_transfer(
+            effective_context,
+            stored_context,
         ):
             raise FileNotFoundError(file_key)
         return stored_context
@@ -1035,26 +1349,19 @@ class Handler(abc.ABC):
         transfer_context = await self._resolve_transfer_context(
             file_key, action_context
         )
-        file_path = _file_storage_path(
-            file_key,
-            self.file_storage_dir,
-            action_context=transfer_context,
-        )
 
         def read_file() -> bytes:
-            if self.max_file_bytes is not None:
-                file_size = os.path.getsize(file_path)
-                if file_size > self.max_file_bytes:
-                    raise ValueError("File transfer exceeds the configured size limit")
-            with open(file_path, "rb") as file:
-                return file.read(
-                    self.max_file_bytes + 1 if self.max_file_bytes is not None else -1
+            with _locked_transfer(self.file_storage_dir, file_key):
+                return _read_regular_at(
+                    self.file_storage_dir,
+                    _transfer_namespace(transfer_context),
+                    file_key,
+                    max_bytes=self.max_file_bytes,
                 )
 
         content = await run_blocking_with_backpressure(read_file)
         if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
-        await run_blocking_with_backpressure(os.path.getsize, file_path)
         return content
 
     async def delete_local_file(
@@ -1063,64 +1370,108 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> None:
-        try:
-            transfer_context = await self._resolve_transfer_context(
-                file_key, action_context
-            )
-        except FileNotFoundError:
-            return
-        file_path = _file_storage_path(
-            file_key,
-            self.file_storage_dir,
-            action_context=transfer_context,
-        )
+        file_key = _validate_file_key(file_key)
+        effective_context = self.resolve_effective_action_context(action_context)
         async with self._file_transfer_lock:
-            try:
-                await run_blocking_with_backpressure(
-                    os.remove,
-                    file_path,
-                )
-            except FileNotFoundError:
-                pass
-            finally:
-                self._owned_transfer_files.discard(file_path)
-            owner_record = _transfer_owner_record_path(file_key, self.file_storage_dir)
+            await run_blocking_with_backpressure(
+                self._delete_transfer_sync,
+                file_key,
+                effective_context,
+                False,
+            )
+
+    def _delete_transfer_sync(
+        self,
+        file_key: str,
+        transfer_context: ActionEnvelopeContext | None,
+        cleanup: bool,
+    ) -> bool:
+        owner_record = _transfer_owner_record_path(file_key, self.file_storage_dir)
+        with _locked_transfer(self.file_storage_dir, file_key) as lock_key:
+            stored_context = transfer_context
+            current_claim_id: str | None = None
             if owner_record is not None:
                 try:
-                    await run_blocking_with_backpressure(os.remove, owner_record)
+                    raw_owner = self._read_private_file(owner_record)
+                    stored_context, current_claim_id = self._parse_transfer_record(
+                        raw_owner
+                    )
                 except FileNotFoundError:
-                    pass
-                finally:
-                    self._owned_transfer_records.discard(owner_record)
+                    return False
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    raise ValueError("Invalid file transfer capability") from None
+                if not self._context_can_access_transfer(
+                    transfer_context,
+                    stored_context,
+                ):
+                    return False
+
+            namespace = _transfer_namespace(stored_context)
+            file_path = os.path.join(self.file_storage_dir, namespace, file_key)
+            if cleanup:
+                expected_claim_id = self._owned_transfer_claims.get(file_path)
+                if current_claim_id != expected_claim_id:
+                    self._owned_transfer_files.discard(file_path)
+                    self._owned_transfer_contexts.pop(file_path, None)
+                    self._owned_transfer_claims.pop(file_path, None)
+                    if owner_record is not None:
+                        self._owned_transfer_records.discard(owner_record)
+                    return False
+                active = _active_transfer_handler(lock_key)
+                if active is not None and active is not self:
+                    self._owned_transfer_files.discard(file_path)
+                    self._owned_transfer_contexts.pop(file_path, None)
+                    self._owned_transfer_claims.pop(file_path, None)
+                    if owner_record is not None:
+                        self._owned_transfer_records.discard(owner_record)
+                    return False
+            try:
+                _remove_regular_at(
+                    self.file_storage_dir,
+                    namespace,
+                    file_key,
+                    missing_ok=True,
+                )
+            except OSError:
+                return False
+            was_active = _is_active_transfer_handler(lock_key, self)
+
+            if owner_record is not None:
+                try:
+                    _remove_regular_at(
+                        self.file_storage_dir,
+                        _TRANSFER_OWNER_DIR,
+                        os.path.basename(owner_record),
+                        missing_ok=True,
+                    )
+                except OSError:
+                    return False
+                self._owned_transfer_records.discard(owner_record)
+            self._owned_transfer_files.discard(file_path)
+            self._owned_transfer_contexts.pop(file_path, None)
+            self._owned_transfer_claims.pop(file_path, None)
+            if not cleanup or was_active:
+                _set_active_transfer_handler(lock_key, None)
+            return True
 
     async def _cleanup_owned_transfers(self) -> None:
         async with self._file_transfer_lock:
             file_paths = tuple(self._owned_transfer_files)
-            owner_records = tuple(self._owned_transfer_records)
-            self._owned_transfer_files.clear()
-            self._owned_transfer_records.clear()
             for file_path in file_paths:
                 try:
                     await run_blocking_cleanup(
-                        os.remove,
-                        file_path,
+                        self._delete_transfer_sync,
+                        os.path.basename(file_path),
+                        self._owned_transfer_contexts[file_path],
+                        True,
                     )
-                except FileNotFoundError:
-                    pass
                 except OSError as exc:
+                    with _locked_transfer(
+                        self.file_storage_dir, os.path.basename(file_path)
+                    ) as lock_key:
+                        _clear_active_transfer_handler(lock_key, self)
                     logger.warning(
                         "Failed to clean runtime transfer file %s: %s",
                         os.path.basename(file_path),
-                        exc,
-                    )
-            for owner_record in owner_records:
-                try:
-                    await run_blocking_cleanup(os.remove, owner_record)
-                except FileNotFoundError:
-                    pass
-                except OSError as exc:
-                    logger.warning(
-                        "Failed to clean runtime transfer owner record %s: %s",
-                        os.path.basename(owner_record),
                         exc,
                     )
