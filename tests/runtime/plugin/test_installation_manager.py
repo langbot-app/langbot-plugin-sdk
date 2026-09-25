@@ -109,6 +109,44 @@ async def _prepare_environment(store, artifact):
     )
 
 
+def _initialized_container() -> runtime_plugin_container.PluginContainer:
+    return runtime_plugin_container.PluginContainer(
+        manifest=ComponentManifest(
+            owner="tester/demo",
+            rel_path="manifest.yaml",
+            manifest={
+                "apiVersion": "v1",
+                "kind": "Plugin",
+                "metadata": {
+                    "author": "tester",
+                    "name": "demo",
+                    "version": "1.0.0",
+                    "label": {"en_US": "demo"},
+                },
+                "spec": {},
+                "execution": {"python": {"path": "main.py", "attr": "Plugin"}},
+            },
+        ),
+        plugin_instance=NonePlugin(),
+        enabled=True,
+        priority=0,
+        plugin_config={},
+        status=runtime_plugin_container.RuntimeContainerStatus.INITIALIZED,
+        components=[],
+    )
+
+
+async def _drain_plugin_tasks(manager: PluginManager) -> None:
+    while True:
+        tasks = tuple(task for task in manager.plugin_run_tasks if not task.done())
+        if not tasks:
+            await asyncio.sleep(0)
+            tasks = tuple(task for task in manager.plugin_run_tasks if not task.done())
+            if not tasks:
+                return
+        await asyncio.gather(*tasks)
+
+
 async def test_manager_indexes_same_artifact_installations_by_complete_binding(
     tmp_path,
 ):
@@ -333,6 +371,7 @@ async def test_shared_config_update_does_not_restart_sibling_worker(
         execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
     )
     worker = manager.installation_runtimes[binding_a].shared_worker
+    worker.plugin_handler = mock.Mock()
     worker.ready_event.set()
     worker_task = asyncio.create_task(asyncio.Event().wait())
     worker.launch_task = worker_task
@@ -349,6 +388,195 @@ async def test_shared_config_update_does_not_restart_sibling_worker(
     assert attached == [manager.installation_runtimes[binding_a]]
     worker_task.cancel()
     await asyncio.gather(worker_task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("retry_operation", ["apply", "reconcile"])
+async def test_failed_sole_shared_slot_retries_with_registered_handler(
+    tmp_path,
+    monkeypatch,
+    retry_operation,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    launches = []
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", launches.append)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime = manager.installation_runtimes[binding]
+    worker = runtime.shared_worker
+    container = _initialized_container()
+    attach_attempts = 0
+
+    class Control:
+        async def call_action(self, action, data, *, action_context):
+            return {
+                "enabled": True,
+                "priority": 0,
+                "plugin_config": {},
+                "installation_uuid": action_context.installation_uuid,
+            }
+
+    class Handler:
+        def set_shared_pool_bindings(self, shared_digest, bindings):
+            pass
+
+        async def initialize_plugin_slot(self, candidate, settings):
+            nonlocal attach_attempts
+            attach_attempts += 1
+            if attach_attempts == 1:
+                raise RuntimeError("transient slot failure")
+
+        async def get_plugin_slot_container(self, candidate):
+            return container.model_dump()
+
+    context.control_handler = Control()
+    handler = Handler()
+    capability = manager._issue_registration_capability(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path=str(worker.artifact.code_path),
+        binding=binding,
+        shared_pool_digest=digest,
+    )
+    await manager.register_plugin(
+        handler,
+        container.model_dump(),
+        registration_capability=capability,
+    )
+
+    assert runtime.state == "failed"
+    assert runtime.error_code == "slot_attach_failed"
+    assert worker.plugin_handler is handler
+    assert worker.transport_registered_event.is_set()
+    assert not worker.ready_event.is_set()
+
+    if retry_operation == "apply":
+        result = await manager.apply_plugin_installation(
+            binding,
+            execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+        )
+        assert result["state"] == "starting"
+    else:
+        result = await manager.reconcile_plugin_installations(
+            (
+                PluginInstallationDesiredState(
+                    binding=binding,
+                    execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+                ),
+            )
+        )
+        assert result["applied"] == [binding.installation_uuid]
+
+    await _drain_plugin_tasks(manager)
+
+    assert attach_attempts == 2
+    assert launches == [worker]
+    assert worker.plugin_handler is handler
+    assert worker.transport_registered_event.is_set()
+    assert runtime.state == "running"
+    assert runtime.plugin_container is not None
+    assert runtime.ready_event.is_set()
+    assert worker.ready_event.is_set()
+
+
+async def test_failed_shared_slot_retry_keeps_healthy_sibling_and_worker(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    launches = []
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", launches.append)
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime_a = manager.installation_runtimes[binding_a]
+    runtime_b = manager.installation_runtimes[binding_b]
+    worker = runtime_a.shared_worker
+    container = _initialized_container()
+    failed_once = False
+
+    class Control:
+        async def call_action(self, action, data, *, action_context):
+            return {
+                "enabled": True,
+                "priority": 0,
+                "plugin_config": {},
+                "installation_uuid": action_context.installation_uuid,
+            }
+
+    class Handler:
+        def set_shared_pool_bindings(self, shared_digest, bindings):
+            pass
+
+        async def initialize_plugin_slot(self, candidate, settings):
+            nonlocal failed_once
+            if candidate == binding_b and not failed_once:
+                failed_once = True
+                raise RuntimeError("transient slot failure")
+
+        async def get_plugin_slot_container(self, candidate):
+            return container.model_dump()
+
+    context.control_handler = Control()
+    handler = Handler()
+    capability = manager._issue_registration_capability(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path=str(worker.artifact.code_path),
+        binding=binding_a,
+        shared_pool_digest=digest,
+    )
+    await manager.register_plugin(
+        handler,
+        container.model_dump(),
+        registration_capability=capability,
+    )
+    healthy_container = runtime_a.plugin_container
+
+    assert runtime_a.state == "running"
+    assert runtime_b.state == "failed"
+    assert worker.ready_event.is_set()
+
+    result = await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    assert result["state"] == "starting"
+    await _drain_plugin_tasks(manager)
+
+    assert launches == [worker]
+    assert worker.plugin_handler is handler
+    assert runtime_a.state == "running"
+    assert runtime_a.plugin_container is healthy_container
+    assert runtime_a.ready_event.is_set()
+    assert runtime_b.state == "running"
+    assert runtime_b.ready_event.is_set()
+    assert worker.ready_event.is_set()
 
 
 async def test_shared_slot_attach_is_joined_and_revalidated_after_settings_await(

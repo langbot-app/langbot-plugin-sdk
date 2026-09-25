@@ -1375,7 +1375,7 @@ class PluginManager:
                         worker.artifact.digest,
                         worker.slots,
                     )
-                if not first_attach and worker.ready_event.is_set():
+                if not first_attach and worker.plugin_handler is not None:
                     self._schedule_shared_slot_attach(runtime)
 
         if first_attach:
