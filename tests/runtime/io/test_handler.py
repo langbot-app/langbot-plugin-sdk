@@ -1438,6 +1438,79 @@ def test_transfer_rejects_configured_root_replaced_by_symlink_during_init(
 
 
 @pytest.mark.asyncio
+async def test_transfer_rejects_configured_root_replaced_after_init(tmp_path):
+    root = tmp_path / "transfer-root"
+    handler = Handler(ProtocolConnection(), file_storage_dir=root)
+    bound_root = tmp_path / "bound-root"
+    root.rename(bound_root)
+    root.mkdir()
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        await _write_chunk(handler, "root-drift.bin", b"payload")
+
+    assert list(root.iterdir()) == []
+    assert list(bound_root.iterdir()) == []
+    await handler.close()
+
+
+@pytest.mark.asyncio
+async def test_root_swap_after_validation_keeps_write_anchored_to_bound_inode(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "transfer-root"
+    handler = Handler(ProtocolConnection(), file_storage_dir=root)
+    displaced = tmp_path / "bound-root"
+    swapped = False
+
+    def swap_after_validation(event, **_details):
+        nonlocal swapped
+        if event == "after_root_validation" and not swapped:
+            swapped = True
+            root.rename(displaced)
+            root.mkdir()
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_after_validation)
+
+    await _write_chunk(handler, "anchored.bin", b"payload")
+
+    assert swapped is True
+    assert (displaced / "unbound" / "anchored.bin").read_bytes() == b"payload"
+    assert list(root.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_repeated_close_keeps_bound_root_open_until_cleanup_succeeds(
+    tmp_path,
+    monkeypatch,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'6' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-close")
+    real_remove = os.remove
+    failed = False
+
+    def fail_quarantine_once(path, *args, **kwargs):
+        nonlocal failed
+        if os.fspath(path).startswith(".quarantine-") and not failed:
+            failed = True
+            raise OSError("simulated cleanup failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_quarantine_once)
+
+    await handler.close()
+    assert handler._file_storage_root_fd_closed is False
+    assert handler._owned_transfer_files
+
+    await handler.close()
+    assert handler._file_storage_root_fd_closed is True
+    assert handler._owned_transfer_files == set()
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_handlers_sharing_root_cannot_interleave_capability_chunks(tmp_path):
     binding = _installation_binding()
     first = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
@@ -1545,7 +1618,7 @@ async def test_cleanup_retains_owner_record_until_file_delete_retry_succeeds(
 
     def fail_file_once(path, *args, **kwargs):
         nonlocal failed
-        if os.fspath(path) == file_key and not failed:
+        if os.fspath(path).startswith(".quarantine-") and not failed:
             failed = True
             raise OSError("simulated file delete failure")
         return real_remove(path, *args, **kwargs)
@@ -1574,10 +1647,13 @@ async def test_cleanup_retries_owner_delete_after_data_file_is_removed(
     await _write_chunk(handler, file_key, b"retry-owner", binding=binding)
     real_remove = os.remove
     failed = False
+    quarantine_removes = 0
 
     def fail_owner_once(path, *args, **kwargs):
-        nonlocal failed
-        if os.fspath(path).endswith(".json") and not failed:
+        nonlocal failed, quarantine_removes
+        if os.fspath(path).startswith(".quarantine-"):
+            quarantine_removes += 1
+        if quarantine_removes == 2 and not failed:
             failed = True
             raise OSError("simulated owner delete failure")
         return real_remove(path, *args, **kwargs)
@@ -1609,13 +1685,16 @@ async def test_explicit_delete_failure_raises_and_retains_capacity_for_retry(
     owner_record = next((tmp_path / ".transfer-owners").iterdir())
     real_remove = os.remove
     failed = False
+    quarantine_removes = 0
 
     def fail_once(path, *args, **kwargs):
-        nonlocal failed
+        nonlocal failed, quarantine_removes
+        if os.fspath(path).startswith(".quarantine-"):
+            quarantine_removes += 1
         is_target = (
-            os.fspath(path) == file_key
+            quarantine_removes == 1
             if failed_name == "payload"
-            else os.fspath(path).endswith(".json")
+            else quarantine_removes == 2
         )
         if is_target and not failed:
             failed = True
@@ -1654,7 +1733,7 @@ async def test_close_retries_failed_transfer_cleanup_without_reclosing_connectio
 
     def fail_payload_once(path, *args, **kwargs):
         nonlocal failed
-        if os.fspath(path) == file_key and not failed:
+        if os.fspath(path).startswith(".quarantine-") and not failed:
             failed = True
             raise OSError("simulated close cleanup failure")
         return real_remove(path, *args, **kwargs)
@@ -1762,10 +1841,107 @@ async def test_failed_first_chunk_rolls_back_capacity_reservation_and_owner_clai
     assert handler._owned_transfer_files == set()
     assert handler._owned_transfer_contexts == {}
     assert handler._owned_transfer_claims == {}
-    assert list((tmp_path / ".transfer-owners").iterdir()) == []
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    assert json.loads(owner_records[0].read_bytes())["claim_id"]
 
     await _write_chunk(handler, accepted_key, b"accepted")
     assert await handler.read_local_file(accepted_key) == b"accepted"
+
+
+@pytest.mark.asyncio
+async def test_payload_inode_swap_during_delete_never_unlinks_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'7' * 64}.bin"
+    await _write_chunk(handler, file_key, b"expected")
+    payload = tmp_path / "unbound" / file_key
+    displaced = tmp_path / "unbound" / "displaced-payload"
+    swapped = False
+
+    def swap_payload(event, **details):
+        nonlocal swapped
+        if event == "before_quarantine_rename" and details["role"] == "payload":
+            swapped = True
+            payload.rename(displaced)
+            payload.write_bytes(b"replacement")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_payload)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+
+    assert swapped is True
+    assert payload.read_bytes() == b"replacement"
+    assert displaced.read_bytes() == b"expected"
+
+
+@pytest.mark.asyncio
+async def test_owner_inode_swap_during_delete_never_unlinks_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'8' * 64}.bin"
+    await _write_chunk(handler, file_key, b"expected")
+    owner = next((tmp_path / ".transfer-owners").iterdir())
+    displaced = owner.with_name("displaced-owner")
+    replacement = b'{"replacement":true}'
+    swapped = False
+
+    def swap_owner(event, **details):
+        nonlocal swapped
+        if event == "before_quarantine_rename" and details["role"] == "owner":
+            swapped = True
+            owner.rename(displaced)
+            owner.write_bytes(replacement)
+            owner.chmod(0o600)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_owner)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+
+    assert swapped is True
+    assert owner.read_bytes() == replacement
+    assert displaced.exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_payload_creation_never_rolls_back_swapped_owner_name(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'9' * 64}.bin"
+    replacement = b'{"replacement":true}'
+    swapped_owner = None
+
+    def swap_owner_then_fail(event, **_details):
+        nonlocal swapped_owner
+        if event != "before_payload_open":
+            return
+        owner = next((tmp_path / ".transfer-owners").iterdir())
+        swapped_owner = owner.with_name("displaced-owner")
+        owner.rename(swapped_owner)
+        owner.write_bytes(replacement)
+        owner.chmod(0o600)
+        raise OSError("simulated payload creation failure")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_owner_then_fail)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, file_key, b"payload")
+
+    owner = next(
+        path
+        for path in (tmp_path / ".transfer-owners").iterdir()
+        if path.name.endswith(".json")
+    )
+    assert owner.read_bytes() == replacement
+    assert swapped_owner is not None and swapped_owner.exists()
 
 
 @pytest.mark.asyncio

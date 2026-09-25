@@ -167,16 +167,15 @@ def _clear_active_transfer_handler(lock_key: tuple[str, str], expected: Any) -> 
 
 
 def _open_transfer_directory(
-    root: str,
+    root_fd: int,
     directory_name: str,
     *,
     create: bool,
-) -> tuple[int, int]:
-    """Open root/child by descriptor without following a child symlink."""
+) -> int:
+    """Open one child directory beneath the bound transfer root descriptor."""
 
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
-    root_fd = os.open(root, directory_flags | no_follow)
     try:
         try:
             directory_fd = os.open(
@@ -200,16 +199,15 @@ def _open_transfer_directory(
         if not stat.S_ISDIR(directory_stat.st_mode):
             os.close(directory_fd)
             raise ValueError("Invalid file transfer capability")
-        return root_fd, directory_fd
+        return directory_fd
     except OSError as exc:
-        os.close(root_fd)
         if isinstance(exc, FileNotFoundError):
             raise
         raise ValueError("Invalid file transfer capability") from None
 
 
-def _prepare_transfer_root(root: str) -> str:
-    """Create/open the configured root without following path symlinks."""
+def _prepare_transfer_root(root: str) -> tuple[str, int, os.stat_result]:
+    """Create and bind the configured root to one exact directory inode."""
 
     lexical_root = os.path.abspath(root)
     components = lexical_root.split(os.sep)
@@ -243,22 +241,31 @@ def _prepare_transfer_root(root: str) -> str:
         if not stat.S_ISDIR(root_stat.st_mode):
             raise ValueError("Invalid file transfer root")
         os.fchmod(current_fd, 0o700)
+        path_stat = os.stat(lexical_root, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(path_stat.st_mode)
+            or path_stat.st_dev != root_stat.st_dev
+            or path_stat.st_ino != root_stat.st_ino
+        ):
+            raise ValueError("Invalid file transfer root")
     except OSError:
-        raise ValueError("Invalid file transfer root") from None
-    finally:
         os.close(current_fd)
-    return lexical_root
+        raise ValueError("Invalid file transfer root") from None
+    except BaseException:
+        os.close(current_fd)
+        raise
+    return lexical_root, current_fd, root_stat
 
 
 def _read_regular_at(
-    root: str,
+    root_fd: int,
     directory_name: str,
     file_name: str,
     *,
     private: bool = False,
     max_bytes: int | None = None,
-) -> bytes:
-    root_fd, directory_fd = _open_transfer_directory(root, directory_name, create=False)
+) -> tuple[bytes, os.stat_result]:
+    directory_fd = _open_transfer_directory(root_fd, directory_name, create=False)
     try:
         try:
             descriptor = os.open(
@@ -279,43 +286,12 @@ def _read_regular_at(
             if max_bytes is not None and file_stat.st_size > max_bytes:
                 raise ValueError("File transfer exceeds the configured size limit")
             with os.fdopen(descriptor, "rb", closefd=False) as file:
-                return file.read(max_bytes + 1 if max_bytes is not None else -1)
+                content = file.read(max_bytes + 1 if max_bytes is not None else -1)
+            return content, file_stat
         finally:
             os.close(descriptor)
     finally:
         os.close(directory_fd)
-        os.close(root_fd)
-
-
-def _remove_regular_at(
-    root: str,
-    directory_name: str,
-    file_name: str,
-    *,
-    missing_ok: bool,
-) -> bool:
-    try:
-        root_fd, directory_fd = _open_transfer_directory(
-            root, directory_name, create=False
-        )
-    except FileNotFoundError:
-        if missing_ok:
-            return False
-        raise
-    try:
-        try:
-            file_stat = os.stat(file_name, dir_fd=directory_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            if missing_ok:
-                return False
-            raise
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise ValueError("Invalid file transfer capability")
-        os.remove(file_name, dir_fd=directory_fd)
-        return True
-    finally:
-        os.close(directory_fd)
-        os.close(root_fd)
 
 
 def _file_storage_path(
@@ -331,11 +307,12 @@ def _file_storage_path(
     namespace = _transfer_namespace(action_context)
     namespace_path = os.path.join(os.fspath(file_storage_dir), namespace)
     if create_namespace:
-        root_fd, namespace_fd = _open_transfer_directory(
-            os.fspath(file_storage_dir), namespace, create=True
-        )
-        os.close(namespace_fd)
-        os.close(root_fd)
+        _root, root_fd, _root_stat = _prepare_transfer_root(os.fspath(file_storage_dir))
+        try:
+            namespace_fd = _open_transfer_directory(root_fd, namespace, create=True)
+            os.close(namespace_fd)
+        finally:
+            os.close(root_fd)
     return os.path.join(namespace_path, key)
 
 
@@ -412,7 +389,13 @@ class Handler(abc.ABC):
                 if runtime_profile == "shared"
                 else FILE_STORAGE_DIR
             )
-        self.file_storage_dir = _prepare_transfer_root(os.fspath(file_storage_dir))
+        (
+            self.file_storage_dir,
+            self._file_storage_root_fd,
+            root_stat,
+        ) = _prepare_transfer_root(os.fspath(file_storage_dir))
+        self._file_storage_root_identity = (root_stat.st_dev, root_stat.st_ino)
+        self._file_storage_root_fd_closed = False
         if max_file_bytes is not None and (
             isinstance(max_file_bytes, bool)
             or not isinstance(max_file_bytes, int)
@@ -617,12 +600,16 @@ class Handler(abc.ABC):
             if self._cancel_active_tasks_on_close:
                 await self._cancel_action_tasks()
             await self._cleanup_owned_transfers()
+            if not self._owned_transfer_files:
+                self._close_transfer_root_if_clean()
 
     async def close(self) -> None:
         """Close the transport and deterministically release connection-owned work."""
         if self._closed:
             if self._owned_transfer_files:
                 await self._cleanup_owned_transfers()
+            if not self._owned_transfer_files:
+                self._close_transfer_root_if_clean()
             return
         self._closed = True
         error = ConnectionClosedError("Connection closed by local runtime")
@@ -634,6 +621,8 @@ class Handler(abc.ABC):
             if self._cancel_active_tasks_on_close:
                 await self._cancel_action_tasks()
             await self._cleanup_owned_transfers()
+            if not self._owned_transfer_files:
+                self._close_transfer_root_if_clean()
 
     async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
         try:
@@ -1067,6 +1056,145 @@ class Handler(abc.ABC):
         return decorator
 
     # ====== file transfer ======
+    def _transfer_race_hook(self, event: str, **details: Any) -> None:
+        """Deterministic no-op hook used by filesystem race regression tests."""
+
+        del event, details
+
+    def _require_transfer_root(self) -> int:
+        if self._file_storage_root_fd_closed:
+            raise ValueError("Invalid file transfer root")
+        try:
+            path_stat = os.stat(self.file_storage_dir, follow_symlinks=False)
+        except OSError:
+            raise ValueError("Invalid file transfer root") from None
+        if (
+            not stat.S_ISDIR(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino) != self._file_storage_root_identity
+        ):
+            raise ValueError("Invalid file transfer root")
+        self._transfer_race_hook("after_root_validation")
+        return self._file_storage_root_fd
+
+    def _bound_transfer_root(self) -> int:
+        if self._file_storage_root_fd_closed:
+            raise ValueError("Invalid file transfer root")
+        return self._file_storage_root_fd
+
+    def _close_transfer_root_if_clean(self) -> None:
+        if self._file_storage_root_fd_closed or self._owned_transfer_files:
+            return
+        os.close(self._file_storage_root_fd)
+        self._file_storage_root_fd_closed = True
+
+    def _read_regular(
+        self,
+        directory_name: str,
+        file_name: str,
+        *,
+        private: bool = False,
+        max_bytes: int | None = None,
+    ) -> tuple[bytes, os.stat_result]:
+        return _read_regular_at(
+            self._require_transfer_root(),
+            directory_name,
+            file_name,
+            private=private,
+            max_bytes=max_bytes,
+        )
+
+    def _read_regular_bound(
+        self,
+        directory_name: str,
+        file_name: str,
+        *,
+        private: bool = False,
+        max_bytes: int | None = None,
+    ) -> tuple[bytes, os.stat_result]:
+        return _read_regular_at(
+            self._bound_transfer_root(),
+            directory_name,
+            file_name,
+            private=private,
+            max_bytes=max_bytes,
+        )
+
+    def _quarantine_expected_regular(
+        self,
+        directory_name: str,
+        file_name: str,
+        expected_stat: os.stat_result,
+        *,
+        role: str,
+        expected_bytes: bytes | None = None,
+        missing_ok: bool,
+    ) -> bool:
+        root_fd = self._bound_transfer_root()
+        try:
+            directory_fd = _open_transfer_directory(
+                root_fd, directory_name, create=False
+            )
+        except FileNotFoundError:
+            if missing_ok:
+                return False
+            raise
+        quarantine_name = f".quarantine-{uuid.uuid4().hex}"
+        try:
+            self._transfer_race_hook(
+                "before_quarantine_rename",
+                role=role,
+                directory_name=directory_name,
+                file_name=file_name,
+            )
+            try:
+                os.rename(
+                    file_name,
+                    quarantine_name,
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                )
+            except FileNotFoundError:
+                if missing_ok:
+                    return False
+                raise
+
+            try:
+                descriptor = os.open(
+                    quarantine_name,
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=directory_fd,
+                )
+                try:
+                    quarantined_stat = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISREG(quarantined_stat.st_mode)
+                        or quarantined_stat.st_dev != expected_stat.st_dev
+                        or quarantined_stat.st_ino != expected_stat.st_ino
+                    ):
+                        raise ValueError("Invalid file transfer capability")
+                    if expected_bytes is not None:
+                        with os.fdopen(descriptor, "rb", closefd=False) as file:
+                            if file.read(len(expected_bytes) + 1) != expected_bytes:
+                                raise ValueError("Invalid file transfer capability")
+                finally:
+                    os.close(descriptor)
+                os.remove(quarantine_name, dir_fd=directory_fd)
+                return True
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.link(
+                        quarantine_name,
+                        file_name,
+                        src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
+                with contextlib.suppress(OSError):
+                    os.remove(quarantine_name, dir_fd=directory_fd)
+                raise
+        finally:
+            os.close(directory_fd)
+
     @staticmethod
     def _serialize_transfer_owner(
         transfer_context: ActionEnvelopeContext | None,
@@ -1137,10 +1265,15 @@ class Handler(abc.ABC):
             )
         )
 
-    @staticmethod
-    def _read_private_file(path: str) -> bytes:
-        return _read_regular_at(
-            os.path.dirname(os.path.dirname(path)),
+    def _read_private_file(self, path: str) -> tuple[bytes, os.stat_result]:
+        return self._read_regular(
+            os.path.basename(os.path.dirname(path)),
+            os.path.basename(path),
+            private=True,
+        )
+
+    def _read_private_file_bound(self, path: str) -> tuple[bytes, os.stat_result]:
+        return self._read_regular_bound(
             os.path.basename(os.path.dirname(path)),
             os.path.basename(path),
             private=True,
@@ -1155,76 +1288,74 @@ class Handler(abc.ABC):
         if record_name is None:
             return False
         expected_owner = self._serialize_transfer_owner(transfer_context)
-        root_fd, owner_dir_fd = _open_transfer_directory(
-            self.file_storage_dir, _TRANSFER_OWNER_DIR, create=True
+        owner_dir_fd = _open_transfer_directory(
+            self._bound_transfer_root(), _TRANSFER_OWNER_DIR, create=True
         )
         try:
+            claim_id = uuid.uuid4().hex
+            serialized_record = self._serialize_transfer_record(
+                transfer_context, claim_id
+            )
+            temp_name = f".owner-{uuid.uuid4().hex}.tmp"
             try:
                 descriptor = os.open(
-                    record_name,
+                    temp_name,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                     0o600,
                     dir_fd=owner_dir_fd,
                 )
-            except FileExistsError:
-                current_owner = _read_regular_at(
-                    self.file_storage_dir,
-                    _TRANSFER_OWNER_DIR,
-                    record_name,
-                    private=True,
-                )
-                try:
-                    stored_context, claim_id = self._parse_transfer_record(
-                        current_owner
-                    )
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    raise ValueError("Invalid file transfer capability") from None
-                if self._serialize_transfer_owner(stored_context) != expected_owner:
-                    raise ValueError("Invalid file transfer capability")
-                file_path = os.path.join(
-                    self.file_storage_dir,
-                    _transfer_namespace(transfer_context),
-                    file_key,
-                )
-                self._owned_transfer_claims[file_path] = claim_id
-                return False
             except OSError:
                 raise ValueError("Invalid file transfer capability") from None
-            created_stat: os.stat_result | None = None
             try:
-                claim_id = uuid.uuid4().hex
-                created_stat = os.fstat(descriptor)
                 with os.fdopen(descriptor, "wb", closefd=False) as file:
-                    file.write(
-                        self._serialize_transfer_record(transfer_context, claim_id)
-                    )
+                    file.write(serialized_record)
                     file.flush()
                     os.fsync(descriptor)
             except BaseException:
                 with contextlib.suppress(OSError):
-                    current_stat = os.stat(
-                        record_name,
-                        dir_fd=owner_dir_fd,
-                        follow_symlinks=False,
-                    )
-                    if created_stat is not None and (
-                        current_stat.st_dev == created_stat.st_dev
-                        and current_stat.st_ino == created_stat.st_ino
-                    ):
-                        os.remove(record_name, dir_fd=owner_dir_fd)
+                    os.remove(temp_name, dir_fd=owner_dir_fd)
                 raise
             finally:
                 os.close(descriptor)
+            try:
+                try:
+                    os.link(
+                        temp_name,
+                        record_name,
+                        src_dir_fd=owner_dir_fd,
+                        dst_dir_fd=owner_dir_fd,
+                        follow_symlinks=False,
+                    )
+                    os.fsync(owner_dir_fd)
+                    created = True
+                except FileExistsError:
+                    created = False
+                if not created:
+                    current_owner, _owner_stat = self._read_regular_bound(
+                        _TRANSFER_OWNER_DIR,
+                        record_name,
+                        private=True,
+                    )
+                    try:
+                        stored_context, claim_id = self._parse_transfer_record(
+                            current_owner
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        raise ValueError("Invalid file transfer capability") from None
+                    if self._serialize_transfer_owner(stored_context) != expected_owner:
+                        raise ValueError("Invalid file transfer capability")
+            finally:
+                with contextlib.suppress(OSError):
+                    os.remove(temp_name, dir_fd=owner_dir_fd)
             file_path = os.path.join(
                 self.file_storage_dir,
                 _transfer_namespace(transfer_context),
                 file_key,
             )
             self._owned_transfer_claims[file_path] = claim_id
-            return True
+            return created
         finally:
             os.close(owner_dir_fd)
-            os.close(root_fd)
 
     def _write_file_chunk(
         self,
@@ -1238,6 +1369,7 @@ class Handler(abc.ABC):
         namespace = _transfer_namespace(transfer_context)
         file_path = os.path.join(root, namespace, file_key)
         owner_record = _transfer_owner_record_path(file_key, root)
+        root_fd = self._require_transfer_root()
 
         with _locked_transfer(root, file_key) as lock_key:
             active = _active_transfer_handler(lock_key)
@@ -1254,14 +1386,9 @@ class Handler(abc.ABC):
             ):
                 raise ValueError("Active file transfer capacity reached")
 
-            created_owner = False
             try:
-                created_owner = self._claim_transfer_capability_sync(
-                    file_key, transfer_context
-                )
-                root_fd, namespace_fd = _open_transfer_directory(
-                    root, namespace, create=True
-                )
+                self._claim_transfer_capability_sync(file_key, transfer_context)
+                namespace_fd = _open_transfer_directory(root_fd, namespace, create=True)
                 try:
                     flags = (
                         os.O_WRONLY
@@ -1270,12 +1397,19 @@ class Handler(abc.ABC):
                         | (os.O_TRUNC if chunk_index == 0 else os.O_APPEND)
                     )
                     try:
+                        self._transfer_race_hook(
+                            "before_payload_open",
+                            file_key=file_key,
+                            namespace=namespace,
+                        )
                         descriptor = os.open(
                             file_key,
                             flags,
                             0o600,
                             dir_fd=namespace_fd,
                         )
+                    except ValueError:
+                        raise
                     except OSError:
                         raise ValueError("Invalid file transfer capability") from None
                     try:
@@ -1299,16 +1433,7 @@ class Handler(abc.ABC):
                         os.close(descriptor)
                 finally:
                     os.close(namespace_fd)
-                    os.close(root_fd)
             except Exception:
-                if created_owner and owner_record is not None:
-                    with contextlib.suppress(FileNotFoundError):
-                        _remove_regular_at(
-                            root,
-                            _TRANSFER_OWNER_DIR,
-                            os.path.basename(owner_record),
-                            missing_ok=True,
-                        )
                 if new_transfer:
                     self._owned_transfer_claims.pop(file_path, None)
                 raise
@@ -1330,7 +1455,7 @@ class Handler(abc.ABC):
         if record_path is None:
             return effective_context
         try:
-            raw_owner = await _run_small_protocol_work(
+            raw_owner, _owner_stat = await _run_small_protocol_work(
                 self._read_private_file, record_path
             )
             stored_context, _claim_id = self._parse_transfer_record(raw_owner)
@@ -1408,12 +1533,12 @@ class Handler(abc.ABC):
 
         def read_file() -> bytes:
             with _locked_transfer(self.file_storage_dir, file_key):
-                return _read_regular_at(
-                    self.file_storage_dir,
+                content, _file_stat = self._read_regular(
                     _transfer_namespace(transfer_context),
                     file_key,
                     max_bytes=self.max_file_bytes,
                 )
+                return content
 
         content = await run_blocking_with_backpressure(read_file)
         if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
@@ -1442,13 +1567,17 @@ class Handler(abc.ABC):
         transfer_context: ActionEnvelopeContext | None,
         cleanup: bool,
     ) -> bool:
+        if not cleanup:
+            self._require_transfer_root()
         owner_record = _transfer_owner_record_path(file_key, self.file_storage_dir)
         with _locked_transfer(self.file_storage_dir, file_key) as lock_key:
             stored_context = transfer_context
             current_claim_id: str | None = None
+            owner_stat: os.stat_result | None = None
+            raw_owner: bytes | None = None
             if owner_record is not None:
                 try:
-                    raw_owner = self._read_private_file(owner_record)
+                    raw_owner, owner_stat = self._read_private_file_bound(owner_record)
                     stored_context, current_claim_id = self._parse_transfer_record(
                         raw_owner
                     )
@@ -1482,27 +1611,39 @@ class Handler(abc.ABC):
                         self._owned_transfer_records.discard(owner_record)
                     return False
             try:
-                _remove_regular_at(
-                    self.file_storage_dir,
+                _payload_bytes, payload_stat = self._read_regular_bound(
                     namespace,
                     file_key,
-                    missing_ok=True,
                 )
-            except OSError:
+            except FileNotFoundError:
+                payload_stat = None
+            try:
+                if payload_stat is not None:
+                    self._quarantine_expected_regular(
+                        namespace,
+                        file_key,
+                        payload_stat,
+                        role="payload",
+                        missing_ok=False,
+                    )
+            except (OSError, ValueError):
                 if cleanup:
                     return False
                 raise
             was_active = _is_active_transfer_handler(lock_key, self)
 
             if owner_record is not None:
+                assert owner_stat is not None and raw_owner is not None
                 try:
-                    _remove_regular_at(
-                        self.file_storage_dir,
+                    self._quarantine_expected_regular(
                         _TRANSFER_OWNER_DIR,
                         os.path.basename(owner_record),
-                        missing_ok=True,
+                        owner_stat,
+                        role="owner",
+                        expected_bytes=raw_owner,
+                        missing_ok=False,
                     )
-                except OSError:
+                except (OSError, ValueError):
                     if cleanup:
                         return False
                     raise
