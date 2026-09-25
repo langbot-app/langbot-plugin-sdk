@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import stat
+import threading
 
 import pytest
 
@@ -43,6 +44,7 @@ class QueueConnection(Connection):
         self.sent: list[str] = []
         self.sent_event = asyncio.Event()
         self.closed = False
+        self.close_calls = 0
 
     async def send(self, message: str) -> None:
         self.sent.append(message)
@@ -55,6 +57,7 @@ class QueueConnection(Connection):
         return message
 
     async def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
 
 
@@ -1114,6 +1117,1377 @@ async def test_file_transfer_owner_survives_handler_recreation_and_failed_cleanu
 
 
 @pytest.mark.asyncio
+async def test_transfer_capability_recovers_exact_owner_without_current_context(
+    tmp_path,
+):
+    sender = Handler(ProtocolConnection(), file_storage_dir=tmp_path / "sender")
+    sent_chunks = []
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+
+    async def capture_chunk(action, data, timeout=15.0, action_context=None):
+        assert action is CommonAction.FILE_CHUNK
+        sent_chunks.append((data, action_context))
+        return {}
+
+    sender.call_action = capture_chunk
+    file_key = await sender.send_file(
+        b"capability payload", "bin", action_context=binding
+    )
+    assert file_key.startswith("ft1_")
+
+    receiver = Handler(ProtocolConnection(), file_storage_dir=tmp_path / "receiver")
+    token = receiver._current_action_context.set(binding)
+    try:
+        for chunk, chunk_context in sent_chunks:
+            assert chunk_context == binding
+            await receiver.actions[CommonAction.FILE_CHUNK.value](chunk)
+    finally:
+        receiver._current_action_context.reset(token)
+
+    assert await receiver.read_local_file(file_key) == b"capability payload"
+    await receiver.delete_local_file(file_key)
+    with pytest.raises(FileNotFoundError):
+        await receiver.read_local_file(file_key)
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_owner_survives_handler_recreation(tmp_path):
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    file_key = f"ft1_{'1' * 64}.bin"
+    first = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = first._current_action_context.set(binding)
+    try:
+        await first.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"restart payload").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        first._current_action_context.reset(token)
+
+    restarted = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    assert await restarted.read_local_file(file_key) == b"restart payload"
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_cleanup_removes_owner_record(tmp_path):
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    file_key = f"ft1_{'4' * 64}.bin"
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = handler._current_action_context.set(binding)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"cleanup payload").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    await handler._cleanup_owned_transfers()
+    assert not owner_records[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_rejects_cross_slot_read_write_and_delete(tmp_path):
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    binding_b = binding_a.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+    file_key = f"ft1_{'2' * 64}.bin"
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = handler._current_action_context.set(binding_a)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"A-secret").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    token = handler._current_action_context.set(binding_b)
+    try:
+        with pytest.raises(FileNotFoundError):
+            await handler.read_local_file(file_key)
+        await handler.delete_local_file(file_key)
+        with pytest.raises(ValueError, match="Invalid file transfer capability"):
+            await handler.actions[CommonAction.FILE_CHUNK.value](
+                {
+                    "file_key": file_key,
+                    "chunk_base64": base64.b64encode(b"B-overwrite").decode("ascii"),
+                    "chunk_index": 0,
+                    "chunk_amount": 1,
+                }
+            )
+    finally:
+        handler._current_action_context.reset(token)
+
+    assert (
+        await handler.read_local_file(file_key, action_context=binding_a) == b"A-secret"
+    )
+
+
+@pytest.mark.asyncio
+async def test_transfer_capability_corrupt_owner_record_fails_closed(tmp_path):
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    file_key = f"ft1_{'3' * 64}.bin"
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = handler._current_action_context.set(binding)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(b"protected").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    owner_records[0].write_text("{}")
+    restarted = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await restarted.read_local_file(file_key)
+
+
+def _installation_binding(name: str = "a") -> InstallationBinding:
+    return InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid=f"workspace-{name}",
+        placement_generation=1,
+        installation_uuid=f"installation-{name}",
+        runtime_revision=1,
+        artifact_digest=name * 64,
+    )
+
+
+async def _write_chunk(
+    handler: Handler,
+    file_key: str,
+    payload: bytes,
+    *,
+    binding: InstallationBinding | None = None,
+    index: int = 0,
+    amount: int = 1,
+) -> None:
+    token = handler._current_action_context.set(binding)
+    try:
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": file_key,
+                "chunk_base64": base64.b64encode(payload).decode("ascii"),
+                "chunk_index": index,
+                "chunk_amount": amount,
+            }
+        )
+    finally:
+        handler._current_action_context.reset(token)
+
+
+def _staging_files(root) -> list:
+    return [path for path in root.rglob(".payload-*.tmp")]
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_stage_creation_reconciles_worker_before_close(
+    tmp_path, monkeypatch
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'c' * 64}.bin"
+    stage_created = threading.Event()
+    release_stage = threading.Event()
+    staged_descriptor = None
+
+    def pause_after_staging_create(event, **details):
+        nonlocal staged_descriptor
+        if event != "after_staging_create":
+            return
+        staged_descriptor = details["descriptor"]
+        stage_created.set()
+        assert release_stage.wait(timeout=2)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", pause_after_staging_create)
+
+    async def run_in_thread(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", run_in_thread)
+    chunk_task = asyncio.create_task(_write_chunk(handler, file_key, b"cancelled"))
+    assert await asyncio.to_thread(stage_created.wait, 1)
+
+    chunk_task.cancel()
+    await asyncio.sleep(0)
+    close_task = asyncio.create_task(handler.close())
+    await asyncio.sleep(0)
+
+    assert close_task.done() is False
+    assert handler._file_storage_root_fd_closed is False
+    release_stage.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(chunk_task, timeout=2)
+    await asyncio.wait_for(close_task, timeout=2)
+    await handler.close()
+
+    assert staged_descriptor is not None
+    with pytest.raises(OSError):
+        os.fstat(staged_descriptor)
+    assert handler._transfer_stages == {}
+    assert handler._owned_transfer_files == set()
+    assert _staging_files(tmp_path) == []
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_final_chunk_cannot_publish_after_close_begins(tmp_path, monkeypatch):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_key = f"ft1_{'f' * 64}.bin"
+    await _write_chunk(
+        handler,
+        file_key,
+        b"first-",
+        binding=binding,
+        index=0,
+        amount=2,
+    )
+    final_paused = threading.Event()
+    release_final = threading.Event()
+
+    def pause_final_before_write(event, **details):
+        if event != "before_staging_write":
+            return
+        final_paused.set()
+        assert release_final.wait(timeout=2)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", pause_final_before_write)
+
+    async def run_in_thread(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", run_in_thread)
+    final_chunk = asyncio.create_task(
+        _write_chunk(
+            handler,
+            file_key,
+            b"second",
+            binding=binding,
+            index=1,
+            amount=2,
+        )
+    )
+    assert await asyncio.to_thread(final_paused.wait, 1)
+
+    close_task = asyncio.create_task(handler.close())
+    await asyncio.sleep(0)
+    assert handler._file_transfer_closing is True
+    assert close_task.done() is False
+    assert handler._file_storage_root_fd_closed is False
+    release_final.set()
+
+    with pytest.raises(ConnectionClosedError):
+        await asyncio.wait_for(final_chunk, timeout=2)
+    await asyncio.wait_for(close_task, timeout=2)
+    await handler.close()
+
+    namespace = tmp_path / handler_module._transfer_namespace(binding)
+    assert not (namespace / file_key).exists()
+    assert handler._transfer_stages == {}
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_records == set()
+    assert _staging_files(tmp_path) == []
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_close", ["local", "disconnect"])
+async def test_close_during_stage_creation_rejects_chunk_without_orphan(
+    tmp_path,
+    monkeypatch,
+    first_close,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    stage_created = threading.Event()
+    release_stage = threading.Event()
+    staged_descriptor = None
+
+    def pause_after_staging_create(event, **details):
+        nonlocal staged_descriptor
+        if event != "after_staging_create":
+            return
+        staged_descriptor = details["descriptor"]
+        stage_created.set()
+        assert release_stage.wait(timeout=2)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", pause_after_staging_create)
+
+    async def run_in_thread(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", run_in_thread)
+    run_task = None
+    if first_close == "disconnect":
+        run_task = asyncio.create_task(handler.run())
+
+    chunk_task = asyncio.create_task(
+        _write_chunk(handler, f"ft1_{'d' * 64}.bin", b"raced-stage")
+    )
+    assert await asyncio.to_thread(stage_created.wait, 1)
+
+    if first_close == "local":
+        first_close_task = asyncio.create_task(handler.close())
+    else:
+        await connection.incoming.put(ConnectionClosedError("peer disconnected"))
+        assert run_task is not None
+        first_close_task = run_task
+    second_close_task = asyncio.create_task(handler.close())
+    await asyncio.sleep(0)
+    release_stage.set()
+
+    with pytest.raises(ConnectionClosedError):
+        await asyncio.wait_for(chunk_task, timeout=2)
+    await asyncio.wait_for(
+        asyncio.gather(first_close_task, second_close_task),
+        timeout=2,
+    )
+    await handler.close()
+
+    assert staged_descriptor is not None
+    with pytest.raises(OSError):
+        os.fstat(staged_descriptor)
+    assert handler._transfer_stages == {}
+    assert handler._owned_transfer_files == set()
+    assert _staging_files(tmp_path) == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == (1 if first_close == "local" else 0)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_closes_cleanup_active_completed_transfers(tmp_path):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_keys = [f"ft1_{index:064x}.bin" for index in range(1, 4)]
+    for file_key in file_keys:
+        await _write_chunk(handler, file_key, file_key.encode(), binding=binding)
+
+    await asyncio.wait_for(
+        asyncio.gather(*(handler.close() for _ in range(8))),
+        timeout=2,
+    )
+    await handler.close()
+
+    assert connection.close_calls == 1
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_records == set()
+    assert handler._transfer_stages == {}
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_closes_wait_for_primary_cleanup_retry(tmp_path, monkeypatch):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'e' * 64}.bin"
+    await _write_chunk(handler, file_key, b"completed")
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    real_cleanup = handler._cleanup_owned_transfers_locked
+    cleanup_calls = 0
+
+    async def paused_cleanup(*, close_root=False):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            cleanup_started.set()
+            await release_cleanup.wait()
+        await real_cleanup(close_root=close_root)
+
+    monkeypatch.setattr(handler, "_cleanup_owned_transfers_locked", paused_cleanup)
+
+    first_close = asyncio.create_task(handler.close())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    repeated_closes = [asyncio.create_task(handler.close()) for _ in range(4)]
+    await asyncio.sleep(0)
+
+    assert all(not task.done() for task in repeated_closes)
+    release_cleanup.set()
+    await asyncio.wait_for(
+        asyncio.gather(first_close, *repeated_closes),
+        timeout=2,
+    )
+
+    assert connection.close_calls == 1
+    assert handler._owned_transfer_files == set()
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_discards_incomplete_transfer_stage_and_releases_ownership(
+    tmp_path,
+):
+    handler = Handler(QueueConnection(), file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_key = f"ft1_{'8' * 64}.bin"
+
+    await _write_chunk(
+        handler,
+        file_key,
+        b"first",
+        binding=binding,
+        index=0,
+        amount=2,
+    )
+    stage = handler._transfer_stages[file_key]
+    descriptor = stage.descriptor
+    assert descriptor is not None
+    assert _staging_files(tmp_path)
+
+    await handler.close()
+
+    assert handler._transfer_stages == {}
+    assert _staging_files(tmp_path) == []
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    assert handler._file_storage_root_fd_closed is True
+    with handler_module._locked_transfer(str(tmp_path), file_key) as lock_key:
+        assert handler_module._active_transfer_handler(lock_key) is None
+
+
+@pytest.mark.asyncio
+async def test_close_retries_incomplete_stage_unlink_before_closing_root(
+    tmp_path,
+    monkeypatch,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'9' * 64}.bin"
+    await _write_chunk(handler, file_key, b"first", index=0, amount=2)
+    stage = handler._transfer_stages[file_key]
+    descriptor = stage.descriptor
+    assert descriptor is not None
+    real_remove = os.remove
+    failed = False
+
+    def fail_stage_unlink_once(path, *args, **kwargs):
+        nonlocal failed
+        if os.fspath(path) == stage.temp_name and not failed:
+            failed = True
+            raise OSError("simulated staging unlink failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_stage_unlink_once)
+
+    await handler.close()
+
+    assert file_key in handler._transfer_stages
+    assert _staging_files(tmp_path)
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    assert handler._file_storage_root_fd_closed is False
+    assert connection.close_calls == 1
+
+    await handler.close()
+
+    assert handler._transfer_stages == {}
+    assert _staging_files(tmp_path) == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_disconnect_and_close_concurrently_discard_incomplete_stage(tmp_path):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'6' * 64}.bin"
+    await _write_chunk(handler, file_key, b"first", index=0, amount=2)
+    descriptor = handler._transfer_stages[file_key].descriptor
+    assert descriptor is not None
+    run_task = asyncio.create_task(handler.run())
+
+    await connection.incoming.put(ConnectionClosedError("peer disconnected"))
+    await asyncio.wait_for(
+        asyncio.gather(run_task, handler.close()),
+        timeout=2,
+    )
+
+    assert handler._transfer_stages == {}
+    assert _staging_files(tmp_path) == []
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    assert handler._file_storage_root_fd_closed is True
+
+
+@pytest.mark.asyncio
+async def test_short_writes_complete_staging_payload_and_owner_sidecar(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_key = f"ft1_{'4' * 64}.bin"
+    real_write = os.write
+    short_writes = 0
+
+    def write_short(fd, data):
+        nonlocal short_writes
+        if len(data) > 1:
+            short_writes += 1
+            return real_write(fd, data[: max(1, len(data) // 2)])
+        return real_write(fd, data)
+
+    monkeypatch.setattr(handler_module.os, "write", write_short)
+
+    await _write_chunk(handler, file_key, b"short-write-payload", binding=binding)
+
+    assert short_writes >= 2
+    assert (
+        await handler.read_local_file(file_key, action_context=binding)
+        == b"short-write-payload"
+    )
+    await handler.close()
+    assert list(tmp_path.rglob("*.tmp")) == []
+    assert list((tmp_path / ".transfer-owners").iterdir()) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("zero_call", [1, 2], ids=["staging", "owner-sidecar"])
+async def test_zero_progress_write_rolls_back_and_allows_retry(
+    tmp_path,
+    monkeypatch,
+    zero_call,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_key = f"ft1_{zero_call:064x}.bin"
+    real_write = os.write
+    calls = 0
+
+    def write_zero_once(fd, data):
+        nonlocal calls
+        calls += 1
+        if calls == zero_call:
+            return 0
+        return real_write(fd, data)
+
+    monkeypatch.setattr(handler_module.os, "write", write_zero_once)
+
+    with pytest.raises(OSError, match="made no progress"):
+        await _write_chunk(handler, file_key, b"first", binding=binding)
+
+    assert handler._transfer_stages == {}
+    assert _staging_files(tmp_path) == []
+    assert handler._owned_transfer_files == set()
+
+    monkeypatch.setattr(handler_module.os, "write", real_write)
+    await _write_chunk(handler, file_key, b"second", binding=binding)
+    assert await handler.read_local_file(file_key, action_context=binding) == b"second"
+    await handler.close()
+    assert list(tmp_path.rglob("*.tmp")) == []
+    assert list((tmp_path / ".transfer-owners").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_transfer_rejects_symlinked_namespace_without_overwriting_sibling(
+    tmp_path,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    binding_a = _installation_binding("a")
+    binding_b = _installation_binding("b")
+    file_key = f"ft1_{'5' * 64}.bin"
+    await _write_chunk(handler, file_key, b"B-secret", binding=binding_b)
+
+    namespace_a = os.path.dirname(
+        handler_module._file_storage_path(file_key, tmp_path, action_context=binding_a)
+    )
+    namespace_b = os.path.dirname(
+        handler_module._file_storage_path(file_key, tmp_path, action_context=binding_b)
+    )
+    os.symlink(namespace_b, namespace_a)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, file_key, b"A-overwrite", binding=binding_a)
+    assert (
+        await handler.read_local_file(file_key, action_context=binding_b) == b"B-secret"
+    )
+
+
+@pytest.mark.asyncio
+async def test_transfer_rejects_symlinked_file_for_write_read_and_delete(tmp_path):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    victim = tmp_path / "victim.bin"
+    victim.write_bytes(b"outside")
+    namespace = tmp_path / "unbound"
+    namespace.mkdir()
+    file_key = f"ft1_{'6' * 64}.bin"
+    await _write_chunk(handler, file_key, b"original")
+    (namespace / file_key).unlink()
+    os.symlink(victim, namespace / file_key)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, file_key, b"overwrite")
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.read_local_file(file_key)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+    assert victim.read_bytes() == b"outside"
+
+
+@pytest.mark.asyncio
+async def test_transfer_rejects_symlinked_owner_directory(tmp_path):
+    external = tmp_path / "external-owners"
+    external.mkdir()
+    os.symlink(external, tmp_path / ".transfer-owners")
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'7' * 64}.bin"
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, file_key, b"payload")
+    assert list(external.iterdir()) == []
+
+
+def test_transfer_rejects_symlinked_configured_root_without_touching_target(tmp_path):
+    external = tmp_path / "external-root"
+    external.mkdir(mode=0o755)
+    root = tmp_path / "transfer-root"
+    root.symlink_to(external, target_is_directory=True)
+    original_mode = stat.S_IMODE(external.stat().st_mode)
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        Handler(ProtocolConnection(), file_storage_dir=root)
+
+    assert stat.S_IMODE(external.stat().st_mode) == original_mode
+    assert list(external.iterdir()) == []
+
+
+def test_transfer_rejects_configured_root_replaced_by_symlink_during_init(
+    tmp_path, monkeypatch
+):
+    external = tmp_path / "external-root"
+    external.mkdir(mode=0o755)
+    root = tmp_path / "transfer-root"
+    real_open = os.open
+    replaced = False
+
+    def replace_before_root_open(path, flags, *args, **kwargs):
+        nonlocal replaced
+        if path == root.name and kwargs.get("dir_fd") is not None and not replaced:
+            replaced = True
+            root.rmdir()
+            root.symlink_to(external, target_is_directory=True)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "open", replace_before_root_open)
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        Handler(ProtocolConnection(), file_storage_dir=root)
+
+    assert replaced is True
+    assert stat.S_IMODE(external.stat().st_mode) == 0o755
+    assert list(external.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_transfer_rejects_configured_root_replaced_after_init(tmp_path):
+    root = tmp_path / "transfer-root"
+    handler = Handler(ProtocolConnection(), file_storage_dir=root)
+    bound_root = tmp_path / "bound-root"
+    root.rename(bound_root)
+    root.mkdir()
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        await _write_chunk(handler, "root-drift.bin", b"payload")
+
+    assert list(root.iterdir()) == []
+    assert list(bound_root.iterdir()) == []
+    await handler.close()
+
+
+@pytest.mark.asyncio
+async def test_root_swap_after_validation_keeps_write_anchored_to_bound_inode(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / "transfer-root"
+    handler = Handler(ProtocolConnection(), file_storage_dir=root)
+    displaced = tmp_path / "bound-root"
+    swapped = False
+
+    def swap_after_validation(event, **_details):
+        nonlocal swapped
+        if event == "after_root_validation" and not swapped:
+            swapped = True
+            root.rename(displaced)
+            root.mkdir()
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_after_validation)
+
+    await _write_chunk(handler, "anchored.bin", b"payload")
+
+    assert swapped is True
+    assert (displaced / "unbound" / "anchored.bin").read_bytes() == b"payload"
+    assert list(root.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_repeated_close_keeps_bound_root_open_until_cleanup_succeeds(
+    tmp_path,
+    monkeypatch,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'6' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-close")
+    real_remove = os.remove
+    failed = False
+
+    def fail_quarantine_once(path, *args, **kwargs):
+        nonlocal failed
+        if os.fspath(path).startswith(".quarantine-") and not failed:
+            failed = True
+            raise OSError("simulated cleanup failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_quarantine_once)
+
+    await handler.close()
+    assert handler._file_storage_root_fd_closed is False
+    assert handler._owned_transfer_files
+
+    await handler.close()
+    assert handler._file_storage_root_fd_closed is True
+    assert handler._owned_transfer_files == set()
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_handlers_sharing_root_cannot_interleave_capability_chunks(tmp_path):
+    binding = _installation_binding()
+    first = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    second = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'8' * 64}.bin"
+
+    await _write_chunk(first, file_key, b"first-", binding=binding, index=0, amount=2)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(
+            second, file_key, b"intruder", binding=binding, index=1, amount=2
+        )
+    await _write_chunk(first, file_key, b"second", binding=binding, index=1, amount=2)
+
+    assert await first.read_local_file(file_key) == b"first-second"
+
+
+@pytest.mark.asyncio
+async def test_stale_handler_cleanup_cannot_delete_reclaimed_capability(tmp_path):
+    binding = _installation_binding()
+    stale = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    current = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'9' * 64}.bin"
+    await _write_chunk(stale, file_key, b"old", binding=binding)
+
+    await current.delete_local_file(file_key, action_context=binding)
+    await _write_chunk(current, file_key, b"new", binding=binding)
+    # Simulate lifecycle loss of the in-memory active-owner hint. Durable claim
+    # identity must still prevent stale cleanup after delete/reclaim.
+    handler_module._set_active_transfer_handler(
+        (current.file_storage_dir, file_key), None
+    )
+    await stale._cleanup_owned_transfers()
+
+    assert await current.read_local_file(file_key, action_context=binding) == b"new"
+
+
+@pytest.mark.asyncio
+async def test_owner_checked_delete_is_atomic_with_same_process_cross_handler_reclaim(
+    tmp_path,
+    monkeypatch,
+):
+    binding = _installation_binding()
+    # The serialization contract is intentionally process-local: these distinct
+    # handlers share the runtime interpreter and transfer-root lock registry.
+    deleting = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    reclaiming = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'b' * 64}.bin"
+    await _write_chunk(deleting, file_key, b"old", binding=binding)
+
+    owner_checked = threading.Event()
+    continue_delete = threading.Event()
+    reclaim_started = threading.Event()
+    real_access_check = deleting._context_can_access_transfer
+    real_reclaim_delete = reclaiming._delete_transfer_sync
+    paused = False
+
+    def pause_inside_locked_delete(effective_context, stored_context):
+        nonlocal paused
+        allowed = real_access_check(effective_context, stored_context)
+        if not paused:
+            paused = True
+            owner_checked.set()
+            assert continue_delete.wait(timeout=2)
+        return allowed
+
+    def note_reclaim_started(*args):
+        reclaim_started.set()
+        return real_reclaim_delete(*args)
+
+    monkeypatch.setattr(
+        deleting, "_context_can_access_transfer", pause_inside_locked_delete
+    )
+    monkeypatch.setattr(reclaiming, "_delete_transfer_sync", note_reclaim_started)
+
+    delete_task = asyncio.create_task(
+        deleting.delete_local_file(file_key, action_context=binding)
+    )
+    assert await asyncio.to_thread(owner_checked.wait, 2)
+
+    async def reclaim() -> None:
+        await reclaiming.delete_local_file(file_key, action_context=binding)
+        await _write_chunk(reclaiming, file_key, b"new", binding=binding)
+
+    reclaim_task = asyncio.create_task(reclaim())
+    assert await asyncio.to_thread(reclaim_started.wait, 2)
+    assert not reclaim_task.done()
+
+    continue_delete.set()
+    await asyncio.wait_for(asyncio.gather(delete_task, reclaim_task), timeout=2)
+
+    assert await reclaiming.read_local_file(file_key, action_context=binding) == b"new"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_retains_owner_record_until_file_delete_retry_succeeds(
+    tmp_path,
+    monkeypatch,
+):
+    binding = _installation_binding()
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'a' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry", binding=binding)
+    real_remove = os.remove
+    failed = False
+
+    def fail_file_once(path, *args, **kwargs):
+        nonlocal failed
+        if os.fspath(path).startswith(".quarantine-") and not failed:
+            failed = True
+            raise OSError("simulated file delete failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_file_once)
+    await handler._cleanup_owned_transfers()
+
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    assert await handler.read_local_file(file_key, action_context=binding) == b"retry"
+
+    await handler._cleanup_owned_transfers()
+    assert not owner_records[0].exists()
+    with pytest.raises(FileNotFoundError):
+        await handler.read_local_file(file_key, action_context=binding)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_retries_owner_delete_after_data_file_is_removed(
+    tmp_path,
+    monkeypatch,
+):
+    binding = _installation_binding()
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'e' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-owner", binding=binding)
+    real_remove = os.remove
+    failed = False
+    quarantine_removes = 0
+
+    def fail_owner_once(path, *args, **kwargs):
+        nonlocal failed, quarantine_removes
+        if os.fspath(path).startswith(".quarantine-"):
+            quarantine_removes += 1
+        if quarantine_removes == 2 and not failed:
+            failed = True
+            raise OSError("simulated owner delete failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_owner_once)
+    await handler._cleanup_owned_transfers()
+
+    owner_records = list((tmp_path / ".transfer-owners").iterdir())
+    assert len(owner_records) == 1
+    assert len(handler._owned_transfer_files) == 1
+
+    await handler._cleanup_owned_transfers()
+    assert not owner_records[0].exists()
+    assert handler._owned_transfer_files == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_name", ["payload", "owner"])
+async def test_explicit_delete_failure_raises_and_retains_capacity_for_retry(
+    tmp_path,
+    monkeypatch,
+    failed_name,
+):
+    monkeypatch.setattr(handler_module, "MAX_ACTIVE_FILE_TRANSFERS", 1)
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'f' * 64}.bin"
+    next_key = f"ft1_{'0' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-delete")
+    owner_record = next((tmp_path / ".transfer-owners").iterdir())
+    real_remove = os.remove
+    failed = False
+    quarantine_removes = 0
+
+    def fail_once(path, *args, **kwargs):
+        nonlocal failed, quarantine_removes
+        if os.fspath(path).startswith(".quarantine-"):
+            quarantine_removes += 1
+        is_target = (
+            quarantine_removes == 1
+            if failed_name == "payload"
+            else quarantine_removes == 2
+        )
+        if is_target and not failed:
+            failed = True
+            raise OSError(f"simulated {failed_name} delete failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_once)
+
+    with pytest.raises(OSError, match=f"simulated {failed_name} delete failure"):
+        await handler.delete_local_file(file_key)
+
+    assert owner_record.exists()
+    assert len(handler._owned_transfer_files) == 1
+    with pytest.raises(ValueError, match="transfer capacity"):
+        await _write_chunk(handler, next_key, b"still-full")
+
+    await handler.delete_local_file(file_key)
+    assert not owner_record.exists()
+    assert handler._owned_transfer_files == set()
+    await _write_chunk(handler, next_key, b"capacity-released")
+
+
+@pytest.mark.asyncio
+async def test_close_retries_failed_transfer_cleanup_without_reclosing_connection(
+    tmp_path,
+    monkeypatch,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'1' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-close")
+    payload = tmp_path / "unbound" / file_key
+    owner_record = next((tmp_path / ".transfer-owners").iterdir())
+    real_remove = os.remove
+    failed = False
+
+    def fail_payload_once(path, *args, **kwargs):
+        nonlocal failed
+        if os.fspath(path).startswith(".quarantine-") and not failed:
+            failed = True
+            raise OSError("simulated close cleanup failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_payload_once)
+
+    await handler.close()
+    assert payload.exists()
+    assert owner_record.exists()
+    assert len(handler._owned_transfer_files) == 1
+    assert connection.close_calls == 1
+
+    await handler.close()
+    assert not payload.exists()
+    assert not owner_record.exists()
+    assert handler._owned_transfer_files == set()
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["serialize", "fsync"])
+async def test_failed_new_owner_record_is_removed_so_same_capability_can_retry(
+    tmp_path,
+    monkeypatch,
+    failure_point,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'2' * 64}.bin"
+
+    if failure_point == "serialize":
+        real_serialize = handler._serialize_transfer_record
+        failed = False
+
+        def fail_serialize_once(*args):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("simulated owner serialization failure")
+            return real_serialize(*args)
+
+        monkeypatch.setattr(handler, "_serialize_transfer_record", fail_serialize_once)
+    else:
+        real_fsync = os.fsync
+        failed = False
+
+        def fail_fsync_once(fd):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise OSError("simulated owner fsync failure")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(handler_module.os, "fsync", fail_fsync_once)
+
+    with pytest.raises((OSError, RuntimeError), match="simulated owner"):
+        await _write_chunk(handler, file_key, b"first")
+
+    owner_dir = tmp_path / ".transfer-owners"
+    assert not owner_dir.exists() or list(owner_dir.iterdir()) == []
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_claims == {}
+
+    await _write_chunk(handler, file_key, b"second")
+    assert await handler.read_local_file(file_key) == b"second"
+
+
+@pytest.mark.asyncio
+async def test_rejected_capability_keys_do_not_leak_owner_sidecars(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(handler_module, "MAX_ACTIVE_FILE_TRANSFERS", 1)
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    await _write_chunk(handler, f"ft1_{0:064x}.bin", b"accepted")
+
+    for number in range(1, 33):
+        with pytest.raises(ValueError, match="transfer capacity"):
+            await _write_chunk(handler, f"ft1_{number:064x}.bin", b"rejected")
+
+    assert len(list((tmp_path / ".transfer-owners").iterdir())) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_first_chunk_rolls_back_capacity_reservation_and_owner_claim(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(handler_module, "MAX_ACTIVE_FILE_TRANSFERS", 1)
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    failed_key = f"ft1_{'c' * 64}.bin"
+    accepted_key = f"ft1_{'d' * 64}.bin"
+    real_open = os.open
+    fail_data_open = True
+
+    def fail_first_data_open(path, flags, *args, **kwargs):
+        nonlocal fail_data_open
+        if path == failed_key and fail_data_open:
+            fail_data_open = False
+            raise OSError("simulated data-file open failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "open", fail_first_data_open)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, failed_key, b"rejected")
+
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_contexts == {}
+    assert handler._owned_transfer_claims == {}
+    owner_dir = tmp_path / ".transfer-owners"
+    assert not owner_dir.exists() or list(owner_dir.iterdir()) == []
+
+    await _write_chunk(handler, accepted_key, b"accepted")
+    assert await handler.read_local_file(accepted_key) == b"accepted"
+
+
+@pytest.mark.asyncio
+async def test_payload_inode_swap_during_delete_never_unlinks_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'7' * 64}.bin"
+    await _write_chunk(handler, file_key, b"expected")
+    payload = tmp_path / "unbound" / file_key
+    displaced = tmp_path / "unbound" / "displaced-payload"
+    swapped = False
+
+    def swap_payload(event, **details):
+        nonlocal swapped
+        if event == "before_quarantine_rename" and details["role"] == "payload":
+            swapped = True
+            payload.rename(displaced)
+            payload.write_bytes(b"replacement")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_payload)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+
+    assert swapped is True
+    assert any(
+        path.read_bytes() == b"replacement"
+        for path in (tmp_path / "unbound").iterdir()
+        if path.is_file()
+    )
+    assert displaced.read_bytes() == b"expected"
+
+
+@pytest.mark.asyncio
+async def test_owner_inode_swap_during_delete_never_unlinks_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'8' * 64}.bin"
+    await _write_chunk(handler, file_key, b"expected")
+    owner = next((tmp_path / ".transfer-owners").iterdir())
+    displaced = owner.with_name("displaced-owner")
+    replacement = b'{"replacement":true}'
+    swapped = False
+
+    def swap_owner(event, **details):
+        nonlocal swapped
+        if event == "before_quarantine_rename" and details["role"] == "owner":
+            swapped = True
+            owner.rename(displaced)
+            owner.write_bytes(replacement)
+            owner.chmod(0o600)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_owner)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+
+    assert swapped is True
+    assert any(
+        path.read_bytes() == replacement
+        for path in (tmp_path / ".transfer-owners").iterdir()
+        if path.is_file()
+    )
+    assert displaced.exists()
+
+
+@pytest.mark.asyncio
+async def test_failed_payload_creation_never_rolls_back_swapped_owner_name(
+    tmp_path,
+    monkeypatch,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'9' * 64}.bin"
+    replacement = b'{"replacement":true}'
+    swapped_owner = None
+
+    def swap_owner_then_fail(event, **_details):
+        nonlocal swapped_owner
+        if event != "before_owner_link":
+            return
+        owner = next((tmp_path / ".transfer-owners").glob(".owner-*.tmp"))
+        swapped_owner = owner.with_name("displaced-owner")
+        owner.rename(swapped_owner)
+        owner.write_bytes(replacement)
+        owner.chmod(0o600)
+        raise OSError("simulated payload creation failure")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_owner_then_fail)
+
+    with pytest.raises(OSError, match="simulated payload creation failure"):
+        await _write_chunk(handler, file_key, b"payload")
+
+    assert swapped_owner is not None and swapped_owner.exists()
+    owner_files = list((tmp_path / ".transfer-owners").iterdir())
+    assert all(not path.name.endswith(".json") for path in owner_files)
+    assert swapped_owner.read_bytes() != replacement
+    assert not any(path.read_bytes() == replacement for path in owner_files)
+
+
+@pytest.mark.asyncio
+async def test_canonical_replacement_immediately_before_write_is_not_modified(
+    tmp_path, monkeypatch
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'a' * 64}.bin"
+    payload = tmp_path / "unbound" / file_key
+    replaced = False
+
+    def install_replacement(event, **_details):
+        nonlocal replaced
+        if event == "before_staging_write" and not replaced:
+            replaced = True
+            payload.write_bytes(b"replacement")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", install_replacement)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, file_key, b"incoming")
+
+    assert replaced is True
+    assert payload.read_bytes() == b"replacement"
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == [payload]
+
+
+@pytest.mark.asyncio
+async def test_quarantine_mismatch_retry_retains_replacement_and_owner_authority(
+    tmp_path, monkeypatch
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'b' * 64}.bin"
+    await _write_chunk(handler, file_key, b"owned")
+    payload = tmp_path / "unbound" / file_key
+    displaced = payload.with_name("externally-displaced")
+    swapped = False
+
+    def swap_payload(event, **details):
+        nonlocal swapped
+        if event == "before_quarantine_rename" and details["role"] == "payload":
+            swapped = True
+            payload.rename(displaced)
+            payload.write_bytes(b"replacement")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_payload)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+    monkeypatch.setattr(handler, "_transfer_race_hook", lambda *_args, **_kwargs: None)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+
+    assert displaced.read_bytes() == b"owned"
+    assert any(
+        path.read_bytes() == b"replacement"
+        for path in (tmp_path / "unbound").iterdir()
+        if path.is_file()
+    )
+    assert len(list((tmp_path / ".transfer-owners").glob("*.json"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_owner_link_directory_fsync_failure_is_tracked_and_close_cleans(
+    tmp_path, monkeypatch
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'c' * 64}.bin"
+    real_fsync = os.fsync
+    failed = False
+
+    def fail_after_owner_link(fd):
+        nonlocal failed
+        owner_files = list((tmp_path / ".transfer-owners").glob("*.json"))
+        if owner_files and stat.S_ISDIR(os.fstat(fd).st_mode) and not failed:
+            failed = True
+            raise OSError("simulated owner directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(handler_module.os, "fsync", fail_after_owner_link)
+
+    with pytest.raises(OSError, match="owner directory fsync"):
+        await _write_chunk(handler, file_key, b"published")
+
+    assert failed is True
+    assert handler._owned_transfer_files
+    assert len(list((tmp_path / ".transfer-owners").glob("*.json"))) == 1
+    monkeypatch.setattr(handler_module.os, "fsync", real_fsync)
+    await handler.close()
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+
+
+@pytest.mark.asyncio
+async def test_oversized_first_chunks_leave_no_transfer_artifacts(tmp_path):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path, max_file_bytes=1)
+
+    for number in range(5):
+        with pytest.raises(ValueError, match="configured size limit"):
+            await _write_chunk(handler, f"ft1_{number:064x}.bin", b"xx")
+
+    assert handler._owned_transfer_files == set()
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+
+
+def test_invalid_max_file_bytes_is_rejected_before_root_fd_is_acquired(
+    tmp_path, monkeypatch
+):
+    prepare_called = False
+
+    def unexpected_prepare(_root):
+        nonlocal prepare_called
+        prepare_called = True
+        raise AssertionError("persistent root must not be acquired")
+
+    monkeypatch.setattr(handler_module, "_prepare_transfer_root", unexpected_prepare)
+    before = len(os.listdir("/proc/self/fd"))
+    with pytest.raises(ValueError, match="max_file_bytes"):
+        Handler(ProtocolConnection(), file_storage_dir=tmp_path, max_file_bytes=0)
+    after = len(os.listdir("/proc/self/fd"))
+
+    assert prepare_called is False
+    assert after == before
+
+
+@pytest.mark.asyncio
 async def test_file_transfer_io_uses_backpressure_aware_executor(tmp_path, monkeypatch):
     handler = Handler(
         ProtocolConnection(),
@@ -1170,7 +2544,8 @@ async def test_file_chunk_action_enforces_aggregate_handler_limit(tmp_path):
             }
         )
 
-    assert await handler.read_local_file("limited.bin") == b"1234"
+    with pytest.raises(FileNotFoundError):
+        await handler.read_local_file("limited.bin")
 
 
 @pytest.mark.asyncio

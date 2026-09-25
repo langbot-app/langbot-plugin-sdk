@@ -192,10 +192,8 @@ async def test_legacy_registration_revocation_rejects_later_chunk(legacy_runtime
             action_context=LEGACY_CONTEXT,
         )
         assert second["code"] != 0
-        assert (
+        with pytest.raises(FileNotFoundError):
             await control.read_local_file(FILE_KEY, action_context=LEGACY_CONTEXT)
-            == b"first"
-        )
 
 
 @pytest.mark.parametrize("profile", ["oss_dev", "shared"])

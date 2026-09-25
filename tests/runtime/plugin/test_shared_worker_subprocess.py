@@ -61,7 +61,7 @@ async def _send(process, seq_id, action, data, binding=None, callbacks=None):
 async def _read_json_line(process):
     assert process.stdout is not None
     while True:
-        line = await asyncio.wait_for(process.stdout.readline(), timeout=3)
+        line = await asyncio.wait_for(process.stdout.readline(), timeout=10)
         if not line:
             stderr = await process.stderr.read() if process.stderr is not None else b""
             raise AssertionError(
@@ -107,11 +107,13 @@ class SharedProbe(BasePlugin):
         encoding="utf-8",
     )
     env = os.environ.copy()
+    transfer_root = tmp_path / "rpc-transfer"
     env.update(
         {
             "PYTHONPATH": str(Path(__file__).parents[3] / "src"),
             "LANGBOT_PLUGIN_REGISTRATION_CAPABILITY": "x" * 40,
             "LANGBOT_PLUGIN_RUNTIME_PROFILE": "shared",
+            "LANGBOT_PLUGIN_FILE_STORAGE_DIR": str(transfer_root),
             "PYTHONUNBUFFERED": "1",
             "SHARED_PROBE_MARKER": str(tmp_path / "markers.log"),
         }

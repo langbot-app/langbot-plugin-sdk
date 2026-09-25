@@ -250,8 +250,12 @@ Core mechanics:
 - `Handler.call_action_generator()` consumes streamed responses.
 - Streaming emits `chunk_status: "continue"` chunks and ends with `"end"`.
 - File transfer uses `CommonAction.FILE_CHUNK` with 16KB base64 chunks stored
-  under `data/temp/lbp/`. Transfer keys are high-entropy opaque basenames; the
-  receiver rejects absolute paths, separators, `..`, and unsafe extensions.
+  under `data/temp/lbp/`. New transfer keys are high-entropy opaque capabilities;
+  the receiver durably binds each capability to its exact authority namespace so
+  a later read can recover that namespace after the action or handler ends. An
+  explicit current context must still match, and the receiver never scans other
+  namespaces. Legacy opaque basenames remain supported. Absolute paths,
+  separators, `..`, and unsafe extensions are rejected.
 
 Action enums are the protocol contract:
 
@@ -345,6 +349,15 @@ APIs (`get_box_status`, `list_boxes`, `acquire_box`) and run-bound operations
 (`bind_box`, `import_box_attachments`, `export_box_files`, `reply_files`). Box Runtime
 owns atomic capacity enforcement and container reuse/lifecycle. Reusing an existing
 Box is allowed when no additional capacity remains.
+
+Transfer payloads are assembled through private, inode-bound staging files and are
+published with no-overwrite links only after the final chunk succeeds. Durable owner
+records include the published payload device/inode identity, so reads and deletion
+fail closed if a canonical name is replaced. The transfer root assumes no untrusted
+process can mutate its directories with the same Unix UID: such a mutator can rename
+an owned inode to an unknowable name, which cannot be recovered safely. The SDK
+reports that condition as local filesystem corruption, retains owner authority, and
+never treats it as successful cleanup or as cross-tenant access.
 
 A run binds one Box before native sandbox tools or file transfer. The Host does not
 choose a conversation scope or stage attachments before starting the Runner. Input
