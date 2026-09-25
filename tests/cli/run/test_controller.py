@@ -17,6 +17,8 @@ from langbot_plugin.api.definition.plugin import BasePlugin, NonePlugin
 from langbot_plugin.api.entities.builtin.provider import session as provider_session
 from langbot_plugin.cli.run import controller as controller_module
 from langbot_plugin.cli.run.controller import PluginRuntimeController
+from langbot_plugin.api.proxies.langbot_api import LangBotAPIProxy
+from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.entities.io.context import InstallationBinding
 from langbot_plugin.runtime.plugin.container import RuntimeContainerStatus
@@ -358,6 +360,64 @@ async def test_shared_worker_keeps_separate_instances_and_config_per_slot(monkey
 
     assert controller.plugin_container_for_slot("installation-a") is None
     assert controller.plugin_container_for_slot("installation-b") is slot_b
+
+
+@pytest.mark.asyncio
+async def test_shared_slot_proxy_scopes_all_file_helpers_and_knowledge_downloads():
+    digest = "a" * 64
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest=digest,
+    )
+    binding_b = binding_a.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+
+    class NamespacedHandler:
+        def __init__(self):
+            self.files = {(binding_a, "knowledge-key"): b"workspace-a knowledge"}
+            self.deleted = []
+            self.sent_contexts = []
+
+        async def call_action(self, action, data, timeout=15.0, *, action_context):
+            assert action is PluginToRuntimeAction.GET_KNOWLEDEGE_FILE_STREAM
+            assert data == {"storage_path": "knowledge/path"}
+            assert action_context in {binding_a, binding_b}
+            return {"file_key": "knowledge-key"}
+
+        async def read_local_file(self, file_key, *, action_context):
+            return self.files[(action_context, file_key)]
+
+        async def delete_local_file(self, file_key, *, action_context):
+            self.deleted.append((action_context, file_key))
+            self.files.pop((action_context, file_key), None)
+
+        async def send_file(self, file_bytes, file_extension, *, action_context):
+            self.sent_contexts.append(action_context)
+            return "sent-key"
+
+    handler = NamespacedHandler()
+    proxy_a = controller_module._SlotHandlerProxy(handler, binding_a)
+    proxy_b = controller_module._SlotHandlerProxy(handler, binding_b)
+
+    assert (
+        await LangBotAPIProxy(proxy_a).get_knowledge_file_stream("knowledge/path")
+        == b"workspace-a knowledge"
+    )
+    assert handler.deleted == [(binding_a, "knowledge-key")]
+    assert await proxy_a.send_file(b"payload", "bin") == "sent-key"
+    assert handler.sent_contexts == [binding_a]
+
+    with pytest.raises(KeyError):
+        await proxy_b.read_local_file("knowledge-key")
+    assert handler.deleted == [(binding_a, "knowledge-key")]
 
 
 @pytest.mark.asyncio

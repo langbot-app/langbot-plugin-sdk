@@ -149,6 +149,7 @@ class SharedPluginWorkerRuntime:
     )
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
     launch_task: asyncio.Task[None] | None = None
+    transport_registered_event: asyncio.Event = field(default_factory=asyncio.Event)
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     attach_tasks: dict[InstallationBinding, asyncio.Task[None]] = field(
@@ -1416,6 +1417,8 @@ class PluginManager:
                 for runtime in worker.slots.values():
                     runtime.state = "starting"
                     runtime.ready_event.clear()
+                worker.transport_registered_event.clear()
+                worker.ready_event.clear()
                 await self._run_shared_worker_attempt(worker, permit)
             except asyncio.CancelledError:
                 if permit is not None:
@@ -1447,9 +1450,10 @@ class PluginManager:
     ) -> None:
         """Run one digest worker with bounded registration readiness."""
 
+        worker.transport_registered_event.clear()
         worker.ready_event.clear()
         worker_task = asyncio.create_task(self._launch_shared_worker(worker))
-        ready_task = asyncio.create_task(worker.ready_event.wait())
+        ready_task = asyncio.create_task(worker.transport_registered_event.wait())
         stable_task: asyncio.Task[None] | None = None
         try:
             done, _ = await asyncio.wait(
@@ -1459,10 +1463,6 @@ class PluginManager:
             )
             if ready_task in done:
                 permit.mark_ready()
-                for runtime in worker.slots.values():
-                    runtime.state = "running"
-                    runtime.error_code = None
-                    runtime.error_message = None
                 if not permit.is_half_open_probe:
                     await worker_task
                     if worker.slots:
@@ -1513,14 +1513,37 @@ class PluginManager:
             runtime.error_code = "worker_launch_failed"
             runtime.error_message = str(exc) or type(exc).__name__
 
-    def _schedule_shared_slot_attach(self, runtime: PluginInstallationRuntime) -> None:
+    @staticmethod
+    def _refresh_shared_worker_ready(worker: SharedPluginWorkerRuntime) -> None:
+        if worker.plugin_handler is not None and any(
+            runtime.state == "running"
+            and runtime.plugin_container is not None
+            and runtime.ready_event.is_set()
+            for runtime in worker.slots.values()
+        ):
+            worker.ready_event.set()
+        else:
+            worker.ready_event.clear()
+
+    def _schedule_shared_slot_attach(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> asyncio.Task[None] | None:
         worker = runtime.shared_worker
         handler = worker.plugin_handler if worker else None
         if handler is None or worker is None:
-            return
+            return None
         existing = worker.attach_tasks.get(runtime.binding)
         if existing is not None and not existing.done():
-            return
+            return existing
+        if runtime.plugin_container is not None:
+            self._binding_by_container_id.pop(id(runtime.plugin_container), None)
+        runtime.plugin_container = None
+        runtime.state = "starting"
+        runtime.error_code = None
+        runtime.error_message = None
+        runtime.ready_event.clear()
+        self._refresh_shared_worker_ready(worker)
         task = asyncio.create_task(self._initialize_shared_slot(runtime, handler))
         worker.attach_tasks[runtime.binding] = task
         self.plugin_run_tasks.append(task)
@@ -1534,13 +1557,31 @@ class PluginManager:
                 return
             exc = completed.exception()
             if exc is not None:
+                if (
+                    runtime.shared_worker is worker
+                    and worker.plugin_handler is handler
+                    and worker.slots.get(runtime.binding) is runtime
+                    and self.context.is_current_installation_binding(runtime.binding)
+                ):
+                    if runtime.plugin_container is not None:
+                        self._binding_by_container_id.pop(
+                            id(runtime.plugin_container),
+                            None,
+                        )
+                    runtime.plugin_container = None
+                    runtime.ready_event.clear()
+                    runtime.state = "failed"
+                    runtime.error_code = "slot_attach_failed"
+                    runtime.error_message = str(exc) or type(exc).__name__
                 logger.error(
                     "Shared plugin slot attach failed: %s",
                     runtime.binding.installation_uuid,
                     exc_info=(type(exc), exc, exc.__traceback__),
                 )
+            self._refresh_shared_worker_ready(worker)
 
         task.add_done_callback(attach_done)
+        return task
 
     async def _initialize_shared_slot(
         self,
@@ -1612,6 +1653,11 @@ class PluginManager:
         )
         self._normalize_component_owners(plugin_container)
         if (
+            plugin_container.status
+            is not runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+        ):
+            raise ValueError("Shared plugin slot did not initialize")
+        if (
             plugin_container.manifest.metadata.author != runtime.artifact.plugin_author
             or plugin_container.manifest.metadata.name != runtime.artifact.plugin_name
         ):
@@ -1622,6 +1668,8 @@ class PluginManager:
             runtime.log_buffer = runtime_plugin_handler_cls.PluginLogBuffer()
         self._binding_by_container_id[id(plugin_container)] = runtime.binding
         runtime.state = "running"
+        runtime.error_code = None
+        runtime.error_message = None
         runtime.ready_event.set()
 
     async def _detach_shared_worker_slot(
@@ -1643,6 +1691,8 @@ class PluginManager:
             runtime.shared_worker = None
             runtime.plugin_handler = None
             runtime.plugin_container = None
+            runtime.ready_event.clear()
+            self._refresh_shared_worker_ready(worker)
             empty = not worker.slots
             if empty:
                 self._shared_workers.pop(worker.artifact.digest, None)
@@ -1660,6 +1710,8 @@ class PluginManager:
             if handler in self.plugin_handlers:
                 self.plugin_handlers.remove(handler)
             worker.plugin_handler = None
+        worker.transport_registered_event.clear()
+        worker.ready_event.clear()
         task = worker.launch_task
         if task is not None and not task.done() and task is not asyncio.current_task():
             task.cancel()
@@ -2107,6 +2159,7 @@ class PluginManager:
                     if worker.plugin_handler is not handler:
                         continue
                     worker.plugin_handler = None
+                    worker.transport_registered_event.clear()
                     worker.ready_event.clear()
                     for runtime in worker.slots.values():
                         runtime.plugin_handler = None
@@ -2534,6 +2587,7 @@ class PluginManager:
                     raise ValueError(
                         "Shared plugin worker desired state is unavailable"
                     )
+                attach_tasks: list[asyncio.Task[None]] = []
                 async with worker.lifecycle_lock:
                     if (
                         self._shared_workers.get(registration.shared_pool_digest)
@@ -2545,7 +2599,6 @@ class PluginManager:
                         worker.slots,
                     )
                     worker.plugin_handler = handler
-                    worker.ready_event.set()
                     for slot_runtime in tuple(worker.slots.values()):
                         if (
                             slot_runtime.shared_worker is worker
@@ -2554,7 +2607,13 @@ class PluginManager:
                             )
                         ):
                             slot_runtime.plugin_handler = handler
-                            self._schedule_shared_slot_attach(slot_runtime)
+                            task = self._schedule_shared_slot_attach(slot_runtime)
+                            if task is not None:
+                                attach_tasks.append(task)
+                    worker.transport_registered_event.set()
+                if attach_tasks:
+                    await asyncio.gather(*attach_tasks, return_exceptions=True)
+                self._refresh_shared_worker_ready(worker)
                 return
             if installation_binding is not None:
                 if not self.context.is_current_installation_binding(
@@ -3014,10 +3073,14 @@ class PluginManager:
             resp = await plugin._runtime_plugin_handler.get_plugin_icon()
 
             icon_file_key = resp["plugin_icon_file_key"]
+            binding = self._binding_by_container_id.get(id(plugin))
+            file_kwargs = {"action_context": binding} if binding is not None else {}
             icon_bytes = await plugin._runtime_plugin_handler.read_local_file(
-                icon_file_key
+                icon_file_key, **file_kwargs
             )
-            await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(
+                icon_file_key, **file_kwargs
+            )
             return icon_bytes, resp["mime_type"]
         return b"", ""
 
@@ -3031,10 +3094,14 @@ class PluginManager:
             )
 
             readme_file_key = resp["plugin_readme_file_key"]
+            binding = self._binding_by_container_id.get(id(plugin))
+            file_kwargs = {"action_context": binding} if binding is not None else {}
             readme_bytes = await plugin._runtime_plugin_handler.read_local_file(
-                readme_file_key
+                readme_file_key, **file_kwargs
             )
-            await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(
+                readme_file_key, **file_kwargs
+            )
             return readme_bytes
 
         return b""
@@ -3074,10 +3141,14 @@ class PluginManager:
             file_file_key = resp["file_file_key"]
             if not file_file_key:
                 return b"", ""
+            binding = self._binding_by_container_id.get(id(plugin))
+            file_kwargs = {"action_context": binding} if binding is not None else {}
             file_bytes = await plugin._runtime_plugin_handler.read_local_file(
-                file_file_key
+                file_file_key, **file_kwargs
             )
-            await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(
+                file_file_key, **file_kwargs
+            )
             return file_bytes, resp["mime_type"]
         return b"", ""
 

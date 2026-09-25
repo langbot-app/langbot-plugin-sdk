@@ -67,6 +67,14 @@ class _SlotHandlerProxy:
         kwargs["action_context"] = self._binding
         return await self._handler.send_file(file_bytes, file_extension, **kwargs)
 
+    async def read_local_file(self, file_key, **kwargs):
+        kwargs["action_context"] = self._binding
+        return await self._handler.read_local_file(file_key, **kwargs)
+
+    async def delete_local_file(self, file_key, **kwargs):
+        kwargs["action_context"] = self._binding
+        return await self._handler.delete_local_file(file_key, **kwargs)
+
     def __getattr__(self, name):
         return getattr(self._handler, name)
 

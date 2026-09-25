@@ -35,7 +35,7 @@ from langbot_plugin.entities.io.errors import (
     DependencyInstallError,
     DependencyVerificationError,
 )
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.context import RuntimeContext
 from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 
@@ -1598,6 +1598,64 @@ async def test_plugin_resource_and_page_methods_delegate_to_connected_handler():
         endpoint="/save",
         method="POST",
     ) == {"data": None, "error": "Plugin not found"}
+
+
+@pytest.mark.asyncio
+async def test_shared_plugin_resource_transfers_use_exact_installation_binding():
+    manager = _manager()
+    plugin = _plugin()
+    digest = "a" * 64
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest=digest,
+    )
+    sibling = binding.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+
+    class SharedHandler(FakeHandler):
+        def __init__(self, container):
+            super().__init__(container)
+            self.files = {
+                (binding, "icon-key"): b"<svg/>",
+                (binding, "readme-key"): b"# Demo",
+                (binding, "asset-key"): b"asset-bytes",
+                (sibling, "icon-key"): b"sibling icon",
+            }
+            self.file_calls = []
+
+        async def read_local_file(self, file_key, *, action_context):
+            self.file_calls.append(("read", action_context, file_key))
+            return self.files[(action_context, file_key)]
+
+        async def delete_local_file(self, file_key, *, action_context):
+            self.file_calls.append(("delete", action_context, file_key))
+            self.files.pop((action_context, file_key), None)
+
+    handler = SharedHandler(plugin)
+    plugin._runtime_plugin_handler = handler
+    manager.plugins = [plugin]
+    manager._binding_by_container_id[id(plugin)] = binding
+
+    assert await manager.get_plugin_icon("tester", "demo") == (
+        b"<svg/>",
+        "image/svg+xml",
+    )
+    assert await manager.get_plugin_readme("tester", "demo") == b"# Demo"
+    assert await manager.get_plugin_assets_file("tester", "demo", "asset.txt") == (
+        b"asset-bytes",
+        "text/plain",
+    )
+    assert {call[1] for call in handler.file_calls} == {binding}
+    assert handler.files[(sibling, "icon-key")] == b"sibling icon"
+    assert not any(key[0] == binding for key in handler.files)
 
 
 @pytest.mark.asyncio
