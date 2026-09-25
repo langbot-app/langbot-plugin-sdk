@@ -167,10 +167,15 @@ class ControlConnectionHandler(handler.Handler):
             if request.artifact_file_key is not None:
                 artifact_package = await self.read_local_file(request.artifact_file_key)
                 await self.delete_local_file(request.artifact_file_key)
+            apply_kwargs: dict[str, Any] = {
+                "artifact_package": artifact_package,
+                "enabled": request.enabled,
+            }
+            if request.execution_mode.value != "dedicated":
+                apply_kwargs["execution_mode"] = request.execution_mode
             result = await self.context.plugin_mgr.apply_plugin_installation(
                 binding,
-                artifact_package=artifact_package,
-                enabled=request.enabled,
+                **apply_kwargs,
             )
             return handler.ActionResponse.success(result)
 

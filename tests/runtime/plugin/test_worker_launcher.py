@@ -141,6 +141,42 @@ def test_shared_launcher_maps_only_trusted_policy_to_nsjail(tmp_path):
     assert "PYTHONDONTWRITEBYTECODE=1" in args
 
 
+def test_certified_shared_launcher_mounts_no_installation_writable_paths(tmp_path):
+    python_prefix = tmp_path / "runtime" / ".venv"
+    python_executable = python_prefix / "bin" / "python"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+        python_executable=str(python_executable),
+        python_prefix=str(python_prefix),
+    )
+    launcher.configure(_policy(), "shared")
+    launch_spec = _launch_spec(tmp_path)
+
+    args = launcher.build_shared_pool_nsjail_args(launch_spec)
+
+    for private_path in (
+        launch_spec.paths.home_path,
+        launch_spec.paths.tmp_path,
+        launch_spec.paths.data_path,
+        launch_spec.paths.root_path / "rpc-transfer",
+    ):
+        assert not any(str(private_path) in value for value in args)
+    assert "HOME=/tmp" in args
+    assert "TMPDIR=/tmp" in args
+    assert f"{PLUGIN_REGISTRATION_CAPABILITY_ENV}=capability-value" in args
+    writable_targets = [
+        value.split(":", 1)[-1]
+        for index, value in enumerate(args)
+        if index > 0 and args[index - 1] == "--bindmount"
+    ]
+    assert "/home" not in writable_targets
+    assert "/data" not in writable_targets
+
+
 def test_dependency_preparation_uses_isolated_writable_staging_only(tmp_path):
     python_prefix = tmp_path / "runtime" / ".venv"
     python_executable = python_prefix / "bin" / "python"

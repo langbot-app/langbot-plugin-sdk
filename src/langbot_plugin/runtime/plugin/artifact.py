@@ -155,6 +155,28 @@ class PluginArtifactStore:
             jail_root_path=jail_root_path,
         )
 
+    def ensure_shared_worker_paths(self, digest: str) -> PluginInstallationPaths:
+        """Create digest-owned writable paths that contain no tenant state."""
+
+        digest = self._validate_digest(digest)
+        root_path = self.base_path / "shared-workers" / digest
+        root_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root_path.chmod(0o700)
+        home_path = root_path / "home"
+        tmp_path = root_path / "tmp"
+        data_path = root_path / "data"
+        jail_root_path = root_path / "root"
+        for path in (home_path, tmp_path, data_path, jail_root_path):
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path.chmod(0o700)
+        return PluginInstallationPaths(
+            root_path=root_path,
+            home_path=home_path,
+            tmp_path=tmp_path,
+            data_path=data_path,
+            jail_root_path=jail_root_path,
+        )
+
     @staticmethod
     def _validate_digest(value: str) -> str:
         digest = str(value or "").strip()

@@ -92,7 +92,10 @@ async def test_registered_legacy_file_chunk_receives_real_bytes(legacy_runtime):
             action_context=LEGACY_CONTEXT,
         )
         assert response["code"] == 0, response
-        assert await control.read_local_file(FILE_KEY) == FILE_BYTES
+        assert (
+            await control.read_local_file(FILE_KEY, action_context=LEGACY_CONTEXT)
+            == FILE_BYTES
+        )
         assert not control.context._installation_bindings
         assert control.bound_action_context is None
 
@@ -189,7 +192,10 @@ async def test_legacy_registration_revocation_rejects_later_chunk(legacy_runtime
             action_context=LEGACY_CONTEXT,
         )
         assert second["code"] != 0
-        assert await control.read_local_file(FILE_KEY) == b"first"
+        assert (
+            await control.read_local_file(FILE_KEY, action_context=LEGACY_CONTEXT)
+            == b"first"
+        )
 
 
 @pytest.mark.parametrize("profile", ["oss_dev", "shared"])
@@ -213,7 +219,11 @@ async def test_complete_file_chunk_preserves_candidate_staging(
             action_context=binding,
         )
         assert response["code"] == 0, response
-        assert await control.read_local_file(FILE_KEY) == FILE_BYTES
+        assert (
+            await control.read_local_file(FILE_KEY, action_context=binding)
+            == FILE_BYTES
+        )
+        await control.delete_local_file(FILE_KEY, action_context=binding)
         assert control.context.is_current_installation_binding(binding) is active
         # Candidate upgrade bytes must not activate a new revision.
         candidate = binding.model_copy(
@@ -226,7 +236,10 @@ async def test_complete_file_chunk_preserves_candidate_staging(
             action_context=candidate,
         )
         assert response["code"] == 0, response
-        assert await control.read_local_file(FILE_KEY) == b"candidate package"
+        assert (
+            await control.read_local_file(FILE_KEY, action_context=candidate)
+            == b"candidate package"
+        )
         assert not control.context.is_current_installation_binding(candidate)
         assert control.context.is_current_installation_binding(binding) is active
 

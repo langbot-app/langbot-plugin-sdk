@@ -56,6 +56,7 @@ from langbot_plugin.runtime.security import PLUGIN_REGISTRATION_CAPABILITY_ENV
 from langbot_plugin.entities.io.context import (
     ActionContext,
     InstallationBinding,
+    PluginExecutionMode,
     PluginInstallationDesiredState,
     PluginWorkerPolicy,
 )
@@ -105,6 +106,7 @@ class _PendingPluginRegistration:
     plugin_name: str
     plugin_path: str
     binding: InstallationBinding | None
+    shared_pool_digest: str | None
     expires_at: float
 
 
@@ -130,6 +132,29 @@ class PluginInstallationRuntime:
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
     launch_task: asyncio.Task[None] | None = None
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
+    execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED
+    shared_worker: SharedPluginWorkerRuntime | None = None
+    log_buffer: typing.Any = None
+
+
+@dataclass(slots=True)
+class SharedPluginWorkerRuntime:
+    """One digest-scoped process with installation-isolated logical slots."""
+
+    artifact: PluginArtifact
+    dependency_environment: PluginDependencyEnvironment
+    paths: PluginInstallationPaths
+    slots: dict[InstallationBinding, PluginInstallationRuntime] = field(
+        default_factory=dict
+    )
+    plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
+    launch_task: asyncio.Task[None] | None = None
+    transport_registered_event: asyncio.Event = field(default_factory=asyncio.Event)
+    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
+    lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    attach_tasks: dict[InstallationBinding, asyncio.Task[None]] = field(
+        default_factory=dict
+    )
 
 
 _REGISTRATION_CAPABILITY_TTL_SECONDS = 300.0
@@ -203,6 +228,7 @@ class PluginManager:
         self._plugin_operation_locks: dict[str, asyncio.Lock] = {}
         self._pending_registrations: dict[str, _PendingPluginRegistration] = {}
         self._installations: dict[InstallationBinding, PluginInstallationRuntime] = {}
+        self._shared_workers: dict[str, SharedPluginWorkerRuntime] = {}
         self._active_binding_by_uuid: dict[str, InstallationBinding] = {}
         self._binding_by_container_id: dict[int, InstallationBinding] = {}
         # Desired-state lock order:
@@ -249,6 +275,10 @@ class PluginManager:
         self,
     ) -> dict[InstallationBinding, PluginInstallationRuntime]:
         return dict(self._installations)
+
+    @property
+    def shared_workers(self) -> dict[str, SharedPluginWorkerRuntime]:
+        return dict(self._shared_workers)
 
     def configure_worker_runtime(
         self,
@@ -448,6 +478,7 @@ class PluginManager:
         plugin_name: str,
         plugin_path: str,
         binding: InstallationBinding | None = None,
+        shared_pool_digest: str | None = None,
     ) -> str:
         """Issue a short-lived, one-use capability for one expected plugin."""
 
@@ -483,6 +514,7 @@ class PluginManager:
             plugin_name=name,
             plugin_path=os.path.abspath(plugin_path),
             binding=binding,
+            shared_pool_digest=shared_pool_digest,
             expires_at=time.monotonic() + _REGISTRATION_CAPABILITY_TTL_SECONDS,
         )
         return capability
@@ -961,10 +993,12 @@ class PluginManager:
         *,
         artifact_package: bytes | None = None,
         enabled: bool = True,
+        execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED,
     ) -> dict[str, typing.Any]:
         """Apply one desired installation and fence an older worker first."""
 
         binding = InstallationBinding.model_validate(binding)
+        execution_mode = PluginExecutionMode(execution_mode)
         lock = self._retain_installation_operation_lock(binding.installation_uuid)
         try:
             async with lock:
@@ -972,6 +1006,7 @@ class PluginManager:
                     binding,
                     artifact_package=artifact_package,
                     enabled=enabled,
+                    execution_mode=execution_mode,
                 )
         finally:
             self._forget_installation_operation_lock(binding.installation_uuid, lock)
@@ -982,9 +1017,11 @@ class PluginManager:
         *,
         artifact_package: bytes | None = None,
         enabled: bool = True,
+        execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED,
     ) -> dict[str, typing.Any]:
         """Apply while the installation-specific operation lock is held."""
 
+        execution_mode = PluginExecutionMode(execution_mode)
         binding = self.context.validate_installation_candidate(binding)
         artifact = await self._resolve_installation_artifact_locked(
             binding,
@@ -1019,10 +1056,15 @@ class PluginManager:
                 artifact=artifact,
                 paths=paths,
                 enabled=enabled,
+                execution_mode=execution_mode,
             )
             self._installations[binding] = current
         else:
             current.enabled = enabled
+            if current.execution_mode != execution_mode:
+                async with self._installation_lifecycle_semaphore():
+                    await self._stop_installation_worker(current)
+                current.execution_mode = execution_mode
 
         if enabled:
             current.error_code = None
@@ -1082,7 +1124,10 @@ class PluginManager:
                         "state": "superseded",
                     }
                 current.state = "starting"
-                self._schedule_installation_worker(current)
+                if execution_mode is PluginExecutionMode.SHARED_CERTIFIED:
+                    self._attach_shared_worker(current)
+                else:
+                    self._schedule_installation_worker(current)
         else:
             current.state = "disabled"
             current.error_code = None
@@ -1229,6 +1274,7 @@ class PluginManager:
                     return await self._apply_plugin_installation_locked(
                         desired.binding,
                         enabled=desired.enabled,
+                        execution_mode=desired.execution_mode,
                     )
             finally:
                 self._forget_installation_operation_lock(
@@ -1296,6 +1342,398 @@ class PluginManager:
                 self._forget_installation_operation_lock(
                     watermark.installation_uuid,
                     lock,
+                )
+
+    def _attach_shared_worker(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> None:
+        dependency_environment = runtime.dependency_environment
+        if dependency_environment is None:
+            raise ValueError("Shared worker dependency environment is unavailable")
+        digest = runtime.artifact.digest
+        worker = self._shared_workers.get(digest)
+        if worker is None:
+            worker = SharedPluginWorkerRuntime(
+                artifact=runtime.artifact,
+                dependency_environment=dependency_environment,
+                paths=self.artifact_store.ensure_shared_worker_paths(digest),
+            )
+            self._shared_workers[digest] = worker
+            first_attach = True
+        else:
+            if worker.dependency_environment.digest != dependency_environment.digest:
+                raise ValueError("Shared worker dependency environment changed")
+            first_attach = False
+        worker.slots[runtime.binding] = runtime
+        runtime.shared_worker = worker
+
+        async def sync_attached_handler() -> None:
+            async with worker.lifecycle_lock:
+                if worker.plugin_handler is not None:
+                    worker.plugin_handler.set_shared_pool_bindings(
+                        worker.artifact.digest,
+                        worker.slots,
+                    )
+                if not first_attach and worker.plugin_handler is not None:
+                    self._schedule_shared_slot_attach(runtime)
+
+        if first_attach:
+            self._schedule_shared_worker(worker)
+        elif worker.plugin_handler is not None or worker.ready_event.is_set():
+            task = asyncio.create_task(sync_attached_handler())
+            self.plugin_run_tasks.append(task)
+            task.add_done_callback(
+                lambda completed: self.plugin_run_tasks.remove(completed)
+                if completed in self.plugin_run_tasks
+                else None
+            )
+
+    def _schedule_shared_worker(self, worker: SharedPluginWorkerRuntime) -> None:
+        if worker.launch_task is not None and not worker.launch_task.done():
+            return
+        worker.launch_task = asyncio.create_task(self._supervise_shared_worker(worker))
+        self.plugin_run_tasks.append(worker.launch_task)
+        worker.launch_task.add_done_callback(
+            lambda completed: self.plugin_run_tasks.remove(completed)
+            if completed in self.plugin_run_tasks
+            else None
+        )
+
+    async def _supervise_shared_worker(self, worker: SharedPluginWorkerRuntime) -> None:
+        """Restart one digest worker while any attached slot remains desired."""
+
+        digest = worker.artifact.digest
+        delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+        while (
+            not self._shutting_down
+            and self._shared_workers.get(digest) is worker
+            and worker.slots
+        ):
+            permit: RestartPermit | None = None
+            permit = await self.restart_coordinator.acquire(f"shared:{digest}")
+            started_at = asyncio.get_running_loop().time()
+            try:
+                for runtime in worker.slots.values():
+                    runtime.state = "starting"
+                    runtime.ready_event.clear()
+                worker.transport_registered_event.clear()
+                worker.ready_event.clear()
+                await self._run_shared_worker_attempt(worker, permit)
+            except asyncio.CancelledError:
+                if permit is not None:
+                    await permit.abandon()
+                raise
+            except Exception as exc:
+                self._record_shared_worker_failure(worker, exc)
+                logger.exception("Shared plugin worker failed: %s", digest)
+            if (
+                self._shutting_down
+                or self._shared_workers.get(digest) is not worker
+                or not worker.slots
+            ):
+                if permit is not None:
+                    await permit.abandon()
+                return
+            await permit.record_failure()
+            uptime = asyncio.get_running_loop().time() - started_at
+            if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
+                delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
+            worker.ready_event.clear()
+            await asyncio.sleep(delay * random.uniform(0.8, 1.2))
+            delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
+
+    async def _run_shared_worker_attempt(
+        self,
+        worker: SharedPluginWorkerRuntime,
+        permit: RestartPermit,
+    ) -> None:
+        """Run one digest worker with bounded registration readiness."""
+
+        worker.transport_registered_event.clear()
+        worker.ready_event.clear()
+        worker_task = asyncio.create_task(self._launch_shared_worker(worker))
+        ready_task = asyncio.create_task(worker.transport_registered_event.wait())
+        stable_task: asyncio.Task[None] | None = None
+        try:
+            done, _ = await asyncio.wait(
+                {worker_task, ready_task},
+                timeout=_PLUGIN_READY_TIMEOUT_SEC,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if ready_task in done:
+                permit.mark_ready()
+                if not permit.is_half_open_probe:
+                    await worker_task
+                    if worker.slots:
+                        raise RuntimeError("Shared plugin worker exited")
+                    return
+
+                stable_task = asyncio.create_task(
+                    asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC)
+                )
+                done, _ = await asyncio.wait(
+                    {worker_task, stable_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stable_task in done:
+                    await permit.mark_stable()
+                await worker_task
+                if worker.slots:
+                    raise RuntimeError("Shared plugin worker exited")
+                return
+
+            if worker_task in done:
+                await worker_task
+                raise RuntimeError("Shared plugin worker exited before ready")
+
+            raise TimeoutError(
+                "Shared plugin worker did not become ready within "
+                f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+            )
+        finally:
+            for task in (ready_task, stable_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (ready_task, stable_task) if task is not None),
+                return_exceptions=True,
+            )
+            if not worker_task.done():
+                worker_task.cancel()
+                await asyncio.gather(worker_task, return_exceptions=True)
+
+    @staticmethod
+    def _record_shared_worker_failure(
+        worker: SharedPluginWorkerRuntime,
+        exc: BaseException,
+    ) -> None:
+        for runtime in worker.slots.values():
+            runtime.state = "failed"
+            runtime.error_code = "worker_launch_failed"
+            runtime.error_message = str(exc) or type(exc).__name__
+
+    @staticmethod
+    def _refresh_shared_worker_ready(worker: SharedPluginWorkerRuntime) -> None:
+        if worker.plugin_handler is not None and any(
+            runtime.state == "running"
+            and runtime.plugin_container is not None
+            and runtime.ready_event.is_set()
+            for runtime in worker.slots.values()
+        ):
+            worker.ready_event.set()
+        else:
+            worker.ready_event.clear()
+
+    def _schedule_shared_slot_attach(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> asyncio.Task[None] | None:
+        worker = runtime.shared_worker
+        handler = worker.plugin_handler if worker else None
+        if handler is None or worker is None:
+            return None
+        existing = worker.attach_tasks.get(runtime.binding)
+        if existing is not None and not existing.done():
+            return existing
+        if runtime.plugin_container is not None:
+            self._binding_by_container_id.pop(id(runtime.plugin_container), None)
+        runtime.plugin_container = None
+        runtime.state = "starting"
+        runtime.error_code = None
+        runtime.error_message = None
+        runtime.ready_event.clear()
+        self._refresh_shared_worker_ready(worker)
+        task = asyncio.create_task(self._initialize_shared_slot(runtime, handler))
+        worker.attach_tasks[runtime.binding] = task
+        self.plugin_run_tasks.append(task)
+
+        def attach_done(completed: asyncio.Task[None]) -> None:
+            if worker.attach_tasks.get(runtime.binding) is completed:
+                worker.attach_tasks.pop(runtime.binding, None)
+            with contextlib.suppress(ValueError):
+                self.plugin_run_tasks.remove(completed)
+            if completed.cancelled():
+                return
+            exc = completed.exception()
+            if exc is not None:
+                if (
+                    runtime.shared_worker is worker
+                    and worker.plugin_handler is handler
+                    and worker.slots.get(runtime.binding) is runtime
+                    and self.context.is_current_installation_binding(runtime.binding)
+                ):
+                    if runtime.plugin_container is not None:
+                        self._binding_by_container_id.pop(
+                            id(runtime.plugin_container),
+                            None,
+                        )
+                    runtime.plugin_container = None
+                    runtime.ready_event.clear()
+                    runtime.state = "failed"
+                    runtime.error_code = "slot_attach_failed"
+                    runtime.error_message = str(exc) or type(exc).__name__
+                logger.error(
+                    "Shared plugin slot attach failed: %s",
+                    runtime.binding.installation_uuid,
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
+            self._refresh_shared_worker_ready(worker)
+
+        task.add_done_callback(attach_done)
+        return task
+
+    async def _initialize_shared_slot(
+        self,
+        runtime: PluginInstallationRuntime,
+        handler: runtime_plugin_handler_cls.PluginConnectionHandler,
+    ) -> None:
+        worker = runtime.shared_worker
+        if worker is None:
+            return
+        async with worker.lifecycle_lock:
+            await self._initialize_shared_slot_locked(runtime, handler, worker)
+
+    async def _initialize_shared_slot_locked(
+        self,
+        runtime: PluginInstallationRuntime,
+        handler: runtime_plugin_handler_cls.PluginConnectionHandler,
+        worker: SharedPluginWorkerRuntime,
+    ) -> None:
+        if (
+            worker is None
+            or worker.plugin_handler is not handler
+            or worker.slots.get(runtime.binding) is not runtime
+            or not self.context.is_current_installation_binding(runtime.binding)
+        ):
+            return
+        plugin_settings = await self.context.control_handler.call_action(
+            RuntimeToLangBotAction.GET_PLUGIN_SETTINGS,
+            {
+                "plugin_author": runtime.artifact.plugin_author,
+                "plugin_name": runtime.artifact.plugin_name,
+            },
+            action_context=runtime.binding,
+        )
+        if (
+            runtime.shared_worker is not worker
+            or worker.plugin_handler is not handler
+            or worker.slots.get(runtime.binding) is not runtime
+            or not self.context.is_current_installation_binding(runtime.binding)
+        ):
+            return
+        installation_uuid = plugin_settings.get("installation_uuid")
+        if (
+            installation_uuid is not None
+            and installation_uuid != runtime.binding.installation_uuid
+        ):
+            raise ValueError("LangBot plugin settings do not match shared slot binding")
+        await handler.initialize_plugin_slot(runtime.binding, plugin_settings)
+        if (
+            runtime.shared_worker is not worker
+            or worker.plugin_handler is not handler
+            or worker.slots.get(runtime.binding) is not runtime
+            or not self.context.is_current_installation_binding(runtime.binding)
+        ):
+            with contextlib.suppress(Exception):
+                await handler.detach_plugin_slot(runtime.binding)
+            return
+        container_data = await handler.get_plugin_slot_container(runtime.binding)
+        if (
+            runtime.shared_worker is not worker
+            or worker.plugin_handler is not handler
+            or worker.slots.get(runtime.binding) is not runtime
+            or not self.context.is_current_installation_binding(runtime.binding)
+        ):
+            with contextlib.suppress(Exception):
+                await handler.detach_plugin_slot(runtime.binding)
+            return
+        plugin_container = runtime_plugin_container.PluginContainer.from_dict(
+            container_data
+        )
+        self._normalize_component_owners(plugin_container)
+        if (
+            plugin_container.status
+            is not runtime_plugin_container.RuntimeContainerStatus.INITIALIZED
+        ):
+            raise ValueError("Shared plugin slot did not initialize")
+        if (
+            plugin_container.manifest.metadata.author != runtime.artifact.plugin_author
+            or plugin_container.manifest.metadata.name != runtime.artifact.plugin_name
+        ):
+            raise ValueError("Shared plugin slot changed its manifest identity")
+        plugin_container._runtime_plugin_handler = handler
+        runtime.plugin_container = plugin_container
+        if runtime.log_buffer is None:
+            runtime.log_buffer = runtime_plugin_handler_cls.PluginLogBuffer()
+        self._binding_by_container_id[id(plugin_container)] = runtime.binding
+        runtime.state = "running"
+        runtime.error_code = None
+        runtime.error_message = None
+        runtime.ready_event.set()
+
+    async def _detach_shared_worker_slot(
+        self,
+        runtime: PluginInstallationRuntime,
+    ) -> None:
+        worker = runtime.shared_worker
+        if worker is None:
+            return
+        async with worker.lifecycle_lock:
+            handler = worker.plugin_handler
+            if handler is not None:
+                handler.cancel_inflight_messages_for_context(runtime.binding)
+                with contextlib.suppress(Exception):
+                    await handler.detach_plugin_slot(runtime.binding)
+            worker.slots.pop(runtime.binding, None)
+            if handler is not None:
+                handler.set_shared_pool_bindings(worker.artifact.digest, worker.slots)
+            runtime.shared_worker = None
+            runtime.plugin_handler = None
+            runtime.plugin_container = None
+            runtime.ready_event.clear()
+            self._refresh_shared_worker_ready(worker)
+            empty = not worker.slots
+            if empty:
+                self._shared_workers.pop(worker.artifact.digest, None)
+        if empty:
+            await self._stop_shared_worker(worker)
+
+    async def _stop_shared_worker(self, worker: SharedPluginWorkerRuntime) -> None:
+        handler = worker.plugin_handler
+        if handler is not None:
+            handler.cancel_inflight_messages()
+            with contextlib.suppress(Exception):
+                await handler.shutdown_plugin()
+            with contextlib.suppress(Exception):
+                await handler.close()
+            if handler in self.plugin_handlers:
+                self.plugin_handlers.remove(handler)
+            worker.plugin_handler = None
+        worker.transport_registered_event.clear()
+        worker.ready_event.clear()
+        task = worker.launch_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        worker.launch_task = None
+        if not worker.slots:
+            transfer_root = (
+                self.artifact_store.base_path
+                / "shared-transfers"
+                / worker.artifact.digest
+            )
+            try:
+                await bounded_executor.run_blocking_cleanup(
+                    shutil.rmtree,
+                    transfer_root,
+                    True,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Failed to clean shared worker transfers %s: %s",
+                    worker.artifact.digest,
+                    exc,
                 )
 
     def _schedule_installation_worker(
@@ -1487,12 +1925,89 @@ class PluginManager:
         runtime.error_code = "worker_launch_failed"
         runtime.error_message = str(exc) or type(exc).__name__
 
+    async def _launch_shared_worker(
+        self,
+        worker: SharedPluginWorkerRuntime,
+    ) -> None:
+        if not worker.slots:
+            return
+        active_bindings = tuple(worker.slots)
+        for candidate in active_bindings:
+            if not self.context.is_current_installation_binding(candidate):
+                raise ValueError("Shared plugin slot binding is no longer current")
+
+        representative = next(iter(worker.slots.values()))
+        capability = self._issue_registration_capability(
+            plugin_author=worker.artifact.plugin_author,
+            plugin_name=worker.artifact.plugin_name,
+            plugin_path=str(worker.artifact.code_path),
+            binding=representative.binding,
+            shared_pool_digest=worker.artifact.digest,
+        )
+        try:
+            controller = self.worker_launcher.create_shared_pool_controller(
+                PluginWorkerLaunchSpec(
+                    binding=representative.binding,
+                    artifact=worker.artifact,
+                    paths=worker.paths,
+                    registration_capability=capability,
+                    dependency_environment=worker.dependency_environment,
+                )
+            )
+
+            async def new_plugin_connection_callback(connection: Connection):
+                shared_transfer_root = (
+                    self.artifact_store.base_path
+                    / "shared-transfers"
+                    / worker.artifact.digest
+                )
+                for binding in worker.slots:
+                    (shared_transfer_root / binding.installation_uuid).mkdir(
+                        parents=True,
+                        exist_ok=True,
+                        mode=0o700,
+                    )
+                plugin_handler = runtime_plugin_handler_cls.PluginConnectionHandler(
+                    connection,
+                    self.context,
+                    stdio_process=getattr(controller, "process", None),
+                    file_storage_dir=str(
+                        self.artifact_store.base_path
+                        / "shared-transfers"
+                        / worker.artifact.digest
+                    ),
+                    max_file_bytes=(
+                        self.context.worker_policy.max_file_size_mb * 1024 * 1024
+                    ),
+                )
+                if (
+                    worker.plugin_handler is not None
+                    and worker.plugin_handler is not plugin_handler
+                ):
+                    await connection.close()
+                    return
+                worker.plugin_handler = plugin_handler
+                self.plugin_handlers.append(plugin_handler)
+                try:
+                    await plugin_handler.run()
+                finally:
+                    await self.remove_plugin_handler(plugin_handler)
+
+            await controller.run(new_plugin_connection_callback)
+        finally:
+            self._revoke_registration_capability(capability)
+
     async def launch_plugin_installation(
         self,
         binding: InstallationBinding,
     ) -> None:
         runtime = self._installations.get(binding)
         if runtime is None or not runtime.enabled:
+            return
+        if runtime.execution_mode is PluginExecutionMode.SHARED_CERTIFIED:
+            worker = runtime.shared_worker
+            if worker is not None:
+                await self._launch_shared_worker(worker)
             return
         if not self.context.is_current_installation_binding(binding):
             raise ValueError("Plugin installation binding is no longer current")
@@ -1563,6 +2078,10 @@ class PluginManager:
         self,
         runtime: PluginInstallationRuntime,
     ) -> None:
+        if runtime.shared_worker is not None:
+            await self._detach_shared_worker_slot(runtime)
+            runtime.launch_task = None
+            return
         handler = runtime.plugin_handler
         if handler is not None:
             handler.cancel_inflight_messages()
@@ -1634,6 +2153,23 @@ class PluginManager:
     ):
         if handler in self.plugin_handlers:
             self.plugin_handlers.remove(handler)
+        for worker in self._shared_workers.values():
+            if worker.plugin_handler is handler:
+                async with worker.lifecycle_lock:
+                    if worker.plugin_handler is not handler:
+                        continue
+                    worker.plugin_handler = None
+                    worker.transport_registered_event.clear()
+                    worker.ready_event.clear()
+                    for runtime in worker.slots.values():
+                        runtime.plugin_handler = None
+                        if runtime.plugin_container is not None:
+                            self._binding_by_container_id.pop(
+                                id(runtime.plugin_container),
+                                None,
+                            )
+                        runtime.plugin_container = None
+                return
         for runtime in self._installations.values():
             if runtime.plugin_handler is handler:
                 if runtime.plugin_container is not None:
@@ -2042,6 +2578,43 @@ class PluginManager:
             plugin_author = registration.plugin_author
             plugin_name = registration.plugin_name
             installation_binding = registration.binding
+            if registration.shared_pool_digest is not None:
+                worker = self._shared_workers.get(registration.shared_pool_digest)
+                if (
+                    worker is None
+                    or worker.artifact.digest != registration.shared_pool_digest
+                ):
+                    raise ValueError(
+                        "Shared plugin worker desired state is unavailable"
+                    )
+                attach_tasks: list[asyncio.Task[None]] = []
+                async with worker.lifecycle_lock:
+                    if (
+                        self._shared_workers.get(registration.shared_pool_digest)
+                        is not worker
+                    ):
+                        raise ValueError("Shared plugin worker desired state changed")
+                    handler.set_shared_pool_bindings(
+                        registration.shared_pool_digest,
+                        worker.slots,
+                    )
+                    worker.plugin_handler = handler
+                    for slot_runtime in tuple(worker.slots.values()):
+                        if (
+                            slot_runtime.shared_worker is worker
+                            and self.context.is_current_installation_binding(
+                                slot_runtime.binding
+                            )
+                        ):
+                            slot_runtime.plugin_handler = handler
+                            task = self._schedule_shared_slot_attach(slot_runtime)
+                            if task is not None:
+                                attach_tasks.append(task)
+                    worker.transport_registered_event.set()
+                if attach_tasks:
+                    await asyncio.gather(*attach_tasks, return_exceptions=True)
+                self._refresh_shared_worker_ready(worker)
+                return
             if installation_binding is not None:
                 if not self.context.is_current_installation_binding(
                     installation_binding
@@ -2376,6 +2949,9 @@ class PluginManager:
 
         for runtime in list(self._installations.values()):
             await self._stop_installation_worker(runtime)
+        for worker in list(self._shared_workers.values()):
+            await self._stop_shared_worker(worker)
+        self._shared_workers.clear()
         for plugin in list(self.plugins):
             await self.shutdown_plugin(plugin)
 
@@ -2497,10 +3073,14 @@ class PluginManager:
             resp = await plugin._runtime_plugin_handler.get_plugin_icon()
 
             icon_file_key = resp["plugin_icon_file_key"]
+            binding = self._binding_by_container_id.get(id(plugin))
+            file_kwargs = {"action_context": binding} if binding is not None else {}
             icon_bytes = await plugin._runtime_plugin_handler.read_local_file(
-                icon_file_key
+                icon_file_key, **file_kwargs
             )
-            await plugin._runtime_plugin_handler.delete_local_file(icon_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(
+                icon_file_key, **file_kwargs
+            )
             return icon_bytes, resp["mime_type"]
         return b"", ""
 
@@ -2514,10 +3094,14 @@ class PluginManager:
             )
 
             readme_file_key = resp["plugin_readme_file_key"]
+            binding = self._binding_by_container_id.get(id(plugin))
+            file_kwargs = {"action_context": binding} if binding is not None else {}
             readme_bytes = await plugin._runtime_plugin_handler.read_local_file(
-                readme_file_key
+                readme_file_key, **file_kwargs
             )
-            await plugin._runtime_plugin_handler.delete_local_file(readme_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(
+                readme_file_key, **file_kwargs
+            )
             return readme_bytes
 
         return b""
@@ -2534,6 +3118,11 @@ class PluginManager:
         Each entry: {"ts": float, "level": str, "text": str}.
         Returns an empty list if the plugin is not running.
         """
+        binding = self._current_control_binding()
+        if binding is not None:
+            runtime = self._installations.get(binding)
+            if runtime is not None and runtime.log_buffer is not None:
+                return runtime.log_buffer.get_logs(limit=limit, level=level)
         plugin = self.find_plugin(plugin_author, plugin_name)
         if plugin is not None and plugin._runtime_plugin_handler is not None:
             log_buffer = getattr(plugin._runtime_plugin_handler, "log_buffer", None)
@@ -2552,10 +3141,14 @@ class PluginManager:
             file_file_key = resp["file_file_key"]
             if not file_file_key:
                 return b"", ""
+            binding = self._binding_by_container_id.get(id(plugin))
+            file_kwargs = {"action_context": binding} if binding is not None else {}
             file_bytes = await plugin._runtime_plugin_handler.read_local_file(
-                file_file_key
+                file_file_key, **file_kwargs
             )
-            await plugin._runtime_plugin_handler.delete_local_file(file_file_key)
+            await plugin._runtime_plugin_handler.delete_local_file(
+                file_file_key, **file_kwargs
+            )
             return file_bytes, resp["mime_type"]
         return b"", ""
 

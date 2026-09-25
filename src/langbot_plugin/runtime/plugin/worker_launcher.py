@@ -582,6 +582,51 @@ class PluginWorkerLauncher:
         )
         return args
 
+    def build_shared_pool_nsjail_args(
+        self,
+        launch_spec: PluginWorkerLaunchSpec,
+    ) -> list[str]:
+        """Build a digest worker without mounting installation-owned paths."""
+
+        args = self.build_nsjail_args(launch_spec)
+        private_mounts = {
+            str(self._absolute_runtime_path(launch_spec.paths.home_path)),
+            str(self._absolute_runtime_path(launch_spec.paths.tmp_path)),
+            str(self._absolute_runtime_path(launch_spec.paths.data_path)),
+        }
+        cleaned: list[str] = []
+        index = 0
+        while index < len(args):
+            if (
+                args[index] == "--bindmount"
+                and index + 1 < len(args)
+                and args[index + 1].split(":", 1)[0] in private_mounts
+            ):
+                index += 2
+                continue
+            cleaned.append(args[index])
+            index += 1
+        if "HOME=/home" in cleaned:
+            cleaned[cleaned.index("HOME=/home")] = "HOME=/tmp"
+        return cleaned
+
+    def create_shared_pool_controller(
+        self,
+        launch_spec: PluginWorkerLaunchSpec,
+    ) -> Controller:
+        self._require_dependency_environment(launch_spec)
+        _, profile = self._require_configuration()
+        if profile != "shared":
+            raise RuntimeError(
+                "Certified shared pools require the shared Runtime profile"
+            )
+        return stdio_client_controller.StdioClientController(
+            command=str(self.nsjail_path),
+            args=self.build_shared_pool_nsjail_args(launch_spec),
+            env={},
+            working_dir="/",
+        )
+
     def _append_readonly_runtime_mounts(
         self,
         args: list[str],

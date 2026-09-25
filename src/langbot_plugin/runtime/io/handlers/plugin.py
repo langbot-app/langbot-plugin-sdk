@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator
+import typing
 import logging
 
 from langbot_plugin.runtime.io import handler, connection
@@ -95,6 +96,8 @@ class PluginConnectionHandler(handler.Handler):
         self.debug_plugin = debug_plugin
         self.debug_auth_token = None
         self.stdio_process = stdio_process
+        self.shared_pool_digest: str | None = None
+        self._shared_pool_bindings: set[InstallationBinding] = set()
         runtime_binding = getattr(self.context, "workspace_binding", None)
         if runtime_binding is not None and not hasattr(self.context, "runtime_profile"):
             # Compatibility for older embedders that predate authenticated
@@ -124,9 +127,10 @@ class PluginConnectionHandler(handler.Handler):
                 for key, value in data.items()
                 if key not in _UNTRUSTED_SCOPE_FIELDS
             }
-            binding: ActionContext | None = self.bound_action_context
+            binding: ActionContext | None = self.resolve_effective_action_context()
             if require_workspace:
-                binding = self.require_bound_action_context()
+                if binding is None:
+                    raise ValueError("Plugin Runtime is not bound to a Workspace")
 
             if binding is None:
                 # Compatibility for non-Workspace APIs used with an older
@@ -144,7 +148,7 @@ class PluginConnectionHandler(handler.Handler):
             )
 
         def scoped_plugins():
-            binding = self.bound_action_context
+            binding = self.resolve_effective_action_context()
             if isinstance(binding, InstallationBinding) and hasattr(
                 self.context.plugin_mgr,
                 "plugins_for_binding",
@@ -397,8 +401,9 @@ class PluginConnectionHandler(handler.Handler):
                 if key not in _UNTRUSTED_SCOPE_FIELDS
             }
             kwargs: dict[str, Any] = {"timeout": float(timeout)}
-            if self.bound_action_context is not None:
-                kwargs["action_context"] = self.bound_action_context
+            binding = self.resolve_effective_action_context()
+            if binding is not None:
+                kwargs["action_context"] = binding
             async for chunk in self.context.control_handler.call_action_generator(
                 PluginToRuntimeAction.INVOKE_LLM_STREAM,
                 payload,
@@ -498,8 +503,14 @@ class PluginConnectionHandler(handler.Handler):
             file_key = result.get("file_key", "")
             if file_key:
                 control_handler = self.context.control_handler
-                file_bytes = await control_handler.read_local_file(file_key)
-                await control_handler.delete_local_file(file_key)
+                binding = self.resolve_effective_action_context()
+                assert control_handler is not None
+                file_bytes = await control_handler.read_local_file(
+                    file_key, action_context=binding
+                )
+                await control_handler.delete_local_file(
+                    file_key, action_context=binding
+                )
                 # Forward to plugin subprocess via chunked transfer
                 plugin_file_key = await self.send_file(file_bytes, "")
                 return handler.ActionResponse.success({"file_key": plugin_file_key})
@@ -639,7 +650,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SET_WORKSPACE_STORAGE)
         async def set_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -655,7 +668,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.GET_WORKSPACE_STORAGE)
         async def get_workspace_storage(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -673,7 +688,9 @@ class PluginConnectionHandler(handler.Handler):
         async def get_workspace_storage_keys(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -691,7 +708,9 @@ class PluginConnectionHandler(handler.Handler):
         async def delete_workspace_storage(
             data: dict[str, Any],
         ) -> handler.ActionResponse:
-            binding = self.require_bound_action_context()
+            binding = self.resolve_effective_action_context()
+            if binding is None:
+                raise ValueError("Plugin Runtime is not bound to a Workspace")
             payload = {
                 **data,
                 "owner_type": "workspace",
@@ -724,7 +743,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.bound_action_context
+            binding = self.resolve_effective_action_context()
             if isinstance(binding, InstallationBinding):
                 commands = await self.context.plugin_mgr.list_commands(binding=binding)
             else:
@@ -735,7 +754,7 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.bound_action_context
+            binding = self.resolve_effective_action_context()
             if isinstance(binding, InstallationBinding):
                 tools = await self.context.plugin_mgr.list_tools(binding=binding)
             else:
@@ -1018,6 +1037,16 @@ class PluginConnectionHandler(handler.Handler):
             return None
 
         binding = self.bound_action_context
+        if self.shared_pool_digest is not None:
+            if not isinstance(action_context, InstallationBinding):
+                raise ValueError("Shared pool action requires InstallationBinding")
+            if action_context.artifact_digest != self.shared_pool_digest:
+                raise ValueError("Shared pool action artifact does not match worker")
+            if action_context not in self._shared_pool_bindings:
+                raise ValueError("Shared pool installation binding is not attached")
+            if not self.context.is_current_installation_binding(action_context):
+                raise ValueError("Shared pool installation binding has been revoked")
+            return action_context
         if binding is None:
             if getattr(self.context, "runtime_profile", "oss_dev") != "shared":
                 return super().validate_inbound_action_context(
@@ -1029,11 +1058,28 @@ class PluginConnectionHandler(handler.Handler):
             self.context.is_current_installation_binding(binding)
         ):
             raise ValueError("Plugin worker installation binding has been revoked")
-        if getattr(
-            self.context, "runtime_profile", "oss_dev"
-        ) == "shared" and not isinstance(binding, InstallationBinding):
-            raise ValueError("Shared plugin worker requires InstallationBinding")
         return super().validate_inbound_action_context(action, action_context)
+
+    def set_shared_pool_bindings(
+        self,
+        digest: str,
+        bindings: typing.Iterable[InstallationBinding],
+    ) -> None:
+        self.shared_pool_digest = digest
+        self._shared_pool_bindings = set(bindings)
+
+    def resolve_outbound_action_context(
+        self,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None,
+    ) -> ActionEnvelopeContext | None:
+        if self.shared_pool_digest is not None and action_context is None:
+            current = self.context.plugin_mgr._current_control_binding()
+            if current not in self._shared_pool_bindings:
+                raise ValueError(
+                    "Shared pool outbound action requires an attached binding"
+                )
+            return current
+        return super().resolve_outbound_action_context(action_context)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
@@ -1044,6 +1090,37 @@ class PluginConnectionHandler(handler.Handler):
         )
 
         return resp
+
+    async def initialize_plugin_slot(
+        self,
+        binding: InstallationBinding,
+        plugin_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self.call_action(
+            RuntimeToPluginAction.ATTACH_PLUGIN_SLOT,
+            {"plugin_settings": plugin_settings or {}},
+            action_context=binding,
+        )
+
+    async def detach_plugin_slot(
+        self,
+        binding: InstallationBinding,
+    ) -> dict[str, Any]:
+        return await self.call_action(
+            RuntimeToPluginAction.DETACH_PLUGIN_SLOT,
+            {},
+            action_context=binding,
+        )
+
+    async def get_plugin_slot_container(
+        self,
+        binding: InstallationBinding,
+    ) -> dict[str, Any]:
+        return await self.call_action(
+            RuntimeToPluginAction.GET_PLUGIN_SLOT_CONTAINER,
+            {},
+            action_context=binding,
+        )
 
     async def get_plugin_container(self) -> dict[str, Any]:
         resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER, {})

@@ -161,13 +161,27 @@ actions reject tenant context. Plugin payload fields are never authoritative
 for these bindings.
 
 In the `shared` profile, `PluginManager` indexes desired state by the complete
-installation binding. The instance-scoped `RECONCILE_PLUGIN_INSTALLATIONS`
+installation binding. Each desired-state entry has an additive
+`execution_mode`: omission or `dedicated` preserves the historical one-process
+per installation behavior, while `shared-runtime-v1` opts a certified
+`shared-runtime-v1` installation into a digest-scoped worker pool. Core is
+responsible for selecting `shared-runtime-v1` only after certification succeeds;
+the Runtime never infers shared authority from tenant-controlled manifest data.
+The instance-scoped `RECONCILE_PLUGIN_INSTALLATIONS`
 action replays the authoritative set, while tenant-scoped
 `APPLY_PLUGIN_INSTALLATION` and `REMOVE_PLUGIN_INSTALLATION` actions change one
 installation. Newer placement generations or Runtime revisions fence the old
 worker immediately; stale or cross-Workspace transitions fail closed.
 
-Each enabled installation is owned by an installation-scoped Supervisor.
+Dedicated enabled installations remain owned by installation-scoped
+Supervisors. A certified shared worker is keyed by the raw artifact digest and
+currently has pool size one: the first slot attach starts it and the last slot
+detach stops it. Installations sharing that process retain separate
+`BasePlugin`, component, config, Host authority, and lifecycle slots. Updating
+one slot reinitializes that slot without restarting siblings. Revision and
+generation fencing remove the exact stale slot, cancel its in-flight actions,
+and prevent background calls after detach.
+
 Unexpected worker exit is recovered with bounded exponential backoff. Disable,
 remove, placement generation changes, Runtime revision changes, and shutdown
 fence the old Supervisor before it can relaunch, while reconcile and control
@@ -183,9 +197,14 @@ installation or Workspace identity.
 
 Plugin packages are verified against `artifact_digest` and extracted once into
 a read-only `artifacts/sha256/<digest>/code` tree. Installations may share that
-code tree, but each gets a separate process and private `home`, `tmp`, and `data`
-directories. A worker receives a short-lived, one-use registration capability
-bound to the complete installation tuple; it cannot select its own tenant scope.
+code tree. Dedicated mode gives each installation a separate process and private
+`home`, `tmp`, and `data` directories. Certified shared workers mount no
+installation or tenant-writable directory; their writable scratch belongs to
+the digest process and tenant state must go through Host actions. A dedicated
+worker capability is bound to one complete installation tuple. A shared worker
+capability is additionally bound to its digest; after registration, every slot
+RPC carries an exact current `InstallationBinding` and cannot select or rebind
+tenant scope.
 
 Before any desired-state artifact worker is launched, the Runtime prepares an
 immutable dependency tree. The resulting `site-packages` tree is keyed by the
@@ -197,7 +216,8 @@ stable `dependency_prepare_failed` desired-state failure. Pip control options in
 an artifact's `requirements.txt` are rejected because only Runtime configuration
 may select indexes or trusted hosts.
 
-Shared workers launch through nsjail with policy-owned cgroup CPU, memory, and
+Workers in the shared Runtime profile launch through nsjail with policy-owned
+cgroup CPU, memory, and
 PID limits plus file/process rlimits. If `require_hard_limits` is true, missing
 nsjail or cgroup v2 delegation makes configuration fail closed. Their dependency
 tree is prepared in a separate nsjail and mounted read-only into the worker.
@@ -305,7 +325,9 @@ An OSS-only exception permits legacy knowledge `FILE_CHUNK` replies carrying
 instance and already-bound Workspace/generation, and its installation capability
 must exactly match a live registered plugin connection. Payload scope is ignored.
 Shared transfers still require a complete binding; candidate artifact pretransfer
-validates that binding without activating desired state.
+validates that binding without activating desired state. Transfer ownership and
+tenant-visible plugin containers/log routing remain installation scoped even
+when several slots use one process.
 
 Legacy OSS plugins are stored under `data/plugins/{author}__{name}`. Runtime
 plugin processes normally run as separate Python processes and connect back via
