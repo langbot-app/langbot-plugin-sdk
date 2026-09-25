@@ -1791,7 +1791,8 @@ async def test_failed_new_owner_record_is_removed_so_same_capability_can_retry(
     with pytest.raises((OSError, RuntimeError), match="simulated owner"):
         await _write_chunk(handler, file_key, b"first")
 
-    assert list((tmp_path / ".transfer-owners").iterdir()) == []
+    owner_dir = tmp_path / ".transfer-owners"
+    assert not owner_dir.exists() or list(owner_dir.iterdir()) == []
     assert handler._owned_transfer_files == set()
     assert handler._owned_transfer_claims == {}
 
@@ -1841,9 +1842,8 @@ async def test_failed_first_chunk_rolls_back_capacity_reservation_and_owner_clai
     assert handler._owned_transfer_files == set()
     assert handler._owned_transfer_contexts == {}
     assert handler._owned_transfer_claims == {}
-    owner_records = list((tmp_path / ".transfer-owners").iterdir())
-    assert len(owner_records) == 1
-    assert json.loads(owner_records[0].read_bytes())["claim_id"]
+    owner_dir = tmp_path / ".transfer-owners"
+    assert not owner_dir.exists() or list(owner_dir.iterdir()) == []
 
     await _write_chunk(handler, accepted_key, b"accepted")
     assert await handler.read_local_file(accepted_key) == b"accepted"
@@ -1874,7 +1874,11 @@ async def test_payload_inode_swap_during_delete_never_unlinks_replacement(
         await handler.delete_local_file(file_key)
 
     assert swapped is True
-    assert payload.read_bytes() == b"replacement"
+    assert any(
+        path.read_bytes() == b"replacement"
+        for path in (tmp_path / "unbound").iterdir()
+        if path.is_file()
+    )
     assert displaced.read_bytes() == b"expected"
 
 
@@ -1905,7 +1909,11 @@ async def test_owner_inode_swap_during_delete_never_unlinks_replacement(
         await handler.delete_local_file(file_key)
 
     assert swapped is True
-    assert owner.read_bytes() == replacement
+    assert any(
+        path.read_bytes() == replacement
+        for path in (tmp_path / ".transfer-owners").iterdir()
+        if path.is_file()
+    )
     assert displaced.exists()
 
 
@@ -1921,9 +1929,9 @@ async def test_failed_payload_creation_never_rolls_back_swapped_owner_name(
 
     def swap_owner_then_fail(event, **_details):
         nonlocal swapped_owner
-        if event != "before_payload_open":
+        if event != "before_owner_link":
             return
-        owner = next((tmp_path / ".transfer-owners").iterdir())
+        owner = next((tmp_path / ".transfer-owners").glob(".owner-*.tmp"))
         swapped_owner = owner.with_name("displaced-owner")
         owner.rename(swapped_owner)
         owner.write_bytes(replacement)
@@ -1932,16 +1940,136 @@ async def test_failed_payload_creation_never_rolls_back_swapped_owner_name(
 
     monkeypatch.setattr(handler, "_transfer_race_hook", swap_owner_then_fail)
 
-    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+    with pytest.raises(OSError, match="simulated payload creation failure"):
         await _write_chunk(handler, file_key, b"payload")
 
-    owner = next(
-        path
-        for path in (tmp_path / ".transfer-owners").iterdir()
-        if path.name.endswith(".json")
-    )
-    assert owner.read_bytes() == replacement
     assert swapped_owner is not None and swapped_owner.exists()
+    owner_files = list((tmp_path / ".transfer-owners").iterdir())
+    assert all(not path.name.endswith(".json") for path in owner_files)
+    assert swapped_owner.read_bytes() != replacement
+    assert not any(path.read_bytes() == replacement for path in owner_files)
+
+
+@pytest.mark.asyncio
+async def test_canonical_replacement_immediately_before_write_is_not_modified(
+    tmp_path, monkeypatch
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'a' * 64}.bin"
+    payload = tmp_path / "unbound" / file_key
+    replaced = False
+
+    def install_replacement(event, **_details):
+        nonlocal replaced
+        if event == "before_staging_write" and not replaced:
+            replaced = True
+            payload.write_bytes(b"replacement")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", install_replacement)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await _write_chunk(handler, file_key, b"incoming")
+
+    assert replaced is True
+    assert payload.read_bytes() == b"replacement"
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == [payload]
+
+
+@pytest.mark.asyncio
+async def test_quarantine_mismatch_retry_retains_replacement_and_owner_authority(
+    tmp_path, monkeypatch
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'b' * 64}.bin"
+    await _write_chunk(handler, file_key, b"owned")
+    payload = tmp_path / "unbound" / file_key
+    displaced = payload.with_name("externally-displaced")
+    swapped = False
+
+    def swap_payload(event, **details):
+        nonlocal swapped
+        if event == "before_quarantine_rename" and details["role"] == "payload":
+            swapped = True
+            payload.rename(displaced)
+            payload.write_bytes(b"replacement")
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", swap_payload)
+
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+    monkeypatch.setattr(handler, "_transfer_race_hook", lambda *_args, **_kwargs: None)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        await handler.delete_local_file(file_key)
+
+    assert displaced.read_bytes() == b"owned"
+    assert any(
+        path.read_bytes() == b"replacement"
+        for path in (tmp_path / "unbound").iterdir()
+        if path.is_file()
+    )
+    assert len(list((tmp_path / ".transfer-owners").glob("*.json"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_owner_link_directory_fsync_failure_is_tracked_and_close_cleans(
+    tmp_path, monkeypatch
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'c' * 64}.bin"
+    real_fsync = os.fsync
+    failed = False
+
+    def fail_after_owner_link(fd):
+        nonlocal failed
+        owner_files = list((tmp_path / ".transfer-owners").glob("*.json"))
+        if owner_files and stat.S_ISDIR(os.fstat(fd).st_mode) and not failed:
+            failed = True
+            raise OSError("simulated owner directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(handler_module.os, "fsync", fail_after_owner_link)
+
+    with pytest.raises(OSError, match="owner directory fsync"):
+        await _write_chunk(handler, file_key, b"published")
+
+    assert failed is True
+    assert handler._owned_transfer_files
+    assert len(list((tmp_path / ".transfer-owners").glob("*.json"))) == 1
+    monkeypatch.setattr(handler_module.os, "fsync", real_fsync)
+    await handler.close()
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+
+
+@pytest.mark.asyncio
+async def test_oversized_first_chunks_leave_no_transfer_artifacts(tmp_path):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path, max_file_bytes=1)
+
+    for number in range(5):
+        with pytest.raises(ValueError, match="configured size limit"):
+            await _write_chunk(handler, f"ft1_{number:064x}.bin", b"xx")
+
+    assert handler._owned_transfer_files == set()
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+
+
+def test_invalid_max_file_bytes_is_rejected_before_root_fd_is_acquired(
+    tmp_path, monkeypatch
+):
+    prepare_called = False
+
+    def unexpected_prepare(_root):
+        nonlocal prepare_called
+        prepare_called = True
+        raise AssertionError("persistent root must not be acquired")
+
+    monkeypatch.setattr(handler_module, "_prepare_transfer_root", unexpected_prepare)
+    before = len(os.listdir("/proc/self/fd"))
+    with pytest.raises(ValueError, match="max_file_bytes"):
+        Handler(ProtocolConnection(), file_storage_dir=tmp_path, max_file_bytes=0)
+    after = len(os.listdir("/proc/self/fd"))
+
+    assert prepare_called is False
+    assert after == before
 
 
 @pytest.mark.asyncio
@@ -2001,7 +2129,8 @@ async def test_file_chunk_action_enforces_aggregate_handler_limit(tmp_path):
             }
         )
 
-    assert await handler.read_local_file("limited.bin") == b"1234"
+    with pytest.raises(FileNotFoundError):
+        await handler.read_local_file("limited.bin")
 
 
 @pytest.mark.asyncio
