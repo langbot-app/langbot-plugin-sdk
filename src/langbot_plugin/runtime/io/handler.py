@@ -13,6 +13,7 @@ from typing import (
 )
 import random
 import os
+import errno
 import hashlib
 import base64
 import uuid
@@ -76,7 +77,7 @@ _ACTIVE_TRANSFER_HANDLERS: dict[tuple[str, str], weakref.ReferenceType[Any]] = {
 class _TransferStage:
     namespace: str
     temp_name: str
-    descriptor: int
+    descriptor: int | None
     file_stat: os.stat_result
     transfer_context: ActionEnvelopeContext | None
     claim_id: str | None
@@ -180,6 +181,19 @@ def _clear_active_transfer_handler(lock_key: tuple[str, str], expected: Any) -> 
         reference = _ACTIVE_TRANSFER_HANDLERS.get(lock_key)
         if reference is not None and reference() is expected:
             del _ACTIVE_TRANSFER_HANDLERS[lock_key]
+
+
+def _write_all(descriptor: int, data: bytes) -> None:
+    """Write all bytes, failing instead of spinning when the OS makes no progress."""
+
+    remaining = memoryview(data)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written <= 0:
+            raise OSError(errno.EIO, "file transfer write made no progress")
+        if written > len(remaining):
+            raise OSError(errno.EIO, "invalid file transfer write result")
+        remaining = remaining[written:]
 
 
 def _open_transfer_directory(
@@ -618,16 +632,14 @@ class Handler(abc.ABC):
             self._fail_pending(disconnect_error)
             if self._cancel_active_tasks_on_close:
                 await self._cancel_action_tasks()
-            await self._cleanup_owned_transfers()
-            if not self._owned_transfer_files:
-                self._close_transfer_root_if_clean()
+            await self._cleanup_owned_transfers(close_root=True)
 
     async def close(self) -> None:
         """Close the transport and deterministically release connection-owned work."""
         if self._closed:
-            if self._owned_transfer_files:
-                await self._cleanup_owned_transfers()
-            if not self._owned_transfer_files:
+            if self._owned_transfer_files or self._transfer_stages:
+                await self._cleanup_owned_transfers(close_root=True)
+            else:
                 self._close_transfer_root_if_clean()
             return
         self._closed = True
@@ -639,9 +651,7 @@ class Handler(abc.ABC):
         finally:
             if self._cancel_active_tasks_on_close:
                 await self._cancel_action_tasks()
-            await self._cleanup_owned_transfers()
-            if not self._owned_transfer_files:
-                self._close_transfer_root_if_clean()
+            await self._cleanup_owned_transfers(close_root=True)
 
     async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
         try:
@@ -1101,7 +1111,11 @@ class Handler(abc.ABC):
         return self._file_storage_root_fd
 
     def _close_transfer_root_if_clean(self) -> None:
-        if self._file_storage_root_fd_closed or self._owned_transfer_files:
+        if (
+            self._file_storage_root_fd_closed
+            or self._owned_transfer_files
+            or self._transfer_stages
+        ):
             return
         os.close(self._file_storage_root_fd)
         self._file_storage_root_fd_closed = True
@@ -1395,22 +1409,41 @@ class Handler(abc.ABC):
         finally:
             os.close(namespace_fd)
 
-    def _discard_transfer_stage(self, file_key: str, stage: _TransferStage) -> None:
-        with contextlib.suppress(OSError):
-            os.close(stage.descriptor)
+    def _discard_transfer_stage(
+        self,
+        file_key: str,
+        stage: _TransferStage,
+        *,
+        clear_active: bool = False,
+    ) -> bool:
+        if stage.descriptor is not None:
+            descriptor = stage.descriptor
+            stage.descriptor = None
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
         try:
             namespace_fd = _open_transfer_directory(
                 self._bound_transfer_root(), stage.namespace, create=False
             )
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError:
             namespace_fd = None
+        except (OSError, ValueError):
+            return False
         if namespace_fd is not None:
             try:
-                with contextlib.suppress(OSError):
+                try:
                     os.remove(stage.temp_name, dir_fd=namespace_fd)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    return False
             finally:
                 os.close(namespace_fd)
         self._transfer_stages.pop(file_key, None)
+        if clear_active:
+            lock_key = (self.file_storage_dir, file_key)
+            _clear_active_transfer_handler(lock_key, self)
+        return True
 
     def _publish_owner_record(
         self,
@@ -1438,7 +1471,7 @@ class Handler(abc.ABC):
                 0o600,
                 dir_fd=owner_dir_fd,
             )
-            os.write(descriptor, serialized)
+            _write_all(descriptor, serialized)
             os.fsync(descriptor)
             os.close(descriptor)
             descriptor = None
@@ -1529,15 +1562,14 @@ class Handler(abc.ABC):
                 self._transfer_race_hook(
                     "before_staging_write", file_key=file_key, namespace=stage.namespace
                 )
+                assert stage.descriptor is not None
                 current_stat = os.fstat(stage.descriptor)
                 if (
                     current_stat.st_dev != stage.file_stat.st_dev
                     or current_stat.st_ino != stage.file_stat.st_ino
                 ):
                     raise ValueError("Invalid file transfer capability")
-                written = os.write(stage.descriptor, chunk_bytes)
-                if written != len(chunk_bytes):
-                    raise OSError("short file transfer write")
+                _write_all(stage.descriptor, chunk_bytes)
                 stage.size = resulting_size
                 stage.next_index += 1
                 if chunk_index + 1 != chunk_amount:
@@ -1838,8 +1870,20 @@ class Handler(abc.ABC):
                 _set_active_transfer_handler(lock_key, None)
             return True
 
-    async def _cleanup_owned_transfers(self) -> None:
+    async def _cleanup_owned_transfers(self, *, close_root: bool = False) -> None:
         async with self._file_transfer_lock:
+            stages = tuple(self._transfer_stages.items())
+            for file_key, stage in stages:
+                with _locked_transfer(self.file_storage_dir, file_key):
+                    if not self._discard_transfer_stage(
+                        file_key,
+                        stage,
+                        clear_active=True,
+                    ):
+                        logger.warning(
+                            "Failed to clean runtime transfer staging file %s",
+                            file_key,
+                        )
             file_paths = tuple(self._owned_transfer_files)
             for file_path in file_paths:
                 try:
@@ -1859,3 +1903,5 @@ class Handler(abc.ABC):
                         os.path.basename(file_path),
                         exc,
                     )
+            if close_root:
+                self._close_transfer_root_if_clean()
