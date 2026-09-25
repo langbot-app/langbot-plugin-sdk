@@ -44,6 +44,7 @@ class QueueConnection(Connection):
         self.sent: list[str] = []
         self.sent_event = asyncio.Event()
         self.closed = False
+        self.close_calls = 0
 
     async def send(self, message: str) -> None:
         self.sent.append(message)
@@ -56,6 +57,7 @@ class QueueConnection(Connection):
         return message
 
     async def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
 
 
@@ -1394,6 +1396,47 @@ async def test_transfer_rejects_symlinked_owner_directory(tmp_path):
     assert list(external.iterdir()) == []
 
 
+def test_transfer_rejects_symlinked_configured_root_without_touching_target(tmp_path):
+    external = tmp_path / "external-root"
+    external.mkdir(mode=0o755)
+    root = tmp_path / "transfer-root"
+    root.symlink_to(external, target_is_directory=True)
+    original_mode = stat.S_IMODE(external.stat().st_mode)
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        Handler(ProtocolConnection(), file_storage_dir=root)
+
+    assert stat.S_IMODE(external.stat().st_mode) == original_mode
+    assert list(external.iterdir()) == []
+
+
+def test_transfer_rejects_configured_root_replaced_by_symlink_during_init(
+    tmp_path, monkeypatch
+):
+    external = tmp_path / "external-root"
+    external.mkdir(mode=0o755)
+    root = tmp_path / "transfer-root"
+    real_open = os.open
+    replaced = False
+
+    def replace_before_root_open(path, flags, *args, **kwargs):
+        nonlocal replaced
+        if path == root.name and kwargs.get("dir_fd") is not None and not replaced:
+            replaced = True
+            root.rmdir()
+            root.symlink_to(external, target_is_directory=True)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "open", replace_before_root_open)
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        Handler(ProtocolConnection(), file_storage_dir=root)
+
+    assert replaced is True
+    assert stat.S_IMODE(external.stat().st_mode) == 0o755
+    assert list(external.iterdir()) == []
+
+
 @pytest.mark.asyncio
 async def test_handlers_sharing_root_cannot_interleave_capability_chunks(tmp_path):
     binding = _installation_binding()
@@ -1549,6 +1592,132 @@ async def test_cleanup_retries_owner_delete_after_data_file_is_removed(
     await handler._cleanup_owned_transfers()
     assert not owner_records[0].exists()
     assert handler._owned_transfer_files == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_name", ["payload", "owner"])
+async def test_explicit_delete_failure_raises_and_retains_capacity_for_retry(
+    tmp_path,
+    monkeypatch,
+    failed_name,
+):
+    monkeypatch.setattr(handler_module, "MAX_ACTIVE_FILE_TRANSFERS", 1)
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'f' * 64}.bin"
+    next_key = f"ft1_{'0' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-delete")
+    owner_record = next((tmp_path / ".transfer-owners").iterdir())
+    real_remove = os.remove
+    failed = False
+
+    def fail_once(path, *args, **kwargs):
+        nonlocal failed
+        is_target = (
+            os.fspath(path) == file_key
+            if failed_name == "payload"
+            else os.fspath(path).endswith(".json")
+        )
+        if is_target and not failed:
+            failed = True
+            raise OSError(f"simulated {failed_name} delete failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_once)
+
+    with pytest.raises(OSError, match=f"simulated {failed_name} delete failure"):
+        await handler.delete_local_file(file_key)
+
+    assert owner_record.exists()
+    assert len(handler._owned_transfer_files) == 1
+    with pytest.raises(ValueError, match="transfer capacity"):
+        await _write_chunk(handler, next_key, b"still-full")
+
+    await handler.delete_local_file(file_key)
+    assert not owner_record.exists()
+    assert handler._owned_transfer_files == set()
+    await _write_chunk(handler, next_key, b"capacity-released")
+
+
+@pytest.mark.asyncio
+async def test_close_retries_failed_transfer_cleanup_without_reclosing_connection(
+    tmp_path,
+    monkeypatch,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'1' * 64}.bin"
+    await _write_chunk(handler, file_key, b"retry-close")
+    payload = tmp_path / "unbound" / file_key
+    owner_record = next((tmp_path / ".transfer-owners").iterdir())
+    real_remove = os.remove
+    failed = False
+
+    def fail_payload_once(path, *args, **kwargs):
+        nonlocal failed
+        if os.fspath(path) == file_key and not failed:
+            failed = True
+            raise OSError("simulated close cleanup failure")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "remove", fail_payload_once)
+
+    await handler.close()
+    assert payload.exists()
+    assert owner_record.exists()
+    assert len(handler._owned_transfer_files) == 1
+    assert connection.close_calls == 1
+
+    await handler.close()
+    assert not payload.exists()
+    assert not owner_record.exists()
+    assert handler._owned_transfer_files == set()
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["serialize", "fsync"])
+async def test_failed_new_owner_record_is_removed_so_same_capability_can_retry(
+    tmp_path,
+    monkeypatch,
+    failure_point,
+):
+    handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    file_key = f"ft1_{'2' * 64}.bin"
+
+    if failure_point == "serialize":
+        real_serialize = handler._serialize_transfer_record
+        failed = False
+
+        def fail_serialize_once(*args):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise RuntimeError("simulated owner serialization failure")
+            return real_serialize(*args)
+
+        monkeypatch.setattr(handler, "_serialize_transfer_record", fail_serialize_once)
+    else:
+        real_fsync = os.fsync
+        failed = False
+
+        def fail_fsync_once(fd):
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise OSError("simulated owner fsync failure")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(handler_module.os, "fsync", fail_fsync_once)
+
+    with pytest.raises((OSError, RuntimeError), match="simulated owner"):
+        await _write_chunk(handler, file_key, b"first")
+
+    assert list((tmp_path / ".transfer-owners").iterdir()) == []
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_claims == {}
+
+    await _write_chunk(handler, file_key, b"second")
+    assert await handler.read_local_file(file_key) == b"second"
 
 
 @pytest.mark.asyncio

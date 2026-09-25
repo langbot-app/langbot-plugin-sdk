@@ -208,6 +208,48 @@ def _open_transfer_directory(
         raise ValueError("Invalid file transfer capability") from None
 
 
+def _prepare_transfer_root(root: str) -> str:
+    """Create/open the configured root without following path symlinks."""
+
+    lexical_root = os.path.abspath(root)
+    components = lexical_root.split(os.sep)
+    if len(components) <= 1:
+        raise ValueError("Invalid file transfer root")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        current_fd = os.open(os.sep, directory_flags)
+    except OSError:
+        raise ValueError("Invalid file transfer root") from None
+    try:
+        for component in components[1:]:
+            if not component:
+                continue
+            try:
+                os.mkdir(component, mode=0o700, dir_fd=current_fd)
+            except FileExistsError:
+                pass
+            try:
+                next_fd = os.open(
+                    component,
+                    directory_flags | no_follow,
+                    dir_fd=current_fd,
+                )
+            except OSError:
+                raise ValueError("Invalid file transfer root") from None
+            os.close(current_fd)
+            current_fd = next_fd
+        root_stat = os.fstat(current_fd)
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise ValueError("Invalid file transfer root")
+        os.fchmod(current_fd, 0o700)
+    except OSError:
+        raise ValueError("Invalid file transfer root") from None
+    finally:
+        os.close(current_fd)
+    return lexical_root
+
+
 def _read_regular_at(
     root: str,
     directory_name: str,
@@ -370,7 +412,7 @@ class Handler(abc.ABC):
                 if runtime_profile == "shared"
                 else FILE_STORAGE_DIR
             )
-        self.file_storage_dir = os.path.realpath(os.fspath(file_storage_dir))
+        self.file_storage_dir = _prepare_transfer_root(os.fspath(file_storage_dir))
         if max_file_bytes is not None and (
             isinstance(max_file_bytes, bool)
             or not isinstance(max_file_bytes, int)
@@ -385,9 +427,6 @@ class Handler(abc.ABC):
         self._owned_transfer_claims: dict[str, str | None] = {}
 
         self._disconnect_callback = disconnect_callback
-
-        os.makedirs(self.file_storage_dir, mode=0o700, exist_ok=True)
-        os.chmod(self.file_storage_dir, 0o700)
 
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
@@ -582,6 +621,8 @@ class Handler(abc.ABC):
     async def close(self) -> None:
         """Close the transport and deterministically release connection-owned work."""
         if self._closed:
+            if self._owned_transfer_files:
+                await self._cleanup_owned_transfers()
             return
         self._closed = True
         error = ConnectionClosedError("Connection closed by local runtime")
@@ -1149,14 +1190,29 @@ class Handler(abc.ABC):
                 return False
             except OSError:
                 raise ValueError("Invalid file transfer capability") from None
+            created_stat: os.stat_result | None = None
             try:
                 claim_id = uuid.uuid4().hex
+                created_stat = os.fstat(descriptor)
                 with os.fdopen(descriptor, "wb", closefd=False) as file:
                     file.write(
                         self._serialize_transfer_record(transfer_context, claim_id)
                     )
                     file.flush()
                     os.fsync(descriptor)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    current_stat = os.stat(
+                        record_name,
+                        dir_fd=owner_dir_fd,
+                        follow_symlinks=False,
+                    )
+                    if created_stat is not None and (
+                        current_stat.st_dev == created_stat.st_dev
+                        and current_stat.st_ino == created_stat.st_ino
+                    ):
+                        os.remove(record_name, dir_fd=owner_dir_fd)
+                raise
             finally:
                 os.close(descriptor)
             file_path = os.path.join(
@@ -1433,7 +1489,9 @@ class Handler(abc.ABC):
                     missing_ok=True,
                 )
             except OSError:
-                return False
+                if cleanup:
+                    return False
+                raise
             was_active = _is_active_transfer_handler(lock_key, self)
 
             if owner_record is not None:
@@ -1445,7 +1503,9 @@ class Handler(abc.ABC):
                         missing_ok=True,
                     )
                 except OSError:
-                    return False
+                    if cleanup:
+                        return False
+                    raise
                 self._owned_transfer_records.discard(owner_record)
             self._owned_transfer_files.discard(file_path)
             self._owned_transfer_contexts.pop(file_path, None)
