@@ -411,6 +411,8 @@ class Handler(abc.ABC):
         # cancelled when the transport terminates.
         self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
         self._closed = False
+        self._file_transfer_closing = False
+        self._close_lock = asyncio.Lock()
         self._close_error: ConnectionClosedError | None = None
         self._bound_action_context = None
         self._current_action_context = contextvars.ContextVar(
@@ -627,31 +629,33 @@ class Handler(abc.ABC):
                     self._active_tasks.add(task)
                     task.add_done_callback(self._active_tasks.discard)
         finally:
-            self._closed = True
+            self._file_transfer_closing = True
             self._close_error = disconnect_error
             self._fail_pending(disconnect_error)
             if self._cancel_active_tasks_on_close:
                 await self._cancel_action_tasks()
-            await self._cleanup_owned_transfers(close_root=True)
+            async with self._file_transfer_lock:
+                self._closed = True
+                await self._cleanup_owned_transfers_locked(close_root=True)
 
     async def close(self) -> None:
         """Close the transport and deterministically release connection-owned work."""
-        if self._closed:
-            if self._owned_transfer_files or self._transfer_stages:
-                await self._cleanup_owned_transfers(close_root=True)
-            else:
-                self._close_transfer_root_if_clean()
-            return
-        self._closed = True
+        self._file_transfer_closing = True
         error = ConnectionClosedError("Connection closed by local runtime")
-        self._close_error = error
-        self._fail_pending(error)
-        try:
-            await self.conn.close()
-        finally:
-            if self._cancel_active_tasks_on_close:
-                await self._cancel_action_tasks()
-            await self._cleanup_owned_transfers(close_root=True)
+        async with self._close_lock:
+            async with self._file_transfer_lock:
+                if self._closed:
+                    await self._cleanup_owned_transfers_locked(close_root=True)
+                    return
+                self._closed = True
+                self._close_error = error
+                self._fail_pending(error)
+            try:
+                await self.conn.close()
+            finally:
+                if self._cancel_active_tasks_on_close:
+                    await self._cancel_action_tasks()
+                await self._cleanup_owned_transfers(close_root=True)
 
     async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
         try:
@@ -1089,6 +1093,10 @@ class Handler(abc.ABC):
         """Deterministic no-op hook used by filesystem race regression tests."""
 
         del event, details
+
+    def _require_file_transfer_open(self) -> None:
+        if self._file_transfer_closing or self._closed:
+            raise self._close_error or ConnectionClosedError("Connection closed")
 
     def _require_transfer_root(self) -> int:
         if self._file_storage_root_fd_closed:
@@ -1540,8 +1548,19 @@ class Handler(abc.ABC):
                 stage = self._create_transfer_stage(
                     file_key, transfer_context, chunk_amount
                 )
-                self._transfer_stages[file_key] = stage
-                _set_active_transfer_handler(lock_key, self)
+                try:
+                    self._transfer_race_hook(
+                        "after_staging_create",
+                        file_key=file_key,
+                        descriptor=stage.descriptor,
+                    )
+                    self._require_file_transfer_open()
+                    self._transfer_stages[file_key] = stage
+                    _set_active_transfer_handler(lock_key, self)
+                except BaseException:
+                    if not self._discard_transfer_stage(file_key, stage):
+                        self._transfer_stages[file_key] = stage
+                    raise
             elif stage is None:
                 raise ValueError("Invalid file transfer capability")
 
@@ -1872,36 +1891,41 @@ class Handler(abc.ABC):
 
     async def _cleanup_owned_transfers(self, *, close_root: bool = False) -> None:
         async with self._file_transfer_lock:
-            stages = tuple(self._transfer_stages.items())
-            for file_key, stage in stages:
-                with _locked_transfer(self.file_storage_dir, file_key):
-                    if not self._discard_transfer_stage(
-                        file_key,
-                        stage,
-                        clear_active=True,
-                    ):
-                        logger.warning(
-                            "Failed to clean runtime transfer staging file %s",
-                            file_key,
-                        )
-            file_paths = tuple(self._owned_transfer_files)
-            for file_path in file_paths:
-                try:
-                    await run_blocking_cleanup(
-                        self._delete_transfer_sync,
-                        os.path.basename(file_path),
-                        self._owned_transfer_contexts[file_path],
-                        True,
-                    )
-                except OSError as exc:
-                    with _locked_transfer(
-                        self.file_storage_dir, os.path.basename(file_path)
-                    ) as lock_key:
-                        _clear_active_transfer_handler(lock_key, self)
+            await self._cleanup_owned_transfers_locked(close_root=close_root)
+
+    async def _cleanup_owned_transfers_locked(
+        self, *, close_root: bool = False
+    ) -> None:
+        stages = tuple(self._transfer_stages.items())
+        for file_key, stage in stages:
+            with _locked_transfer(self.file_storage_dir, file_key):
+                if not self._discard_transfer_stage(
+                    file_key,
+                    stage,
+                    clear_active=True,
+                ):
                     logger.warning(
-                        "Failed to clean runtime transfer file %s: %s",
-                        os.path.basename(file_path),
-                        exc,
+                        "Failed to clean runtime transfer staging file %s",
+                        file_key,
                     )
-            if close_root:
-                self._close_transfer_root_if_clean()
+        file_paths = tuple(self._owned_transfer_files)
+        for file_path in file_paths:
+            try:
+                await run_blocking_cleanup(
+                    self._delete_transfer_sync,
+                    os.path.basename(file_path),
+                    self._owned_transfer_contexts[file_path],
+                    True,
+                )
+            except OSError as exc:
+                with _locked_transfer(
+                    self.file_storage_dir, os.path.basename(file_path)
+                ) as lock_key:
+                    _clear_active_transfer_handler(lock_key, self)
+                logger.warning(
+                    "Failed to clean runtime transfer file %s: %s",
+                    os.path.basename(file_path),
+                    exc,
+                )
+        if close_root:
+            self._close_transfer_root_if_clean()

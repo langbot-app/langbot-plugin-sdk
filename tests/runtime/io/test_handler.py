@@ -1342,6 +1342,133 @@ def _staging_files(root) -> list:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("first_close", ["local", "disconnect"])
+async def test_close_during_stage_creation_rejects_chunk_without_orphan(
+    tmp_path,
+    monkeypatch,
+    first_close,
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    stage_created = threading.Event()
+    release_stage = threading.Event()
+    staged_descriptor = None
+
+    def pause_after_staging_create(event, **details):
+        nonlocal staged_descriptor
+        if event != "after_staging_create":
+            return
+        staged_descriptor = details["descriptor"]
+        stage_created.set()
+        assert release_stage.wait(timeout=2)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", pause_after_staging_create)
+
+    async def run_in_thread(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", run_in_thread)
+    run_task = None
+    if first_close == "disconnect":
+        run_task = asyncio.create_task(handler.run())
+
+    chunk_task = asyncio.create_task(
+        _write_chunk(handler, f"ft1_{'d' * 64}.bin", b"raced-stage")
+    )
+    assert await asyncio.to_thread(stage_created.wait, 1)
+
+    if first_close == "local":
+        first_close_task = asyncio.create_task(handler.close())
+    else:
+        await connection.incoming.put(ConnectionClosedError("peer disconnected"))
+        assert run_task is not None
+        first_close_task = run_task
+    second_close_task = asyncio.create_task(handler.close())
+    await asyncio.sleep(0)
+    release_stage.set()
+
+    with pytest.raises(ConnectionClosedError):
+        await asyncio.wait_for(chunk_task, timeout=2)
+    await asyncio.wait_for(
+        asyncio.gather(first_close_task, second_close_task),
+        timeout=2,
+    )
+    await handler.close()
+
+    assert staged_descriptor is not None
+    with pytest.raises(OSError):
+        os.fstat(staged_descriptor)
+    assert handler._transfer_stages == {}
+    assert handler._owned_transfer_files == set()
+    assert _staging_files(tmp_path) == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == (1 if first_close == "local" else 0)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_closes_cleanup_active_completed_transfers(tmp_path):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_keys = [f"ft1_{index:064x}.bin" for index in range(1, 4)]
+    for file_key in file_keys:
+        await _write_chunk(handler, file_key, file_key.encode(), binding=binding)
+
+    await asyncio.wait_for(
+        asyncio.gather(*(handler.close() for _ in range(8))),
+        timeout=2,
+    )
+    await handler.close()
+
+    assert connection.close_calls == 1
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_records == set()
+    assert handler._transfer_stages == {}
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_closes_wait_for_primary_cleanup_retry(tmp_path, monkeypatch):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'e' * 64}.bin"
+    await _write_chunk(handler, file_key, b"completed")
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    real_cleanup = handler._cleanup_owned_transfers_locked
+    cleanup_calls = 0
+
+    async def paused_cleanup(*, close_root=False):
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            cleanup_started.set()
+            await release_cleanup.wait()
+        await real_cleanup(close_root=close_root)
+
+    monkeypatch.setattr(handler, "_cleanup_owned_transfers_locked", paused_cleanup)
+
+    first_close = asyncio.create_task(handler.close())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    repeated_closes = [asyncio.create_task(handler.close()) for _ in range(4)]
+    await asyncio.sleep(0)
+
+    assert all(not task.done() for task in repeated_closes)
+    release_cleanup.set()
+    await asyncio.wait_for(
+        asyncio.gather(first_close, *repeated_closes),
+        timeout=2,
+    )
+
+    assert connection.close_calls == 1
+    assert handler._owned_transfer_files == set()
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+
+
+@pytest.mark.asyncio
 async def test_close_discards_incomplete_transfer_stage_and_releases_ownership(
     tmp_path,
 ):
