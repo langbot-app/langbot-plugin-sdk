@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 from langbot_plugin.runtime.plugin.artifact import PluginArtifact
 
@@ -28,6 +29,7 @@ _MAX_ENVIRONMENT_ENTRIES = 100_000
 _MAX_ENVIRONMENT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _RUNTIME_PROVIDED_DISTRIBUTIONS = frozenset({"langbot-plugin"})
+_RUNTIME_SDK_COMPATIBILITY_SERIES = (0, 6)
 
 
 class DependencyEnvironmentPreparationError(RuntimeError):
@@ -225,6 +227,39 @@ class PluginDependencyEnvironmentStore:
             raise
 
     @staticmethod
+    def _runtime_sdk_requirement_satisfied(
+        requirement: Requirement,
+        runtime_version: str,
+    ) -> bool:
+        if not requirement.specifier or requirement.specifier.contains(
+            runtime_version,
+            prereleases=True,
+        ):
+            return True
+
+        # Published 0.6 plugins historically used exact SDK pins even though
+        # workers always import the Runtime-owned SDK. Preserve that deployed
+        # contract only within the reviewed 0.6 compatibility series: an older
+        # exact pin is a minimum ABI level, while every other constraint remains
+        # strict. Direct URLs are rejected before this helper is called.
+        specifiers = tuple(requirement.specifier)
+        if len(specifiers) != 1 or specifiers[0].operator != "==":
+            return False
+        requested_raw = specifiers[0].version
+        if "*" in requested_raw:
+            return False
+        try:
+            requested = Version(requested_raw)
+            runtime = Version(runtime_version)
+        except InvalidVersion:
+            return False
+        return (
+            requested.release[:2] == _RUNTIME_SDK_COMPATIBILITY_SERIES
+            and runtime.release[:2] == _RUNTIME_SDK_COMPATIBILITY_SERIES
+            and requested <= runtime
+        )
+
+    @staticmethod
     def _read_requirements(
         artifact: PluginArtifact,
     ) -> tuple[tuple[str, ...], str]:
@@ -283,8 +318,9 @@ class PluginDependencyEnvironmentStore:
                     ) from exc
                 # Validate the already-installed Runtime SDK, including beta
                 # releases, rather than filtering candidates for installation.
-                if requirement.specifier and not requirement.specifier.contains(
-                    runtime_version, prereleases=True
+                if not PluginDependencyEnvironmentStore._runtime_sdk_requirement_satisfied(
+                    requirement,
+                    runtime_version,
                 ):
                     raise DependencyEnvironmentPreparationError(
                         "Plugin requires "

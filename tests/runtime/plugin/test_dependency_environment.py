@@ -258,6 +258,63 @@ async def test_runtime_sdk_requirement_is_not_installed_into_plugin_environment(
     assert captured_requirements == ("third-party-demo==1.0.0",)
 
 
+@pytest.mark.parametrize("requirement", ["==0.6.0b5", "==0.6.1", "==0.6.2", "==0.6.3"])
+async def test_runtime_sdk_legacy_06_exact_pin_accepts_newer_compatible_06_runtime(
+    tmp_path,
+    monkeypatch,
+    requirement,
+):
+    artifact = _artifact(
+        tmp_path,
+        f"langbot-plugin{requirement}\nthird-party-demo==1.0.0\n",
+    )
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    captured_requirements = None
+    monkeypatch.setattr(
+        dependency_environment_module.importlib.metadata,
+        "version",
+        lambda name: "0.6.3" if name == "langbot-plugin" else "1.0.0",
+    )
+
+    async def installer(staging, requirements):
+        nonlocal captured_requirements
+        captured_requirements = requirements
+        _publish_fake_distribution(staging, requirements)
+
+    await store.prepare(
+        artifact,
+        runtime_fingerprint="runtime-v1",
+        installer=installer,
+    )
+
+    assert captured_requirements == ("third-party-demo==1.0.0",)
+
+
+@pytest.mark.parametrize("requirement", ["==0.5.5", "==0.7.0", ">=0.7.0", "!=0.6.3"])
+async def test_runtime_sdk_compatibility_does_not_relax_other_constraints(
+    tmp_path,
+    monkeypatch,
+    requirement,
+):
+    artifact = _artifact(tmp_path, f"langbot-plugin{requirement}\n")
+    store = PluginDependencyEnvironmentStore(tmp_path / "plugin-runtime")
+    monkeypatch.setattr(
+        dependency_environment_module.importlib.metadata,
+        "version",
+        lambda name: "0.6.3",
+    )
+
+    async def installer(staging, requirements):  # pragma: no cover - must not run
+        raise AssertionError("installer must not run")
+
+    with pytest.raises(DependencyEnvironmentPreparationError):
+        await store.prepare(
+            artifact,
+            runtime_fingerprint="runtime-v1",
+            installer=installer,
+        )
+
+
 @pytest.mark.parametrize(
     ("runtime_version", "requirement"),
     [
