@@ -1025,24 +1025,90 @@ async def test_file_transfer_owner_uses_effective_context_and_denies_sibling(
 
     token = handler._current_action_context.set(binding_b)
     try:
-        with pytest.raises(ValueError, match="ownership"):
+        with pytest.raises(FileNotFoundError):
             await handler.read_local_file("private.bin")
-        with pytest.raises(ValueError, match="ownership"):
-            await handler.delete_local_file("private.bin")
-        with pytest.raises(ValueError, match="ownership"):
-            await handler.actions[CommonAction.FILE_CHUNK.value](
-                {
-                    "file_key": "private.bin",
-                    "chunk_base64": base64.b64encode(b"overwrite").decode("ascii"),
-                    "chunk_index": 0,
-                    "chunk_amount": 1,
-                }
-            )
+        await handler.delete_local_file("private.bin")
+        await handler.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "private.bin",
+                "chunk_base64": base64.b64encode(b"B-data").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+        assert await handler.read_local_file("private.bin") == b"B-data"
     finally:
         handler._current_action_context.reset(token)
 
     assert (
         await handler.read_local_file("private.bin", action_context=binding_a)
+        == b"A-secret"
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_transfer_owner_survives_handler_recreation_and_failed_cleanup(
+    tmp_path,
+    monkeypatch,
+):
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    binding_b = binding_a.model_copy(
+        update={
+            "workspace_uuid": "workspace-b",
+            "installation_uuid": "installation-b",
+        }
+    )
+    first = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    token = first._current_action_context.set(binding_a)
+    try:
+        await first.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "private.bin",
+                "chunk_base64": base64.b64encode(b"A-secret").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+    finally:
+        first._current_action_context.reset(token)
+
+    async def fail_cleanup(*_args, **_kwargs):
+        raise OSError("simulated cleanup failure")
+
+    monkeypatch.setattr(handler_module, "run_blocking_cleanup", fail_cleanup)
+    await first._cleanup_owned_transfers()
+
+    restarted = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
+    assert (
+        await restarted.read_local_file("private.bin", action_context=binding_a)
+        == b"A-secret"
+    )
+    with pytest.raises(FileNotFoundError):
+        await restarted.read_local_file("private.bin", action_context=binding_b)
+
+    token = restarted._current_action_context.set(binding_b)
+    try:
+        await restarted.actions[CommonAction.FILE_CHUNK.value](
+            {
+                "file_key": "private.bin",
+                "chunk_base64": base64.b64encode(b"B-data").decode("ascii"),
+                "chunk_index": 0,
+                "chunk_amount": 1,
+            }
+        )
+        await restarted.delete_local_file("private.bin")
+    finally:
+        restarted._current_action_context.reset(token)
+
+    assert (
+        await restarted.read_local_file("private.bin", action_context=binding_a)
         == b"A-secret"
     )
 

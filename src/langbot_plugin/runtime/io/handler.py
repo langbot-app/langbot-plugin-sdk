@@ -68,8 +68,11 @@ async def _run_small_protocol_work(fn: Callable[..., Any], *args: Any) -> Any:
 def _file_storage_path(
     file_key: str,
     file_storage_dir: str | os.PathLike[str] = FILE_STORAGE_DIR,
+    *,
+    action_context: ActionEnvelopeContext | None = None,
+    create_namespace: bool = False,
 ) -> str:
-    """Resolve one opaque transfer key without accepting path syntax."""
+    """Resolve one opaque key inside its durable authority namespace."""
 
     if not isinstance(file_key, str):
         raise ValueError("Invalid file transfer key")
@@ -85,7 +88,20 @@ def _file_storage_path(
         or _SAFE_FILE_KEY_PATTERN.fullmatch(key) is None
     ):
         raise ValueError("Invalid file transfer key")
-    return os.path.join(os.fspath(file_storage_dir), key)
+    if action_context is None:
+        namespace = "unbound"
+    else:
+        serialized_context = json.dumps(
+            action_context.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        namespace = hashlib.sha256(serialized_context).hexdigest()
+    namespace_path = os.path.join(os.fspath(file_storage_dir), namespace)
+    if create_namespace:
+        os.makedirs(namespace_path, mode=0o700, exist_ok=True)
+        os.chmod(namespace_path, 0o700)
+    return os.path.join(namespace_path, key)
 
 
 class Handler(abc.ABC):
@@ -157,7 +173,6 @@ class Handler(abc.ABC):
         self.max_file_bytes = max_file_bytes
         self._file_transfer_lock = asyncio.Lock()
         self._owned_transfer_files: set[str] = set()
-        self._owned_transfer_contexts: dict[str, ActionEnvelopeContext | None] = {}
 
         self._disconnect_callback = disconnect_callback
 
@@ -166,10 +181,6 @@ class Handler(abc.ABC):
 
         @self.action(CommonAction.FILE_CHUNK)
         async def file_chunk(data: dict[str, Any]) -> ActionResponse:
-            file_path = _file_storage_path(
-                data["file_key"],
-                self.file_storage_dir,
-            )
             chunk_base64 = data["chunk_base64"]
             chunk_index = data["chunk_index"]
             chunk_amount = data["chunk_amount"]
@@ -193,21 +204,18 @@ class Handler(abc.ABC):
                 raise ValueError("File transfer chunk exceeds the protocol limit")
             async with self._file_transfer_lock:
                 transfer_context = self.resolve_effective_action_context()
+                file_path = _file_storage_path(
+                    data["file_key"],
+                    self.file_storage_dir,
+                    action_context=transfer_context,
+                    create_namespace=True,
+                )
                 if (
-                    data["file_key"] in self._owned_transfer_contexts
-                    and self._owned_transfer_contexts[data["file_key"]]
-                    != transfer_context
-                ):
-                    raise ValueError(
-                        "File transfer ownership does not match action context"
-                    )
-                if (
-                    data["file_key"] not in self._owned_transfer_files
+                    file_path not in self._owned_transfer_files
                     and len(self._owned_transfer_files) >= MAX_ACTIVE_FILE_TRANSFERS
                 ):
                     raise ValueError("Active file transfer capacity reached")
-                self._owned_transfer_contexts[data["file_key"]] = transfer_context
-                self._owned_transfer_files.add(data["file_key"])
+                self._owned_transfer_files.add(file_path)
                 # The first chunk replaces stale partial data for the same
                 # opaque transfer id; later chunks append. Runtime-side
                 # installation handlers cap the aggregate bytes written on
@@ -894,12 +902,11 @@ class Handler(abc.ABC):
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> bytes:
         transfer_context = self.resolve_effective_action_context(action_context)
-        if (
-            file_key in self._owned_transfer_contexts
-            and self._owned_transfer_contexts[file_key] != transfer_context
-        ):
-            raise ValueError("File transfer ownership does not match action context")
-        file_path = _file_storage_path(file_key, self.file_storage_dir)
+        file_path = _file_storage_path(
+            file_key,
+            self.file_storage_dir,
+            action_context=transfer_context,
+        )
 
         def read_file() -> bytes:
             if self.max_file_bytes is not None:
@@ -924,39 +931,37 @@ class Handler(abc.ABC):
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> None:
         transfer_context = self.resolve_effective_action_context(action_context)
-        if (
-            file_key in self._owned_transfer_contexts
-            and self._owned_transfer_contexts[file_key] != transfer_context
-        ):
-            raise ValueError("File transfer ownership does not match action context")
+        file_path = _file_storage_path(
+            file_key,
+            self.file_storage_dir,
+            action_context=transfer_context,
+        )
         async with self._file_transfer_lock:
             try:
                 await run_blocking_with_backpressure(
                     os.remove,
-                    _file_storage_path(file_key, self.file_storage_dir),
+                    file_path,
                 )
             except FileNotFoundError:
                 pass
             finally:
-                self._owned_transfer_files.discard(file_key)
-                self._owned_transfer_contexts.pop(file_key, None)
+                self._owned_transfer_files.discard(file_path)
 
     async def _cleanup_owned_transfers(self) -> None:
         async with self._file_transfer_lock:
-            file_keys = tuple(self._owned_transfer_files)
+            file_paths = tuple(self._owned_transfer_files)
             self._owned_transfer_files.clear()
-            self._owned_transfer_contexts.clear()
-            for file_key in file_keys:
+            for file_path in file_paths:
                 try:
                     await run_blocking_cleanup(
                         os.remove,
-                        _file_storage_path(file_key, self.file_storage_dir),
+                        file_path,
                     )
                 except FileNotFoundError:
                     pass
                 except OSError as exc:
                     logger.warning(
                         "Failed to clean runtime transfer file %s: %s",
-                        file_key,
+                        os.path.basename(file_path),
                         exc,
                     )

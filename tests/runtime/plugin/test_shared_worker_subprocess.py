@@ -231,7 +231,7 @@ class SharedProbe(BasePlugin):
             binding_b,
         )
         assert denied["code"] == 1
-        assert "ownership" in denied["message"]
+        assert "FileNotFoundError" in denied["message"]
 
         first_pid = shared.pid
         shared.terminate()

@@ -1547,6 +1547,118 @@ async def test_installation_worker_ready_timeout_cancels_hung_process(
     assert cancelled.is_set()
 
 
+async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_failure(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    schedule_shared_worker = manager._schedule_shared_worker
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding].shared_worker
+    cancelled = asyncio.Event()
+
+    class NeverRegisterController:
+        process = None
+
+        async def run(self, _callback):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "create_shared_pool_controller",
+        lambda _spec: NeverRegisterController(),
+    )
+    monkeypatch.setattr(manager_module, "_PLUGIN_READY_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr(manager_module, "_PLUGIN_RESTART_INITIAL_DELAY_SEC", 60.0)
+
+    assert worker is not None
+    schedule_shared_worker(worker)
+
+    async def wait_for_failure():
+        while manager.restart_coordinator.snapshot()["restart_failures_total"] < 1:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_failure(), timeout=1)
+
+    assert cancelled.is_set()
+    assert manager.restart_coordinator.snapshot()["active_launches"] == 0
+    assert manager.installation_runtimes[binding].state == "failed"
+    await manager._stop_shared_worker(worker)
+
+
+async def test_shared_worker_manager_restart_reattaches_every_current_slot(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager_module, "_PLUGIN_RESTART_INITIAL_DELAY_SEC", 0.0)
+    launches = 0
+    attached: list[tuple[int, InstallationBinding]] = []
+    allow_first_crash = asyncio.Event()
+
+    async def launch(worker):
+        nonlocal launches
+        launches += 1
+        worker.ready_event.set()
+        for runtime in tuple(worker.slots.values()):
+            attached.append((launches, runtime.binding))
+        if launches == 1:
+            await allow_first_crash.wait()
+            raise RuntimeError("simulated shared worker crash")
+        manager._shutting_down = True
+
+    monkeypatch.setattr(manager, "_launch_shared_worker", launch)
+
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    allow_first_crash.set()
+    worker = manager.installation_runtimes[binding_a].shared_worker
+    assert worker is not None
+    assert worker.launch_task is not None
+    await asyncio.wait_for(worker.launch_task, timeout=1)
+
+    assert launches == 2
+    assert {
+        binding.installation_uuid for attempt, binding in attached if attempt == 2
+    } == {
+        binding_a.installation_uuid,
+        binding_b.installation_uuid,
+    }
+    assert manager.restart_coordinator.snapshot()["restart_failures_total"] == 1
+
+
 async def test_first_installation_launches_are_globally_bounded(
     tmp_path,
     monkeypatch,

@@ -1409,21 +1409,109 @@ class PluginManager:
             and self._shared_workers.get(digest) is worker
             and worker.slots
         ):
+            permit: RestartPermit | None = None
+            permit = await self.restart_coordinator.acquire(f"shared:{digest}")
+            started_at = asyncio.get_running_loop().time()
             try:
-                await self._launch_shared_worker(worker)
+                for runtime in worker.slots.values():
+                    runtime.state = "starting"
+                    runtime.ready_event.clear()
+                await self._run_shared_worker_attempt(worker, permit)
             except asyncio.CancelledError:
+                if permit is not None:
+                    await permit.abandon()
                 raise
-            except Exception:
+            except Exception as exc:
+                self._record_shared_worker_failure(worker, exc)
                 logger.exception("Shared plugin worker failed: %s", digest)
             if (
                 self._shutting_down
                 or self._shared_workers.get(digest) is not worker
                 or not worker.slots
             ):
+                if permit is not None:
+                    await permit.abandon()
                 return
+            await permit.record_failure()
+            uptime = asyncio.get_running_loop().time() - started_at
+            if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
+                delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
             worker.ready_event.clear()
             await asyncio.sleep(delay * random.uniform(0.8, 1.2))
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
+
+    async def _run_shared_worker_attempt(
+        self,
+        worker: SharedPluginWorkerRuntime,
+        permit: RestartPermit,
+    ) -> None:
+        """Run one digest worker with bounded registration readiness."""
+
+        worker.ready_event.clear()
+        worker_task = asyncio.create_task(self._launch_shared_worker(worker))
+        ready_task = asyncio.create_task(worker.ready_event.wait())
+        stable_task: asyncio.Task[None] | None = None
+        try:
+            done, _ = await asyncio.wait(
+                {worker_task, ready_task},
+                timeout=_PLUGIN_READY_TIMEOUT_SEC,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if ready_task in done:
+                permit.mark_ready()
+                for runtime in worker.slots.values():
+                    runtime.state = "running"
+                    runtime.error_code = None
+                    runtime.error_message = None
+                if not permit.is_half_open_probe:
+                    await worker_task
+                    if worker.slots:
+                        raise RuntimeError("Shared plugin worker exited")
+                    return
+
+                stable_task = asyncio.create_task(
+                    asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC)
+                )
+                done, _ = await asyncio.wait(
+                    {worker_task, stable_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stable_task in done:
+                    await permit.mark_stable()
+                await worker_task
+                if worker.slots:
+                    raise RuntimeError("Shared plugin worker exited")
+                return
+
+            if worker_task in done:
+                await worker_task
+                raise RuntimeError("Shared plugin worker exited before ready")
+
+            raise TimeoutError(
+                "Shared plugin worker did not become ready within "
+                f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+            )
+        finally:
+            for task in (ready_task, stable_task):
+                if task is not None and not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (ready_task, stable_task) if task is not None),
+                return_exceptions=True,
+            )
+            if not worker_task.done():
+                worker_task.cancel()
+                await asyncio.gather(worker_task, return_exceptions=True)
+
+    @staticmethod
+    def _record_shared_worker_failure(
+        worker: SharedPluginWorkerRuntime,
+        exc: BaseException,
+    ) -> None:
+        for runtime in worker.slots.values():
+            runtime.state = "failed"
+            runtime.error_code = "worker_launch_failed"
+            runtime.error_message = str(exc) or type(exc).__name__
 
     def _schedule_shared_slot_attach(self, runtime: PluginInstallationRuntime) -> None:
         worker = runtime.shared_worker
@@ -1577,6 +1665,24 @@ class PluginManager:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         worker.launch_task = None
+        if not worker.slots:
+            transfer_root = (
+                self.artifact_store.base_path
+                / "shared-transfers"
+                / worker.artifact.digest
+            )
+            try:
+                await bounded_executor.run_blocking_cleanup(
+                    shutil.rmtree,
+                    transfer_root,
+                    True,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Failed to clean shared worker transfers %s: %s",
+                    worker.artifact.digest,
+                    exc,
+                )
 
     def _schedule_installation_worker(
         self,
