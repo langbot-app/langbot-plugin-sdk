@@ -19,6 +19,7 @@ from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
+from langbot_plugin.entities.io.context import InstallationBinding
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
@@ -138,7 +139,7 @@ async def _iter_runner_results_with_deadline(
 class PluginRuntimeHandler(Handler):
     """The handler for running plugins."""
 
-    plugin_container: PluginContainer
+    _base_plugin_container: PluginContainer
 
     shutdown_callback: (
         typing.Callable[[], typing.Coroutine[typing.Any, typing.Any, None]] | None
@@ -155,6 +156,14 @@ class PluginRuntimeHandler(Handler):
         super().__init__(connection)
         self.name = "FromRuntime"
         self._shutdown_task: asyncio.Task[None] | None = None
+        self._slot_containers: dict[str, PluginContainer] = {}
+        self._slot_initialize_callback: typing.Callable[
+            [InstallationBinding, dict[str, typing.Any]],
+            typing.Coroutine[typing.Any, typing.Any, PluginContainer],
+        ] | None = None
+        self._slot_detach_callback: typing.Callable[
+            [str], typing.Coroutine[typing.Any, typing.Any, None]
+        ] | None = None
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
         async def initialize_plugin(data: dict[str, typing.Any]) -> ActionResponse:
@@ -163,6 +172,42 @@ class PluginRuntimeHandler(Handler):
                 self.bind_action_context(action_context)
             await plugin_initialize_callback(data["plugin_settings"])
             return ActionResponse.success({})
+
+        @self.action(RuntimeToPluginAction.ATTACH_PLUGIN_SLOT)
+        async def attach_plugin_slot(data: dict[str, typing.Any]) -> ActionResponse:
+            binding = self.current_action_context
+            if not isinstance(binding, InstallationBinding):
+                raise ValueError("Shared slot attach requires InstallationBinding")
+            if self._slot_initialize_callback is None:
+                raise ValueError("Shared slot initialization is unavailable")
+            container = await self._slot_initialize_callback(
+                binding,
+                data["plugin_settings"],
+            )
+            self._slot_containers[binding.installation_uuid] = container
+            return ActionResponse.success({})
+
+        @self.action(RuntimeToPluginAction.DETACH_PLUGIN_SLOT)
+        async def detach_plugin_slot(data: dict[str, typing.Any]) -> ActionResponse:
+            del data
+            binding = self.current_action_context
+            if not isinstance(binding, InstallationBinding):
+                raise ValueError("Shared slot detach requires InstallationBinding")
+            if self._slot_detach_callback is not None:
+                await self._slot_detach_callback(binding.installation_uuid)
+            self._slot_containers.pop(binding.installation_uuid, None)
+            return ActionResponse.success({})
+
+        @self.action(RuntimeToPluginAction.GET_PLUGIN_SLOT_CONTAINER)
+        async def get_plugin_slot_container(data: dict[str, typing.Any]) -> ActionResponse:
+            del data
+            binding = self.current_action_context
+            if not isinstance(binding, InstallationBinding):
+                raise ValueError("Shared slot lookup requires InstallationBinding")
+            container = self._slot_containers.get(binding.installation_uuid)
+            if container is None:
+                raise ValueError("Shared plugin slot is not attached")
+            return ActionResponse.success(container.model_dump())
 
         @self.action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER)
         async def get_plugin_container(data: dict[str, typing.Any]) -> ActionResponse:
@@ -712,6 +757,19 @@ class PluginRuntimeHandler(Handler):
             result = await parser_instance.parse(parse_context)
 
             return ActionResponse.success(result.model_dump(mode="json"))
+
+    @property
+    def plugin_container(self) -> PluginContainer:
+        binding = self.current_action_context
+        if isinstance(binding, InstallationBinding):
+            slot = self._slot_containers.get(binding.installation_uuid)
+            if slot is not None:
+                return slot
+        return self._base_plugin_container
+
+    @plugin_container.setter
+    def plugin_container(self, value: PluginContainer) -> None:
+        self._base_plugin_container = value
 
     async def register_plugin(
         self,

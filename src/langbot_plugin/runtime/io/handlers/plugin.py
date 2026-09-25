@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator
+import typing
 import logging
 
 from langbot_plugin.runtime.io import handler, connection
@@ -95,6 +96,8 @@ class PluginConnectionHandler(handler.Handler):
         self.debug_plugin = debug_plugin
         self.debug_auth_token = None
         self.stdio_process = stdio_process
+        self.shared_pool_digest: str | None = None
+        self._shared_pool_bindings: set[InstallationBinding] = set()
         runtime_binding = getattr(self.context, "workspace_binding", None)
         if runtime_binding is not None and not hasattr(self.context, "runtime_profile"):
             # Compatibility for older embedders that predate authenticated
@@ -1018,6 +1021,16 @@ class PluginConnectionHandler(handler.Handler):
             return None
 
         binding = self.bound_action_context
+        if self.shared_pool_digest is not None:
+            if not isinstance(action_context, InstallationBinding):
+                raise ValueError("Shared pool action requires InstallationBinding")
+            if action_context.artifact_digest != self.shared_pool_digest:
+                raise ValueError("Shared pool action artifact does not match worker")
+            if action_context not in self._shared_pool_bindings:
+                raise ValueError("Shared pool installation binding is not attached")
+            if not self.context.is_current_installation_binding(action_context):
+                raise ValueError("Shared pool installation binding has been revoked")
+            return action_context
         if binding is None:
             if getattr(self.context, "runtime_profile", "oss_dev") != "shared":
                 return super().validate_inbound_action_context(
@@ -1029,11 +1042,26 @@ class PluginConnectionHandler(handler.Handler):
             self.context.is_current_installation_binding(binding)
         ):
             raise ValueError("Plugin worker installation binding has been revoked")
-        if getattr(
-            self.context, "runtime_profile", "oss_dev"
-        ) == "shared" and not isinstance(binding, InstallationBinding):
-            raise ValueError("Shared plugin worker requires InstallationBinding")
         return super().validate_inbound_action_context(action, action_context)
+
+    def set_shared_pool_bindings(
+        self,
+        digest: str,
+        bindings: typing.Iterable[InstallationBinding],
+    ) -> None:
+        self.shared_pool_digest = digest
+        self._shared_pool_bindings = set(bindings)
+
+    def resolve_outbound_action_context(
+        self,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None,
+    ) -> ActionEnvelopeContext | None:
+        if self.shared_pool_digest is not None and action_context is None:
+            current = self.context.plugin_mgr._current_control_binding()
+            if current not in self._shared_pool_bindings:
+                raise ValueError("Shared pool outbound action requires an attached binding")
+            return current
+        return super().resolve_outbound_action_context(action_context)
 
     async def initialize_plugin(
         self, plugin_settings: dict[str, Any]
@@ -1044,6 +1072,37 @@ class PluginConnectionHandler(handler.Handler):
         )
 
         return resp
+
+    async def initialize_plugin_slot(
+        self,
+        binding: InstallationBinding,
+        plugin_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self.call_action(
+            RuntimeToPluginAction.ATTACH_PLUGIN_SLOT,
+            {"plugin_settings": plugin_settings or {}},
+            action_context=binding,
+        )
+
+    async def detach_plugin_slot(
+        self,
+        binding: InstallationBinding,
+    ) -> dict[str, Any]:
+        return await self.call_action(
+            RuntimeToPluginAction.DETACH_PLUGIN_SLOT,
+            {},
+            action_context=binding,
+        )
+
+    async def get_plugin_slot_container(
+        self,
+        binding: InstallationBinding,
+    ) -> dict[str, Any]:
+        return await self.call_action(
+            RuntimeToPluginAction.GET_PLUGIN_SLOT_CONTAINER,
+            {},
+            action_context=binding,
+        )
 
     async def get_plugin_container(self) -> dict[str, Any]:
         resp = await self.call_action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER, {})

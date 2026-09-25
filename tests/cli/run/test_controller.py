@@ -315,6 +315,48 @@ async def test_initialize_creates_plugin_and_supported_component_instances(monke
 
 
 @pytest.mark.asyncio
+async def test_shared_worker_keeps_separate_instances_and_config_per_slot(monkeypatch):
+    controller = _controller()
+    controller.handler = object()
+    component_classes = {
+        "Plugin": DemoPlugin,
+        "Tool": DemoTool,
+        "EventListener": DemoEventListener,
+    }
+
+    def fake_component_class(self: ComponentManifest):
+        return component_classes[self.kind]
+
+    monkeypatch.setattr(
+        ComponentManifest,
+        "get_python_component_class",
+        fake_component_class,
+    )
+
+    await controller.initialize_slot(
+        "installation-a",
+        {"enabled": True, "priority": 1, "plugin_config": {"tenant": "a"}},
+    )
+    await controller.initialize_slot(
+        "installation-b",
+        {"enabled": True, "priority": 2, "plugin_config": {"tenant": "b"}},
+    )
+
+    slot_a = controller.plugin_container_for_slot("installation-a")
+    slot_b = controller.plugin_container_for_slot("installation-b")
+    assert slot_a is not slot_b
+    assert slot_a.plugin_instance is not slot_b.plugin_instance
+    assert slot_a.plugin_instance.config == {"tenant": "a"}
+    assert slot_b.plugin_instance.config == {"tenant": "b"}
+    assert slot_a.components[0].component_instance is not slot_b.components[0].component_instance
+
+    await controller.detach_slot("installation-a")
+
+    assert controller.plugin_container_for_slot("installation-a") is None
+    assert controller.plugin_container_for_slot("installation-b") is slot_b
+
+
+@pytest.mark.asyncio
 async def test_initialize_writes_runner_class_declarations_to_manifest(
     monkeypatch,
 ):

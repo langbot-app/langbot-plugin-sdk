@@ -134,6 +134,9 @@ class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""
 
     INITIALIZE_PLUGIN = "initialize_plugin"
+    ATTACH_PLUGIN_SLOT = "attach_plugin_slot"
+    DETACH_PLUGIN_SLOT = "detach_plugin_slot"
+    GET_PLUGIN_SLOT_CONTAINER = "get_plugin_slot_container"
     GET_PLUGIN_CONTAINER = "get_plugin_container"
     GET_PLUGIN_ICON = "get_plugin_icon"
     GET_PLUGIN_README = "get_plugin_readme"

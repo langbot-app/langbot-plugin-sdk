@@ -4,6 +4,7 @@ import asyncio
 import os
 import typing
 import logging
+import copy
 
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.runtime.plugin.container import (
@@ -32,6 +33,7 @@ from langbot_plugin.api.definition.components.page import Page
 from langbot_plugin.api.definition.components.parser.parser import Parser
 from langbot_plugin.api.definition.components.runner.runner import Runner
 from langbot_plugin.entities.io.errors import ConnectionClosedError
+from langbot_plugin.entities.io.context import InstallationBinding
 from langbot_plugin.cli.run.hotreload import HotReloader, reload_plugin_modules
 from langbot_plugin.runtime.security import (
     PLUGIN_DEBUG_KEY_ENV,
@@ -42,6 +44,29 @@ from langbot_plugin.runtime.security import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _SlotHandlerProxy:
+    """Bind every worker-to-Runtime call to one exact installation slot."""
+
+    def __init__(self, handler: PluginRuntimeHandler, binding: InstallationBinding):
+        self._handler = handler
+        self._binding = binding
+
+    async def call_action(self, action, data, timeout=15.0, **kwargs):
+        kwargs["action_context"] = self._binding
+        return await self._handler.call_action(action, data, timeout=timeout, **kwargs)
+
+    def call_action_generator(self, action, data, timeout=15.0, **kwargs):
+        kwargs["action_context"] = self._binding
+        return self._handler.call_action_generator(action, data, timeout=timeout, **kwargs)
+
+    async def send_file(self, file_bytes, file_extension, **kwargs):
+        kwargs["action_context"] = self._binding
+        return await self._handler.send_file(file_bytes, file_extension, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._handler, name)
 
 
 def _apply_runner_class_defaults(
@@ -119,6 +144,7 @@ class PluginRuntimeController:
             status=RuntimeContainerStatus.UNMOUNTED,
             components=components_containers,
         )
+        self._slot_containers: dict[str, PluginContainer] = {}
 
     async def run(self) -> None:
         await self._controller_task
@@ -167,6 +193,8 @@ class PluginRuntimeController:
 
                 async def new_connection_callback(connection: Connection):
                     self.handler = PluginRuntimeHandler(connection, self.initialize)
+                    self.handler._slot_initialize_callback = self.initialize_slot
+                    self.handler._slot_detach_callback = self.detach_slot
 
                     async def disconnect_callback(hdl: PluginRuntimeHandler):
                         if self.prod_mode:
@@ -371,10 +399,54 @@ class PluginRuntimeController:
 
         self.plugin_container.status = RuntimeContainerStatus.INITIALIZED
 
+    async def initialize_slot(
+        self,
+        installation_uuid: str | InstallationBinding,
+        plugin_settings: dict[str, typing.Any],
+    ) -> PluginContainer:
+        """Create or replace one installation's independent object graph."""
+
+        slot_key = (
+            installation_uuid.installation_uuid
+            if isinstance(installation_uuid, InstallationBinding)
+            else installation_uuid
+        )
+        previous = self.plugin_container
+        previous_handler = self.handler
+        slot = PluginContainer.from_dict(copy.deepcopy(previous.model_dump()))
+        slot.plugin_instance = NonePlugin()
+        for component in slot.components:
+            component.component_instance = NoneComponent()
+        self.plugin_container = slot
+        if isinstance(installation_uuid, InstallationBinding):
+            self.handler = typing.cast(
+                PluginRuntimeHandler,
+                _SlotHandlerProxy(previous_handler, installation_uuid),
+            )
+        try:
+            await self.initialize(plugin_settings)
+            self._slot_containers[slot_key] = slot
+            return slot
+        finally:
+            self.plugin_container = previous
+            self.handler = previous_handler
+
+    def plugin_container_for_slot(
+        self,
+        installation_uuid: str,
+    ) -> PluginContainer | None:
+        return self._slot_containers.get(installation_uuid)
+
+    async def detach_slot(self, installation_uuid: str) -> None:
+        """Drop exactly one slot; sibling instances remain resident."""
+
+        self._slot_containers.pop(installation_uuid, None)
+
     async def cleanup_instances(self) -> None:
         """Clean up all plugin and component instances."""
         logger.info("Cleaning up plugin instances...")
 
+        self._slot_containers.clear()
         # Clear component instances
         for component_container in self.plugin_container.components:
             # Reset component instance

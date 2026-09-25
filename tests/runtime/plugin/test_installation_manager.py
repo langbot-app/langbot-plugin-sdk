@@ -12,9 +12,13 @@ from unittest import mock
 
 import pytest
 
+from langbot_plugin.api.definition.components.manifest import ComponentManifest
+from langbot_plugin.api.definition.plugin import NonePlugin
+
 from langbot_plugin.entities.io.context import (
     InstallationBinding,
     PluginInstallationDesiredState,
+    PluginExecutionMode,
     PluginWorkerPolicy,
     RuntimeIdentity,
 )
@@ -26,6 +30,7 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
 )
 from langbot_plugin.runtime.plugin.mgr import PluginManager
 from langbot_plugin.runtime.plugin import mgr as manager_module
+from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 
 
 def _package(
@@ -90,6 +95,20 @@ def _manager(tmp_path) -> tuple[RuntimeContext, PluginManager]:
     return context, manager
 
 
+async def _prepare_environment(store, artifact):
+    root = store.base_path / "test-shared-environment"
+    site_packages = root / "site-packages"
+    site_packages.mkdir(parents=True, exist_ok=True)
+    return PluginDependencyEnvironment(
+        digest="b" * 64,
+        artifact_digest=artifact.digest,
+        requirements_digest="c" * 64,
+        runtime_fingerprint="d" * 64,
+        root_path=root,
+        site_packages_path=site_packages,
+    )
+
+
 async def test_manager_indexes_same_artifact_installations_by_complete_binding(
     tmp_path,
 ):
@@ -131,6 +150,303 @@ async def test_manager_indexes_same_artifact_installations_by_complete_binding(
         assert stat.S_IMODE(runtimes[binding_b].paths.root_path.stat().st_mode) == 0o700
     assert context.is_current_installation_binding(binding_a)
     assert context.is_current_installation_binding(binding_b)
+
+
+async def test_certified_same_digest_installations_share_one_pool_worker(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    scheduled = []
+
+    async def prepare(store, artifact):
+        root = store.base_path / "shared-environment"
+        site_packages = root / "site-packages"
+        site_packages.mkdir(parents=True, exist_ok=True)
+        return PluginDependencyEnvironment(
+            digest="b" * 64,
+            artifact_digest=artifact.digest,
+            requirements_digest="c" * 64,
+            runtime_fingerprint="d" * 64,
+            root_path=root,
+            site_packages_path=site_packages,
+        )
+
+    monkeypatch.setattr(manager.worker_launcher, "prepare_dependency_environment", prepare)
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: scheduled.append(worker))
+
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+
+    runtime_a = manager.installation_runtimes[binding_a]
+    runtime_b = manager.installation_runtimes[binding_b]
+    assert runtime_a.shared_worker is runtime_b.shared_worker
+    assert set(runtime_a.shared_worker.slots) == {binding_a, binding_b}
+    assert scheduled == [runtime_a.shared_worker]
+    assert runtime_a.paths.home_path != runtime_b.paths.home_path
+
+
+async def test_dedicated_mode_keeps_one_worker_per_installation(tmp_path, monkeypatch):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    scheduled = []
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_installation_worker", scheduled.append)
+
+    await manager.apply_plugin_installation(binding_a, artifact_package=package)
+    await manager.apply_plugin_installation(binding_b)
+
+    assert manager.installation_runtimes[binding_a].shared_worker is None
+    assert manager.installation_runtimes[binding_b].shared_worker is None
+    assert scheduled == [
+        manager.installation_runtimes[binding_a],
+        manager.installation_runtimes[binding_b],
+    ]
+
+
+async def test_shared_worker_first_attach_starts_last_detach_stops(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    started = []
+    stopped = []
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", started.append)
+
+    async def stop(worker):
+        stopped.append(worker)
+
+    monkeypatch.setattr(manager, "_stop_shared_worker", stop)
+
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding_a].shared_worker
+
+    await manager.remove_plugin_installation(binding_a)
+    assert stopped == []
+    assert set(worker.slots) == {binding_b}
+
+    await manager.remove_plugin_installation(binding_b)
+    assert started == [worker]
+    assert stopped == [worker]
+    assert digest not in manager.shared_workers
+
+
+async def test_shared_revision_fence_detaches_only_stale_slot(tmp_path, monkeypatch):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    old_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    new_a = old_a.model_copy(update={"runtime_revision": 2})
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: None)
+    monkeypatch.setattr(manager, "_schedule_shared_slot_attach", lambda runtime: None)
+
+    await manager.apply_plugin_installation(
+        old_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[old_a].shared_worker
+    await manager.apply_plugin_installation(
+        new_a,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+
+    assert old_a not in worker.slots
+    assert set(worker.slots) == {new_a, binding_b}
+    assert context.is_current_installation_binding(new_a)
+    assert context.is_current_installation_binding(binding_b)
+
+
+async def test_shared_config_update_does_not_restart_sibling_worker(tmp_path, monkeypatch):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: None)
+    attached = []
+    monkeypatch.setattr(manager, "_schedule_shared_slot_attach", attached.append)
+
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding_a].shared_worker
+    worker.ready_event.set()
+    worker_task = asyncio.create_task(asyncio.Event().wait())
+    worker.launch_task = worker_task
+
+    await manager.apply_plugin_installation(
+        binding_a,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+
+    assert worker.launch_task is worker_task
+    assert not worker_task.cancelled()
+    assert manager.installation_runtimes[binding_b].shared_worker is worker
+    assert attached == [manager.installation_runtimes[binding_a]]
+    worker_task.cancel()
+    await asyncio.gather(worker_task, return_exceptions=True)
+
+
+async def test_shared_worker_registration_attaches_all_slots_with_exact_settings(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: None)
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    settings_calls = []
+
+    class Control:
+        async def call_action(self, action, data, *, action_context):
+            settings_calls.append((action, data, action_context))
+            return {
+                "enabled": True,
+                "priority": 0,
+                "plugin_config": {"workspace": action_context.workspace_uuid},
+                "installation_uuid": action_context.installation_uuid,
+            }
+
+    base_container = runtime_plugin_container.PluginContainer(
+        manifest=ComponentManifest(
+            owner="tester/demo",
+            rel_path="manifest.yaml",
+            manifest={
+                "apiVersion": "v1",
+                "kind": "Plugin",
+                "metadata": {
+                    "author": "tester",
+                    "name": "demo",
+                    "version": "1.0.0",
+                    "label": {"en_US": "demo"},
+                },
+                "spec": {},
+                "execution": {"python": {"path": "main.py", "attr": "Plugin"}},
+            },
+        ),
+        plugin_instance=NonePlugin(),
+        enabled=True,
+        priority=0,
+        plugin_config={},
+        status=runtime_plugin_container.RuntimeContainerStatus.MOUNTED,
+        components=[],
+    )
+
+    class Handler:
+        debug_plugin = False
+        attached = []
+
+        def set_shared_pool_bindings(self, shared_digest, bindings):
+            self.shared_digest = shared_digest
+            self.bindings = set(bindings)
+
+        async def initialize_plugin_slot(self, binding, settings):
+            self.attached.append((binding, settings))
+
+        async def get_plugin_slot_container(self, binding):
+            return base_container.model_copy(
+                update={"status": runtime_plugin_container.RuntimeContainerStatus.INITIALIZED}
+            ).model_dump()
+
+    context.control_handler = Control()
+    handler = Handler()
+    worker = manager.installation_runtimes[binding_a].shared_worker
+    capability = manager._issue_registration_capability(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path=str(worker.artifact.code_path),
+        binding=binding_a,
+        shared_pool_digest=digest,
+    )
+
+    await manager.register_plugin(
+        handler,
+        base_container.model_dump(),
+        registration_capability=capability,
+    )
+    await asyncio.gather(
+        *(task for task in manager.plugin_run_tasks if task is not worker.launch_task)
+    )
+
+    assert handler.bindings == {binding_a, binding_b}
+    assert [call[2] for call in settings_calls] == [binding_a, binding_b]
+    assert [item[1]["plugin_config"] for item in handler.attached] == [
+        {"workspace": "workspace-a"},
+        {"workspace": "workspace-b"},
+    ]
 
 
 async def test_cancelled_remove_finishes_worker_revoke_before_propagating(

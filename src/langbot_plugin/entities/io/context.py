@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 import math
 import re
+from enum import Enum
 from typing import Literal
 
 import pydantic
 
 
 _SHA256_DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+class PluginExecutionMode(str, Enum):
+    """Process placement selected by the trusted control plane."""
+
+    DEDICATED = "dedicated"
+    SHARED_CERTIFIED = "shared_certified"
 
 
 class RuntimeIdentity(pydantic.BaseModel):
@@ -333,6 +341,7 @@ class PluginInstallationDesiredState(pydantic.BaseModel):
 
     binding: InstallationBinding
     enabled: bool = True
+    execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
 
@@ -364,6 +373,7 @@ class ReconcilePluginInstallationsRequest(pydantic.BaseModel):
 class ApplyPluginInstallationRequest(pydantic.BaseModel):
     artifact_file_key: str | None = None
     enabled: bool = True
+    execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
 

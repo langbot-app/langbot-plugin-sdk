@@ -123,6 +123,9 @@ class Handler(abc.ABC):
         self.resp_waiters = {}
         self.resp_queues = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        self._action_task_contexts: dict[
+            asyncio.Task[None], ActionEnvelopeContext | None
+        ] = {}
         self._active_tasks: set[asyncio.Task[None]] = set()
         # Reserved tasks remain in the common set for cancellation and accounting.
         self._reserved_action_tasks: set[asyncio.Task[None]] = set()
@@ -154,6 +157,9 @@ class Handler(abc.ABC):
         self.max_file_bytes = max_file_bytes
         self._file_transfer_lock = asyncio.Lock()
         self._owned_transfer_files: set[str] = set()
+        self._owned_transfer_contexts: dict[
+            str, ActionEnvelopeContext | None
+        ] = {}
 
         self._disconnect_callback = disconnect_callback
 
@@ -193,6 +199,9 @@ class Handler(abc.ABC):
                     and len(self._owned_transfer_files) >= MAX_ACTIVE_FILE_TRANSFERS
                 ):
                     raise ValueError("Active file transfer capacity reached")
+                transfer_context = self.current_action_context
+                if self._owned_transfer_contexts.get(data["file_key"]) != transfer_context:
+                    self._owned_transfer_contexts[data["file_key"]] = transfer_context
                 self._owned_transfer_files.add(data["file_key"])
                 # The first chunk replaces stale partial data for the same
                 # opaque transfer id; later chunks append. Runtime-side
@@ -440,6 +449,9 @@ class Handler(abc.ABC):
                 request.context,
             )
             context_token = self._current_action_context.set(action_context)
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                self._action_task_contexts[current_task] = action_context
 
             with blocking_work_scope(getattr(action_context, "workspace_uuid", None)):
                 response = self.actions[action_name](request.data)
@@ -476,6 +488,9 @@ class Handler(abc.ABC):
         finally:
             if context_token is not None:
                 self._current_action_context.reset(context_token)
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                self._action_task_contexts.pop(current_task, None)
             if action_name and not action_name.startswith("__"):
                 logger.debug("[Action] %s", action_name)
 
@@ -531,6 +546,16 @@ class Handler(abc.ABC):
 
         for action_task in tuple(self._action_tasks):
             action_task.cancel()
+
+    def cancel_inflight_messages_for_context(
+        self,
+        action_context: ActionEnvelopeContext,
+    ) -> None:
+        """Cancel only requests owned by one exact installation revision."""
+
+        for action_task, owned_context in tuple(self._action_task_contexts.items()):
+            if owned_context == action_context:
+                action_task.cancel()
 
     async def call_action(
         self,
@@ -847,7 +872,23 @@ class Handler(abc.ABC):
             )
         return file_key
 
-    async def read_local_file(self, file_key: str) -> bytes:
+    async def read_local_file(
+        self,
+        file_key: str,
+        *,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+    ) -> bytes:
+        transfer_context = (
+            parse_action_envelope_context(action_context)
+            if action_context is not None
+            else self.current_action_context
+        )
+        if (
+            action_context is not None
+            and file_key in self._owned_transfer_contexts
+            and self._owned_transfer_contexts[file_key] != transfer_context
+        ):
+            raise ValueError("File transfer ownership does not match action context")
         file_path = _file_storage_path(file_key, self.file_storage_dir)
 
         def read_file() -> bytes:
@@ -866,7 +907,23 @@ class Handler(abc.ABC):
         await run_blocking_with_backpressure(os.path.getsize, file_path)
         return content
 
-    async def delete_local_file(self, file_key: str) -> None:
+    async def delete_local_file(
+        self,
+        file_key: str,
+        *,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+    ) -> None:
+        transfer_context = (
+            parse_action_envelope_context(action_context)
+            if action_context is not None
+            else self.current_action_context
+        )
+        if (
+            action_context is not None
+            and file_key in self._owned_transfer_contexts
+            and self._owned_transfer_contexts[file_key] != transfer_context
+        ):
+            raise ValueError("File transfer ownership does not match action context")
         async with self._file_transfer_lock:
             try:
                 await run_blocking_with_backpressure(
@@ -877,11 +934,13 @@ class Handler(abc.ABC):
                 pass
             finally:
                 self._owned_transfer_files.discard(file_key)
+                self._owned_transfer_contexts.pop(file_key, None)
 
     async def _cleanup_owned_transfers(self) -> None:
         async with self._file_transfer_lock:
             file_keys = tuple(self._owned_transfer_files)
             self._owned_transfer_files.clear()
+            self._owned_transfer_contexts.clear()
             for file_key in file_keys:
                 try:
                     await run_blocking_cleanup(

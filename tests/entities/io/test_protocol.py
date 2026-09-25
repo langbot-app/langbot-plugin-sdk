@@ -23,6 +23,7 @@ from langbot_plugin.entities.io.context import (
     ApplyPluginInstallationRequest,
     InstallationBinding,
     PluginInstallationDesiredState,
+    PluginExecutionMode,
     PluginWorkerPolicy,
     ReconcilePluginInstallationsRequest,
     RuntimeConfig,
@@ -330,7 +331,19 @@ def test_desired_state_protocol_requires_unique_complete_bindings():
     request = ReconcilePluginInstallationsRequest(installations=(desired,))
 
     assert request.installations == (desired,)
+    assert desired.execution_mode is PluginExecutionMode.DEDICATED
+    assert (
+        PluginInstallationDesiredState(
+            binding=binding,
+            execution_mode="shared_certified",
+        ).execution_mode
+        is PluginExecutionMode.SHARED_CERTIFIED
+    )
     assert ApplyPluginInstallationRequest(artifact_file_key=None).enabled is True
+    assert (
+        ApplyPluginInstallationRequest(artifact_file_key=None).execution_mode
+        is PluginExecutionMode.DEDICATED
+    )
     with pytest.raises(ValidationError, match="unique installation_uuid"):
         ReconcilePluginInstallationsRequest(installations=(desired, desired))
 
