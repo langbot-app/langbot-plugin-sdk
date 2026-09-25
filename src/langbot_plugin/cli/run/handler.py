@@ -157,13 +157,17 @@ class PluginRuntimeHandler(Handler):
         self.name = "FromRuntime"
         self._shutdown_task: asyncio.Task[None] | None = None
         self._slot_containers: dict[str, PluginContainer] = {}
-        self._slot_initialize_callback: typing.Callable[
-            [InstallationBinding, dict[str, typing.Any]],
-            typing.Coroutine[typing.Any, typing.Any, PluginContainer],
-        ] | None = None
-        self._slot_detach_callback: typing.Callable[
-            [str], typing.Coroutine[typing.Any, typing.Any, None]
-        ] | None = None
+        self._slot_initialize_callback: (
+            typing.Callable[
+                [InstallationBinding, dict[str, typing.Any]],
+                typing.Coroutine[typing.Any, typing.Any, PluginContainer],
+            ]
+            | None
+        ) = None
+        self._slot_detach_callback: (
+            typing.Callable[[str], typing.Coroutine[typing.Any, typing.Any, None]]
+            | None
+        ) = None
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
         async def initialize_plugin(data: dict[str, typing.Any]) -> ActionResponse:
@@ -199,7 +203,9 @@ class PluginRuntimeHandler(Handler):
             return ActionResponse.success({})
 
         @self.action(RuntimeToPluginAction.GET_PLUGIN_SLOT_CONTAINER)
-        async def get_plugin_slot_container(data: dict[str, typing.Any]) -> ActionResponse:
+        async def get_plugin_slot_container(
+            data: dict[str, typing.Any],
+        ) -> ActionResponse:
             del data
             binding = self.current_action_context
             if not isinstance(binding, InstallationBinding):

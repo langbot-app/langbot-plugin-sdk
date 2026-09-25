@@ -617,7 +617,9 @@ class PluginWorkerLauncher:
         self._require_dependency_environment(launch_spec)
         _, profile = self._require_configuration()
         if profile != "shared":
-            raise RuntimeError("Certified shared pools require the shared Runtime profile")
+            raise RuntimeError(
+                "Certified shared pools require the shared Runtime profile"
+            )
         return stdio_client_controller.StdioClientController(
             command=str(self.nsjail_path),
             args=self.build_shared_pool_nsjail_args(launch_spec),
