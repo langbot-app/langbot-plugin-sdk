@@ -1342,6 +1342,125 @@ def _staging_files(root) -> list:
 
 
 @pytest.mark.asyncio
+async def test_cancel_after_stage_creation_reconciles_worker_before_close(
+    tmp_path, monkeypatch
+):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    file_key = f"ft1_{'c' * 64}.bin"
+    stage_created = threading.Event()
+    release_stage = threading.Event()
+    staged_descriptor = None
+
+    def pause_after_staging_create(event, **details):
+        nonlocal staged_descriptor
+        if event != "after_staging_create":
+            return
+        staged_descriptor = details["descriptor"]
+        stage_created.set()
+        assert release_stage.wait(timeout=2)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", pause_after_staging_create)
+
+    async def run_in_thread(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", run_in_thread)
+    chunk_task = asyncio.create_task(_write_chunk(handler, file_key, b"cancelled"))
+    assert await asyncio.to_thread(stage_created.wait, 1)
+
+    chunk_task.cancel()
+    await asyncio.sleep(0)
+    close_task = asyncio.create_task(handler.close())
+    await asyncio.sleep(0)
+
+    assert close_task.done() is False
+    assert handler._file_storage_root_fd_closed is False
+    release_stage.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(chunk_task, timeout=2)
+    await asyncio.wait_for(close_task, timeout=2)
+    await handler.close()
+
+    assert staged_descriptor is not None
+    with pytest.raises(OSError):
+        os.fstat(staged_descriptor)
+    assert handler._transfer_stages == {}
+    assert handler._owned_transfer_files == set()
+    assert _staging_files(tmp_path) == []
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_final_chunk_cannot_publish_after_close_begins(tmp_path, monkeypatch):
+    connection = QueueConnection()
+    handler = Handler(connection, file_storage_dir=tmp_path)
+    binding = _installation_binding()
+    file_key = f"ft1_{'f' * 64}.bin"
+    await _write_chunk(
+        handler,
+        file_key,
+        b"first-",
+        binding=binding,
+        index=0,
+        amount=2,
+    )
+    final_paused = threading.Event()
+    release_final = threading.Event()
+
+    def pause_final_before_write(event, **details):
+        if event != "before_staging_write":
+            return
+        final_paused.set()
+        assert release_final.wait(timeout=2)
+
+    monkeypatch.setattr(handler, "_transfer_race_hook", pause_final_before_write)
+
+    async def run_in_thread(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: fn(*args))
+
+    monkeypatch.setattr(handler_module.asyncio, "to_thread", run_in_thread)
+    final_chunk = asyncio.create_task(
+        _write_chunk(
+            handler,
+            file_key,
+            b"second",
+            binding=binding,
+            index=1,
+            amount=2,
+        )
+    )
+    assert await asyncio.to_thread(final_paused.wait, 1)
+
+    close_task = asyncio.create_task(handler.close())
+    await asyncio.sleep(0)
+    assert handler._file_transfer_closing is True
+    assert close_task.done() is False
+    assert handler._file_storage_root_fd_closed is False
+    release_final.set()
+
+    with pytest.raises(ConnectionClosedError):
+        await asyncio.wait_for(final_chunk, timeout=2)
+    await asyncio.wait_for(close_task, timeout=2)
+    await handler.close()
+
+    namespace = tmp_path / handler_module._transfer_namespace(binding)
+    assert not (namespace / file_key).exists()
+    assert handler._transfer_stages == {}
+    assert handler._owned_transfer_files == set()
+    assert handler._owned_transfer_records == set()
+    assert _staging_files(tmp_path) == []
+    assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
+    assert handler._file_storage_root_fd_closed is True
+    assert connection.close_calls == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("first_close", ["local", "disconnect"])
 async def test_close_during_stage_creation_rejects_chunk_without_orphan(
     tmp_path,

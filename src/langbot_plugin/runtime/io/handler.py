@@ -412,6 +412,7 @@ class Handler(abc.ABC):
         self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
         self._closed = False
         self._file_transfer_closing = False
+        self._file_transfer_state_lock = threading.RLock()
         self._close_lock = asyncio.Lock()
         self._close_error: ConnectionClosedError | None = None
         self._bound_action_context = None
@@ -472,14 +473,34 @@ class Handler(abc.ABC):
             async with self._file_transfer_lock:
                 transfer_context = self.resolve_effective_action_context()
                 file_key = _validate_file_key(data["file_key"])
-                await _run_small_protocol_work(
-                    self._write_file_chunk,
-                    file_key,
-                    transfer_context,
-                    chunk_bytes,
-                    chunk_index,
-                    chunk_amount,
+                worker = asyncio.create_task(
+                    _run_small_protocol_work(
+                        self._write_file_chunk,
+                        file_key,
+                        transfer_context,
+                        chunk_bytes,
+                        chunk_index,
+                        chunk_amount,
+                    )
                 )
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    while not worker.done():
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            continue
+                        except BaseException:
+                            pass
+                    try:
+                        self._rollback_cancelled_file_chunk(file_key, transfer_context)
+                    except BaseException:
+                        logger.exception(
+                            "Failed to roll back cancelled file transfer %s",
+                            file_key,
+                        )
+                    raise
             return ActionResponse.success({})
 
     def _message_blocking_scope(
@@ -629,7 +650,7 @@ class Handler(abc.ABC):
                     self._active_tasks.add(task)
                     task.add_done_callback(self._active_tasks.discard)
         finally:
-            self._file_transfer_closing = True
+            self._begin_file_transfer_close()
             self._close_error = disconnect_error
             self._fail_pending(disconnect_error)
             if self._cancel_active_tasks_on_close:
@@ -640,7 +661,7 @@ class Handler(abc.ABC):
 
     async def close(self) -> None:
         """Close the transport and deterministically release connection-owned work."""
-        self._file_transfer_closing = True
+        self._begin_file_transfer_close()
         error = ConnectionClosedError("Connection closed by local runtime")
         async with self._close_lock:
             async with self._file_transfer_lock:
@@ -1095,8 +1116,13 @@ class Handler(abc.ABC):
         del event, details
 
     def _require_file_transfer_open(self) -> None:
-        if self._file_transfer_closing or self._closed:
-            raise self._close_error or ConnectionClosedError("Connection closed")
+        with self._file_transfer_state_lock:
+            if self._file_transfer_closing or self._closed:
+                raise self._close_error or ConnectionClosedError("Connection closed")
+
+    def _begin_file_transfer_close(self) -> None:
+        with self._file_transfer_state_lock:
+            self._file_transfer_closing = True
 
     def _require_transfer_root(self) -> int:
         if self._file_storage_root_fd_closed:
@@ -1528,6 +1554,7 @@ class Handler(abc.ABC):
         self._require_transfer_root()
 
         with _locked_transfer(root, file_key) as lock_key:
+            self._require_file_transfer_open()
             active = _active_transfer_handler(lock_key)
             if active is not None and active is not self:
                 raise ValueError("Invalid file transfer capability")
@@ -1581,6 +1608,7 @@ class Handler(abc.ABC):
                 self._transfer_race_hook(
                     "before_staging_write", file_key=file_key, namespace=stage.namespace
                 )
+                self._require_file_transfer_open()
                 assert stage.descriptor is not None
                 current_stat = os.fstat(stage.descriptor)
                 if (
@@ -1588,42 +1616,48 @@ class Handler(abc.ABC):
                     or current_stat.st_ino != stage.file_stat.st_ino
                 ):
                     raise ValueError("Invalid file transfer capability")
-                _write_all(stage.descriptor, chunk_bytes)
+                with self._file_transfer_state_lock:
+                    self._require_file_transfer_open()
+                    _write_all(stage.descriptor, chunk_bytes)
                 stage.size = resulting_size
                 stage.next_index += 1
                 if chunk_index + 1 != chunk_amount:
                     return
 
                 os.fsync(stage.descriptor)
-                namespace_fd = _open_transfer_directory(
-                    self._bound_transfer_root(), stage.namespace, create=False
-                )
-                try:
-                    try:
-                        os.link(
-                            stage.temp_name,
-                            file_key,
-                            src_dir_fd=namespace_fd,
-                            dst_dir_fd=namespace_fd,
-                            follow_symlinks=False,
-                        )
-                    except FileExistsError:
-                        raise ValueError("Invalid file transfer capability") from None
-                    stage.payload_published = True
-                    os.fsync(namespace_fd)
-                finally:
-                    os.close(namespace_fd)
-
-                if stage.claim_id is not None:
-                    self._publish_owner_record(file_key, stage, file_path)
-                else:
-                    self._owned_transfer_files.add(file_path)
-                    self._owned_transfer_contexts[file_path] = transfer_context
-                    self._owned_transfer_claims[file_path] = None
-                    self._owned_transfer_identities[file_path] = (
-                        stage.file_stat.st_dev,
-                        stage.file_stat.st_ino,
+                with self._file_transfer_state_lock:
+                    self._require_file_transfer_open()
+                    namespace_fd = _open_transfer_directory(
+                        self._bound_transfer_root(), stage.namespace, create=False
                     )
+                    try:
+                        try:
+                            os.link(
+                                stage.temp_name,
+                                file_key,
+                                src_dir_fd=namespace_fd,
+                                dst_dir_fd=namespace_fd,
+                                follow_symlinks=False,
+                            )
+                        except FileExistsError:
+                            raise ValueError(
+                                "Invalid file transfer capability"
+                            ) from None
+                        stage.payload_published = True
+                        os.fsync(namespace_fd)
+                    finally:
+                        os.close(namespace_fd)
+
+                    if stage.claim_id is not None:
+                        self._publish_owner_record(file_key, stage, file_path)
+                    else:
+                        self._owned_transfer_files.add(file_path)
+                        self._owned_transfer_contexts[file_path] = transfer_context
+                        self._owned_transfer_claims[file_path] = None
+                        self._owned_transfer_identities[file_path] = (
+                            stage.file_stat.st_dev,
+                            stage.file_stat.st_ino,
+                        )
                 self._discard_transfer_stage(file_key, stage)
             except BaseException:
                 if stage.owner_published:
@@ -1646,6 +1680,24 @@ class Handler(abc.ABC):
                     self._discard_transfer_stage(file_key, stage)
                     _clear_active_transfer_handler(lock_key, self)
                 raise
+
+    def _rollback_cancelled_file_chunk(
+        self,
+        file_key: str,
+        transfer_context: ActionEnvelopeContext | None,
+    ) -> None:
+        file_path = os.path.join(
+            self.file_storage_dir,
+            _transfer_namespace(transfer_context),
+            file_key,
+        )
+        with _locked_transfer(self.file_storage_dir, file_key) as lock_key:
+            stage = self._transfer_stages.get(file_key)
+            if stage is not None:
+                self._discard_transfer_stage(file_key, stage)
+                _clear_active_transfer_handler(lock_key, self)
+            if file_path in self._owned_transfer_files:
+                self._delete_transfer_sync(file_key, transfer_context, True)
 
     async def _resolve_transfer_context(
         self,
