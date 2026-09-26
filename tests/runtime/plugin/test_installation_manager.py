@@ -2234,7 +2234,11 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
         "create_shared_pool_controller",
         lambda _spec: NeverRegisterController(),
     )
-    monkeypatch.setattr(manager_module, "_PLUGIN_READY_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr(
+        manager_module,
+        "_SHARED_TRANSPORT_READY_TIMEOUT_SEC",
+        0.01,
+    )
     monkeypatch.setattr(manager_module, "_PLUGIN_RESTART_INITIAL_DELAY_SEC", 60.0)
 
     assert worker is not None

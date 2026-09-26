@@ -86,6 +86,7 @@ _PLUGIN_RESTART_INITIAL_DELAY_SEC = 1.0
 _PLUGIN_RESTART_MAX_DELAY_SEC = 60.0
 _PLUGIN_STABLE_WINDOW_SEC = 60.0
 _PLUGIN_READY_TIMEOUT_SEC = 30.0
+_SHARED_TRANSPORT_READY_TIMEOUT_SEC = 120.0
 _SHARED_SLOT_ATTACH_TIMEOUT_SEC = 120.0
 _PLUGIN_WORKER_STOP_TIMEOUT_SEC = 5.0
 
@@ -1475,7 +1476,7 @@ class PluginManager:
         try:
             done, _ = await asyncio.wait(
                 {worker_task, ready_task},
-                timeout=_PLUGIN_READY_TIMEOUT_SEC,
+                timeout=_SHARED_TRANSPORT_READY_TIMEOUT_SEC,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if ready_task not in done:
@@ -1486,7 +1487,7 @@ class PluginManager:
                     )
                 raise TimeoutError(
                     "Shared plugin worker did not register within "
-                    f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+                    f"{_SHARED_TRANSPORT_READY_TIMEOUT_SEC:.0f} seconds"
                 )
 
             permit.mark_ready()
