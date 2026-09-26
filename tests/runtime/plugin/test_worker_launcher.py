@@ -277,6 +277,19 @@ def test_shared_launcher_absolutizes_runtime_paths_before_fixed_root_cwd(
     assert f"{staging.tmp_path.absolute()}:/tmp" in dependency_args
 
 
+def test_shared_pool_controller_transfers_process_lifetime_ownership(tmp_path):
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    controller = launcher.create_shared_pool_controller(_launch_spec(tmp_path))
+
+    assert getattr(controller, "close_process_on_callback_return") is False
+
+
 def test_shared_launcher_fails_without_nsjail_or_required_cgroup():
     no_nsjail = PluginWorkerLauncher(
         nsjail_path="",

@@ -20,7 +20,7 @@ class FakeProcess:
     def __init__(self, stdin=object(), stdout=object()):
         self.stdin = stdin
         self.stdout = stdout
-        self.returncode = 0
+        self.returncode: int | None = 0
 
 
 class FakeWebSocket:
@@ -112,6 +112,33 @@ async def test_stdio_client_controller_captures_stderr_only_when_requested(
     await controller.run(callback)
 
     assert captured["stderr"] is stdio_client.asyncio.subprocess.PIPE
+
+
+async def test_stdio_client_controller_can_transfer_process_lifetime_ownership(
+    monkeypatch,
+):
+    process = FakeProcess()
+    process.returncode = None
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(
+        stdio_client.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    controller = stdio_client.StdioClientController(
+        "python",
+        [],
+        {},
+        close_process_on_callback_return=False,
+    )
+
+    await controller.run(lambda _connection: asyncio.sleep(0))
+
+    assert controller.process is process
+    assert controller.connection is not None
 
 
 async def test_stdio_client_controller_rejects_missing_pipes(monkeypatch):

@@ -625,6 +625,7 @@ class PluginWorkerLauncher:
             args=self.build_shared_pool_nsjail_args(launch_spec),
             env={},
             working_dir="/",
+            close_process_on_callback_return=False,
         )
 
     def _append_readonly_runtime_mounts(
