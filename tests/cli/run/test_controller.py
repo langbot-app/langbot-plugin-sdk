@@ -586,6 +586,37 @@ async def test_mount_stdio_prod_registers_plugin(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_mount_stdio_prod_keeps_serving_after_registration(monkeypatch):
+    capability = "registration-capability-that-is-long-enough-for-tests"
+    monkeypatch.setenv("LANGBOT_PLUGIN_REGISTRATION_CAPABILITY", capability)
+    fake_handler_cls = _fake_handler_class(run_forever=True)
+    monkeypatch.setattr(controller_module, "PluginRuntimeHandler", fake_handler_cls)
+    _install_stdio_controller(monkeypatch, "connect")
+    controller = PluginRuntimeController(
+        plugin_manifest=_manifest("Plugin", "demo"),
+        component_manifests=[],
+        stdio=True,
+        ws_debug_url="ws://runtime/plugin/ws",
+        prod_mode=True,
+    )
+
+    mount_task = asyncio.create_task(controller.mount())
+    handler = None
+    try:
+        await _wait_until(lambda: bool(getattr(fake_handler_cls, "instances")))
+        handler = getattr(fake_handler_cls, "instances")[0]
+        await handler.registered.wait()
+        await asyncio.sleep(0)
+        assert not mount_task.done()
+    finally:
+        mount_task.cancel()
+        await asyncio.gather(mount_task, return_exceptions=True)
+
+    assert handler is not None
+    assert handler.cancelled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_mount_prod_connection_failure_sets_waiter_and_exits(monkeypatch):
     capability = "registration-capability-that-is-long-enough-for-tests"
     monkeypatch.setenv("LANGBOT_PLUGIN_REGISTRATION_CAPABILITY", capability)

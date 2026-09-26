@@ -315,6 +315,7 @@ class PluginRuntimeController:
 
                 # If in production mode, break the loop after first connection
                 if self.prod_mode:
+                    await self._controller_task
                     break
 
                 # In debug mode, wait for shutdown signal
