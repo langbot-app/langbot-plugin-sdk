@@ -449,6 +449,15 @@ async def test_failed_sole_shared_slot_retries_with_registered_handler(
         binding=binding,
         shared_pool_digest=digest,
     )
+    alt_handler = Handler()
+    with pytest.raises(ValueError, match="registration transport changed"):
+        await manager.register_plugin(
+            alt_handler,
+            container.model_dump(),
+            registration_capability=capability,
+        )
+    assert manager.is_registration_capability_pending(capability)
+    assert worker.pending_plugin_handler is handler
     await manager.register_plugin(
         handler,
         container.model_dump(),

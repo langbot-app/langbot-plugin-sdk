@@ -555,12 +555,23 @@ class PluginManager:
         *,
         plugin_author: str,
         plugin_name: str,
+        expected_shared_handler: runtime_plugin_handler_cls.PluginConnectionHandler
+        | None = None,
     ) -> _PendingPluginRegistration:
         key = self._find_pending_registration_key(capability)
         if key is None:
             raise ValueError(
                 "Plugin registration capability is invalid or already used"
             )
+        registration = self._pending_registrations[key]
+        if registration.shared_pool_digest is not None:
+            worker = self._shared_workers.get(registration.shared_pool_digest)
+            if (
+                expected_shared_handler is None
+                or worker is None
+                or worker.pending_plugin_handler is not expected_shared_handler
+            ):
+                raise ValueError("Shared plugin worker registration transport changed")
         registration = self._pending_registrations.pop(key)
         if (
             registration.plugin_author != plugin_author
@@ -1970,6 +1981,12 @@ class PluginManager:
             worker.controller = controller
 
             async def new_plugin_connection_callback(connection: Connection):
+                if (
+                    worker.pending_plugin_handler is not None
+                    or worker.plugin_handler is not None
+                ):
+                    await connection.close()
+                    return
                 shared_transfer_root = (
                     self.artifact_store.base_path
                     / "shared-transfers"
@@ -1994,12 +2011,6 @@ class PluginManager:
                         self.context.worker_policy.max_file_size_mb * 1024 * 1024
                     ),
                 )
-                if (
-                    worker.pending_plugin_handler is not None
-                    or worker.plugin_handler is not None
-                ):
-                    await connection.close()
-                    return
                 worker.pending_plugin_handler = plugin_handler
                 self.plugin_handlers.append(plugin_handler)
                 try:
@@ -2597,6 +2608,7 @@ class PluginManager:
                 registration_capability or "",
                 plugin_author=plugin_author,
                 plugin_name=plugin_name,
+                expected_shared_handler=handler,
             )
             # From this point forward, use only the identity captured before the
             # child process was launched, never values supplied by plugin code.
