@@ -522,17 +522,12 @@ class Handler(abc.ABC):
                 target is not None and target in self._action_task_contexts
             )
             target_context = (
-                self._action_task_contexts[target]
-                if target_context_known
-                else None
+                self._action_task_contexts[target] if target_context_known else None
             )
             can_request_cancel = (
                 target is not None
                 and target is not current
-                and (
-                    not target_context_known
-                    or target_context == request_context
-                )
+                and (not target_context_known or target_context == request_context)
             )
             if can_request_cancel:
                 cancel_callback = self._action_cancel_callbacks.get(target)
@@ -1028,13 +1023,15 @@ class Handler(abc.ABC):
         """Best-effort cancellation for an outbound action accepted by the peer."""
 
         try:
-            async with asyncio.timeout(5.0):
-                await self.call_action(
+            await asyncio.wait_for(
+                self.call_action(
                     CommonAction.CANCEL_ACTION,
                     {"seq_id": seq_id},
                     timeout=None,
                     action_context=action_context,
-                )
+                ),
+                timeout=5.0,
+            )
         except (
             ActionCallError,
             ActionCallTimeoutError,
