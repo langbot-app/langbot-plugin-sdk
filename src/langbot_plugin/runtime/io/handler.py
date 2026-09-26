@@ -45,9 +45,11 @@ from langbot_plugin.runtime.security import (
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
 from langbot_plugin.runtime.bounded_executor import (
+    TRANSPORT_CONTROL_SCOPE,
     blocking_work_scope,
     run_blocking_cleanup,
     run_blocking_with_backpressure,
+    run_transport_control_work,
 )
 
 logger = logging.getLogger(__name__)
@@ -514,10 +516,17 @@ class Handler(abc.ABC):
         )
         return getattr(context, "workspace_uuid", None)
 
-    async def _decode_message(self, message: str) -> Any:
+    async def _decode_message(
+        self,
+        message: str,
+        *,
+        blocking_scope: str | None = None,
+    ) -> Any:
         """Parse peer JSON outside the shared event loop with tenant fairness."""
 
-        with blocking_work_scope(self._message_blocking_scope()):
+        if blocking_scope == TRANSPORT_CONTROL_SCOPE:
+            return await run_transport_control_work(json.loads, message)
+        with blocking_work_scope(blocking_scope or self._message_blocking_scope()):
             return await run_blocking_with_backpressure(json.loads, message)
 
     async def _encode_message(
@@ -525,26 +534,32 @@ class Handler(abc.ABC):
         payload: Any,
         *,
         action_context: ActionEnvelopeContext | None = None,
+        blocking_scope: str | None = None,
     ) -> str:
         """Serialize protocol JSON outside the shared event loop."""
 
+        serialize = lambda: json.dumps(  # noqa: E731
+            payload.model_dump() if hasattr(payload, "model_dump") else payload
+        )
+        if blocking_scope == TRANSPORT_CONTROL_SCOPE:
+            return await run_transport_control_work(serialize)
         with blocking_work_scope(
-            self._message_blocking_scope(action_context),
+            blocking_scope or self._message_blocking_scope(action_context),
         ):
-            return await run_blocking_with_backpressure(
-                lambda: json.dumps(
-                    payload.model_dump() if hasattr(payload, "model_dump") else payload
-                )
-            )
+            return await run_blocking_with_backpressure(serialize)
 
     async def _validate_message_model(
         self,
         model_type: Any,
         payload: Any,
+        *,
+        blocking_scope: str | None = None,
     ) -> Any:
         """Run potentially deep Pydantic validation outside the event loop."""
 
-        with blocking_work_scope(self._message_blocking_scope()):
+        if blocking_scope == TRANSPORT_CONTROL_SCOPE:
+            return await run_transport_control_work(model_type.model_validate, payload)
+        with blocking_work_scope(blocking_scope or self._message_blocking_scope()):
             return await run_blocking_with_backpressure(
                 model_type.model_validate, payload
             )
@@ -554,19 +569,26 @@ class Handler(abc.ABC):
         payload: Any,
         *,
         action_context: ActionEnvelopeContext | None = None,
+        blocking_scope: str | None = None,
     ) -> None:
         """Keep serialization and transport chunking in one tenant scope."""
 
         with blocking_work_scope(
-            self._message_blocking_scope(action_context),
+            blocking_scope or self._message_blocking_scope(action_context),
         ):
             encoded = await self._encode_message(
                 payload,
                 action_context=action_context,
+                blocking_scope=blocking_scope,
             )
             await self.conn.send(encoded)
 
-    async def _format_protocol_error(self, exc: BaseException) -> str:
+    async def _format_protocol_error(
+        self,
+        exc: BaseException,
+        *,
+        blocking_scope: str | None = None,
+    ) -> str:
         def render() -> str:
             message = str(exc)
             if len(message) > MAX_PROTOCOL_ERROR_CHARS:
@@ -576,7 +598,9 @@ class Handler(abc.ABC):
                 )
             return f"{exc.__class__.__name__}: {message}"
 
-        with blocking_work_scope(self._message_blocking_scope()):
+        if blocking_scope == TRANSPORT_CONTROL_SCOPE:
+            return await run_transport_control_work(render)
+        with blocking_work_scope(blocking_scope or self._message_blocking_scope()):
             return await run_blocking_with_backpressure(render)
 
     def set_disconnect_callback(
@@ -610,8 +634,14 @@ class Handler(abc.ABC):
                 if message is None:
                     continue
 
+                control_candidate = self._uses_reserved_decode_capacity(message)
                 try:
-                    req_data = await self._decode_message(message)
+                    req_data = await self._decode_message(
+                        message,
+                        blocking_scope=(
+                            TRANSPORT_CONTROL_SCOPE if control_candidate else None
+                        ),
+                    )
                 except (json.JSONDecodeError, TypeError) as exc:
                     logger.warning("Ignored malformed runtime message: %s", exc)
                     continue
@@ -641,7 +671,17 @@ class Handler(abc.ABC):
                     await self._send_overloaded_response(seq_id, limit=limit)
                     continue
 
-                task = asyncio.create_task(self._handle_action(req_data))
+                effective_registration = self._uses_reserved_action_capacity(req_data)
+                task = asyncio.create_task(
+                    self._handle_action(
+                        req_data,
+                        control_scope=(
+                            TRANSPORT_CONTROL_SCOPE
+                            if control_candidate and effective_registration
+                            else None
+                        ),
+                    )
+                )
                 self._action_tasks.add(task)
                 if reserved:
                     self._reserved_action_tasks.add(task)
@@ -711,7 +751,12 @@ class Handler(abc.ABC):
                     )
                 )
 
-    async def _handle_action(self, req_data: dict[str, Any]) -> None:
+    async def _handle_action(
+        self,
+        req_data: dict[str, Any],
+        *,
+        control_scope: str | None = None,
+    ) -> None:
         seq_id = req_data.get("seq_id", -1)
         action_name = str(req_data.get("action", ""))
         context_token = None
@@ -719,6 +764,7 @@ class Handler(abc.ABC):
             request = await self._validate_message_model(
                 ActionRequest,
                 req_data,
+                blocking_scope=control_scope,
             )
             action_name = request.action
             if action_name not in self.actions:
@@ -739,7 +785,10 @@ class Handler(abc.ABC):
                     if isinstance(response, Coroutine):
                         response = await response
                     response.seq_id = seq_id
-                    await self._send_message(response)
+                    await self._send_message(
+                        response,
+                        blocking_scope=control_scope,
+                    )
                 else:
                     async for chunk in response:
                         assert isinstance(chunk, ActionResponse)
@@ -760,11 +809,17 @@ class Handler(abc.ABC):
                 exc.__class__.__name__,
             )
             error_response = ActionResponse.error(
-                await self._format_protocol_error(exc)
+                await self._format_protocol_error(
+                    exc,
+                    blocking_scope=control_scope,
+                )
             )
             error_response.seq_id = seq_id
             with contextlib.suppress(ConnectionClosedError):
-                await self._send_message(error_response)
+                await self._send_message(
+                    error_response,
+                    blocking_scope=control_scope,
+                )
         finally:
             if context_token is not None:
                 self._current_action_context.reset(context_token)
@@ -776,6 +831,14 @@ class Handler(abc.ABC):
 
     def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
         """Opt in to bounded control capacity, not validation or authorization."""
+        return False
+
+    def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
+        """Confirm the decoded top-level control action before isolation."""
+        return False
+
+    def _uses_reserved_decode_capacity(self, message: str) -> bool:
+        """Opt in to reserved executor capacity before JSON decoding."""
         return False
 
     async def _send_overloaded_response(

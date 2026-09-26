@@ -46,6 +46,21 @@ _UNTRUSTED_SCOPE_FIELDS = frozenset(
 class PluginConnectionHandler(handler.Handler):
     """The handler for plugin connection."""
 
+    def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
+        is_registration = (
+            req_data.get("action") == PluginToRuntimeAction.REGISTER_PLUGIN.value
+        )
+        if not is_registration or not self._registration_codec_available:
+            return False
+        self._registration_codec_available = False
+        return True
+
+    def _uses_reserved_decode_capacity(self, message: str) -> bool:
+        if not self._registration_codec_available:
+            return False
+        prefix = message[:256]
+        return prefix.lstrip().startswith("{") and "register" in prefix
+
     context: context_module.RuntimeContext
 
     debug_plugin: bool = False
@@ -95,6 +110,7 @@ class PluginConnectionHandler(handler.Handler):
         self.name = "FromPlugin"
         self.debug_plugin = debug_plugin
         self.debug_auth_token = None
+        self._registration_codec_available = True
         self.stdio_process = stdio_process
         self.shared_pool_digest: str | None = None
         self._shared_pool_bindings: set[InstallationBinding] = set()

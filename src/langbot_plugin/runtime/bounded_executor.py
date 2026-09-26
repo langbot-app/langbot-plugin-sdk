@@ -19,6 +19,8 @@ DEFAULT_MAX_INFLIGHT_PER_SCOPE = 4
 HARD_MAX_WORKERS = 64
 HARD_MAX_PENDING = 4096
 BLOCKING_CLEANUP_SCOPE = "system:cleanup"
+TRANSPORT_CONTROL_SCOPE = "system:transport-control"
+TRANSPORT_CONTROL_MAX_PENDING = 4
 _CLEANUP_RETRY_INITIAL_SECONDS = 0.01
 _CLEANUP_RETRY_MAX_SECONDS = 0.25
 
@@ -194,6 +196,13 @@ class BoundedThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         self.max_pending = max_pending
         self.max_inflight_per_scope = max_inflight_per_scope
         self._capacity = threading.BoundedSemaphore(max_workers + max_pending)
+        self._reserved_control_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"{thread_name_prefix}-control",
+        )
+        self._reserved_control_capacity = threading.BoundedSemaphore(
+            1 + TRANSPORT_CONTROL_MAX_PENDING
+        )
         self._stats_lock = threading.Lock()
         self._inflight_by_scope: dict[str, int] = {}
         self._inflight = 0
@@ -212,7 +221,23 @@ class BoundedThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
         **kwargs: Any,
     ) -> concurrent.futures.Future:
         scope = current_blocking_work_scope()
-        if not self._capacity.acquire(blocking=False):
+        if scope == TRANSPORT_CONTROL_SCOPE:
+            if not self._reserved_control_capacity.acquire(blocking=False):
+                raise BlockingWorkCapacityError(
+                    "Transport-control blocking capacity reached",
+                    scope=scope,
+                )
+            try:
+                future = self._reserved_control_executor.submit(fn, *args, **kwargs)
+            except BaseException:
+                self._reserved_control_capacity.release()
+                raise
+            future.add_done_callback(
+                lambda _future: self._reserved_control_capacity.release()
+            )
+            return future
+        capacity = self._capacity
+        if not capacity.acquire(blocking=False):
             with self._stats_lock:
                 self._rejected_total += 1
                 self._global_rejected_total += 1
@@ -228,7 +253,7 @@ class BoundedThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             ):
                 self._rejected_total += 1
                 self._scope_rejected_total += 1
-                self._capacity.release()
+                capacity.release()
                 raise BlockingWorkCapacityError(
                     "Workspace blocking executor capacity reached",
                     scope=scope,
@@ -255,7 +280,7 @@ class BoundedThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             with self._stats_lock:
                 self._inflight -= 1
                 self._release_scope_locked(scope)
-            self._capacity.release()
+            capacity.release()
             raise
 
         def complete(_future: concurrent.futures.Future) -> None:
@@ -263,10 +288,17 @@ class BoundedThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
                 self._inflight -= 1
                 self._completed_total += 1
                 self._release_scope_locked(scope)
-            self._capacity.release()
+            capacity.release()
 
         future.add_done_callback(complete)
         return future
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        self._reserved_control_executor.shutdown(
+            wait=wait,
+            cancel_futures=cancel_futures,
+        )
+        super().shutdown(wait=wait, cancel_futures=cancel_futures)
 
     def _release_scope_locked(self, scope: str | None) -> None:
         if scope is None:
@@ -295,6 +327,26 @@ class BoundedThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
                 "global_rejected_total": self._global_rejected_total,
                 "scope_rejected_total": self._scope_rejected_total,
             }
+
+
+async def run_transport_control_work(
+    fn: Callable[..., Any],
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run trusted registration codec work on one bounded control thread."""
+
+    retry_delay = _CLEANUP_RETRY_INITIAL_SECONDS
+    while True:
+        try:
+            with blocking_work_scope(TRANSPORT_CONTROL_SCOPE):
+                return await asyncio.to_thread(fn, *args, **kwargs)
+        except BlockingWorkCapacityError as exc:
+            if exc.scope != TRANSPORT_CONTROL_SCOPE:
+                raise
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, _CLEANUP_RETRY_MAX_SECONDS)
 
 
 def configure_bounded_default_executor(

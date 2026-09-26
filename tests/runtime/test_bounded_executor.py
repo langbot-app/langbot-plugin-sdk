@@ -17,6 +17,7 @@ from langbot_plugin.runtime.bounded_executor import (
     run_blocking_atomic,
     run_blocking_cleanup,
     run_blocking_with_backpressure,
+    run_transport_control_work,
 )
 
 
@@ -64,6 +65,41 @@ def test_bounded_executor_rejects_instead_of_queueing_without_limit():
     assert second.result(timeout=1) == "queued"
     assert executor.snapshot()["inflight"] == 0
     executor.shutdown()
+
+
+def test_transport_control_uses_independent_executor_when_global_queue_is_full():
+    loop = asyncio.new_event_loop()
+    executor = configure_bounded_default_executor(
+        loop,
+        max_workers=1,
+        max_pending=0,
+        max_inflight_per_scope=1,
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def block() -> None:
+        started.set()
+        release.wait(timeout=5)
+
+    async def exercise() -> None:
+        blocker = asyncio.create_task(asyncio.to_thread(block))
+        while not started.is_set():
+            await asyncio.sleep(0)
+        try:
+            with pytest.raises(BlockingWorkCapacityError):
+                await asyncio.to_thread(lambda: "full")
+            assert await run_transport_control_work(lambda: "control") == "control"
+        finally:
+            release.set()
+            await blocker
+
+    try:
+        loop.run_until_complete(exercise())
+    finally:
+        release.set()
+        executor.shutdown()
+        loop.close()
 
 
 def test_workspace_scope_cannot_monopolize_global_workers():
