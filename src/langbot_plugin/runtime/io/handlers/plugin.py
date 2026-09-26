@@ -46,6 +46,9 @@ _UNTRUSTED_SCOPE_FIELDS = frozenset(
 class PluginConnectionHandler(handler.Handler):
     """The handler for plugin connection."""
 
+    def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
+        return req_data.get("action") == PluginToRuntimeAction.REGISTER_PLUGIN.value
+
     def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
         is_registration = (
             req_data.get("action") == PluginToRuntimeAction.REGISTER_PLUGIN.value
