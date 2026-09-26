@@ -65,12 +65,14 @@ class StdioClientController(Controller):
         working_dir: str = ".",
         *,
         capture_stderr: bool = False,
+        close_process_on_callback_return: bool = True,
     ):
         self.command = command
         self.args = args
         self.env = env
         self.working_dir = working_dir
         self.capture_stderr = capture_stderr
+        self.close_process_on_callback_return = close_process_on_callback_return
 
     async def run(
         self,
@@ -95,7 +97,8 @@ class StdioClientController(Controller):
         try:
             await new_connection_callback(self.connection)
         finally:
-            await self.close()
+            if self.close_process_on_callback_return:
+                await self.close()
 
     async def close(self) -> None:
         """Close pipes and reap the owned subprocess."""
