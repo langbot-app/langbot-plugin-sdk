@@ -2082,6 +2082,7 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
     )
     worker = manager.installation_runtimes[binding].shared_worker
     cancelled = asyncio.Event()
+    closed = asyncio.Event()
 
     class NeverRegisterController:
         process = None
@@ -2091,6 +2092,9 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
                 await asyncio.Event().wait()
             finally:
                 cancelled.set()
+
+        async def close(self):
+            closed.set()
 
     monkeypatch.setattr(
         manager.worker_launcher,
@@ -2110,6 +2114,8 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
     await asyncio.wait_for(wait_for_failure(), timeout=1)
 
     assert cancelled.is_set()
+    assert closed.is_set()
+    assert worker.controller is None
     assert manager.restart_coordinator.snapshot()["active_launches"] == 0
     assert manager.installation_runtimes[binding].state == "failed"
     await manager._stop_shared_worker(worker)

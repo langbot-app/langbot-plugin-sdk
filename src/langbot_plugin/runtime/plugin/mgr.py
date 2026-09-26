@@ -26,6 +26,7 @@ from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
     client as stdio_client_controller,
 )
+from langbot_plugin.runtime.io.controller import Controller
 from langbot_plugin.runtime.plugin.runner_service import RunnerRuntimeService
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
@@ -148,6 +149,7 @@ class SharedPluginWorkerRuntime:
         default_factory=dict
     )
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
+    controller: Controller | None = None
     launch_task: asyncio.Task[None] | None = None
     transport_registered_event: asyncio.Event = field(default_factory=asyncio.Event)
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -1717,6 +1719,14 @@ class PluginManager:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         worker.launch_task = None
+        controller = worker.controller
+        if controller is not None:
+            close = getattr(controller, "close", None)
+            if close is not None:
+                with contextlib.suppress(Exception):
+                    await close()
+            if worker.controller is controller:
+                worker.controller = None
         if not worker.slots:
             transfer_root = (
                 self.artifact_store.base_path
@@ -1954,6 +1964,7 @@ class PluginManager:
                     dependency_environment=worker.dependency_environment,
                 )
             )
+            worker.controller = controller
 
             async def new_plugin_connection_callback(connection: Connection):
                 shared_transfer_root = (
@@ -1993,7 +2004,15 @@ class PluginManager:
                 finally:
                     await self.remove_plugin_handler(plugin_handler)
 
-            await controller.run(new_plugin_connection_callback)
+            try:
+                await controller.run(new_plugin_connection_callback)
+            finally:
+                close = getattr(controller, "close", None)
+                if close is not None:
+                    with contextlib.suppress(Exception):
+                        await close()
+                if worker.controller is controller:
+                    worker.controller = None
         finally:
             self._revoke_registration_capability(capability)
 
