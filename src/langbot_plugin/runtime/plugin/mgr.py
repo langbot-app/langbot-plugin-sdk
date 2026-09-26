@@ -2606,7 +2606,7 @@ class PluginManager:
                     raise ValueError(
                         "Shared plugin worker desired state is unavailable"
                     )
-                attach_tasks: list[asyncio.Task[None]] = []
+                attach_runtimes: list[PluginInstallationRuntime] = []
                 async with worker.lifecycle_lock:
                     if (
                         self._shared_workers.get(registration.shared_pool_digest)
@@ -2626,12 +2626,10 @@ class PluginManager:
                             )
                         ):
                             slot_runtime.plugin_handler = handler
-                            task = self._schedule_shared_slot_attach(slot_runtime)
-                            if task is not None:
-                                attach_tasks.append(task)
+                            attach_runtimes.append(slot_runtime)
                     worker.transport_registered_event.set()
-                if attach_tasks:
-                    await asyncio.gather(*attach_tasks, return_exceptions=True)
+                for slot_runtime in attach_runtimes:
+                    self._schedule_shared_slot_attach(slot_runtime)
                 self._refresh_shared_worker_ready(worker)
                 return
             if installation_binding is not None:

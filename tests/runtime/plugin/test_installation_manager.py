@@ -144,7 +144,7 @@ async def _drain_plugin_tasks(manager: PluginManager) -> None:
             tasks = tuple(task for task in manager.plugin_run_tasks if not task.done())
             if not tasks:
                 return
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def test_manager_indexes_same_artifact_installations_by_complete_binding(
@@ -453,6 +453,7 @@ async def test_failed_sole_shared_slot_retries_with_registered_handler(
         container.model_dump(),
         registration_capability=capability,
     )
+    await _drain_plugin_tasks(manager)
 
     assert runtime.state == "failed"
     assert runtime.error_code == "slot_attach_failed"
@@ -556,6 +557,7 @@ async def test_failed_shared_slot_retry_keeps_healthy_sibling_and_worker(
         container.model_dump(),
         registration_capability=capability,
     )
+    await _drain_plugin_tasks(manager)
     healthy_container = runtime_a.plugin_container
 
     assert runtime_a.state == "running"
@@ -879,6 +881,8 @@ async def test_shared_registration_waits_for_validated_slot_before_running(
     )
     await asyncio.wait_for(validation_started.wait(), timeout=1)
 
+    assert registration.done()
+    assert registration.exception() is None
     assert runtime.state == "starting"
     assert runtime.plugin_container is None
     assert not runtime.ready_event.is_set()
@@ -886,6 +890,7 @@ async def test_shared_registration_waits_for_validated_slot_before_running(
 
     release_validation.set()
     await registration
+    await _drain_plugin_tasks(manager)
     assert runtime.state == "running"
     assert runtime.plugin_container is not None
     assert runtime.ready_event.is_set()
@@ -980,6 +985,7 @@ async def test_shared_registration_reports_mixed_slot_attach_results(
         base_container.model_dump(),
         registration_capability=capability,
     )
+    await _drain_plugin_tasks(manager)
 
     runtime_a = manager.installation_runtimes[binding_a]
     runtime_b = manager.installation_runtimes[binding_b]
@@ -1070,6 +1076,7 @@ async def test_shared_slot_uninitialized_container_is_failed(tmp_path, monkeypat
         container.model_dump(),
         registration_capability=capability,
     )
+    await _drain_plugin_tasks(manager)
 
     assert runtime.state == "failed"
     assert runtime.error_code == "slot_attach_failed"
