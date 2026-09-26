@@ -155,6 +155,7 @@ class PluginRuntimeController:
             components=components_containers,
         )
         self._slot_containers: dict[str, PluginContainer] = {}
+        self._slot_generations: dict[str, int] = {}
 
     async def run(self) -> None:
         await self._controller_task
@@ -205,6 +206,7 @@ class PluginRuntimeController:
                     self.handler = PluginRuntimeHandler(connection, self.initialize)
                     self.handler._slot_initialize_callback = self.initialize_slot
                     self.handler._slot_detach_callback = self.detach_slot
+                    self.handler._slot_cancel_callback = self.invalidate_slot
 
                     async def disconnect_callback(hdl: PluginRuntimeHandler):
                         if self.prod_mode:
@@ -434,6 +436,8 @@ class PluginRuntimeController:
             if isinstance(installation_uuid, InstallationBinding)
             else installation_uuid
         )
+        generation = self._slot_generations.get(slot_key, 0) + 1
+        self._slot_generations[slot_key] = generation
         slot = PluginContainer.from_dict(
             copy.deepcopy(self.plugin_container.model_dump())
         )
@@ -444,6 +448,8 @@ class PluginRuntimeController:
         if isinstance(installation_uuid, InstallationBinding):
             runtime_handler = _SlotHandlerProxy(self.handler, installation_uuid)
         await self._initialize_container(slot, runtime_handler, plugin_settings)
+        if self._slot_generations.get(slot_key) != generation:
+            raise RuntimeError("Shared plugin slot initialization was superseded")
         self._slot_containers[slot_key] = slot
         return slot
 
@@ -453,9 +459,17 @@ class PluginRuntimeController:
     ) -> PluginContainer | None:
         return self._slot_containers.get(installation_uuid)
 
+    def invalidate_slot(self, installation_uuid: str) -> None:
+        """Fence an in-flight initializer before cancellation reaches plugin code."""
+
+        self._slot_generations[installation_uuid] = (
+            self._slot_generations.get(installation_uuid, 0) + 1
+        )
+
     async def detach_slot(self, installation_uuid: str) -> None:
         """Drop exactly one slot; sibling instances remain resident."""
 
+        self.invalidate_slot(installation_uuid)
         self._slot_containers.pop(installation_uuid, None)
 
     async def cleanup_instances(self) -> None:

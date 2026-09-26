@@ -403,7 +403,12 @@ class Handler(abc.ABC):
         self.resp_waiters = {}
         self.resp_queues = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
+        self._action_tasks_by_seq: dict[int, asyncio.Task[None]] = {}
         self._action_task_contexts: dict[
+            asyncio.Task[None], ActionEnvelopeContext | None
+        ] = {}
+        self._action_cancel_callbacks: dict[asyncio.Task[None], Callable[[], None]] = {}
+        self._pending_action_cancellations: dict[
             asyncio.Task[None], ActionEnvelopeContext | None
         ] = {}
         self._active_tasks: set[asyncio.Task[None]] = set()
@@ -504,6 +509,40 @@ class Handler(abc.ABC):
                         )
                     raise
             return ActionResponse.success({})
+
+        @self.action(CommonAction.CANCEL_ACTION)
+        async def cancel_action(data: dict[str, Any]) -> ActionResponse:
+            target_seq_id = data.get("seq_id")
+            if isinstance(target_seq_id, bool) or not isinstance(target_seq_id, int):
+                raise ValueError("Cancellation requires an integer seq_id")
+            target = self._action_tasks_by_seq.get(target_seq_id)
+            current = asyncio.current_task()
+            request_context = self.current_action_context
+            target_context_known = (
+                target is not None and target in self._action_task_contexts
+            )
+            target_context = (
+                self._action_task_contexts[target]
+                if target_context_known
+                else None
+            )
+            can_request_cancel = (
+                target is not None
+                and target is not current
+                and (
+                    not target_context_known
+                    or target_context == request_context
+                )
+            )
+            if can_request_cancel:
+                cancel_callback = self._action_cancel_callbacks.get(target)
+                if target_context_known and target_context == request_context:
+                    if cancel_callback is not None:
+                        cancel_callback()
+                    target.cancel()
+                else:
+                    self._pending_action_cancellations[target] = request_context
+            return ActionResponse.success({"cancelled": can_request_cancel})
 
     def _message_blocking_scope(
         self,
@@ -683,9 +722,15 @@ class Handler(abc.ABC):
                     )
                 )
                 self._action_tasks.add(task)
+                self._action_tasks_by_seq[seq_id] = task
                 if reserved:
                     self._reserved_action_tasks.add(task)
-                task.add_done_callback(self._action_task_done)
+                task.add_done_callback(
+                    lambda completed, owned_seq_id=seq_id: self._action_task_done(
+                        completed,
+                        owned_seq_id,
+                    )
+                )
                 if self._cancel_active_tasks_on_close:
                     self._active_tasks.add(task)
                     task.add_done_callback(self._active_tasks.discard)
@@ -778,6 +823,9 @@ class Handler(abc.ABC):
             current_task = asyncio.current_task()
             if current_task is not None:
                 self._action_task_contexts[current_task] = action_context
+                pending_context = self._pending_action_cancellations.get(current_task)
+                if pending_context is not None and pending_context != action_context:
+                    self._pending_action_cancellations.pop(current_task, None)
 
             with blocking_work_scope(getattr(action_context, "workspace_uuid", None)):
                 response = self.actions[action_name](request.data)
@@ -826,12 +874,26 @@ class Handler(abc.ABC):
             current_task = asyncio.current_task()
             if current_task is not None:
                 self._action_task_contexts.pop(current_task, None)
+                self._action_cancel_callbacks.pop(current_task, None)
+                self._pending_action_cancellations.pop(current_task, None)
             if action_name and not action_name.startswith("__"):
                 logger.debug("[Action] %s", action_name)
 
+    def set_current_action_cancel_callback(self, callback: Callable[[], None]) -> None:
+        """Run a synchronous fence before peer cancellation reaches action code."""
+
+        current_task = asyncio.current_task()
+        if current_task is None or current_task not in self._action_task_contexts:
+            raise RuntimeError("No tracked action task is active")
+        self._action_cancel_callbacks[current_task] = callback
+        pending_context = self._pending_action_cancellations.pop(current_task, None)
+        if pending_context == self._action_task_contexts[current_task]:
+            callback()
+            raise asyncio.CancelledError
+
     def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
         """Opt in to bounded control capacity, not validation or authorization."""
-        return False
+        return req_data.get("action") == CommonAction.CANCEL_ACTION.value
 
     def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
         """Confirm the decoded top-level control action before isolation."""
@@ -851,9 +913,15 @@ class Handler(abc.ABC):
         with contextlib.suppress(ConnectionClosedError):
             await self._send_message(response)
 
-    def _action_task_done(self, task: asyncio.Task[None]) -> None:
+    def _action_task_done(
+        self,
+        task: asyncio.Task[None],
+        seq_id: int | None = None,
+    ) -> None:
         self._action_tasks.discard(task)
         self._reserved_action_tasks.discard(task)
+        if seq_id is not None and self._action_tasks_by_seq.get(seq_id) is task:
+            self._action_tasks_by_seq.pop(seq_id, None)
         if task.cancelled():
             return
         exc = task.exception()
@@ -881,6 +949,7 @@ class Handler(abc.ABC):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._action_tasks.clear()
+        self._action_tasks_by_seq.clear()
         self._reserved_action_tasks.clear()
         self._active_tasks.clear()
 
@@ -904,8 +973,9 @@ class Handler(abc.ABC):
         self,
         action: ActionType,
         data: dict[str, Any],
-        timeout: float = 15.0,
+        timeout: float | None = 15.0,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+        cancel_peer_on_cancel: bool = False,
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
         self.seq_id_index += 1
@@ -930,7 +1000,13 @@ class Handler(abc.ABC):
             if response.code != 0:
                 raise ActionCallError(f"{response.message}", response.data)
             return response.data
+        except asyncio.CancelledError:
+            if cancel_peer_on_cancel:
+                await self._cancel_peer_action(this_seq_id, resolved_context)
+            raise
         except asyncio.TimeoutError:
+            if cancel_peer_on_cancel:
+                await self._cancel_peer_action(this_seq_id, resolved_context)
             raise ActionCallTimeoutError(f"Action {action.value} call timed out")
         except ActionCallError:
             raise
@@ -943,6 +1019,29 @@ class Handler(abc.ABC):
                 del self.resp_waiters[this_seq_id]
             if this_seq_id in self.resp_queues:
                 del self.resp_queues[this_seq_id]
+
+    async def _cancel_peer_action(
+        self,
+        seq_id: int,
+        action_context: ActionEnvelopeContext | None,
+    ) -> None:
+        """Best-effort cancellation for an outbound action accepted by the peer."""
+
+        try:
+            async with asyncio.timeout(5.0):
+                await self.call_action(
+                    CommonAction.CANCEL_ACTION,
+                    {"seq_id": seq_id},
+                    timeout=None,
+                    action_context=action_context,
+                )
+        except (
+            ActionCallError,
+            ActionCallTimeoutError,
+            ConnectionClosedError,
+            TimeoutError,
+        ):
+            logger.debug("Failed to cancel peer action %s", seq_id, exc_info=True)
 
     async def call_action_generator(
         self,

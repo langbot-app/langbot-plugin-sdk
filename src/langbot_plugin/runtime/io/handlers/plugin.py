@@ -47,7 +47,9 @@ class PluginConnectionHandler(handler.Handler):
     """The handler for plugin connection."""
 
     def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
-        return req_data.get("action") == PluginToRuntimeAction.REGISTER_PLUGIN.value
+        return super()._uses_reserved_admission(req_data) or (
+            req_data.get("action") == PluginToRuntimeAction.REGISTER_PLUGIN.value
+        )
 
     def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
         is_registration = (
@@ -1114,11 +1116,15 @@ class PluginConnectionHandler(handler.Handler):
         self,
         binding: InstallationBinding,
         plugin_settings: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = 15.0,
     ) -> dict[str, Any]:
         return await self.call_action(
             RuntimeToPluginAction.ATTACH_PLUGIN_SLOT,
             {"plugin_settings": plugin_settings or {}},
             action_context=binding,
+            timeout=timeout,
+            cancel_peer_on_cancel=True,
         )
 
     async def detach_plugin_slot(
