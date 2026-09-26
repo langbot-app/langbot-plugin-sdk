@@ -2067,6 +2067,116 @@ async def test_installation_worker_ready_timeout_cancels_hung_process(
     assert cancelled.is_set()
 
 
+async def test_shared_connection_does_not_claim_registration_before_capability_validation(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding].shared_worker
+    assert worker is not None
+
+    class FakeConnection:
+        async def close(self):
+            return None
+
+    class FakeHandler:
+        async def run(self):
+            await asyncio.Event().wait()
+
+    handler = FakeHandler()
+    callback_started = asyncio.Event()
+
+    class CapturingController:
+        process = None
+
+        async def run(self, callback):
+            task = asyncio.create_task(callback(FakeConnection()))
+            callback_started.set()
+            try:
+                await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "create_shared_pool_controller",
+        lambda _spec: CapturingController(),
+    )
+    monkeypatch.setattr(
+        manager_module.runtime_plugin_handler_cls,
+        "PluginConnectionHandler",
+        lambda *args, **kwargs: handler,
+    )
+
+    launch = asyncio.create_task(manager._launch_shared_worker(worker))
+    await asyncio.wait_for(callback_started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert worker.plugin_handler is None
+    assert handler in manager.plugin_handlers
+
+    launch.cancel()
+    await asyncio.gather(launch, return_exceptions=True)
+
+
+async def test_shared_registration_failure_does_not_clear_new_worker_handler(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding].shared_worker
+    assert worker is not None
+
+    class OldHandler:
+        pass
+
+    class NewHandler:
+        pass
+
+    old_handler = OldHandler()
+    new_handler = NewHandler()
+    worker.plugin_handler = new_handler
+    manager.plugin_handlers.extend([old_handler, new_handler])
+
+    await manager.remove_plugin_handler(old_handler)
+
+    assert worker.plugin_handler is new_handler
+    assert new_handler in manager.plugin_handlers
+
+
 async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_failure(
     tmp_path,
     monkeypatch,

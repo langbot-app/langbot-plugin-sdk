@@ -1997,7 +1997,6 @@ class PluginManager:
                 ):
                     await connection.close()
                     return
-                worker.plugin_handler = plugin_handler
                 self.plugin_handlers.append(plugin_handler)
                 try:
                     await plugin_handler.run()
