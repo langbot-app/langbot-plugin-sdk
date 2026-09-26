@@ -441,6 +441,7 @@ async def test_failed_sole_shared_slot_retries_with_registered_handler(
 
     context.control_handler = Control()
     handler = Handler()
+    worker.pending_plugin_handler = handler
     capability = manager._issue_registration_capability(
         plugin_author="tester",
         plugin_name="demo",
@@ -545,6 +546,7 @@ async def test_failed_shared_slot_retry_keeps_healthy_sibling_and_worker(
 
     context.control_handler = Control()
     handler = Handler()
+    worker.pending_plugin_handler = handler
     capability = manager._issue_registration_capability(
         plugin_author="tester",
         plugin_name="demo",
@@ -771,6 +773,7 @@ async def test_shared_worker_registration_attaches_all_slots_with_exact_settings
     context.control_handler = Control()
     handler = Handler()
     worker = manager.installation_runtimes[binding_a].shared_worker
+    worker.pending_plugin_handler = handler
     capability = manager._issue_registration_capability(
         plugin_author="tester",
         plugin_name="demo",
@@ -865,6 +868,7 @@ async def test_shared_registration_waits_for_validated_slot_before_running(
 
     context.control_handler = Control()
     handler = Handler()
+    worker.pending_plugin_handler = handler
     capability = manager._issue_registration_capability(
         plugin_author="tester",
         plugin_name="demo",
@@ -972,6 +976,7 @@ async def test_shared_registration_reports_mixed_slot_attach_results(
 
     context.control_handler = Control()
     handler = Handler()
+    worker.pending_plugin_handler = handler
     capability = manager._issue_registration_capability(
         plugin_author="tester",
         plugin_name="demo",
@@ -1063,6 +1068,7 @@ async def test_shared_slot_uninitialized_container_is_failed(tmp_path, monkeypat
 
     context.control_handler = Control()
     handler = Handler()
+    worker.pending_plugin_handler = handler
     capability = manager._issue_registration_capability(
         plugin_author="tester",
         plugin_name="demo",
@@ -2132,6 +2138,7 @@ async def test_shared_connection_does_not_claim_registration_before_capability_v
     await asyncio.sleep(0)
 
     assert worker.plugin_handler is None
+    assert worker.pending_plugin_handler is handler
     assert handler in manager.plugin_handlers
 
     launch.cancel()

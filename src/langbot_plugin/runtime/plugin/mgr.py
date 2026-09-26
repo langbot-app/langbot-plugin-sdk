@@ -149,6 +149,9 @@ class SharedPluginWorkerRuntime:
         default_factory=dict
     )
     plugin_handler: runtime_plugin_handler_cls.PluginConnectionHandler | None = None
+    pending_plugin_handler: (
+        runtime_plugin_handler_cls.PluginConnectionHandler | None
+    ) = None
     controller: Controller | None = None
     launch_task: asyncio.Task[None] | None = None
     transport_registered_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -1992,11 +1995,12 @@ class PluginManager:
                     ),
                 )
                 if (
-                    worker.plugin_handler is not None
-                    and worker.plugin_handler is not plugin_handler
+                    worker.pending_plugin_handler is not None
+                    or worker.plugin_handler is not None
                 ):
                     await connection.close()
                     return
+                worker.pending_plugin_handler = plugin_handler
                 self.plugin_handlers.append(plugin_handler)
                 try:
                     await plugin_handler.run()
@@ -2172,6 +2176,9 @@ class PluginManager:
         if handler in self.plugin_handlers:
             self.plugin_handlers.remove(handler)
         for worker in self._shared_workers.values():
+            if worker.pending_plugin_handler is handler:
+                worker.pending_plugin_handler = None
+                return
             if worker.plugin_handler is handler:
                 async with worker.lifecycle_lock:
                     if worker.plugin_handler is not handler:
@@ -2616,6 +2623,11 @@ class PluginManager:
                         registration.shared_pool_digest,
                         worker.slots,
                     )
+                    if worker.pending_plugin_handler is not handler:
+                        raise ValueError(
+                            "Shared plugin worker registration transport changed"
+                        )
+                    worker.pending_plugin_handler = None
                     worker.plugin_handler = handler
                     for slot_runtime in tuple(worker.slots.values()):
                         if (
