@@ -1257,6 +1257,138 @@ async def test_desired_state_does_not_reject_on_aggregate_worker_capacity(
     assert reconciled["applied"] == ["installation-a", "installation-b"]
 
 
+async def test_shared_worker_capacity_rejects_new_digest_but_reuses_existing(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    context.worker_policy = context.worker_policy.model_copy(update={"max_workers": 1})
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+
+    package_a = _package(body="VALUE = 1")
+    digest_a = hashlib.sha256(package_a).hexdigest()
+    binding_a = _binding("installation-a", digest_a, workspace_uuid="workspace-a")
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package_a,
+        enabled=False,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime_a = manager.installation_runtimes[binding_a]
+    runtime_a.dependency_environment = await _prepare_environment(
+        manager.dependency_environment_store,
+        runtime_a.artifact,
+    )
+    manager._attach_shared_worker(runtime_a)
+
+    binding_b = _binding("installation-b", digest_a, workspace_uuid="workspace-b")
+    await manager.apply_plugin_installation(
+        binding_b,
+        enabled=False,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime_b = manager.installation_runtimes[binding_b]
+    runtime_b.dependency_environment = runtime_a.dependency_environment
+    manager._attach_shared_worker(runtime_b)
+    assert runtime_a.shared_worker is runtime_b.shared_worker
+
+    package_c = _package(body="VALUE = 2")
+    digest_c = hashlib.sha256(package_c).hexdigest()
+    binding_c = _binding("installation-c", digest_c, workspace_uuid="workspace-c")
+    await manager.apply_plugin_installation(
+        binding_c,
+        artifact_package=package_c,
+        enabled=False,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime_c = manager.installation_runtimes[binding_c]
+    runtime_c.dependency_environment = await _prepare_environment(
+        manager.dependency_environment_store,
+        runtime_c.artifact,
+    )
+    with pytest.raises(RuntimeError, match="Shared plugin worker capacity reached"):
+        manager._attach_shared_worker(runtime_c)
+
+
+async def test_shared_worker_draining_reserves_capacity_and_same_digest_identity(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    context.worker_policy = context.worker_policy.model_copy(update={"max_workers": 1})
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        enabled=False,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime = manager.installation_runtimes[binding]
+    runtime.dependency_environment = await _prepare_environment(
+        manager.dependency_environment_store,
+        runtime.artifact,
+    )
+    manager._attach_shared_worker(runtime)
+    worker = runtime.shared_worker
+    assert worker is not None
+    cleanup_entered = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def blocked_stop(candidate):
+        assert candidate is worker
+        cleanup_entered.set()
+        await release_cleanup.wait()
+
+    monkeypatch.setattr(manager, "_stop_shared_worker", blocked_stop)
+    detach = asyncio.create_task(manager._detach_shared_worker_slot(runtime))
+    await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+
+    assert manager._shared_workers[digest] is worker
+    same_digest = manager_module.PluginInstallationRuntime(
+        binding=_binding("installation-b", digest, workspace_uuid="workspace-b"),
+        artifact=runtime.artifact,
+        paths=runtime.paths,
+        enabled=False,
+        dependency_environment=runtime.dependency_environment,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    manager._attach_shared_worker(same_digest)
+    assert same_digest.shared_worker is worker
+
+    other_package = _package(body="VALUE = 2")
+    other_digest = hashlib.sha256(other_package).hexdigest()
+    other_artifact = manager.artifact_store.install_package(
+        other_package, other_digest
+    )
+    other_runtime = manager_module.PluginInstallationRuntime(
+        binding=_binding(
+            "installation-c",
+            hashlib.sha256(other_package).hexdigest(),
+            workspace_uuid="workspace-c",
+        ),
+        artifact=other_artifact,
+        paths=manager.artifact_store.ensure_installation_paths(
+            _binding("installation-c", other_digest, workspace_uuid="workspace-c")
+        ),
+        enabled=False,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    other_runtime.dependency_environment = await _prepare_environment(
+        manager.dependency_environment_store,
+        other_runtime.artifact,
+    )
+    with pytest.raises(RuntimeError, match="Shared plugin worker capacity reached"):
+        manager._attach_shared_worker(other_runtime)
+
+    worker.slots.pop(same_digest.binding, None)
+    release_cleanup.set()
+    await detach
+    assert digest not in manager._shared_workers
+
+
 async def test_installation_lifecycle_runs_dependency_preparation_concurrently_bounded(
     tmp_path,
     monkeypatch,
