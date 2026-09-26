@@ -1608,12 +1608,14 @@ class PluginManager:
             return
         async with worker.lifecycle_lock:
             try:
-                async with asyncio.timeout(_SHARED_SLOT_ATTACH_TIMEOUT_SEC):
-                    await self._initialize_shared_slot_locked(
+                await asyncio.wait_for(
+                    self._initialize_shared_slot_locked(
                         runtime,
                         handler,
                         worker,
-                    )
+                    ),
+                    timeout=_SHARED_SLOT_ATTACH_TIMEOUT_SEC,
+                )
             except TimeoutError as exc:
                 raise TimeoutError(
                     "Shared plugin slot did not initialize within "
