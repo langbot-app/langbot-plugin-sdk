@@ -86,6 +86,7 @@ _PLUGIN_RESTART_INITIAL_DELAY_SEC = 1.0
 _PLUGIN_RESTART_MAX_DELAY_SEC = 60.0
 _PLUGIN_STABLE_WINDOW_SEC = 60.0
 _PLUGIN_READY_TIMEOUT_SEC = 30.0
+_SHARED_SLOT_ATTACH_TIMEOUT_SEC = 120.0
 _PLUGIN_WORKER_STOP_TIMEOUT_SEC = 5.0
 
 
@@ -1464,7 +1465,7 @@ class PluginManager:
         worker: SharedPluginWorkerRuntime,
         permit: RestartPermit,
     ) -> None:
-        """Run one digest worker with bounded registration readiness."""
+        """Run one digest worker with bounded transport registration."""
 
         worker.transport_registered_event.clear()
         worker.ready_event.clear()
@@ -1477,36 +1478,34 @@ class PluginManager:
                 timeout=_PLUGIN_READY_TIMEOUT_SEC,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if ready_task in done:
-                permit.mark_ready()
-                if not permit.is_half_open_probe:
+            if ready_task not in done:
+                if worker_task in done:
                     await worker_task
-                    if worker.slots:
-                        raise RuntimeError("Shared plugin worker exited")
-                    return
+                    raise RuntimeError(
+                        "Shared plugin worker exited before registration"
+                    )
+                raise TimeoutError(
+                    "Shared plugin worker did not register within "
+                    f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+                )
 
-                stable_task = asyncio.create_task(
-                    asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC)
-                )
-                done, _ = await asyncio.wait(
-                    {worker_task, stable_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if stable_task in done:
-                    await permit.mark_stable()
+            permit.mark_ready()
+            if not permit.is_half_open_probe:
                 await worker_task
                 if worker.slots:
                     raise RuntimeError("Shared plugin worker exited")
                 return
 
-            if worker_task in done:
-                await worker_task
-                raise RuntimeError("Shared plugin worker exited before ready")
-
-            raise TimeoutError(
-                "Shared plugin worker did not become ready within "
-                f"{_PLUGIN_READY_TIMEOUT_SEC:.0f} seconds"
+            stable_task = asyncio.create_task(asyncio.sleep(_PLUGIN_STABLE_WINDOW_SEC))
+            done, _ = await asyncio.wait(
+                {worker_task, stable_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if stable_task in done:
+                await permit.mark_stable()
+            await worker_task
+            if worker.slots:
+                raise RuntimeError("Shared plugin worker exited")
         finally:
             for task in (ready_task, stable_task):
                 if task is not None and not task.done():
@@ -1608,7 +1607,18 @@ class PluginManager:
         if worker is None:
             return
         async with worker.lifecycle_lock:
-            await self._initialize_shared_slot_locked(runtime, handler, worker)
+            try:
+                async with asyncio.timeout(_SHARED_SLOT_ATTACH_TIMEOUT_SEC):
+                    await self._initialize_shared_slot_locked(
+                        runtime,
+                        handler,
+                        worker,
+                    )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    "Shared plugin slot did not initialize within "
+                    f"{_SHARED_SLOT_ATTACH_TIMEOUT_SEC:.0f} seconds"
+                ) from exc
 
     async def _initialize_shared_slot_locked(
         self,
@@ -1644,7 +1654,11 @@ class PluginManager:
             and installation_uuid != runtime.binding.installation_uuid
         ):
             raise ValueError("LangBot plugin settings do not match shared slot binding")
-        await handler.initialize_plugin_slot(runtime.binding, plugin_settings)
+        await handler.initialize_plugin_slot(
+            runtime.binding,
+            plugin_settings,
+            timeout=None,
+        )
         if (
             runtime.shared_worker is not worker
             or worker.plugin_handler is not handler

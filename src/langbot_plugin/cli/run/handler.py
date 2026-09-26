@@ -157,6 +157,7 @@ class PluginRuntimeHandler(Handler):
         self.name = "FromRuntime"
         self._shutdown_task: asyncio.Task[None] | None = None
         self._slot_containers: dict[str, PluginContainer] = {}
+        self._slot_generations: dict[str, int] = {}
         self._slot_initialize_callback: (
             typing.Callable[
                 [InstallationBinding, dict[str, typing.Any]],
@@ -168,6 +169,7 @@ class PluginRuntimeHandler(Handler):
             typing.Callable[[str], typing.Coroutine[typing.Any, typing.Any, None]]
             | None
         ) = None
+        self._slot_cancel_callback: typing.Callable[[str], None] | None = None
 
         @self.action(RuntimeToPluginAction.INITIALIZE_PLUGIN)
         async def initialize_plugin(data: dict[str, typing.Any]) -> ActionResponse:
@@ -184,10 +186,33 @@ class PluginRuntimeHandler(Handler):
                 raise ValueError("Shared slot attach requires InstallationBinding")
             if self._slot_initialize_callback is None:
                 raise ValueError("Shared slot initialization is unavailable")
-            container = await self._slot_initialize_callback(
-                binding,
-                data["plugin_settings"],
-            )
+            slot_id = binding.installation_uuid
+            generation = self._slot_generations.get(slot_id, 0) + 1
+            self._slot_generations[slot_id] = generation
+
+            fenced = False
+
+            def cancel_slot_attach() -> None:
+                nonlocal fenced
+                if fenced:
+                    return
+                fenced = True
+                if self._slot_generations.get(slot_id) == generation:
+                    self._slot_generations[slot_id] = generation + 1
+                if self._slot_cancel_callback is not None:
+                    self._slot_cancel_callback(slot_id)
+
+            self.set_current_action_cancel_callback(cancel_slot_attach)
+            try:
+                container = await self._slot_initialize_callback(
+                    binding,
+                    data["plugin_settings"],
+                )
+            except asyncio.CancelledError:
+                cancel_slot_attach()
+                raise
+            if self._slot_generations.get(slot_id) != generation:
+                raise RuntimeError("Shared plugin slot attach was superseded")
             self._slot_containers[binding.installation_uuid] = container
             return ActionResponse.success({})
 
@@ -197,6 +222,8 @@ class PluginRuntimeHandler(Handler):
             binding = self.current_action_context
             if not isinstance(binding, InstallationBinding):
                 raise ValueError("Shared slot detach requires InstallationBinding")
+            slot_id = binding.installation_uuid
+            self._slot_generations[slot_id] = self._slot_generations.get(slot_id, 0) + 1
             if self._slot_detach_callback is not None:
                 await self._slot_detach_callback(binding.installation_uuid)
             self._slot_containers.pop(binding.installation_uuid, None)

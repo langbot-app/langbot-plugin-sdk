@@ -280,7 +280,63 @@ async def test_run_exposes_validated_context_to_action_and_rejects_mismatch():
 
 
 @pytest.mark.asyncio
-async def test_call_action_timeout_cleans_waiter():
+async def test_call_action_cancellation_cancels_peer_action():
+    class PairedConnection(Connection):
+        def __init__(self):
+            self.incoming = asyncio.Queue()
+            self.peer = None
+
+        async def send(self, message: str) -> None:
+            await self.peer.incoming.put(message)
+
+        async def receive(self) -> str:
+            return await self.incoming.get()
+
+        async def close(self) -> None:
+            pass
+
+    connection_a = PairedConnection()
+    connection_b = PairedConnection()
+    connection_a.peer = connection_b
+    connection_b.peer = connection_a
+    caller = Handler(connection_a)
+    peer = Handler(connection_b)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    @peer.action(CommonAction.PING)
+    async def hang(_data):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        return ActionResponse.success({})
+
+    caller_run = asyncio.create_task(caller.run())
+    peer_run = asyncio.create_task(peer.run())
+    call = asyncio.create_task(
+        caller.call_action(
+            CommonAction.PING,
+            {},
+            timeout=None,
+            cancel_peer_on_cancel=True,
+        )
+    )
+    await started.wait()
+    call.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert peer._action_tasks == set()
+    assert caller.resp_waiters == {}
+
+    caller_run.cancel()
+    peer_run.cancel()
+    await asyncio.gather(caller_run, peer_run, return_exceptions=True)
+
+
+async def test_action_timeout_clears_waiter():
     conn = QueueConnection()
     handler = Handler(conn)
 

@@ -430,7 +430,7 @@ async def test_failed_sole_shared_slot_retries_with_registered_handler(
         def set_shared_pool_bindings(self, shared_digest, bindings):
             pass
 
-        async def initialize_plugin_slot(self, candidate, settings):
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
             nonlocal attach_attempts
             attach_attempts += 1
             if attach_attempts == 1:
@@ -544,7 +544,7 @@ async def test_failed_shared_slot_retry_keeps_healthy_sibling_and_worker(
         def set_shared_pool_bindings(self, shared_digest, bindings):
             pass
 
-        async def initialize_plugin_slot(self, candidate, settings):
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
             nonlocal failed_once
             if candidate == binding_b and not failed_once:
                 failed_once = True
@@ -628,7 +628,7 @@ async def test_shared_slot_attach_is_joined_and_revalidated_after_settings_await
             return {"plugin_config": {}}
 
     class Handler:
-        async def initialize_plugin_slot(self, binding, settings):
+        async def initialize_plugin_slot(self, binding, settings, *, timeout=15.0):
             initialized.append(binding)
 
         def cancel_inflight_messages_for_context(self, binding):
@@ -769,7 +769,7 @@ async def test_shared_worker_registration_attaches_all_slots_with_exact_settings
             self.shared_digest = shared_digest
             self.bindings = set(bindings)
 
-        async def initialize_plugin_slot(self, binding, settings):
+        async def initialize_plugin_slot(self, binding, settings, *, timeout=15.0):
             self.attached.append((binding, settings))
 
         async def get_plugin_slot_container(self, binding):
@@ -867,7 +867,7 @@ async def test_shared_registration_waits_for_validated_slot_before_running(
         def set_shared_pool_bindings(self, digest, bindings):
             pass
 
-        async def initialize_plugin_slot(self, candidate, settings):
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
             pass
 
         async def get_plugin_slot_container(self, candidate):
@@ -976,7 +976,7 @@ async def test_shared_registration_reports_mixed_slot_attach_results(
         def set_shared_pool_bindings(self, digest, bindings):
             pass
 
-        async def initialize_plugin_slot(self, candidate, settings):
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
             if candidate == binding_b:
                 raise RuntimeError("slot config rejected")
 
@@ -1069,7 +1069,7 @@ async def test_shared_slot_uninitialized_container_is_failed(tmp_path, monkeypat
         def set_shared_pool_bindings(self, digest, bindings):
             pass
 
-        async def initialize_plugin_slot(self, candidate, settings):
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
             pass
 
         async def get_plugin_slot_container(self, candidate):
@@ -2251,7 +2251,181 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
     assert worker.controller is None
     assert manager.restart_coordinator.snapshot()["active_launches"] == 0
     assert manager.installation_runtimes[binding].state == "failed"
+    assert "did not register" in manager.installation_runtimes[binding].error_message
     await manager._stop_shared_worker(worker)
+
+
+async def test_shared_transport_registration_survives_slow_slot_attach(
+    tmp_path,
+    monkeypatch,
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding].shared_worker
+    assert worker is not None
+    release_worker = asyncio.Event()
+    permit_ready = asyncio.Event()
+
+    class Permit:
+        is_half_open_probe = False
+
+        def mark_ready(self):
+            permit_ready.set()
+
+    async def launch(_worker):
+        _worker.transport_registered_event.set()
+        await release_worker.wait()
+
+    monkeypatch.setattr(manager, "_launch_shared_worker", launch)
+    monkeypatch.setattr(manager_module, "_PLUGIN_READY_TIMEOUT_SEC", 0.01)
+    attempt = asyncio.create_task(manager._run_shared_worker_attempt(worker, Permit()))
+
+    await asyncio.wait_for(permit_ready.wait(), timeout=1)
+    await asyncio.sleep(0.02)
+    assert not attempt.done()
+    release_worker.set()
+    worker.slots.clear()
+    await attempt
+
+
+async def test_shared_slot_attach_disables_inner_rpc_timeout(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime = manager.installation_runtimes[binding]
+    worker = runtime.shared_worker
+    assert worker is not None
+    container = _initialized_container()
+    seen_timeout = object()
+
+    class Control:
+        async def call_action(self, action, data, *, action_context):
+            return {
+                "plugin_config": {},
+                "installation_uuid": action_context.installation_uuid,
+            }
+
+    class Handler:
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
+            nonlocal seen_timeout
+            seen_timeout = timeout
+
+        async def get_plugin_slot_container(self, candidate):
+            return container.model_dump()
+
+    context.control_handler = Control()
+    handler = Handler()
+    worker.plugin_handler = handler
+    await manager._initialize_shared_slot(runtime, handler)
+
+    assert seen_timeout is None
+    assert runtime.state == "running"
+
+
+async def test_hung_shared_slot_attach_times_out_and_unblocks_sibling_and_removal(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding_a = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding_a,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    await manager.apply_plugin_installation(
+        binding_b,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding_a].shared_worker
+    assert worker is not None
+    container = _initialized_container()
+    first_cancelled = asyncio.Event()
+
+    class Control:
+        async def call_action(self, action, data, *, action_context):
+            return {
+                "plugin_config": {},
+                "installation_uuid": action_context.installation_uuid,
+            }
+
+    class Handler:
+        async def initialize_plugin_slot(self, candidate, settings, *, timeout=15.0):
+            if candidate == binding_a:
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    first_cancelled.set()
+
+        async def get_plugin_slot_container(self, candidate):
+            return container.model_dump()
+
+        def cancel_inflight_messages_for_context(self, candidate):
+            pass
+
+        async def detach_plugin_slot(self, candidate):
+            pass
+
+        def set_shared_pool_bindings(self, digest, bindings):
+            pass
+
+    context.control_handler = Control()
+    handler = Handler()
+    worker.plugin_handler = handler
+    monkeypatch.setattr(manager_module, "_SHARED_SLOT_ATTACH_TIMEOUT_SEC", 0.01)
+    task_a = manager._schedule_shared_slot_attach(
+        manager.installation_runtimes[binding_a]
+    )
+    task_b = manager._schedule_shared_slot_attach(
+        manager.installation_runtimes[binding_b]
+    )
+    assert task_a is not None
+    assert task_b is not None
+
+    await asyncio.wait_for(asyncio.gather(task_a, task_b, return_exceptions=True), 1)
+    assert first_cancelled.is_set()
+    assert manager.installation_runtimes[binding_a].state == "failed"
+    assert manager.installation_runtimes[binding_b].state == "running"
+    await asyncio.wait_for(manager.remove_plugin_installation(binding_a), 1)
+    assert binding_a not in worker.slots
+    assert binding_b in worker.slots
 
 
 async def test_shared_worker_manager_restart_reattaches_every_current_slot(
