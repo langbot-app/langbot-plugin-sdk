@@ -1360,9 +1360,7 @@ async def test_shared_worker_draining_reserves_capacity_and_same_digest_identity
 
     other_package = _package(body="VALUE = 2")
     other_digest = hashlib.sha256(other_package).hexdigest()
-    other_artifact = manager.artifact_store.install_package(
-        other_package, other_digest
-    )
+    other_artifact = manager.artifact_store.install_package(other_package, other_digest)
     other_runtime = manager_module.PluginInstallationRuntime(
         binding=_binding(
             "installation-c",
