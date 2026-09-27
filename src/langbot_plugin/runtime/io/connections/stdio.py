@@ -13,6 +13,7 @@ from langbot_plugin.runtime.io.connection import (
 )
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.runtime.bounded_executor import run_blocking_with_backpressure
+from langbot_plugin.runtime.bounded_executor import run_transport_control_work
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,14 @@ class StdioConnection(connection.Connection):
         stdin: asyncio.StreamWriter,
         process: asyncio.subprocess.Process | None = None,
         chunk_size: int = 16 * 1024,  # 16KB chunks by default
+        *,
+        reserve_first_message_decode: bool = False,
     ):
         self.stdout = stdout
         self.stdin = stdin
         self.process = process
         self.chunk_size = chunk_size
+        self._first_message_control_available = reserve_first_message_decode
         self._send_lock = asyncio.Lock()  # 发送锁，防止并发发送冲突
 
         self._process_exit_task = None
@@ -165,6 +169,9 @@ class StdioConnection(connection.Connection):
                 if not line:
                     continue
 
+                use_control_join = self._first_message_control_available
+                self._first_message_control_available = False
+
                 # Try to parse as JSON to check for chunked messages
                 if line.startswith("{") and line.endswith("}"):
                     if self._is_valid_json(line):
@@ -220,10 +227,12 @@ class StdioConnection(connection.Connection):
                                                     "Incomplete runtime chunked message"
                                                 )
                                             # Reconstruct original message
-                                            return await run_blocking_with_backpressure(
-                                                "".join,
-                                                chunks,
+                                            join = (
+                                                run_transport_control_work
+                                                if use_control_join
+                                                else run_blocking_with_backpressure
                                             )
+                                            return await join("".join, chunks)
 
                                         # Yield control periodically
                                         if len(chunks) % 50 == 0:
