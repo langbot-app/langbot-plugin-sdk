@@ -248,6 +248,31 @@ async def test_stdio_unchunked_first_message_consumes_control_join(monkeypatch):
     assert ordinary_calls == [("".join, (["second"],))]
 
 
+async def test_stdio_stdout_noise_does_not_consume_control_join(monkeypatch):
+    lines = [
+        b"plugin import noise\n",
+        json.dumps({"type": "chunk_start", "total_size": 5}).encode() + b"\n",
+        json.dumps({"type": "chunk_data", "data": "first", "offset": 0}).encode()
+        + b"\n",
+        json.dumps({"type": "chunk_end"}).encode() + b"\n",
+    ]
+    control_calls = []
+
+    async def run_control(fn, *args):
+        control_calls.append((fn, args))
+        return fn(*args)
+
+    monkeypatch.setattr(stdio_module, "run_transport_control_work", run_control)
+    connection = StdioConnection(
+        FakeStreamReader(lines),
+        FakeStreamWriter(),
+        reserve_first_message_decode=True,
+    )
+
+    assert await connection.receive() == "first"
+    assert control_calls == [("".join, (["first"],))]
+
+
 async def test_stdio_connection_rejects_fragment_count_amplification(
     monkeypatch,
 ):

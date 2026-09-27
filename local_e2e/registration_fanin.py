@@ -32,6 +32,9 @@ class Manager:
 
 
 async def child() -> None:
+    if os.environ.get("REGISTRATION_FANIN_STDOUT_NOISE") == "1":
+        sys.stdout.write("plugin-import-noise\n")
+        sys.stdout.flush()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
     await asyncio.get_running_loop().connect_read_pipe(
@@ -104,6 +107,12 @@ async def parent() -> None:
     managers = []
     try:
         for _ in range(6):
+            child_env = {
+                **os.environ,
+                "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
+            }
+            if args.noise:
+                child_env["REGISTRATION_FANIN_STDOUT_NOISE"] = "1"
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 __file__,
@@ -111,10 +120,7 @@ async def parent() -> None:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={
-                    **os.environ,
-                    "PYTHONPATH": str(Path(__file__).parents[1] / "src"),
-                },
+                env=child_env,
             )
             assert process.stdout is not None and process.stdin is not None
             manager = Manager()
@@ -179,5 +185,6 @@ def _register_response(manager: Manager):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--child", action="store_true")
+    parser.add_argument("--noise", action="store_true")
     args = parser.parse_args()
     asyncio.run(child() if args.child else parent())
