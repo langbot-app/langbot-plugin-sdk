@@ -149,6 +149,105 @@ async def test_stdio_connection_reassembles_chunked_message():
     assert await connection.receive() == "hello world"
 
 
+async def test_stdio_chunk_reassembly_uses_transport_control_capacity(monkeypatch):
+    chunk_lines = [
+        {"type": "chunk_start", "total_size": 11},
+        {"type": "chunk_data", "data": "hello ", "offset": 0},
+        {"type": "chunk_data", "data": "world", "offset": 6},
+        {"type": "chunk_end"},
+    ]
+    reader = FakeStreamReader(
+        [json.dumps(chunk).encode() + b"\n" for chunk in chunk_lines]
+    )
+    calls = []
+
+    async def run_control(fn, *args):
+        calls.append((fn, args))
+        return fn(*args)
+
+    monkeypatch.setattr(stdio_module, "run_transport_control_work", run_control)
+    connection = StdioConnection(
+        reader,
+        FakeStreamWriter(),
+        reserve_first_message_decode=True,
+    )
+
+    assert await connection.receive() == "hello world"
+    assert calls == [("".join, (["hello ", "world"],))]
+
+
+async def test_stdio_only_first_chunked_message_uses_transport_control(monkeypatch):
+    messages = []
+    for text in ("first", "second"):
+        messages.extend(
+            [
+                {"type": "chunk_start", "total_size": len(text)},
+                {"type": "chunk_data", "data": text, "offset": 0},
+                {"type": "chunk_end"},
+            ]
+        )
+    reader = FakeStreamReader(
+        [json.dumps(chunk).encode() + b"\n" for chunk in messages]
+    )
+    control_calls = []
+    ordinary_calls = []
+
+    async def run_control(fn, *args):
+        control_calls.append((fn, args))
+        return fn(*args)
+
+    async def run_ordinary(fn, *args):
+        ordinary_calls.append((fn, args))
+        return fn(*args)
+
+    monkeypatch.setattr(stdio_module, "run_transport_control_work", run_control)
+    monkeypatch.setattr(
+        stdio_module,
+        "run_blocking_with_backpressure",
+        run_ordinary,
+    )
+    connection = StdioConnection(
+        reader,
+        FakeStreamWriter(),
+        reserve_first_message_decode=True,
+    )
+
+    assert await connection.receive() == "first"
+    assert await connection.receive() == "second"
+    assert control_calls == [("".join, (["first"],))]
+    assert ordinary_calls == [("".join, (["second"],))]
+
+
+async def test_stdio_unchunked_first_message_consumes_control_join(monkeypatch):
+    lines = [
+        b'{"action": "first"}\n',
+        json.dumps({"type": "chunk_start", "total_size": 6}).encode() + b"\n",
+        json.dumps({"type": "chunk_data", "data": "second", "offset": 0}).encode()
+        + b"\n",
+        json.dumps({"type": "chunk_end"}).encode() + b"\n",
+    ]
+    ordinary_calls = []
+
+    async def run_ordinary(fn, *args):
+        ordinary_calls.append((fn, args))
+        return fn(*args)
+
+    monkeypatch.setattr(
+        stdio_module,
+        "run_blocking_with_backpressure",
+        run_ordinary,
+    )
+    connection = StdioConnection(
+        FakeStreamReader(lines),
+        FakeStreamWriter(),
+        reserve_first_message_decode=True,
+    )
+
+    assert await connection.receive() == '{"action": "first"}'
+    assert await connection.receive() == "second"
+    assert ordinary_calls == [("".join, (["second"],))]
+
+
 async def test_stdio_connection_rejects_fragment_count_amplification(
     monkeypatch,
 ):

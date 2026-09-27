@@ -92,7 +92,10 @@ class StdioClientController(Controller):
             raise RuntimeError("Failed to create subprocess pipes")
 
         self.connection = stdio_connection.StdioConnection(
-            self.process.stdout, self.process.stdin, process=self.process
+            self.process.stdout,
+            self.process.stdin,
+            process=self.process,
+            reserve_first_message_decode=True,
         )
         try:
             await new_connection_callback(self.connection)
