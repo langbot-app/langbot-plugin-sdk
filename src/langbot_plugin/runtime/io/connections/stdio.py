@@ -13,7 +13,6 @@ from langbot_plugin.runtime.io.connection import (
 )
 from langbot_plugin.entities.io.errors import ConnectionClosedError
 from langbot_plugin.runtime.bounded_executor import run_blocking_with_backpressure
-from langbot_plugin.runtime.bounded_executor import run_transport_control_work
 
 logger = logging.getLogger(__name__)
 
@@ -227,13 +226,19 @@ class StdioConnection(connection.Connection):
                                                 raise ConnectionClosedError(
                                                     "Incomplete runtime chunked message"
                                                 )
-                                            # Reconstruct original message
-                                            join = (
-                                                run_transport_control_work
-                                                if use_control_join
-                                                else run_blocking_with_backpressure
+                                            # The first host-side frame is a
+                                            # bounded protocol registration.
+                                            # Join it inline so neither an
+                                            # exhausted ordinary pool nor a
+                                            # wedged control thread can block
+                                            # transport admission. Subsequent
+                                            # peer traffic stays off-loop.
+                                            if use_control_join:
+                                                return "".join(chunks)
+                                            return await run_blocking_with_backpressure(
+                                                "".join,
+                                                chunks,
                                             )
-                                            return await join("".join, chunks)
 
                                         # Yield control periodically
                                         if len(chunks) % 50 == 0:
