@@ -158,6 +158,23 @@ def _handler(debug_plugin=False, action_context=None, *, runtime_profile=None):
     return handler, manager, control_handler
 
 
+def test_reserved_decode_capacity_is_consumed_by_first_message_only():
+    handler, _manager, _control = _handler()
+
+    assert handler._uses_reserved_decode_capacity("not registration") is True
+    assert handler._uses_reserved_decode_capacity("still not registration") is False
+    assert handler._registration_codec_available is True
+
+
+def test_decoded_registration_can_retain_control_scope_after_first_decode():
+    handler, _manager, _control = _handler()
+    registration = {"action": PluginToRuntimeAction.REGISTER_PLUGIN.value}
+
+    assert handler._uses_reserved_decode_capacity("opaque registration payload") is True
+    assert handler._uses_reserved_action_capacity(registration) is True
+    assert handler._registration_codec_available is False
+
+
 async def test_bound_plugin_handler_accepts_legacy_api_call_without_context():
     """An installed SDK 0.4.x worker omits envelopes; host binding stays authoritative."""
 

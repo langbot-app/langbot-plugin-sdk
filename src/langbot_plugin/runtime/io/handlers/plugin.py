@@ -61,10 +61,12 @@ class PluginConnectionHandler(handler.Handler):
         return True
 
     def _uses_reserved_decode_capacity(self, message: str) -> bool:
-        if not self._registration_codec_available:
+        if super()._uses_reserved_decode_capacity(message):
+            return True
+        if not self._first_message_decode_available:
             return False
-        prefix = message[:256]
-        return prefix.lstrip().startswith("{") and "register" in prefix
+        self._first_message_decode_available = False
+        return True
 
     context: context_module.RuntimeContext
 
@@ -116,6 +118,7 @@ class PluginConnectionHandler(handler.Handler):
         self.debug_plugin = debug_plugin
         self.debug_auth_token = None
         self._registration_codec_available = True
+        self._first_message_decode_available = True
         self.stdio_process = stdio_process
         self.shared_pool_digest: str | None = None
         self._shared_pool_bindings: set[InstallationBinding] = set()
