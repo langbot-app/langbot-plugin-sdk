@@ -1372,6 +1372,11 @@ class PluginManager:
         digest = runtime.artifact.digest
         worker = self._shared_workers.get(digest)
         if worker is None:
+            policy = self.context.worker_policy
+            if policy is None:
+                raise ValueError("Plugin worker policy is unavailable")
+            if len(self._shared_workers) >= policy.max_workers:
+                raise RuntimeError("Shared plugin worker capacity reached")
             worker = SharedPluginWorkerRuntime(
                 artifact=runtime.artifact,
                 dependency_environment=dependency_environment,
@@ -1607,8 +1612,8 @@ class PluginManager:
         worker = runtime.shared_worker
         if worker is None:
             return
-        async with worker.lifecycle_lock:
-            try:
+        try:
+            async with worker.lifecycle_lock:
                 await asyncio.wait_for(
                     self._initialize_shared_slot_locked(
                         runtime,
@@ -1617,11 +1622,11 @@ class PluginManager:
                     ),
                     timeout=_SHARED_SLOT_ATTACH_TIMEOUT_SEC,
                 )
-            except TimeoutError as exc:
-                raise TimeoutError(
-                    "Shared plugin slot did not initialize within "
-                    f"{_SHARED_SLOT_ATTACH_TIMEOUT_SEC:.0f} seconds"
-                ) from exc
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "Shared plugin slot did not initialize within "
+                f"{_SHARED_SLOT_ATTACH_TIMEOUT_SEC:.0f} seconds"
+            ) from exc
 
     async def _initialize_shared_slot_locked(
         self,
@@ -1728,9 +1733,13 @@ class PluginManager:
             self._refresh_shared_worker_ready(worker)
             empty = not worker.slots
             if empty:
-                self._shared_workers.pop(worker.artifact.digest, None)
-        if empty:
-            await self._stop_shared_worker(worker)
+                await self._stop_shared_worker(worker)
+                if worker.slots:
+                    self._schedule_shared_worker(worker)
+                else:
+                    current = self._shared_workers.get(worker.artifact.digest)
+                    if current is worker:
+                        self._shared_workers.pop(worker.artifact.digest, None)
 
     async def _stop_shared_worker(self, worker: SharedPluginWorkerRuntime) -> None:
         handler = worker.plugin_handler
