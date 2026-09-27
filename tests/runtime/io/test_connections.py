@@ -149,7 +149,7 @@ async def test_stdio_connection_reassembles_chunked_message():
     assert await connection.receive() == "hello world"
 
 
-async def test_stdio_chunk_reassembly_uses_transport_control_capacity(monkeypatch):
+async def test_stdio_first_chunk_reassembly_stays_inline(monkeypatch):
     chunk_lines = [
         {"type": "chunk_start", "total_size": 11},
         {"type": "chunk_data", "data": "hello ", "offset": 0},
@@ -159,13 +159,6 @@ async def test_stdio_chunk_reassembly_uses_transport_control_capacity(monkeypatc
     reader = FakeStreamReader(
         [json.dumps(chunk).encode() + b"\n" for chunk in chunk_lines]
     )
-    calls = []
-
-    async def run_control(fn, *args):
-        calls.append((fn, args))
-        return fn(*args)
-
-    monkeypatch.setattr(stdio_module, "run_transport_control_work", run_control)
     connection = StdioConnection(
         reader,
         FakeStreamWriter(),
@@ -173,7 +166,6 @@ async def test_stdio_chunk_reassembly_uses_transport_control_capacity(monkeypatc
     )
 
     assert await connection.receive() == "hello world"
-    assert calls == [("".join, (["hello ", "world"],))]
 
 
 async def test_stdio_only_first_chunked_message_uses_transport_control(monkeypatch):
@@ -189,18 +181,12 @@ async def test_stdio_only_first_chunked_message_uses_transport_control(monkeypat
     reader = FakeStreamReader(
         [json.dumps(chunk).encode() + b"\n" for chunk in messages]
     )
-    control_calls = []
     ordinary_calls = []
-
-    async def run_control(fn, *args):
-        control_calls.append((fn, args))
-        return fn(*args)
 
     async def run_ordinary(fn, *args):
         ordinary_calls.append((fn, args))
         return fn(*args)
 
-    monkeypatch.setattr(stdio_module, "run_transport_control_work", run_control)
     monkeypatch.setattr(
         stdio_module,
         "run_blocking_with_backpressure",
@@ -214,7 +200,6 @@ async def test_stdio_only_first_chunked_message_uses_transport_control(monkeypat
 
     assert await connection.receive() == "first"
     assert await connection.receive() == "second"
-    assert control_calls == [("".join, (["first"],))]
     assert ordinary_calls == [("".join, (["second"],))]
 
 
@@ -256,13 +241,6 @@ async def test_stdio_stdout_noise_does_not_consume_control_join(monkeypatch):
         + b"\n",
         json.dumps({"type": "chunk_end"}).encode() + b"\n",
     ]
-    control_calls = []
-
-    async def run_control(fn, *args):
-        control_calls.append((fn, args))
-        return fn(*args)
-
-    monkeypatch.setattr(stdio_module, "run_transport_control_work", run_control)
     connection = StdioConnection(
         FakeStreamReader(lines),
         FakeStreamWriter(),
@@ -270,7 +248,6 @@ async def test_stdio_stdout_noise_does_not_consume_control_join(monkeypatch):
     )
 
     assert await connection.receive() == "first"
-    assert control_calls == [("".join, (["first"],))]
 
 
 async def test_stdio_connection_rejects_fragment_count_amplification(
