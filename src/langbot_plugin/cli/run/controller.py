@@ -257,6 +257,7 @@ class PluginRuntimeController:
 
                 if self._stdio:
                     controller = stdio_controller_server.StdioServerController()
+                    controller.reserve_first_message_send = self.prod_mode
                 else:
                     if self.prod_mode:
                         registration_capability = validate_runtime_secret(

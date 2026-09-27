@@ -113,6 +113,34 @@ async def test_stdio_connection_sends_large_message_as_json_chunks():
     assert payloads[4] == {"type": "chunk_end"}
 
 
+async def test_stdio_only_first_send_can_bypass_blocking_executor(monkeypatch):
+    writer = FakeStreamWriter()
+    calls = []
+
+    async def run_ordinary(fn, *args):
+        calls.append((fn, args))
+        return fn(*args)
+
+    monkeypatch.setattr(
+        stdio_module,
+        "run_blocking_with_backpressure",
+        run_ordinary,
+    )
+    connection = StdioConnection(
+        FakeStreamReader([]),
+        writer,
+        chunk_size=4,
+        reserve_first_message_send=True,
+    )
+
+    await connection.send("abcdefghi")
+    assert calls == []
+    await connection.send("second")
+    assert len(calls) == 2
+    assert getattr(calls[0][0], "__self__", None) == "second"
+    assert calls[1][0] is split_utf8_chunks
+
+
 async def test_stdio_connection_rejects_excessive_outbound_fragment_count(
     monkeypatch,
 ):

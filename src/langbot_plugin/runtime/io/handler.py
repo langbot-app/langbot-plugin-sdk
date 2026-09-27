@@ -607,6 +607,17 @@ class Handler(abc.ABC):
     ) -> None:
         """Keep serialization and transport chunking in one tenant scope."""
 
+        inline = bool(getattr(self.conn, "_first_message_send_inline", False))
+        if inline:
+            # Production stdio plugin workers must be able to emit their
+            # launch-scoped registration even when their bounded executor is
+            # occupied by imports. The connection consumes the same one-shot
+            # flag when it writes the encoded frame.
+            encoded = json.dumps(
+                payload.model_dump() if hasattr(payload, "model_dump") else payload
+            )
+            await self.conn.send(encoded)
+            return
         with blocking_work_scope(
             blocking_scope or self._message_blocking_scope(action_context),
         ):

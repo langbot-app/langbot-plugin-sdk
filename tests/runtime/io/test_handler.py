@@ -75,6 +75,29 @@ async def _wait_for_sent(conn: QueueConnection, count: int = 1) -> list[dict]:
 
 
 @pytest.mark.asyncio
+async def test_first_inline_send_bypasses_handler_encoder(monkeypatch):
+    conn = QueueConnection()
+    setattr(conn, "_first_message_send_inline", True)
+    handler = Handler(conn)
+
+    async def blocked_encode(*args, **kwargs):
+        raise AssertionError("ordinary encoder must not run")
+
+    monkeypatch.setattr(handler, "_encode_message", blocked_encode)
+    task = asyncio.create_task(
+        handler.call_action(SampleAction.ECHO, {"message": "hello"}, timeout=1)
+    )
+    [request] = await _wait_for_sent(conn)
+    handler.resp_waiters[request["seq_id"]].set_result(
+        ActionResponse(
+            seq_id=request["seq_id"], code=0, message="ok", data={"ok": True}
+        )
+    )
+
+    assert await task == {"ok": True}
+
+
+@pytest.mark.asyncio
 async def test_call_action_sends_request_and_returns_response_data():
     conn = QueueConnection()
     handler = Handler(conn)
