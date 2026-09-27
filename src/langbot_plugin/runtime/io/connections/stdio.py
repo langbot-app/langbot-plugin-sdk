@@ -30,12 +30,14 @@ class StdioConnection(connection.Connection):
         chunk_size: int = 16 * 1024,  # 16KB chunks by default
         *,
         reserve_first_message_decode: bool = False,
+        reserve_first_message_send: bool = False,
     ):
         self.stdout = stdout
         self.stdin = stdin
         self.process = process
         self.chunk_size = chunk_size
         self._first_message_control_available = reserve_first_message_decode
+        self._first_message_send_inline = reserve_first_message_send
         self._send_lock = asyncio.Lock()  # 发送锁，防止并发发送冲突
 
         self._process_exit_task = None
@@ -43,10 +45,15 @@ class StdioConnection(connection.Connection):
     async def send(self, message: str) -> None:
         """Send message with chunking support for large data."""
         async with self._send_lock:  # 确保同一时间只有一个send操作
-            message_bytes = await run_blocking_with_backpressure(
-                message.encode,
-                "utf-8",
-            )
+            inline = self._first_message_send_inline
+            self._first_message_send_inline = False
+            if inline:
+                message_bytes = message.encode("utf-8")
+            else:
+                message_bytes = await run_blocking_with_backpressure(
+                    message.encode,
+                    "utf-8",
+                )
             message_size = len(message_bytes)
             if message_size > MAX_MESSAGE_BYTES:
                 raise ValueError(
@@ -69,11 +76,14 @@ class StdioConnection(connection.Connection):
             # For large messages, send in chunks
             try:
                 del message_bytes
-                chunks = await run_blocking_with_backpressure(
-                    split_utf8_chunks,
-                    message,
-                    self.chunk_size,
-                )
+                if inline:
+                    chunks = split_utf8_chunks(message, self.chunk_size)
+                else:
+                    chunks = await run_blocking_with_backpressure(
+                        split_utf8_chunks,
+                        message,
+                        self.chunk_size,
+                    )
                 # Send start marker for chunked message
                 chunk_header = json.dumps(
                     {"type": "chunk_start", "total_size": message_size}

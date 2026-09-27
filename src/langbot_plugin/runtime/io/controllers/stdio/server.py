@@ -86,11 +86,18 @@ async def connect_stdin_stdout(limit=_DEFAULT_LIMIT, loop=None):
 
 
 class StdioServerController(Controller):
+    def __init__(self, *, reserve_first_message_send: bool = False) -> None:
+        self.reserve_first_message_send = reserve_first_message_send
+
     async def run(
         self,
         new_connection_callback: Callable[[Connection], Coroutine[Any, Any, None]],
     ):
         stdin_reader, stdout_writer = await connect_stdin_stdout()
 
-        connection = stdio_connection.StdioConnection(stdin_reader, stdout_writer)
+        connection = stdio_connection.StdioConnection(
+            stdin_reader,
+            stdout_writer,
+            reserve_first_message_send=self.reserve_first_message_send,
+        )
         await new_connection_callback(connection)
