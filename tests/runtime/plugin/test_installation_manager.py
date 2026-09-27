@@ -500,6 +500,107 @@ async def test_failed_sole_shared_slot_retries_with_registered_handler(
     assert worker.ready_event.is_set()
 
 
+async def test_shared_registration_does_not_wait_for_slot_lifecycle_lock(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-lock", digest, workspace_uuid="workspace-lock")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime = manager.installation_runtimes[binding]
+    worker = runtime.shared_worker
+    assert worker is not None
+    handler = mock.Mock()
+    handler.set_shared_pool_bindings = mock.Mock()
+    worker.registration_generation = 1
+    handler.shared_registration_generation = 1
+    worker.pending_plugin_handler = handler
+    capability = manager._issue_registration_capability(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path=str(worker.artifact.code_path),
+        binding=binding,
+        shared_pool_digest=digest,
+    )
+
+    await worker.lifecycle_lock.acquire()
+    try:
+        await asyncio.wait_for(
+            manager.register_plugin(
+                handler,
+                _initialized_container().model_dump(),
+                registration_capability=capability,
+            ),
+            timeout=0.1,
+        )
+    finally:
+        worker.lifecycle_lock.release()
+
+    assert worker.plugin_handler is handler
+    assert worker.transport_registered_event.is_set()
+
+
+async def test_shared_registration_rejects_last_slot_draining_race(
+    tmp_path,
+    monkeypatch,
+):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-drain", digest, workspace_uuid="workspace-drain")
+    monkeypatch.setattr(
+        manager.worker_launcher,
+        "prepare_dependency_environment",
+        _prepare_environment,
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    runtime = manager.installation_runtimes[binding]
+    worker = runtime.shared_worker
+    assert worker is not None
+    handler = mock.Mock()
+    handler.set_shared_pool_bindings = mock.Mock()
+    worker.registration_generation = 7
+    handler.shared_registration_generation = 7
+    worker.pending_plugin_handler = handler
+    capability = manager._issue_registration_capability(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path=str(worker.artifact.code_path),
+        binding=binding,
+        shared_pool_digest=digest,
+    )
+
+    worker.draining = True
+    worker.registration_generation += 1
+    worker.slots.pop(binding)
+    with pytest.raises(ValueError, match="registration generation changed"):
+        await manager.register_plugin(
+            handler,
+            _initialized_container().model_dump(),
+            registration_capability=capability,
+        )
+
+    assert worker.plugin_handler is None
+    assert not worker.transport_registered_event.is_set()
+
+
 async def test_failed_shared_slot_retry_keeps_healthy_sibling_and_worker(
     tmp_path,
     monkeypatch,

@@ -159,6 +159,8 @@ class SharedPluginWorkerRuntime:
     transport_registered_event: asyncio.Event = field(default_factory=asyncio.Event)
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    registration_generation: int = 0
+    draining: bool = False
     attach_tasks: dict[InstallationBinding, asyncio.Task[None]] = field(
         default_factory=dict
     )
@@ -1718,6 +1720,9 @@ class PluginManager:
         if worker is None:
             return
         async with worker.lifecycle_lock:
+            if len(worker.slots) == 1 and runtime.binding in worker.slots:
+                worker.draining = True
+                worker.registration_generation += 1
             handler = worker.plugin_handler
             if handler is not None:
                 handler.cancel_inflight_messages_for_context(runtime.binding)
@@ -1735,6 +1740,7 @@ class PluginManager:
             if empty:
                 await self._stop_shared_worker(worker)
                 if worker.slots:
+                    worker.draining = False
                     self._schedule_shared_worker(worker)
                 else:
                     current = self._shared_workers.get(worker.artifact.digest)
@@ -1987,6 +1993,9 @@ class PluginManager:
                 raise ValueError("Shared plugin slot binding is no longer current")
 
         representative = next(iter(worker.slots.values()))
+        worker.registration_generation += 1
+        launch_generation = worker.registration_generation
+        worker.draining = False
         capability = self._issue_registration_capability(
             plugin_author=worker.artifact.plugin_author,
             plugin_name=worker.artifact.plugin_name,
@@ -2008,7 +2017,11 @@ class PluginManager:
 
             async def new_plugin_connection_callback(connection: Connection):
                 if (
-                    worker.pending_plugin_handler is not None
+                    worker.draining
+                    or worker.registration_generation != launch_generation
+                    or not worker.slots
+                    or self._shared_workers.get(worker.artifact.digest) is not worker
+                    or worker.pending_plugin_handler is not None
                     or worker.plugin_handler is not None
                 ):
                     await connection.close()
@@ -2037,6 +2050,7 @@ class PluginManager:
                         self.context.worker_policy.max_file_size_mb * 1024 * 1024
                     ),
                 )
+                plugin_handler.shared_registration_generation = launch_generation
                 worker.pending_plugin_handler = plugin_handler
                 self.plugin_handlers.append(plugin_handler)
                 try:
@@ -2650,33 +2664,48 @@ class PluginManager:
                     raise ValueError(
                         "Shared plugin worker desired state is unavailable"
                     )
-                attach_runtimes: list[PluginInstallationRuntime] = []
-                async with worker.lifecycle_lock:
-                    if (
-                        self._shared_workers.get(registration.shared_pool_digest)
-                        is not worker
-                    ):
-                        raise ValueError("Shared plugin worker desired state changed")
-                    handler.set_shared_pool_bindings(
-                        registration.shared_pool_digest,
-                        worker.slots,
+                if (
+                    self._shared_workers.get(registration.shared_pool_digest)
+                    is not worker
+                ):
+                    raise ValueError("Shared plugin worker desired state changed")
+                if (
+                    worker.draining
+                    or not worker.slots
+                    or getattr(
+                        handler,
+                        "shared_registration_generation",
+                        worker.registration_generation,
                     )
-                    if worker.pending_plugin_handler is not handler:
-                        raise ValueError(
-                            "Shared plugin worker registration transport changed"
+                    != worker.registration_generation
+                ):
+                    raise ValueError(
+                        "Shared plugin worker registration generation changed"
+                    )
+                handler.set_shared_pool_bindings(
+                    registration.shared_pool_digest,
+                    worker.slots,
+                )
+                if worker.pending_plugin_handler is not handler:
+                    raise ValueError(
+                        "Shared plugin worker registration transport changed"
+                    )
+                # Registration is the fence that releases the launch attempt.
+                # It must not wait behind slow slot lifecycle work: attach tasks
+                # take the lifecycle lock separately and revalidate identity.
+                worker.pending_plugin_handler = None
+                worker.plugin_handler = handler
+                attach_runtimes = []
+                for slot_runtime in tuple(worker.slots.values()):
+                    if (
+                        slot_runtime.shared_worker is worker
+                        and self.context.is_current_installation_binding(
+                            slot_runtime.binding
                         )
-                    worker.pending_plugin_handler = None
-                    worker.plugin_handler = handler
-                    for slot_runtime in tuple(worker.slots.values()):
-                        if (
-                            slot_runtime.shared_worker is worker
-                            and self.context.is_current_installation_binding(
-                                slot_runtime.binding
-                            )
-                        ):
-                            slot_runtime.plugin_handler = handler
-                            attach_runtimes.append(slot_runtime)
-                    worker.transport_registered_event.set()
+                    ):
+                        slot_runtime.plugin_handler = handler
+                        attach_runtimes.append(slot_runtime)
+                worker.transport_registered_event.set()
                 for slot_runtime in attach_runtimes:
                     self._schedule_shared_slot_attach(slot_runtime)
                 self._refresh_shared_worker_ready(worker)
