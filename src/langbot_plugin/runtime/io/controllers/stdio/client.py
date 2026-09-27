@@ -96,6 +96,7 @@ class StdioClientController(Controller):
             self.process.stdin,
             process=self.process,
             reserve_first_message_decode=True,
+            reserve_first_message_send=True,
         )
         try:
             await new_connection_callback(self.connection)

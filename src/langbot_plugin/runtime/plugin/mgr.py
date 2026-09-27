@@ -2049,6 +2049,7 @@ class PluginManager:
                     max_file_bytes=(
                         self.context.worker_policy.max_file_size_mb * 1024 * 1024
                     ),
+                    certified_shared_stdio=True,
                 )
                 plugin_handler.shared_registration_generation = launch_generation
                 worker.pending_plugin_handler = plugin_handler

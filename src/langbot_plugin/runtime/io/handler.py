@@ -19,6 +19,7 @@ import base64
 import uuid
 import contextlib
 import contextvars
+import concurrent.futures
 import re
 import logging
 import stat
@@ -63,6 +64,7 @@ MAX_RESERVED_ACTIONS = 4
 MAX_STREAM_QUEUE_SIZE = 128
 MAX_ACTIVE_FILE_TRANSFERS = 128
 MAX_PROTOCOL_ERROR_CHARS = 4096
+MAX_INLINE_REGISTRATION_BYTES = 16 * 1024 * 1024
 _SAFE_FILE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 _SAFE_FILE_EXTENSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 _TRANSFER_CAPABILITY_PATTERN = re.compile(
@@ -427,6 +429,9 @@ class Handler(abc.ABC):
             f"{self.__class__.__name__}_{id(self)}_action_context",
             default=None,
         )
+        self._registration_codec_executor: (
+            concurrent.futures.ThreadPoolExecutor | None
+        ) = None
 
         if file_storage_dir is None:
             runtime_profile = os.environ.get(PLUGIN_RUNTIME_PROFILE_ENV, "oss_dev")
@@ -681,13 +686,30 @@ class Handler(abc.ABC):
 
                 control_candidate = self._uses_reserved_decode_capacity(message)
                 try:
-                    req_data = await self._decode_message(
-                        message,
-                        blocking_scope=(
-                            TRANSPORT_CONTROL_SCOPE if control_candidate else None
-                        ),
-                    )
-                except (json.JSONDecodeError, TypeError) as exc:
+                    if control_candidate:
+                        # Certified shared stdio registration must not depend on
+                        # either the ordinary or transport-control pool. Preserve
+                        # the existing 16 MiB wire contract while isolating its
+                        # one-shot codec work from the event loop.
+                        if len(message.encode("utf-8")) > MAX_INLINE_REGISTRATION_BYTES:
+                            raise ValueError(
+                                "Registration frame exceeds inline size limit"
+                            )
+                        if self._registration_codec_executor is None:
+                            self._registration_codec_executor = (
+                                concurrent.futures.ThreadPoolExecutor(
+                                    max_workers=1,
+                                    thread_name_prefix="plugin-registration-codec",
+                                )
+                            )
+                        req_data = await asyncio.get_running_loop().run_in_executor(
+                            self._registration_codec_executor,
+                            json.loads,
+                            message,
+                        )
+                    else:
+                        req_data = await self._decode_message(message)
+                except (json.JSONDecodeError, TypeError, ValueError) as exc:
                     logger.warning("Ignored malformed runtime message: %s", exc)
                     continue
                 if not isinstance(req_data, dict):
@@ -741,6 +763,12 @@ class Handler(abc.ABC):
                     self._active_tasks.add(task)
                     task.add_done_callback(self._active_tasks.discard)
         finally:
+            if self._registration_codec_executor is not None:
+                self._registration_codec_executor.shutdown(
+                    wait=False,
+                    cancel_futures=True,
+                )
+                self._registration_codec_executor = None
             self._begin_file_transfer_close()
             self._close_error = disconnect_error
             self._fail_pending(disconnect_error)
@@ -812,10 +840,10 @@ class Handler(abc.ABC):
         action_name = str(req_data.get("action", ""))
         context_token = None
         try:
-            request = await self._validate_message_model(
-                ActionRequest,
-                req_data,
-                blocking_scope=control_scope,
+            request = (
+                ActionRequest.model_validate(req_data)
+                if control_scope == TRANSPORT_CONTROL_SCOPE
+                else await self._validate_message_model(ActionRequest, req_data)
             )
             action_name = request.action
             if action_name not in self.actions:
@@ -839,10 +867,11 @@ class Handler(abc.ABC):
                     if isinstance(response, Coroutine):
                         response = await response
                     response.seq_id = seq_id
-                    await self._send_message(
-                        response,
-                        blocking_scope=control_scope,
-                    )
+                    if control_scope == TRANSPORT_CONTROL_SCOPE:
+                        encoded = json.dumps(response.model_dump())
+                        await self.conn.send(encoded)
+                    else:
+                        await self._send_message(response)
                 else:
                     async for chunk in response:
                         assert isinstance(chunk, ActionResponse)
@@ -862,18 +891,23 @@ class Handler(abc.ABC):
                 action_name or "<unknown>",
                 exc.__class__.__name__,
             )
-            error_response = ActionResponse.error(
-                await self._format_protocol_error(
-                    exc,
-                    blocking_scope=control_scope,
-                )
-            )
+            if control_scope == TRANSPORT_CONTROL_SCOPE:
+                message = str(exc)
+                if len(message) > MAX_PROTOCOL_ERROR_CHARS:
+                    message = (
+                        message[:MAX_PROTOCOL_ERROR_CHARS]
+                        + "... [protocol error truncated]"
+                    )
+                protocol_error = f"{exc.__class__.__name__}: {message}"
+            else:
+                protocol_error = await self._format_protocol_error(exc)
+            error_response = ActionResponse.error(protocol_error)
             error_response.seq_id = seq_id
             with contextlib.suppress(ConnectionClosedError):
-                await self._send_message(
-                    error_response,
-                    blocking_scope=control_scope,
-                )
+                if control_scope == TRANSPORT_CONTROL_SCOPE:
+                    await self.conn.send(json.dumps(error_response.model_dump()))
+                else:
+                    await self._send_message(error_response)
         finally:
             if context_token is not None:
                 self._current_action_context.reset(context_token)
