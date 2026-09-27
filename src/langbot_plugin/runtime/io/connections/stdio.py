@@ -169,9 +169,6 @@ class StdioConnection(connection.Connection):
                 if not line:
                     continue
 
-                use_control_join = self._first_message_control_available
-                self._first_message_control_available = False
-
                 # Try to parse as JSON to check for chunked messages
                 if line.startswith("{") and line.endswith("}"):
                     if self._is_valid_json(line):
@@ -181,6 +178,10 @@ class StdioConnection(connection.Connection):
                             # Handle chunked messages
                             if isinstance(msg_data, dict) and "type" in msg_data:
                                 if msg_data["type"] == "chunk_start":
+                                    use_control_join = (
+                                        self._first_message_control_available
+                                    )
+                                    self._first_message_control_available = False
                                     # Start receiving chunked message
                                     chunks = []
                                     total_size = int(msg_data.get("total_size", -1))
@@ -244,15 +245,19 @@ class StdioConnection(connection.Connection):
                                     "chunk_data",
                                     "chunk_end",
                                 ]:
+                                    self._first_message_control_available = False
                                     return line
                             else:
                                 # Regular JSON message
+                                self._first_message_control_available = False
                                 return line
                         except (json.JSONDecodeError, KeyError):
                             # If JSON parsing fails, treat as regular message
+                            self._first_message_control_available = False
                             return line
                     else:
                         # Not valid JSON, but looks like JSON format
+                        self._first_message_control_available = False
                         return line
 
         except Exception as e:
