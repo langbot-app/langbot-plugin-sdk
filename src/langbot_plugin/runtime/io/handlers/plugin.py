@@ -121,6 +121,7 @@ class PluginConnectionHandler(handler.Handler):
         self._first_message_decode_available = True
         self.stdio_process = stdio_process
         self.shared_pool_digest: str | None = None
+        self.shared_registration_generation: int | None = None
         self._shared_pool_bindings: set[InstallationBinding] = set()
         runtime_binding = getattr(self.context, "workspace_binding", None)
         if runtime_binding is not None and not hasattr(self.context, "runtime_profile"):
