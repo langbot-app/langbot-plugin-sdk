@@ -144,8 +144,10 @@ async def parent() -> None:
                     process.stdin,
                     process=process,
                     reserve_first_message_decode=True,
+                    reserve_first_message_send=True,
                 ),
                 context,
+                certified_shared_stdio=True,
             )
             # Isolate codec admission from manager ownership details.
             handler.actions[PluginToRuntimeAction.REGISTER_PLUGIN.value] = (

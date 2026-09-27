@@ -20,7 +20,11 @@ from langbot_plugin.entities.io.resp import ActionResponse, ChunkStatus
 from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io import handler as handler_module
-from langbot_plugin.runtime.io.handler import FILE_CHUNK_LENGTH, Handler
+from langbot_plugin.runtime.io.handler import (
+    FILE_CHUNK_LENGTH,
+    MAX_INLINE_REGISTRATION_BYTES,
+    Handler,
+)
 from langbot_plugin.runtime.security import (
     PLUGIN_FILE_STORAGE_DIR_ENV,
     PLUGIN_RUNTIME_PROFILE_ENV,
@@ -95,6 +99,32 @@ async def test_first_inline_send_bypasses_handler_encoder(monkeypatch):
     )
 
     assert await task == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_first_inline_receive_rejects_oversized_frame_before_json_decode(
+    monkeypatch,
+):
+    conn = QueueConnection()
+    handler = Handler(conn)
+    monkeypatch.setattr(handler, "_uses_reserved_decode_capacity", lambda message: True)
+    monkeypatch.setattr(
+        handler, "_uses_reserved_action_capacity", lambda req_data: True
+    )
+    decoded = False
+
+    def forbidden_decode(_message):
+        nonlocal decoded
+        decoded = True
+        raise AssertionError("oversized frame must be rejected before JSON decoding")
+
+    monkeypatch.setattr(handler_module.json, "loads", forbidden_decode)
+    await conn.incoming.put(" " * (MAX_INLINE_REGISTRATION_BYTES + 1))
+    await conn.incoming.put(ConnectionClosedError("done"))
+
+    await handler.run()
+
+    assert decoded is False
 
 
 @pytest.mark.asyncio

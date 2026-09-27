@@ -160,6 +160,7 @@ def _handler(debug_plugin=False, action_context=None, *, runtime_profile=None):
 
 def test_reserved_decode_capacity_is_consumed_by_first_message_only():
     handler, _manager, _control = _handler()
+    handler._certified_shared_stdio = True
 
     assert handler._uses_reserved_decode_capacity("not registration") is True
     assert handler._uses_reserved_decode_capacity("still not registration") is False
@@ -168,6 +169,7 @@ def test_reserved_decode_capacity_is_consumed_by_first_message_only():
 
 def test_decoded_registration_can_retain_control_scope_after_first_decode():
     handler, _manager, _control = _handler()
+    handler._certified_shared_stdio = True
     registration = {"action": PluginToRuntimeAction.REGISTER_PLUGIN.value}
 
     assert handler._uses_reserved_decode_capacity("opaque registration payload") is True

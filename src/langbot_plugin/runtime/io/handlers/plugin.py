@@ -63,7 +63,7 @@ class PluginConnectionHandler(handler.Handler):
     def _uses_reserved_decode_capacity(self, message: str) -> bool:
         if super()._uses_reserved_decode_capacity(message):
             return True
-        if not self._first_message_decode_available:
+        if not self._certified_shared_stdio or not self._first_message_decode_available:
             return False
         self._first_message_decode_available = False
         return True
@@ -94,6 +94,7 @@ class PluginConnectionHandler(handler.Handler):
         *,
         file_storage_dir: str | None = None,
         max_file_bytes: int | None = None,
+        certified_shared_stdio: bool = False,
     ):
         async def disconnect_callback(hdl: handler.Handler):
             logger.debug("disconnect_callback")
@@ -119,6 +120,7 @@ class PluginConnectionHandler(handler.Handler):
         self.debug_auth_token = None
         self._registration_codec_available = True
         self._first_message_decode_available = True
+        self._certified_shared_stdio = certified_shared_stdio
         self.stdio_process = stdio_process
         self.shared_pool_digest: str | None = None
         self.shared_registration_generation: int | None = None
