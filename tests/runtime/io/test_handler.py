@@ -149,6 +149,50 @@ async def test_call_action_sends_request_and_returns_response_data():
     assert request["seq_id"] not in handler.resp_waiters
 
 
+@pytest.mark.asyncio
+async def test_escaped_invocation_cannot_reuse_host_authority():
+    from langbot_plugin.api.proxies.invocation import bind_invocation
+
+    conn = QueueConnection()
+    handler = Handler(conn)
+    captured = None
+
+    async def escaped_call():
+        await asyncio.sleep(0)
+        return await handler.call_action(SampleAction.ECHO, {}, timeout=0.1)
+
+    with bind_invocation(handler, config={"tenant": "a"}):
+        captured = asyncio.create_task(escaped_call())
+
+    with pytest.raises(RuntimeError, match="ended"):
+        await captured
+    assert conn.sent == []
+
+
+@pytest.mark.asyncio
+async def test_escaped_invocation_cannot_delete_after_waiting_for_file_lock(tmp_path):
+    from langbot_plugin.api.proxies.invocation import bind_invocation
+
+    handler = Handler(QueueConnection(), file_storage_dir=tmp_path)
+    handler._file_transfer_lock = asyncio.Lock()
+    deleted = []
+
+    def fake_delete(*args):
+        deleted.append(args)
+        return True
+
+    handler._delete_transfer_sync = fake_delete
+    await handler._file_transfer_lock.acquire()
+    with bind_invocation(handler, config={"tenant": "a"}):
+        task = asyncio.create_task(handler.delete_local_file("ft1_" + "a" * 64))
+        await asyncio.sleep(0)
+    handler._file_transfer_lock.release()
+
+    with pytest.raises(RuntimeError, match="invocation has ended"):
+        await task
+    assert deleted == []
+
+
 def _action_context(workspace_uuid="workspace-a", installation_uuid=None):
     return ActionContext(
         instance_uuid="instance-1",

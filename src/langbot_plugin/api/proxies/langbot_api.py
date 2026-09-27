@@ -79,6 +79,7 @@ class LangBotAPIProxy:
             )
         )["version"]
 
+    @run_scoped
     async def get_bots(self) -> list[str]:
         """Get all bots"""
         return (
@@ -87,6 +88,7 @@ class LangBotAPIProxy:
             )
         )["bots"]
 
+    @run_scoped
     async def get_bot_info(self, bot_uuid: str) -> dict[str, Any]:
         """Get a bot info"""
         return (
@@ -343,6 +345,7 @@ class LangBotAPIProxy:
             PluginToRuntimeAction.DELETE_WORKSPACE_STORAGE, {"key": key}
         )
 
+    @run_scoped
     async def get_config_file(self, file_key: str) -> bytes:
         """Get a config file by file key
 
@@ -360,6 +363,7 @@ class LangBotAPIProxy:
 
         return base64.b64decode(resp)
 
+    @run_scoped
     async def list_plugins_manifest(self) -> list[str]:
         """List all plugins"""
         return (
@@ -368,6 +372,7 @@ class LangBotAPIProxy:
             )
         )["plugins"]
 
+    @run_scoped
     async def list_commands(self) -> list[str]:
         """List all commands"""
         return (
@@ -510,6 +515,7 @@ class LangBotAPIProxy:
             )
         )["results"]
 
+    @run_scoped
     async def vector_upsert(
         self,
         collection_id: str,
@@ -542,6 +548,7 @@ class LangBotAPIProxy:
             timeout=60,
         )
 
+    @run_scoped
     async def vector_search(
         self,
         collection_id: str,
@@ -586,6 +593,7 @@ class LangBotAPIProxy:
             )
         )["results"]
 
+    @run_scoped
     async def vector_delete(
         self,
         collection_id: str,
@@ -614,6 +622,7 @@ class LangBotAPIProxy:
             )
         )["count"]
 
+    @run_scoped
     async def vector_list(
         self,
         collection_id: str,
@@ -644,6 +653,7 @@ class LangBotAPIProxy:
             timeout=30,
         )
 
+    @run_scoped
     async def get_knowledge_file_stream(self, storage_path: str) -> bytes:
         """Get file content from Host's storage.
 
@@ -723,6 +733,7 @@ class LangBotAPIProxy:
 
     # ================= Parser Capability APIs =================
 
+    @run_scoped
     async def list_parsers(self, mime_type: str | None = None) -> list[dict[str, Any]]:
         """List available Parser plugins.
 
@@ -739,6 +750,7 @@ class LangBotAPIProxy:
             )
         )["parsers"]
 
+    @run_scoped
     async def invoke_parser(
         self,
         plugin_author: str,

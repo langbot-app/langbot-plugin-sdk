@@ -12,7 +12,8 @@ from typing import Any, TypedDict
 
 import yaml
 
-CERTIFICATION_SCHEMA = "certified-plugin-envelope-v1"
+CERTIFICATION_SCHEMA = "certified-plugin-envelope-v2"
+LEGACY_CERTIFICATION_SCHEMA = "certified-plugin-envelope-v1"
 MAX_ENVELOPE_COMMENT_BYTES = 16 * 1024
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _SHA256_HEX_LENGTH = 64
@@ -27,6 +28,7 @@ class ManifestIdentity(TypedDict):
     name: str
     version: str
     shared_runtime: str | None
+    component_model: str | None
 
 
 class EnvelopeFormatError(ValueError):
@@ -43,17 +45,22 @@ class CertificationEnvelope:
     version: str
     digest: str
     shared_runtime: str | None
+    component_model: str | None
     signature: str
 
     def unsigned_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "schema": self.schema,
             "key_id": self.key_id,
             "plugin_id": self.plugin_id,
             "version": self.version,
             "digest": self.digest,
             "shared_runtime": self.shared_runtime,
+            "component_model": self.component_model,
         }
+        if self.schema == LEGACY_CERTIFICATION_SCHEMA:
+            value.pop("component_model")
+        return value
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.unsigned_dict(), "signature": self.signature}
@@ -93,6 +100,7 @@ def create_envelope(
         version=identity["version"],
         digest=normalized_zip_digest(archive),
         shared_runtime=identity["shared_runtime"],
+        component_model=identity["component_model"],
         signature="",
     )
     return sign_envelope(unsigned, signer)
@@ -126,6 +134,8 @@ def read_envelope(archive: bytes) -> CertificationEnvelope | None:
         raise EnvelopeFormatError("certification envelope is not UTF-8 JSON") from exc
     if not isinstance(value, dict):
         raise EnvelopeFormatError("certification envelope must be a JSON object")
+    schema = value.get("schema")
+    legacy = schema == LEGACY_CERTIFICATION_SCHEMA
     expected_keys = {
         "schema",
         "key_id",
@@ -133,8 +143,11 @@ def read_envelope(archive: bytes) -> CertificationEnvelope | None:
         "version",
         "digest",
         "shared_runtime",
+        "component_model",
         "signature",
     }
+    if legacy:
+        expected_keys.remove("component_model")
     if set(value) != expected_keys:
         raise EnvelopeFormatError("certification envelope fields are invalid")
     plugin_id = value["plugin_id"]
@@ -147,6 +160,7 @@ def read_envelope(archive: bytes) -> CertificationEnvelope | None:
         version=value["version"],
         digest=value["digest"],
         shared_runtime=value["shared_runtime"],
+        component_model=value.get("component_model"),
         signature=value["signature"],
     )
     _validate_envelope(envelope, allow_unsupported_schema=True)
@@ -174,12 +188,15 @@ def verify_archive(
         return CertificationVerification("malformed")
     if envelope is None:
         return CertificationVerification("absent")
-    if envelope.schema != CERTIFICATION_SCHEMA:
+    if envelope.schema not in {CERTIFICATION_SCHEMA, LEGACY_CERTIFICATION_SCHEMA}:
         return CertificationVerification("unsupported_schema", envelope)
     try:
         if normalized_zip_digest(archive) != envelope.digest:
             return CertificationVerification("digest_mismatch", envelope)
-        identity = _read_manifest_identity(archive)
+        identity = _read_manifest_identity(
+            archive,
+            allow_legacy_shared=(envelope.schema == LEGACY_CERTIFICATION_SCHEMA),
+        )
     except (
         EnvelopeFormatError,
         ValueError,
@@ -192,6 +209,7 @@ def verify_archive(
         envelope.plugin_id != {"author": identity["author"], "name": identity["name"]}
         or envelope.version != identity["version"]
         or envelope.shared_runtime != identity["shared_runtime"]
+        or envelope.component_model != identity["component_model"]
     ):
         return CertificationVerification("manifest_mismatch", envelope)
     verifier = key_resolver(envelope.key_id)
@@ -233,6 +251,16 @@ def _validate_envelope(
         raise EnvelopeFormatError("certification envelope digest is invalid")
     if envelope.shared_runtime not in {None, "shared-runtime-v1"}:
         raise EnvelopeFormatError("certification envelope shared_runtime is invalid")
+    if envelope.component_model not in {None, "stateless-v1"}:
+        raise EnvelopeFormatError("certification envelope component_model is invalid")
+    if (
+        envelope.shared_runtime == "shared-runtime-v1"
+        and envelope.component_model != "stateless-v1"
+        and envelope.schema != LEGACY_CERTIFICATION_SCHEMA
+    ):
+        raise EnvelopeFormatError(
+            "certification envelope shared runtime requires stateless-v1"
+        )
     if require_signature:
         _required_string(envelope.signature, "signature")
         try:
@@ -250,7 +278,11 @@ def _required_string(value: Any, field_name: str) -> str:
     return value
 
 
-def _read_manifest_identity(archive: bytes) -> ManifestIdentity:
+def _read_manifest_identity(
+    archive: bytes,
+    *,
+    allow_legacy_shared: bool = False,
+) -> ManifestIdentity:
     with zipfile.ZipFile(io.BytesIO(archive), "r") as package:
         manifests = [
             info for info in package.infolist() if info.filename == "manifest.yaml"
@@ -270,6 +302,7 @@ def _read_manifest_identity(archive: bytes) -> ManifestIdentity:
     execution = manifest.get("execution")
     if execution is None:
         shared_runtime = None
+        component_model = None
     elif not isinstance(execution, dict):
         raise EnvelopeFormatError("plugin manifest execution is invalid")
     else:
@@ -279,6 +312,17 @@ def _read_manifest_identity(archive: bytes) -> ManifestIdentity:
             shared_runtime = execution["sharedRuntime"]
             if shared_runtime != "shared-runtime-v1":
                 raise EnvelopeFormatError("plugin manifest sharedRuntime is invalid")
+        component_model = execution.get("componentModel")
+        if component_model not in {None, "stateless-v1"}:
+            raise EnvelopeFormatError("plugin manifest componentModel is invalid")
+        if (
+            shared_runtime == "shared-runtime-v1"
+            and component_model != "stateless-v1"
+            and not allow_legacy_shared
+        ):
+            raise EnvelopeFormatError(
+                "plugin manifest sharedRuntime requires componentModel stateless-v1"
+            )
     return {
         "author": _required_string(metadata.get("author"), "manifest metadata.author"),
         "name": _required_string(metadata.get("name"), "manifest metadata.name"),
@@ -286,6 +330,7 @@ def _read_manifest_identity(archive: bytes) -> ManifestIdentity:
             metadata.get("version"), "manifest metadata.version"
         ),
         "shared_runtime": shared_runtime,
+        "component_model": component_model,
     }
 
 

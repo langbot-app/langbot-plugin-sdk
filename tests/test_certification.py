@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import base64
 import hashlib
 import hmac
 import io
@@ -41,6 +42,8 @@ def _plugin_archive(*, shared_runtime: str | None | object = _MISSING) -> bytes:
     }
     if shared_runtime is not _MISSING:
         manifest["execution"]["sharedRuntime"] = shared_runtime
+        if shared_runtime == "shared-runtime-v1":
+            manifest["execution"]["componentModel"] = "stateless-v1"
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
         archive.writestr("manifest.yaml", yaml.safe_dump(manifest, sort_keys=False))
@@ -99,7 +102,41 @@ def test_valid_signed_envelope_binds_shared_runtime_and_manifest_identity():
     assert result.envelope.plugin_id == {"author": "certifier", "name": "demo"}
     assert result.envelope.version == "1.2.3"
     assert result.envelope.shared_runtime == "shared-runtime-v1"
+    assert result.envelope.component_model == "stateless-v1"
     assert result.envelope.digest == normalized_zip_digest(certified)
+
+
+def test_legacy_v1_envelope_remains_verifiable_but_has_no_stateless_claim():
+    archive = _plugin_archive(shared_runtime="shared-runtime-v1")
+    # Rebuild a legacy manifest and exact legacy seven-field signed envelope.
+    with zipfile.ZipFile(io.BytesIO(archive), "r") as source:
+        manifest = yaml.safe_load(source.read("manifest.yaml"))
+    manifest["execution"].pop("componentModel")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as target:
+        target.writestr("manifest.yaml", yaml.safe_dump(manifest, sort_keys=False))
+        target.writestr("main.py", "print('plugin')\n")
+    legacy_archive = output.getvalue()
+    unsigned = {
+        "schema": "certified-plugin-envelope-v1",
+        "key_id": "test-key",
+        "plugin_id": {"author": "certifier", "name": "demo"},
+        "version": "1.2.3",
+        "digest": normalized_zip_digest(legacy_archive),
+        "shared_runtime": "shared-runtime-v1",
+    }
+    signed = {
+        **unsigned,
+        "signature": base64.b64encode(_sign(canonical_json(unsigned))).decode("ascii"),
+    }
+
+    result = verify_archive(
+        _with_comment(legacy_archive, canonical_json(signed)), _resolve
+    )
+
+    assert result.status == "valid"
+    assert result.envelope is not None
+    assert result.envelope.component_model is None
 
 
 def test_archive_byte_tamper_reports_digest_mismatch():
@@ -137,6 +174,7 @@ def test_manifest_mismatch_is_reported_after_a_valid_signature():
         version=envelope.version,
         digest=envelope.digest,
         shared_runtime=envelope.shared_runtime,
+        component_model=envelope.component_model,
         signature="",
     )
     certified = write_envelope(archive, sign_envelope(mismatched, _sign))
@@ -165,7 +203,7 @@ def test_write_refuses_an_unsupported_schema():
     with pytest.raises(EnvelopeFormatError, match="unsupported"):
         write_envelope(
             archive,
-            dataclasses.replace(envelope, schema="certified-plugin-envelope-v2"),
+            dataclasses.replace(envelope, schema="certified-plugin-envelope-v3"),
         )
 
 
@@ -176,12 +214,13 @@ def test_write_refuses_an_unsupported_schema():
         (
             canonical_json(
                 {
-                    "schema": "certified-plugin-envelope-v2",
+                    "schema": "certified-plugin-envelope-v3",
                     "key_id": "test-key",
                     "plugin_id": {"author": "certifier", "name": "demo"},
                     "version": "1.2.3",
                     "digest": "0" * 64,
                     "shared_runtime": None,
+                    "component_model": None,
                     "signature": "AA==",
                 }
             ),

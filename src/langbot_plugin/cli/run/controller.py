@@ -4,14 +4,16 @@ import asyncio
 import os
 import typing
 import logging
-import copy
+
 
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.runtime.plugin.container import (
     ComponentContainer,
     PluginContainer,
+    PluginInstallationSlot,
     RuntimeContainerStatus,
 )
+from langbot_plugin.api.proxies.invocation import freeze_config
 from langbot_plugin.cli.run.handler import PluginRuntimeHandler
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -154,8 +156,9 @@ class PluginRuntimeController:
             status=RuntimeContainerStatus.UNMOUNTED,
             components=components_containers,
         )
-        self._slot_containers: dict[str, PluginContainer] = {}
+        self._slot_containers: dict[str, PluginInstallationSlot] = {}
         self._slot_generations: dict[str, int] = {}
+        self._shared_initialize_lock = asyncio.Lock()
 
     async def run(self) -> None:
         await self._controller_task
@@ -427,37 +430,48 @@ class PluginRuntimeController:
 
     async def initialize_slot(
         self,
-        installation_uuid: str | InstallationBinding,
+        installation_uuid: InstallationBinding,
         plugin_settings: dict[str, typing.Any],
-    ) -> PluginContainer:
-        """Create or replace one installation's independent object graph."""
+    ) -> PluginInstallationSlot:
+        """Attach lightweight tenant state to one process-wide object graph."""
 
-        slot_key = (
-            installation_uuid.installation_uuid
-            if isinstance(installation_uuid, InstallationBinding)
-            else installation_uuid
-        )
+        if not isinstance(installation_uuid, InstallationBinding):
+            raise ValueError("Shared plugin slots require InstallationBinding")
+        execution = self.plugin_container.manifest.execution
+        if (
+            execution is None
+            or execution.shared_runtime != "shared-runtime-v1"
+            or execution.component_model != "stateless-v1"
+        ):
+            raise ValueError(
+                "Shared plugin slots require shared-runtime-v1/stateless-v1"
+            )
+        slot_key = installation_uuid.installation_uuid
         generation = self._slot_generations.get(slot_key, 0) + 1
         self._slot_generations[slot_key] = generation
-        slot = PluginContainer.from_dict(
-            copy.deepcopy(self.plugin_container.model_dump())
-        )
-        slot.plugin_instance = NonePlugin()
-        for component in slot.components:
-            component.component_instance = NoneComponent()
-        runtime_handler: typing.Any = self.handler
-        if isinstance(installation_uuid, InstallationBinding):
-            runtime_handler = _SlotHandlerProxy(self.handler, installation_uuid)
-        await self._initialize_container(slot, runtime_handler, plugin_settings)
+        async with self._shared_initialize_lock:
+            if self.plugin_container.status is not RuntimeContainerStatus.INITIALIZED:
+                await self._initialize_container(
+                    self.plugin_container,
+                    self.handler,
+                    {"enabled": True, "priority": 0, "plugin_config": {}},
+                )
         if self._slot_generations.get(slot_key) != generation:
             raise RuntimeError("Shared plugin slot initialization was superseded")
+        slot = PluginInstallationSlot(
+            binding=installation_uuid,
+            enabled=bool(plugin_settings["enabled"]),
+            priority=int(plugin_settings["priority"]),
+            plugin_config=freeze_config(plugin_settings["plugin_config"]),
+            plugin_container=self.plugin_container,
+        )
         self._slot_containers[slot_key] = slot
         return slot
 
     def plugin_container_for_slot(
         self,
         installation_uuid: str,
-    ) -> PluginContainer | None:
+    ) -> PluginInstallationSlot | None:
         return self._slot_containers.get(installation_uuid)
 
     def invalidate_slot(self, installation_uuid: str) -> None:

@@ -87,9 +87,13 @@ metadata:
   version: 1.0.0
   label: {en_US: Shared Probe}
 spec:
-  components: {}
+  components:
+    Tool:
+      fromFiles: [components/probe.yaml]
 execution:
   python: {path: main.py, attr: SharedProbe}
+  sharedRuntime: shared-runtime-v1
+  componentModel: stateless-v1
 """,
         encoding="utf-8",
     )
@@ -98,11 +102,49 @@ execution:
 from langbot_plugin.api.definition.plugin import BasePlugin
 class SharedProbe(BasePlugin):
     async def initialize(self):
+        marker = os.environ.get("SHARED_PROBE_MARKER")
+        if marker:
+            with open(marker, "a", encoding="utf-8") as handle:
+                handle.write(f"init:{os.getpid()}:{id(self)}\\n")
+
+    async def observe(self):
         await self.get_bots()
         marker = os.environ.get("SHARED_PROBE_MARKER")
         if marker:
             with open(marker, "a", encoding="utf-8") as handle:
-                handle.write(f"{os.getpid()}:{self.config['tenant']}:{id(self)}\\n")
+                handle.write(f"call:{os.getpid()}:{self.config['tenant']}:{id(self)}\\n")
+""",
+        encoding="utf-8",
+    )
+    (plugin / "components").mkdir()
+    (plugin / "components" / "probe.yaml").write_text(
+        """apiVersion: v1
+kind: Tool
+metadata:
+  name: probe
+  label: {en_US: Probe}
+spec: {}
+execution:
+  python: {path: probe.py, attr: ProbeTool}
+""",
+        encoding="utf-8",
+    )
+    (plugin / "components" / "probe.py").write_text(
+        """import os
+from langbot_plugin.api.definition.components.tool.tool import Tool
+class ProbeTool(Tool):
+    async def initialize(self):
+        marker = os.environ.get("SHARED_PROBE_MARKER")
+        if marker:
+            with open(marker, "a", encoding="utf-8") as handle:
+                handle.write(f"component-init:{os.getpid()}:{id(self)}\\n")
+    async def call(self, params, session, query_id):
+        marker = os.environ.get("SHARED_PROBE_MARKER")
+        if marker:
+            with open(marker, "a", encoding="utf-8") as handle:
+                handle.write(f"call:{os.getpid()}:{self.get_plugin_config()['tenant']}:{id(self)}\\n")
+        await self.plugin.get_bots()
+        return self.get_plugin_config()["tenant"]
 """,
         encoding="utf-8",
     )
@@ -207,14 +249,49 @@ class SharedProbe(BasePlugin):
         )
         assert slot_a["data"]["plugin_config"] == {"tenant": "a"}
         assert slot_b["data"]["plugin_config"] == {"tenant": "b"}
+        assert callbacks == []
+        call_payload = {
+            "tool_name": "probe",
+            "tool_parameters": {},
+            "session": {
+                "launcher_type": "person",
+                "launcher_id": "launcher",
+                "sender_id": "sender",
+            },
+            "query_id": 1,
+        }
+        called_a = await _send(
+            shared,
+            107,
+            RuntimeToPluginAction.CALL_TOOL.value,
+            call_payload,
+            binding_a,
+            callbacks,
+        )
+        called_b = await _send(
+            shared,
+            108,
+            RuntimeToPluginAction.CALL_TOOL.value,
+            call_payload,
+            binding_b,
+            callbacks,
+        )
+        assert called_a["data"]["tool_response"] == "a"
+        assert called_b["data"]["tool_response"] == "b"
         assert [callback["context"] for callback in callbacks] == [
             binding_a.model_dump(),
             binding_b.model_dump(),
         ]
         marker_lines = (tmp_path / "markers.log").read_text().splitlines()
-        assert {line.split(":", 2)[0] for line in marker_lines} == {str(shared.pid)}
-        assert {line.split(":", 2)[1] for line in marker_lines} == {"a", "b"}
-        assert len({line.split(":", 2)[2] for line in marker_lines}) == 2
+        plugin_init = [line for line in marker_lines if line.startswith("init:")]
+        component_init = [
+            line for line in marker_lines if line.startswith("component-init:")
+        ]
+        calls = [line for line in marker_lines if line.startswith("call:")]
+        assert len(plugin_init) == len(component_init) == 1
+        assert {line.split(":", 3)[1] for line in marker_lines} == {str(shared.pid)}
+        assert {line.split(":", 3)[2] for line in calls} == {"a", "b"}
+        assert len({line.split(":", 3)[3] for line in calls}) == 1
 
         chunk = {
             "file_key": "private.bin",
@@ -288,10 +365,7 @@ class SharedProbe(BasePlugin):
                 replacement_callbacks,
             )
         )["code"] == 0
-        assert [callback["context"] for callback in replacement_callbacks] == [
-            binding_a.model_dump(),
-            binding_b.model_dump(),
-        ]
+        assert replacement_callbacks == []
 
         assert (
             await _send(
