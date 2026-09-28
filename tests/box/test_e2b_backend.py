@@ -17,6 +17,7 @@ from langbot_plugin.box.e2b_backend import (
     E2BSandboxBackend,
     _adapt_path_for_e2b,
     _check_e2b_available,
+    _rewrite_command_paths_for_e2b,
 )
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
@@ -92,6 +93,19 @@ def test_adapt_path_other_paths_unchanged():
     assert _adapt_path_for_e2b("/home/user") == "/home/user"
     assert _adapt_path_for_e2b("/tmp") == "/tmp"
     assert _adapt_path_for_e2b("/code") == "/code"
+
+
+def test_rewrite_command_paths_for_e2b_respects_path_boundaries():
+    command = (
+        "ls /workspace && echo /workspace/a && echo /workspaces && echo x/workspace"
+    )
+
+    rewritten = _rewrite_command_paths_for_e2b(command)
+
+    assert rewritten == (
+        "ls /home/user/workspace && echo /home/user/workspace/a "
+        "&& echo /workspaces && echo x/workspace"
+    )
 
 
 # ── is_available ──────────────────────────────────────────────────────
