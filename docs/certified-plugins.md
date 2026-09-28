@@ -12,22 +12,24 @@ execution:
     path: main.py
     attr: Plugin
   sharedRuntime: shared-runtime-v1
+  componentModel: stateless-v1
 ```
 
-If `execution.sharedRuntime` is absent, the manifest remains a dedicated-runtime manifest. Any other value is rejected by the SDK manifest model and by certification verification.
+If `execution.sharedRuntime` is absent, the manifest remains a dedicated-runtime manifest. `shared-runtime-v1` requires `componentModel: stateless-v1`; this declares the [stateless singleton component contract](stateless-components.md). Legacy per-installation object behavior remains compatible on dedicated workers but is not certifiable.
 
 ## Envelope format
 
-The envelope is compact, sorted UTF-8 JSON in the ZIP comment. The supported schema is `certified-plugin-envelope-v1` with exactly these fields:
+The envelope is compact, sorted UTF-8 JSON in the ZIP comment. New stateless certificates use `certified-plugin-envelope-v2` with exactly these fields. Legacy v1 envelopes remain readable and verifiable, but have no signed `component_model` and cannot authorize shared singleton placement.
 
 ```json
 {
-  "schema": "certified-plugin-envelope-v1",
+  "schema": "certified-plugin-envelope-v2",
   "key_id": "issuer-key-id",
   "plugin_id": {"author": "publisher", "name": "plugin"},
   "version": "1.2.3",
   "digest": "lowercase-sha256-hex",
   "shared_runtime": "shared-runtime-v1",
+  "component_model": "stateless-v1",
   "signature": "base64-signature"
 }
 ```
@@ -51,7 +53,7 @@ if result.status != "valid":
     raise ValueError(result.status)
 ```
 
-Verification binds the envelope's `plugin_id.author`, `plugin_id.name`, `version`, normalized digest, and `shared_runtime` to `manifest.yaml`.
+Verification binds the envelope's `plugin_id.author`, `plugin_id.name`, `version`, normalized digest, `shared_runtime`, and `component_model` to `manifest.yaml`.
 
 ## Verification statuses
 

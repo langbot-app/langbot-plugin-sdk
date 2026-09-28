@@ -53,8 +53,9 @@ Plugin-facing APIs live under `src/langbot_plugin/api/`.
 - `definition/plugin.py` defines `BasePlugin`.
 - `definition/components/` defines component base classes.
 - `definition/components/manifest.py` defines component manifest models. Plugin
-  manifests may set `execution.sharedRuntime: shared-runtime-v1`; omission keeps
-  the dedicated-runtime profile.
+  manifests may set `execution.sharedRuntime: shared-runtime-v1` together with
+  `execution.componentModel: stateless-v1`; omission keeps the legacy dedicated
+  object model.
 - `certification.py` defines optional ZIP-comment certification envelopes. It
   canonicalizes envelope JSON, normalizes the ZIP digest by removing the comment,
   and verifies the signed manifest identity and runtime profile without changing
@@ -176,9 +177,10 @@ worker immediately; stale or cross-Workspace transitions fail closed.
 Dedicated enabled installations remain owned by installation-scoped
 Supervisors. A certified shared worker is keyed by the raw artifact digest and
 currently has pool size one: the first slot attach starts it and the last slot
-detach stops it. Installations sharing that process retain separate
-`BasePlugin`, component, config, Host authority, and lifecycle slots. Updating
-one slot reinitializes that slot without restarting siblings. Revision and
+detach stops it. Installations sharing that process use one `BasePlugin` and one instance of each
+component. Lightweight slots retain immutable config snapshots, Host authority,
+revision and task ownership. Invocation-local context selects the slot; config
+updates replace that snapshot without recreating components. Revision and
 generation fencing remove the exact stale slot, cancel its in-flight actions,
 and prevent background calls after detach.
 

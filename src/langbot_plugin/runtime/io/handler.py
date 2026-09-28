@@ -861,28 +861,31 @@ class Handler(abc.ABC):
                 if pending_context is not None and pending_context != action_context:
                     self._pending_action_cancellations.pop(current_task, None)
 
-            with blocking_work_scope(getattr(action_context, "workspace_uuid", None)):
-                response = self.actions[action_name](request.data)
-                if not isinstance(response, AsyncGenerator):
-                    if isinstance(response, Coroutine):
-                        response = await response
-                    response.seq_id = seq_id
-                    if control_scope == TRANSPORT_CONTROL_SCOPE:
-                        encoded = json.dumps(response.model_dump())
-                        await self.conn.send(encoded)
+            with self.action_invocation_scope(action_name, action_context):
+                with blocking_work_scope(
+                    getattr(action_context, "workspace_uuid", None)
+                ):
+                    response = self.actions[action_name](request.data)
+                    if not isinstance(response, AsyncGenerator):
+                        if isinstance(response, Coroutine):
+                            response = await response
+                        response.seq_id = seq_id
+                        if control_scope == TRANSPORT_CONTROL_SCOPE:
+                            encoded = json.dumps(response.model_dump())
+                            await self.conn.send(encoded)
+                        else:
+                            await self._send_message(response)
                     else:
-                        await self._send_message(response)
-                else:
-                    async for chunk in response:
-                        assert isinstance(chunk, ActionResponse)
-                        chunk.seq_id = seq_id
-                        chunk.chunk_status = ChunkStatus.CONTINUE
-                        await self._send_message(chunk)
+                        async for chunk in response:
+                            assert isinstance(chunk, ActionResponse)
+                            chunk.seq_id = seq_id
+                            chunk.chunk_status = ChunkStatus.CONTINUE
+                            await self._send_message(chunk)
 
-                    end_response = ActionResponse.success({})
-                    end_response.seq_id = seq_id
-                    end_response.chunk_status = ChunkStatus.END
-                    await self._send_message(end_response)
+                        end_response = ActionResponse.success({})
+                        end_response.seq_id = seq_id
+                        end_response.chunk_status = ChunkStatus.END
+                        await self._send_message(end_response)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1018,6 +1021,9 @@ class Handler(abc.ABC):
         cancel_peer_on_cancel: bool = False,
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
@@ -1032,11 +1038,15 @@ class Handler(abc.ABC):
         future = asyncio.get_running_loop().create_future()
         self.resp_waiters[this_seq_id] = future
         try:
+            if invocation is not None:
+                invocation.require_active()
             await self._send_message(
                 request,
                 action_context=resolved_context,
             )
             response = await asyncio.wait_for(future, timeout)
+            if invocation is not None:
+                invocation.require_active()
             if response.code != 0:
                 raise ActionCallError(f"{response.message}", response.data)
             return response.data
@@ -1092,6 +1102,9 @@ class Handler(abc.ABC):
         timeout: float = 15.0,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
         self.seq_id_index += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
@@ -1110,6 +1123,8 @@ class Handler(abc.ABC):
         self.resp_queues[this_seq_id] = queue
 
         try:
+            if invocation is not None:
+                invocation.require_active()
             await self._send_message(
                 request,
                 action_context=resolved_context,
@@ -1117,6 +1132,8 @@ class Handler(abc.ABC):
             while True:
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
+                    if invocation is not None:
+                        invocation.require_active()
                     if isinstance(response, BaseException):
                         raise response
                     if response.code != 0:
@@ -1153,6 +1170,18 @@ class Handler(abc.ABC):
         """Context of the request currently executing in this asyncio task."""
 
         return self._current_action_context.get()
+
+    @contextlib.contextmanager
+    def action_invocation_scope(
+        self,
+        action: str,
+        action_context: ActionEnvelopeContext | None,
+    ):
+        """Bind implementation-specific task-local state for one action."""
+
+        del action
+        del action_context
+        yield
 
     def bind_action_context(
         self,
@@ -1939,6 +1968,9 @@ class Handler(abc.ABC):
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
         if self.max_file_bytes is not None and len(file_bytes) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
         if not isinstance(file_extension, str):
@@ -1953,6 +1985,8 @@ class Handler(abc.ABC):
             1, (file_length + FILE_CHUNK_LENGTH - 1) // FILE_CHUNK_LENGTH
         )
         for i in range(chunk_amount):
+            if invocation is not None:
+                invocation.require_active()
             chunk_bytes = file_bytes[
                 i * FILE_CHUNK_LENGTH : (i + 1) * FILE_CHUNK_LENGTH
             ]
@@ -1988,6 +2022,11 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> bytes:
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
+        if invocation is not None:
+            invocation.require_active()
         transfer_context, expected_payload = await self._resolve_transfer_context(
             file_key, action_context
         )
@@ -2011,6 +2050,8 @@ class Handler(abc.ABC):
                 return content
 
         content = await run_blocking_with_backpressure(read_file)
+        if invocation is not None:
+            invocation.require_active()
         if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
         return content
@@ -2021,9 +2062,16 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> None:
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
+        if invocation is not None:
+            invocation.require_active()
         file_key = _validate_file_key(file_key)
         effective_context = self.resolve_effective_action_context(action_context)
         async with self._file_transfer_lock:
+            if invocation is not None:
+                invocation.require_active()
             await run_blocking_with_backpressure(
                 self._delete_transfer_sync,
                 file_key,

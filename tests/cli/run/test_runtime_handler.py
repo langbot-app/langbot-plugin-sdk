@@ -30,7 +30,7 @@ from langbot_plugin.cli.run.handler import (
     _resolve_asset_path,
 )
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
-from langbot_plugin.entities.io.context import ActionContext
+from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
 
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
 
@@ -273,6 +273,39 @@ async def test_plugin_runtime_handler_binds_context_from_initialize_envelope():
     assert response["code"] == 0
     assert initialized == [{"enabled": True}]
     assert handler.bound_action_context == action_context
+
+
+async def test_attach_scope_revokes_authority_copied_by_initialize_task():
+    from langbot_plugin.api.proxies.invocation import invocation_capability
+
+    handler, _initialized = _handler()
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=2,
+        installation_uuid="installation-1",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    release = asyncio.Event()
+    outcomes = []
+
+    async def escaped():
+        await release.wait()
+        try:
+            invocation_capability(handler)
+        except RuntimeError as exc:
+            outcomes.append(str(exc))
+
+    with handler.action_invocation_scope(
+        RuntimeToPluginAction.ATTACH_PLUGIN_SLOT.value,
+        binding,
+    ):
+        task = asyncio.create_task(escaped())
+
+    release.set()
+    await task
+    assert outcomes == ["Plugin invocation has ended"]
 
 
 async def test_plugin_runtime_handler_icon_without_icon_path_returns_empty_payload():

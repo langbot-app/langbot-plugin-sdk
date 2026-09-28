@@ -7,22 +7,68 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
 import inspect
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
+
+from langbot_plugin.entities.io.context import InstallationBinding
+
+
+def freeze_config(value: Any) -> Any:
+    """Return an immutable invocation snapshot without sharing tenant objects."""
+
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): freeze_config(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_config(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(freeze_config(item) for item in value)
+    return value
+
+
+def thaw_config(value: Any) -> Any:
+    """Return a recursively JSON-safe copy of an immutable config snapshot."""
+
+    if isinstance(value, Mapping):
+        return {str(key): thaw_config(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [thaw_config(item) for item in value]
+    if isinstance(value, frozenset):
+        return [thaw_config(item) for item in value]
+    return value
 
 
 @dataclass
 class Invocation:
     handler: Any
     api: Any
+    config: Mapping[str, Any] | None = None
+    binding: InstallationBinding | None = None
     active: bool = True
+
+    def require_active(self) -> None:
+        if not self.active:
+            raise RuntimeError("Plugin invocation has ended")
 
 
 _current: ContextVar[Invocation | None] = ContextVar("plugin_invocation", default=None)
 
 
 @contextmanager
-def bind_invocation(handler, api):
-    invocation = Invocation(handler, api)
+def bind_invocation(
+    handler,
+    api=None,
+    *,
+    config: Mapping[str, Any] | None = None,
+    binding: InstallationBinding | None = None,
+):
+    invocation = Invocation(
+        handler,
+        api,
+        config=freeze_config(config or {}) if config is not None else None,
+        binding=binding,
+    )
     token = _current.set(invocation)
     try:
         yield
@@ -38,6 +84,41 @@ def current_api(handler):
     if not invocation.active:
         raise RuntimeError("Runner invocation has ended")
     return invocation.api
+
+
+def current_invocation(handler=None) -> Invocation | None:
+    """Return the active task-local invocation, rejecting escaped background work."""
+
+    invocation = _current.get()
+    if invocation is None:
+        return None
+    if handler is not None and invocation.handler is not handler:
+        return None
+    if not invocation.active:
+        raise RuntimeError("Plugin invocation has ended")
+    return invocation
+
+
+def invocation_capability(handler=None) -> Invocation | None:
+    """Return the current revocable authority object for outbound boundaries."""
+
+    invocation = _current.get()
+    if invocation is None or (
+        handler is not None and invocation.handler is not handler
+    ):
+        return None
+    invocation.require_active()
+    return invocation
+
+
+def current_config(handler=None) -> Mapping[str, Any] | None:
+    invocation = current_invocation(handler)
+    return None if invocation is None else invocation.config
+
+
+def current_binding(handler=None) -> InstallationBinding | None:
+    invocation = current_invocation(handler)
+    return None if invocation is None else invocation.binding
 
 
 def run_scoped(method):

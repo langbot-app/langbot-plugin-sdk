@@ -1689,8 +1689,11 @@ class PluginManager:
                 await handler.detach_plugin_slot(runtime.binding)
             return
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
-            container_data
+            container_data.get("plugin_container", container_data)
         )
+        plugin_container.enabled = bool(container_data.get("enabled", True))
+        plugin_container.priority = int(container_data.get("priority", 0))
+        plugin_container.plugin_config = dict(container_data.get("plugin_config", {}))
         self._normalize_component_owners(plugin_container)
         if (
             plugin_container.status

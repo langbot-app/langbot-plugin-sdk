@@ -13,7 +13,11 @@ from langbot_plugin.api.entities.builtin.runner.result import RunnerResult
 from langbot_plugin.api.entities.builtin.platform.events import EBAEvent
 from langbot_plugin.api.proxies.runner.api import RunnerAPIProxy
 from langbot_plugin.api.proxies.runner.tracing import _TracedRunAPI
-from langbot_plugin.api.proxies.invocation import bind_invocation
+from langbot_plugin.api.proxies.invocation import (
+    bind_invocation,
+    current_binding,
+    current_config,
+)
 
 
 class Runner(BaseComponent):
@@ -40,6 +44,9 @@ class Runner(BaseComponent):
         self._plugin_identity = plugin_identity
 
     def get_plugin_config(self) -> dict[str, Any]:
+        scoped = current_config(self._plugin_runtime_handler)
+        if scoped is not None:
+            return dict(scoped)
         return dict(self._plugin_config)
 
     @property
@@ -118,7 +125,15 @@ class Runner(BaseComponent):
                 await results.put(RunnerResult.run_completed(ctx.run_id))
 
         async def execute_bound():
-            with bind_invocation(self._plugin_runtime_handler, ctx.api):
+            scoped_config = current_config(self._plugin_runtime_handler)
+            with bind_invocation(
+                self._plugin_runtime_handler,
+                ctx.api,
+                config=(
+                    self._plugin_config if scoped_config is None else scoped_config
+                ),
+                binding=current_binding(self._plugin_runtime_handler),
+            ):
                 await execute()
 
         task = asyncio.create_task(execute_bound())

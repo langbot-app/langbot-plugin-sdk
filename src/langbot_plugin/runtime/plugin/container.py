@@ -5,6 +5,7 @@ from __future__ import annotations
 import typing
 import enum
 import pydantic
+from dataclasses import dataclass
 
 from langbot_plugin.api.definition.plugin import NonePlugin
 from langbot_plugin.api.definition.plugin import BasePlugin
@@ -128,3 +129,14 @@ class ComponentContainer(pydantic.BaseModel):
 
 
 PluginContainer.model_rebuild()
+
+
+@dataclass(frozen=True, slots=True)
+class PluginInstallationSlot:
+    """Lightweight tenant state pointing at one process-wide object graph."""
+
+    binding: typing.Any
+    enabled: bool
+    priority: int
+    plugin_config: typing.Mapping[str, typing.Any]
+    plugin_container: PluginContainer
