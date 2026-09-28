@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from langbot_plugin.entities.io.actions.enums import (
     CommonAction,
     PluginToRuntimeAction,
@@ -73,6 +75,10 @@ async def _read_json_line(process):
             continue
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="shared worker slots require the Linux nsjail pool",
+)
 async def test_real_subprocess_shared_slots_are_isolated_and_dedicated_is_separate(
     tmp_path,
 ):

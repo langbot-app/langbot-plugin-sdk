@@ -5,7 +5,9 @@ import base64
 import contextlib
 import json
 import os
+import shutil
 import stat
+import tempfile
 import threading
 
 import pytest
@@ -35,6 +37,43 @@ from langbot_plugin.runtime.bounded_executor import (
 )
 
 from tests.helpers.protocol import ProtocolConnection
+
+
+def _transfer_entry_name(path: str | os.PathLike[str]) -> str:
+    """Return the entry name a transfer filesystem call targets.
+
+    Descriptor-relative calls receive a bare entry name; the path-backed
+    fallback used where ``dir_fd`` is unavailable receives the resolved
+    absolute path.  Fixtures key off the entry name so both shapes match.
+    """
+
+    return os.path.basename(os.fspath(path))
+
+
+def _symlinks_supported() -> bool:
+    """Whether this host may create symlinks (Windows needs a privilege)."""
+
+    directory = tempfile.mkdtemp(prefix="lbp-symlink-probe-")
+    try:
+        os.symlink(__file__, os.path.join(directory, "probe-link"))
+        return True
+    except (OSError, NotImplementedError):
+        return False
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+SYMLINK_SUPPORTED = _symlinks_supported()
+DESCRIPTOR_ROOT_SUPPORTED = handler_module._DIRECTORY_HANDLE_SUPPORTED
+
+requires_symlinks = pytest.mark.skipif(
+    not SYMLINK_SUPPORTED,
+    reason="host cannot create symlinks (Windows requires developer mode)",
+)
+requires_descriptor_root = pytest.mark.skipif(
+    not DESCRIPTOR_ROOT_SUPPORTED,
+    reason="asserts descriptor-relative transfer root semantics (POSIX only)",
+)
 
 
 class SampleAction(ActionType):
@@ -1789,7 +1828,7 @@ async def test_close_retries_incomplete_stage_unlink_before_closing_root(
 
     def fail_stage_unlink_once(path, *args, **kwargs):
         nonlocal failed
-        if os.fspath(path) == stage.temp_name and not failed:
+        if _transfer_entry_name(path) == stage.temp_name and not failed:
             failed = True
             raise OSError("simulated staging unlink failure")
         return real_remove(path, *args, **kwargs)
@@ -1906,6 +1945,7 @@ async def test_zero_progress_write_rolls_back_and_allows_retry(
 
 
 @pytest.mark.asyncio
+@requires_symlinks
 async def test_transfer_rejects_symlinked_namespace_without_overwriting_sibling(
     tmp_path,
 ):
@@ -1931,6 +1971,7 @@ async def test_transfer_rejects_symlinked_namespace_without_overwriting_sibling(
 
 
 @pytest.mark.asyncio
+@requires_symlinks
 async def test_transfer_rejects_symlinked_file_for_write_read_and_delete(tmp_path):
     handler = Handler(ProtocolConnection(), file_storage_dir=tmp_path)
     victim = tmp_path / "victim.bin"
@@ -1952,6 +1993,7 @@ async def test_transfer_rejects_symlinked_file_for_write_read_and_delete(tmp_pat
 
 
 @pytest.mark.asyncio
+@requires_symlinks
 async def test_transfer_rejects_symlinked_owner_directory(tmp_path):
     external = tmp_path / "external-owners"
     external.mkdir()
@@ -1964,6 +2006,7 @@ async def test_transfer_rejects_symlinked_owner_directory(tmp_path):
     assert list(external.iterdir()) == []
 
 
+@requires_symlinks
 def test_transfer_rejects_symlinked_configured_root_without_touching_target(tmp_path):
     external = tmp_path / "external-root"
     external.mkdir(mode=0o755)
@@ -1978,6 +2021,8 @@ def test_transfer_rejects_symlinked_configured_root_without_touching_target(tmp_
     assert list(external.iterdir()) == []
 
 
+@requires_descriptor_root
+@requires_symlinks
 def test_transfer_rejects_configured_root_replaced_by_symlink_during_init(
     tmp_path, monkeypatch
 ):
@@ -2021,7 +2066,34 @@ async def test_transfer_rejects_configured_root_replaced_after_init(tmp_path):
     await handler.close()
 
 
+def test_prepared_transfer_root_matches_platform_capability(tmp_path):
+    """The bound root is a descriptor on POSIX and a path handle elsewhere.
+
+    Platforms without ``dir_fd`` keep the namespace containment checks but
+    cannot bind an inode, so the handle type must track the platform rather
+    than silently degrading a POSIX deployment.
+    """
+
+    root = tmp_path / "transfer-root"
+    lexical_root, handle, root_stat = handler_module._prepare_transfer_root(str(root))
+
+    assert lexical_root == os.path.abspath(root)
+    assert stat.S_ISDIR(root_stat.st_mode)
+    if handler_module._DIRECTORY_HANDLE_SUPPORTED:
+        assert isinstance(handle, int)
+        assert os.fstat(handle).st_ino == root_stat.st_ino
+        os.close(handle)
+        return
+
+    assert isinstance(handle, handler_module._PathDirectoryHandle)
+    assert handle.path == os.path.realpath(root)
+    with pytest.raises(ValueError, match="Invalid file transfer capability"):
+        handler_module._join_directory_entry(handle, "..")
+    handler_module._close_directory(handle)
+
+
 @pytest.mark.asyncio
+@requires_descriptor_root
 async def test_root_swap_after_validation_keeps_write_anchored_to_bound_inode(
     tmp_path,
     monkeypatch,
@@ -2061,7 +2133,7 @@ async def test_repeated_close_keeps_bound_root_open_until_cleanup_succeeds(
 
     def fail_quarantine_once(path, *args, **kwargs):
         nonlocal failed
-        if os.fspath(path).startswith(".quarantine-") and not failed:
+        if _transfer_entry_name(path).startswith(".quarantine-") and not failed:
             failed = True
             raise OSError("simulated cleanup failure")
         return real_remove(path, *args, **kwargs)
@@ -2186,7 +2258,7 @@ async def test_cleanup_retains_owner_record_until_file_delete_retry_succeeds(
 
     def fail_file_once(path, *args, **kwargs):
         nonlocal failed
-        if os.fspath(path).startswith(".quarantine-") and not failed:
+        if _transfer_entry_name(path).startswith(".quarantine-") and not failed:
             failed = True
             raise OSError("simulated file delete failure")
         return real_remove(path, *args, **kwargs)
@@ -2219,7 +2291,7 @@ async def test_cleanup_retries_owner_delete_after_data_file_is_removed(
 
     def fail_owner_once(path, *args, **kwargs):
         nonlocal failed, quarantine_removes
-        if os.fspath(path).startswith(".quarantine-"):
+        if _transfer_entry_name(path).startswith(".quarantine-"):
             quarantine_removes += 1
         if quarantine_removes == 2 and not failed:
             failed = True
@@ -2257,7 +2329,7 @@ async def test_explicit_delete_failure_raises_and_retains_capacity_for_retry(
 
     def fail_once(path, *args, **kwargs):
         nonlocal failed, quarantine_removes
-        if os.fspath(path).startswith(".quarantine-"):
+        if _transfer_entry_name(path).startswith(".quarantine-"):
             quarantine_removes += 1
         is_target = (
             quarantine_removes == 1
@@ -2301,7 +2373,7 @@ async def test_close_retries_failed_transfer_cleanup_without_reclosing_connectio
 
     def fail_payload_once(path, *args, **kwargs):
         nonlocal failed
-        if os.fspath(path).startswith(".quarantine-") and not failed:
+        if _transfer_entry_name(path).startswith(".quarantine-") and not failed:
             failed = True
             raise OSError("simulated close cleanup failure")
         return real_remove(path, *args, **kwargs)
@@ -2398,7 +2470,7 @@ async def test_failed_first_chunk_rolls_back_capacity_reservation_and_owner_clai
 
     def fail_first_data_open(path, flags, *args, **kwargs):
         nonlocal fail_data_open
-        if path == failed_key and fail_data_open:
+        if os.path.basename(os.fspath(path)) == failed_key and fail_data_open:
             fail_data_open = False
             raise OSError("simulated data-file open failure")
         return real_open(path, flags, *args, **kwargs)
@@ -2579,6 +2651,7 @@ async def test_quarantine_mismatch_retry_retains_replacement_and_owner_authority
 
 
 @pytest.mark.asyncio
+@requires_descriptor_root
 async def test_owner_link_directory_fsync_failure_is_tracked_and_close_cleans(
     tmp_path, monkeypatch
 ):
@@ -2620,6 +2693,7 @@ async def test_oversized_first_chunks_leave_no_transfer_artifacts(tmp_path):
     assert [path for path in tmp_path.rglob("*") if path.is_file()] == []
 
 
+@requires_descriptor_root
 def test_invalid_max_file_bytes_is_rejected_before_root_fd_is_acquired(
     tmp_path, monkeypatch
 ):

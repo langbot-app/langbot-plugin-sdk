@@ -927,3 +927,40 @@ def test_launcher_configuration_is_required_immutable_and_platform_fenced(tmp_pa
     )
     with pytest.raises(RuntimeError, match="require Linux"):
         non_linux.configure(_policy(), "shared")
+
+
+def test_windows_shared_profile_executes_per_plugin_workers(tmp_path):
+    """Windows cannot isolate workers with nsjail, so the launcher degrades.
+
+    The shared *authorization* contract is unchanged (the launcher keeps
+    reporting the requested profile); only the execution mechanism falls back
+    to per-plugin workers, which is what the surrounding runtime expects on a
+    development host.
+    """
+
+    if sys.platform != "win32":
+        pytest.skip("Windows-only development fallback")
+
+    launcher = PluginWorkerLauncher(
+        platform="win32",
+        cgroup_v2_available=False,
+    )
+    launcher.configure(_policy(), "shared")
+
+    assert launcher.runtime_profile == "shared"
+    assert launcher._require_configuration()[1] == "oss_dev"
+
+
+def test_linux_shared_profile_keeps_hard_limit_fence():
+    """The production fence must survive future platform relaxations."""
+
+    if sys.platform != "linux":
+        pytest.skip("Linux-only production fence")
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=False,
+        platform="linux",
+    )
+    with pytest.raises(RuntimeError, match="require delegated cgroup v2"):
+        launcher.configure(_policy(), "shared")

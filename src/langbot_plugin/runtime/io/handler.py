@@ -200,34 +200,203 @@ def _write_all(descriptor: int, data: bytes) -> None:
         remaining = remaining[written:]
 
 
+_DIRECTORY_HANDLE_SUPPORTED = bool(getattr(os, "supports_dir_fd", ())) and all(
+    operation in os.supports_dir_fd
+    for operation in (os.open, os.mkdir, os.stat, os.unlink, os.rename, os.link)
+)
+"""Whether the platform binds directories to descriptors (POSIX only)."""
+
+if not _DIRECTORY_HANDLE_SUPPORTED:  # pragma: no cover - platform dependent
+    logger.warning(
+        "File transfer runs without descriptor-relative isolation on this platform "
+        "(no os dir_fd support); deploy shared Runtime on POSIX hosts."
+    )
+
+
+class _PathDirectoryHandle:
+    """Absolute-path directory handle for platforms without ``dir_fd`` support.
+
+    Windows cannot open a directory as a descriptor and has no ``dir_fd``
+    argument, so no descriptor-relative walk exists there.  This fallback keeps
+    the namespace containment checks and the directory/regular-file checks, but
+    loses the check-to-use atomicity that only descriptors provide.  It is for
+    local development hosts; the POSIX descriptor path remains the isolation
+    boundary for shared Runtime deployments.
+    """
+
+    __slots__ = ("path", "identity")
+
+    def __init__(self, path: str, identity: tuple[int, int]) -> None:
+        self.path = path
+        self.identity = identity
+
+    @property
+    def resolved(self) -> str:
+        return os.path.realpath(self.path)
+
+
+def _directory_handle_path(handle: int | _PathDirectoryHandle) -> str | None:
+    """Return the backing path for a path-backed handle, otherwise ``None``."""
+
+    return handle.path if isinstance(handle, _PathDirectoryHandle) else None
+
+
+def _join_directory_entry(
+    handle: int | _PathDirectoryHandle,
+    name: str,
+) -> str:
+    """Resolve one single path component beneath a path-backed handle."""
+
+    path = _directory_handle_path(handle)
+    if path is None:  # pragma: no cover - POSIX callers never reach this
+        raise ValueError("Invalid file transfer capability")
+    if (
+        not name
+        or name in {".", ".."}
+        or os.sep in name
+        or (os.altsep is not None and os.altsep in name)
+        or os.path.isabs(name)
+        or os.path.splitdrive(name)[0]
+    ):
+        raise ValueError("Invalid file transfer capability")
+    candidate = os.path.join(path, name)
+    resolved = os.path.realpath(candidate)
+    root = os.path.realpath(path)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        # A junction/symlink swapped in between the walk steps would escape.
+        raise ValueError("Invalid file transfer capability")
+    return candidate
+
+
+def _directory_stat(handle: int | _PathDirectoryHandle) -> os.stat_result:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        return os.fstat(handle)
+    path = _directory_handle_path(handle)
+    assert path is not None
+    return os.stat(path, follow_symlinks=False)
+
+
+def _close_directory(handle: int | _PathDirectoryHandle) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.close(handle)
+
+
+def _chmod_directory(handle: int | _PathDirectoryHandle, mode: int) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.fchmod(handle, mode)
+        return
+    path = _directory_handle_path(handle)
+    assert path is not None
+    with contextlib.suppress(OSError):
+        os.chmod(path, mode)
+
+
+def _sync_directory(handle: int | _PathDirectoryHandle) -> None:
+    """Persist directory metadata where the platform can express it."""
+
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.fsync(handle)
+
+
+def _open_relative_file(
+    handle: int | _PathDirectoryHandle,
+    file_name: str,
+    flags: int,
+    mode: int = 0o777,
+) -> int:
+    """Open one file entry beneath a directory handle."""
+
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        return os.open(file_name, flags | no_follow, mode, dir_fd=handle)
+    path = _join_directory_entry(handle, file_name)
+    if os.path.islink(path):
+        raise ValueError("Invalid file transfer capability")
+    return os.open(path, flags, mode)
+
+
+def _remove_relative(handle: int | _PathDirectoryHandle, name: str) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.remove(name, dir_fd=handle)
+        return
+    os.remove(_join_directory_entry(handle, name))
+
+
+def _rename_relative(
+    handle: int | _PathDirectoryHandle,
+    source: str,
+    target: str,
+) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.rename(source, target, src_dir_fd=handle, dst_dir_fd=handle)
+        return
+    os.rename(
+        _join_directory_entry(handle, source),
+        _join_directory_entry(handle, target),
+    )
+
+
+def _link_relative(
+    handle: int | _PathDirectoryHandle,
+    source: str,
+    target: str,
+) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.link(
+            source,
+            target,
+            src_dir_fd=handle,
+            dst_dir_fd=handle,
+            follow_symlinks=False,
+        )
+        return
+    source_path = _join_directory_entry(handle, source)
+    if os.path.islink(source_path):
+        raise ValueError("Invalid file transfer capability")
+    os.link(source_path, _join_directory_entry(handle, target))
+
+
 def _open_transfer_directory(
-    root_fd: int,
+    root_handle: int | _PathDirectoryHandle,
     directory_name: str,
     *,
     create: bool,
-) -> int:
-    """Open one child directory beneath the bound transfer root descriptor."""
+) -> int | _PathDirectoryHandle:
+    """Open one child directory beneath the bound transfer root handle."""
 
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
+        if not _DIRECTORY_HANDLE_SUPPORTED:
+            child = _join_directory_entry(root_handle, directory_name)
+            if create:
+                os.makedirs(child, mode=0o700, exist_ok=True)
+            if os.path.islink(child):
+                raise ValueError("Invalid file transfer capability")
+            child_stat = os.stat(child, follow_symlinks=False)
+            if not stat.S_ISDIR(child_stat.st_mode):
+                raise ValueError("Invalid file transfer capability")
+            return _PathDirectoryHandle(
+                os.path.realpath(child),
+                (child_stat.st_dev, child_stat.st_ino),
+            )
         try:
             directory_fd = os.open(
                 directory_name,
                 directory_flags | no_follow,
-                dir_fd=root_fd,
+                dir_fd=root_handle,
             )
         except FileNotFoundError:
             if not create:
                 raise
             try:
-                os.mkdir(directory_name, mode=0o700, dir_fd=root_fd)
+                os.mkdir(directory_name, mode=0o700, dir_fd=root_handle)
             except FileExistsError:
                 pass
             directory_fd = os.open(
                 directory_name,
                 directory_flags | no_follow,
-                dir_fd=root_fd,
+                dir_fd=root_handle,
             )
         directory_stat = os.fstat(directory_fd)
         if not stat.S_ISDIR(directory_stat.st_mode):
@@ -240,13 +409,32 @@ def _open_transfer_directory(
         raise ValueError("Invalid file transfer capability") from None
 
 
-def _prepare_transfer_root(root: str) -> tuple[str, int, os.stat_result]:
+def _prepare_transfer_root(
+    root: str,
+) -> tuple[str, int | _PathDirectoryHandle, os.stat_result]:
     """Create and bind the configured root to one exact directory inode."""
 
     lexical_root = os.path.abspath(root)
     components = lexical_root.split(os.sep)
     if len(components) <= 1:
         raise ValueError("Invalid file transfer root")
+    if not _DIRECTORY_HANDLE_SUPPORTED:
+        # Windows-style fallback: create the root and keep an absolute-path
+        # handle.  The regular-directory and identity checks stay; only the
+        # descriptor-relative binding cannot be expressed on this platform.
+        try:
+            os.makedirs(lexical_root, mode=0o700, exist_ok=True)
+            root_stat = os.stat(lexical_root, follow_symlinks=False)
+        except OSError:
+            raise ValueError("Invalid file transfer root") from None
+        if not stat.S_ISDIR(root_stat.st_mode) or os.path.islink(lexical_root):
+            raise ValueError("Invalid file transfer root")
+        handle = _PathDirectoryHandle(
+            os.path.realpath(lexical_root),
+            (root_stat.st_dev, root_stat.st_ino),
+        )
+        _chmod_directory(handle, 0o700)
+        return lexical_root, handle, root_stat
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -292,20 +480,22 @@ def _prepare_transfer_root(root: str) -> tuple[str, int, os.stat_result]:
 
 
 def _read_regular_at(
-    root_fd: int,
+    root_handle: int | _PathDirectoryHandle,
     directory_name: str,
     file_name: str,
     *,
     private: bool = False,
     max_bytes: int | None = None,
 ) -> tuple[bytes, os.stat_result]:
-    directory_fd = _open_transfer_directory(root_fd, directory_name, create=False)
+    directory_handle = _open_transfer_directory(
+        root_handle, directory_name, create=False
+    )
     try:
         try:
-            descriptor = os.open(
+            descriptor = _open_relative_file(
+                directory_handle,
                 file_name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory_fd,
+                os.O_RDONLY,
             )
         except OSError as exc:
             if isinstance(exc, FileNotFoundError):
@@ -315,7 +505,10 @@ def _read_regular_at(
             file_stat = os.fstat(descriptor)
             if not stat.S_ISREG(file_stat.st_mode):
                 raise ValueError("Invalid file transfer capability")
-            if private and file_stat.st_mode & 0o077:
+            # POSIX ownership bits are the only honest signal for a private
+            # entry; platforms whose stat() synthesizes mode bits (Windows) are
+            # governed by ACLs instead and skip this check.
+            if private and _DIRECTORY_HANDLE_SUPPORTED and file_stat.st_mode & 0o077:
                 raise ValueError("Invalid file transfer capability")
             if max_bytes is not None and file_stat.st_size > max_bytes:
                 raise ValueError("File transfer exceeds the configured size limit")
@@ -325,7 +518,7 @@ def _read_regular_at(
         finally:
             os.close(descriptor)
     finally:
-        os.close(directory_fd)
+        _close_directory(directory_handle)
 
 
 def _file_storage_path(
@@ -341,12 +534,16 @@ def _file_storage_path(
     namespace = _transfer_namespace(action_context)
     namespace_path = os.path.join(os.fspath(file_storage_dir), namespace)
     if create_namespace:
-        _root, root_fd, _root_stat = _prepare_transfer_root(os.fspath(file_storage_dir))
+        _root, root_handle, _root_stat = _prepare_transfer_root(
+            os.fspath(file_storage_dir)
+        )
         try:
-            namespace_fd = _open_transfer_directory(root_fd, namespace, create=True)
-            os.close(namespace_fd)
+            namespace_handle = _open_transfer_directory(
+                root_handle, namespace, create=True
+            )
+            _close_directory(namespace_handle)
         finally:
-            os.close(root_fd)
+            _close_directory(root_handle)
     return os.path.join(namespace_path, key)
 
 
@@ -1357,7 +1554,7 @@ class Handler(abc.ABC):
         with self._file_transfer_state_lock:
             self._file_transfer_closing = True
 
-    def _require_transfer_root(self) -> int:
+    def _require_transfer_root(self) -> int | _PathDirectoryHandle:
         if self._file_storage_root_fd_closed:
             raise ValueError("Invalid file transfer root")
         try:
@@ -1372,7 +1569,7 @@ class Handler(abc.ABC):
         self._transfer_race_hook("after_root_validation")
         return self._file_storage_root_fd
 
-    def _bound_transfer_root(self) -> int:
+    def _bound_transfer_root(self) -> int | _PathDirectoryHandle:
         if self._file_storage_root_fd_closed:
             raise ValueError("Invalid file transfer root")
         return self._file_storage_root_fd
@@ -1384,7 +1581,7 @@ class Handler(abc.ABC):
             or self._transfer_stages
         ):
             return
-        os.close(self._file_storage_root_fd)
+        _close_directory(self._file_storage_root_fd)
         self._file_storage_root_fd_closed = True
 
     def _read_regular(
@@ -1429,10 +1626,10 @@ class Handler(abc.ABC):
         expected_bytes: bytes | None = None,
         missing_ok: bool,
     ) -> bool:
-        root_fd = self._bound_transfer_root()
+        root_handle = self._bound_transfer_root()
         try:
-            directory_fd = _open_transfer_directory(
-                root_fd, directory_name, create=False
+            directory_handle = _open_transfer_directory(
+                root_handle, directory_name, create=False
             )
         except FileNotFoundError:
             if missing_ok:
@@ -1447,12 +1644,7 @@ class Handler(abc.ABC):
                 file_name=file_name,
             )
             try:
-                os.rename(
-                    file_name,
-                    quarantine_name,
-                    src_dir_fd=directory_fd,
-                    dst_dir_fd=directory_fd,
-                )
+                _rename_relative(directory_handle, file_name, quarantine_name)
             except FileNotFoundError:
                 if missing_ok:
                     return False
@@ -1460,10 +1652,10 @@ class Handler(abc.ABC):
 
             verified = False
             try:
-                descriptor = os.open(
+                descriptor = _open_relative_file(
+                    directory_handle,
                     quarantine_name,
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                    dir_fd=directory_fd,
+                    os.O_RDONLY,
                 )
                 try:
                     quarantined_stat = os.fstat(descriptor)
@@ -1480,26 +1672,20 @@ class Handler(abc.ABC):
                     verified = True
                 finally:
                     os.close(descriptor)
-                os.remove(quarantine_name, dir_fd=directory_fd)
+                _remove_relative(directory_handle, quarantine_name)
                 return True
             except BaseException:
                 # Never restore or remove a name that resolved to a mismatching
                 # inode. Retaining it and the owner record makes retries fail
                 # closed instead of deleting a same-UID mutator's replacement.
                 if verified:
+                    with contextlib.suppress(OSError, ValueError):
+                        _link_relative(directory_handle, quarantine_name, file_name)
                     with contextlib.suppress(OSError):
-                        os.link(
-                            quarantine_name,
-                            file_name,
-                            src_dir_fd=directory_fd,
-                            dst_dir_fd=directory_fd,
-                            follow_symlinks=False,
-                        )
-                    with contextlib.suppress(OSError):
-                        os.remove(quarantine_name, dir_fd=directory_fd)
+                        _remove_relative(directory_handle, quarantine_name)
                 raise
         finally:
-            os.close(directory_fd)
+            _close_directory(directory_handle)
 
     @classmethod
     def _serialize_transfer_record(
@@ -1601,7 +1787,7 @@ class Handler(abc.ABC):
         chunk_amount: int,
     ) -> _TransferStage:
         namespace = _transfer_namespace(transfer_context)
-        namespace_fd = _open_transfer_directory(
+        namespace_handle = _open_transfer_directory(
             self._bound_transfer_root(), namespace, create=True
         )
         temp_name = f".payload-{uuid.uuid4().hex}.tmp"
@@ -1609,18 +1795,18 @@ class Handler(abc.ABC):
             record_name = _transfer_owner_record_name(file_key)
             if record_name is not None:
                 try:
-                    owner_dir_fd = _open_transfer_directory(
+                    owner_dir_handle = _open_transfer_directory(
                         self._bound_transfer_root(), _TRANSFER_OWNER_DIR, create=False
                     )
                 except FileNotFoundError:
-                    owner_dir_fd = None
-                if owner_dir_fd is not None:
+                    owner_dir_handle = None
+                if owner_dir_handle is not None:
                     try:
                         try:
-                            owner_fd = os.open(
+                            owner_fd = _open_relative_file(
+                                owner_dir_handle,
                                 record_name,
-                                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                                dir_fd=owner_dir_fd,
+                                os.O_RDONLY,
                             )
                         except FileNotFoundError:
                             owner_fd = None
@@ -1632,14 +1818,14 @@ class Handler(abc.ABC):
                             os.close(owner_fd)
                             raise ValueError("Invalid file transfer capability")
                     finally:
-                        os.close(owner_dir_fd)
+                        _close_directory(owner_dir_handle)
             # Published names are immutable.  Opening them for write (especially
             # with O_TRUNC) would let a raced replacement be modified.
             try:
-                existing_fd = os.open(
+                existing_fd = _open_relative_file(
+                    namespace_handle,
                     file_key,
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                    dir_fd=namespace_fd,
+                    os.O_RDONLY,
                 )
             except FileNotFoundError:
                 existing_fd = None
@@ -1648,11 +1834,11 @@ class Handler(abc.ABC):
             if existing_fd is not None:
                 os.close(existing_fd)
                 raise ValueError("Invalid file transfer capability")
-            descriptor = os.open(
+            descriptor = _open_relative_file(
+                namespace_handle,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o600,
-                dir_fd=namespace_fd,
             )
             file_stat = os.fstat(descriptor)
             if not stat.S_ISREG(file_stat.st_mode):
@@ -1674,7 +1860,7 @@ class Handler(abc.ABC):
         except OSError:
             raise ValueError("Invalid file transfer capability") from None
         finally:
-            os.close(namespace_fd)
+            _close_directory(namespace_handle)
 
     def _discard_transfer_stage(
         self,
@@ -1689,23 +1875,23 @@ class Handler(abc.ABC):
             with contextlib.suppress(OSError):
                 os.close(descriptor)
         try:
-            namespace_fd = _open_transfer_directory(
+            namespace_handle = _open_transfer_directory(
                 self._bound_transfer_root(), stage.namespace, create=False
             )
         except FileNotFoundError:
-            namespace_fd = None
+            namespace_handle = None
         except (OSError, ValueError):
             return False
-        if namespace_fd is not None:
+        if namespace_handle is not None:
             try:
                 try:
-                    os.remove(stage.temp_name, dir_fd=namespace_fd)
+                    _remove_relative(namespace_handle, stage.temp_name)
                 except FileNotFoundError:
                     pass
                 except OSError:
                     return False
             finally:
-                os.close(namespace_fd)
+                _close_directory(namespace_handle)
         self._transfer_stages.pop(file_key, None)
         if clear_active:
             lock_key = (self.file_storage_dir, file_key)
@@ -1721,7 +1907,7 @@ class Handler(abc.ABC):
         record_name = _transfer_owner_record_name(file_key)
         if record_name is None or stage.claim_id is None:
             return
-        owner_dir_fd = _open_transfer_directory(
+        owner_dir_handle = _open_transfer_directory(
             self._bound_transfer_root(), _TRANSFER_OWNER_DIR, create=True
         )
         temp_name = f".owner-{uuid.uuid4().hex}.tmp"
@@ -1732,11 +1918,11 @@ class Handler(abc.ABC):
         )
         descriptor: int | None = None
         try:
-            descriptor = os.open(
+            descriptor = _open_relative_file(
+                owner_dir_handle,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o600,
-                dir_fd=owner_dir_fd,
             )
             _write_all(descriptor, serialized)
             os.fsync(descriptor)
@@ -1745,13 +1931,7 @@ class Handler(abc.ABC):
             self._transfer_race_hook(
                 "before_owner_link", file_key=file_key, record_name=record_name
             )
-            os.link(
-                temp_name,
-                record_name,
-                src_dir_fd=owner_dir_fd,
-                dst_dir_fd=owner_dir_fd,
-                follow_symlinks=False,
-            )
+            _link_relative(owner_dir_handle, temp_name, record_name)
             stage.owner_published = True
             owner_path = os.path.join(
                 self.file_storage_dir, _TRANSFER_OWNER_DIR, record_name
@@ -1766,13 +1946,13 @@ class Handler(abc.ABC):
                 stage.file_stat.st_dev,
                 stage.file_stat.st_ino,
             )
-            os.fsync(owner_dir_fd)
+            _sync_directory(owner_dir_handle)
         finally:
             if descriptor is not None:
                 os.close(descriptor)
             with contextlib.suppress(OSError):
-                os.remove(temp_name, dir_fd=owner_dir_fd)
-            os.close(owner_dir_fd)
+                _remove_relative(owner_dir_handle, temp_name)
+            _close_directory(owner_dir_handle)
 
     def _write_file_chunk(
         self,
@@ -1860,26 +2040,24 @@ class Handler(abc.ABC):
                 os.fsync(stage.descriptor)
                 with self._file_transfer_state_lock:
                     self._require_file_transfer_open()
-                    namespace_fd = _open_transfer_directory(
+                    namespace_handle = _open_transfer_directory(
                         self._bound_transfer_root(), stage.namespace, create=False
                     )
                     try:
                         try:
-                            os.link(
+                            _link_relative(
+                                namespace_handle,
                                 stage.temp_name,
                                 file_key,
-                                src_dir_fd=namespace_fd,
-                                dst_dir_fd=namespace_fd,
-                                follow_symlinks=False,
                             )
                         except FileExistsError:
                             raise ValueError(
                                 "Invalid file transfer capability"
                             ) from None
                         stage.payload_published = True
-                        os.fsync(namespace_fd)
+                        _sync_directory(namespace_handle)
                     finally:
-                        os.close(namespace_fd)
+                        _close_directory(namespace_handle)
 
                     if stage.claim_id is not None:
                         self._publish_owner_record(file_key, stage, file_path)

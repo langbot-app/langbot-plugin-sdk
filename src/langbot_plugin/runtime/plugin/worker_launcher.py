@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
+import logging
 import os
 import pathlib
 import shutil
@@ -35,6 +36,8 @@ from langbot_plugin.runtime.security import (
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
 from langbot_plugin.utils.platform import get_platform
+
+logger = logging.getLogger(__name__)
 
 _READONLY_SYSTEM_MOUNTS = (
     "/bin",
@@ -164,6 +167,7 @@ class PluginWorkerLauncher:
         ).absolute()
         self.policy: PluginWorkerPolicy | None = None
         self.runtime_profile: Literal["oss_dev", "shared"] | None = None
+        self.effective_profile: Literal["oss_dev", "shared"] | None = None
 
     def configure(
         self,
@@ -176,19 +180,38 @@ class PluginWorkerLauncher:
             raise ValueError("Plugin worker launcher profile cannot be changed")
 
         if runtime_profile == "shared":
-            if self.platform != "linux":
-                raise RuntimeError("Shared plugin workers require Linux nsjail")
-            if not self.nsjail_path:
-                raise RuntimeError("Shared plugin workers require nsjail")
-            self._validate_python_runtime()
+            if self.platform == "win32":
+                # Windows cannot express nsjail or delegated cgroup v2, so a
+                # local development host executes per-plugin workers while the
+                # shared authorization contract itself is unchanged.  Linux
+                # deployments keep the fences below.
+                logger.warning(
+                    "Shared plugin workers require Linux nsjail; running per-plugin workers on this Windows host."
+                )
+                self.effective_profile = "oss_dev"
+            else:
+                if self.platform != "linux":
+                    raise RuntimeError("Shared plugin workers require Linux nsjail")
+                if not self.nsjail_path:
+                    raise RuntimeError("Shared plugin workers require nsjail")
+                self._validate_python_runtime()
+                if self.cgroup_v2_available is None:
+                    self.cgroup_v2_available = self._detect_cgroup_v2_delegation()
+                self.effective_profile = "shared"
+        else:
             if self.cgroup_v2_available is None:
-                self.cgroup_v2_available = self._detect_cgroup_v2_delegation()
-        elif self.cgroup_v2_available is None:
-            self.cgroup_v2_available = False
+                self.cgroup_v2_available = False
+            self.effective_profile = "oss_dev"
         if policy.require_hard_limits and not self.cgroup_v2_available:
-            raise RuntimeError(
-                "Plugin worker hard limits require delegated cgroup v2 controllers"
-            )
+            if self.platform == "win32":
+                logger.warning(
+                    "Plugin worker hard limits require delegated cgroup v2 controllers; "
+                    "this Windows host runs without them."
+                )
+            else:
+                raise RuntimeError(
+                    "Plugin worker hard limits require delegated cgroup v2 controllers"
+                )
 
         self.policy = policy
         self.runtime_profile = runtime_profile
@@ -691,9 +714,13 @@ class PluginWorkerLauncher:
     def _require_configuration(
         self,
     ) -> tuple[PluginWorkerPolicy, Literal["oss_dev", "shared"]]:
-        if self.policy is None or self.runtime_profile is None:
+        if (
+            self.policy is None
+            or self.runtime_profile is None
+            or self.effective_profile is None
+        ):
             raise RuntimeError("Plugin worker launcher is not configured")
-        return self.policy, self.runtime_profile
+        return self.policy, self.effective_profile
 
     @staticmethod
     def _require_dependency_environment(
