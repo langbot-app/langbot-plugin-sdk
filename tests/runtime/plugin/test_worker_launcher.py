@@ -571,6 +571,7 @@ async def test_prepare_dependency_environment_selects_profile_installer(
             *,
             runtime_fingerprint,
             installer,
+            execution_mode=None,
         ):
             captured.update(
                 artifact=artifact,

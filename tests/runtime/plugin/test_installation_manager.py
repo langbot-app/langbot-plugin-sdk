@@ -95,7 +95,7 @@ def _manager(tmp_path) -> tuple[RuntimeContext, PluginManager]:
     return context, manager
 
 
-async def _prepare_environment(store, artifact):
+async def _prepare_environment(store, artifact, *, execution_mode=None):
     root = store.base_path / "test-shared-environment"
     site_packages = root / "site-packages"
     site_packages.mkdir(parents=True, exist_ok=True)
@@ -201,7 +201,7 @@ async def test_certified_same_digest_installations_share_one_pool_worker(
     binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
     scheduled = []
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         root = store.base_path / "shared-environment"
         site_packages = root / "site-packages"
         site_packages.mkdir(parents=True, exist_ok=True)
@@ -1527,7 +1527,7 @@ async def test_installation_lifecycle_runs_dependency_preparation_concurrently_b
     active_prepares = 0
     max_active_prepares = 0
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         nonlocal active_prepares, max_active_prepares
         active_prepares += 1
         max_active_prepares = max(max_active_prepares, active_prepares)
@@ -1938,7 +1938,7 @@ async def test_shared_apply_prepares_dependency_environment_before_worker_launch
     )
     order: list[str] = []
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         order.append("prepare")
         root = store.base_path / "test-environment"
         site_packages = root / "site-packages"
@@ -1988,7 +1988,7 @@ async def test_shared_dependency_failure_is_explicit_and_same_revision_can_retry
     )
     launch_count = 0
 
-    async def fail_prepare(store, artifact):
+    async def fail_prepare(store, artifact, *, execution_mode=None):
         raise DependencyEnvironmentPreparationError("dependency download failed")
 
     def schedule(runtime):
@@ -2020,7 +2020,7 @@ async def test_shared_dependency_failure_is_explicit_and_same_revision_can_retry
     assert runtime.launch_task is None
     assert runtime.dependency_environment is None
 
-    async def successful_prepare(store, artifact):
+    async def successful_prepare(store, artifact, *, execution_mode=None):
         root = store.base_path / "retry-environment"
         site_packages = root / "site-packages"
         site_packages.mkdir(parents=True)
@@ -2063,7 +2063,7 @@ async def test_reconcile_reports_dependency_failure_without_worker_launch(
         enabled=False,
     )
 
-    async def fail_prepare(store, artifact):
+    async def fail_prepare(store, artifact, *, execution_mode=None):
         raise DependencyEnvironmentPreparationError("dependency download failed")
 
     monkeypatch.setattr(
@@ -2179,7 +2179,7 @@ async def test_oss_desired_state_prepares_environment_before_worker_launch(
     )
     order: list[str] = []
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         order.append("prepare")
         root = store.base_path / "test-environment"
         site_packages = root / "site-packages"

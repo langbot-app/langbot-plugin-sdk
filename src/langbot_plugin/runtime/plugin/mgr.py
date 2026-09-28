@@ -1106,6 +1106,7 @@ class PluginManager:
                         await self.worker_launcher.prepare_dependency_environment(
                             self.dependency_environment_store,
                             artifact,
+                            execution_mode=execution_mode.value,
                         )
                     )
                 except DependencyEnvironmentPreparationError as exc:

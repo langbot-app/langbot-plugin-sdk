@@ -262,6 +262,8 @@ class PluginWorkerLauncher:
         self,
         store: PluginDependencyEnvironmentStore,
         artifact: PluginArtifact,
+        *,
+        execution_mode: str | None = None,
     ) -> PluginDependencyEnvironment:
         """Prepare artifact dependencies before issuing a worker capability."""
 
@@ -275,6 +277,7 @@ class PluginWorkerLauncher:
             artifact,
             runtime_fingerprint=self.dependency_runtime_fingerprint(),
             installer=installer,
+            execution_mode=execution_mode,
         )
 
     def dependency_runtime_fingerprint(self) -> str:
