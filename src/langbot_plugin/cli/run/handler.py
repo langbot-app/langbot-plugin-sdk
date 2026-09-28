@@ -827,6 +827,17 @@ class PluginRuntimeHandler(Handler):
             with bind_invocation(self, config={}, binding=action_context):
                 yield
             return
+        # Dedicated workers are bound to one installation during initialization;
+        # they have no shared slot. Keep their action scope usable while fencing
+        # all other installation bindings to an attached shared slot.
+        if self.bound_action_context == action_context:
+            with bind_invocation(
+                self,
+                config=self.plugin_container.plugin_config,
+                binding=action_context,
+            ):
+                yield
+            return
         slot = self._slot_containers.get(action_context.installation_uuid)
         if slot is None or slot.binding != action_context:
             raise ValueError("Shared plugin slot is not attached")

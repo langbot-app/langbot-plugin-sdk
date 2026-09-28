@@ -275,6 +275,54 @@ async def test_plugin_runtime_handler_binds_context_from_initialize_envelope():
     assert handler.bound_action_context == action_context
 
 
+async def test_dedicated_initialize_uses_bound_installation_without_shared_slot():
+    from langbot_plugin.api.proxies.invocation import invocation_capability
+
+    handler, initialized = _handler()
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=2,
+        installation_uuid="dedicated-1",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    handler.plugin_container.plugin_config = {"dedicated": True}
+    handler.bind_action_context(binding)
+    with handler.action_invocation_scope(
+        RuntimeToPluginAction.INITIALIZE_PLUGIN.value, binding
+    ):
+        capability = invocation_capability(handler)
+        assert capability is not None
+        assert capability.binding == binding
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            RuntimeToPluginAction.INITIALIZE_PLUGIN.value,
+            {"plugin_settings": {"enabled": True}},
+            action_context=binding,
+        )
+    assert response["code"] == 0
+    assert initialized == [{"enabled": True}]
+    assert handler._slot_containers == {}
+
+
+async def test_unattached_shared_slot_remains_rejected():
+    handler, _initialized = _handler()
+    binding = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=2,
+        installation_uuid="shared-1",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    with pytest.raises(ValueError, match="Shared plugin slot is not attached"):
+        with handler.action_invocation_scope(
+            RuntimeToPluginAction.INITIALIZE_PLUGIN.value, binding
+        ):
+            pass
+
+
 async def test_attach_scope_revokes_authority_copied_by_initialize_task():
     from langbot_plugin.api.proxies.invocation import invocation_capability
 
