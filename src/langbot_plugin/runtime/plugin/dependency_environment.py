@@ -33,15 +33,51 @@ _RUNTIME_SDK_COMPATIBILITY_SERIES = (0, 6)
 # Raw archive SHA-256 digests, not normalized certification digests. This is
 # dependency ABI admission only; it never grants certification or shared slots.
 _LEGACY_DEDICATED_SDK_061 = {
-    ("langbot-team", "CozeAgent", "0.1.10"): "90d9e1adbf456fd5e55ab8e022c26a17d272bf834104d711fff390c3649dc7a4",
-    ("langbot-team", "DashScopeAgent", "0.1.10"): "ca9fe3b6cf3d891c0d5f5ef6c711c25b20a922e8fe110778997314a1f8b0559e",
-    ("langbot-team", "DeerFlowAgent", "0.1.10"): "b35f551f9a9498f1f33d2596230725d3db1f13852edcb74330bc4a4dd681c6c9",
-    ("langbot-team", "DifyAgent", "0.1.10"): "1dd9cb4140bf0c2f848ecd648210b8cf7c9a0f520575ddc61e91a704e3ea3280",
-    ("langbot-team", "LangflowAgent", "0.1.10"): "b582250f2bf46e758fd904c52dea0ee6496626d61be6096a44fb9b34684583a5",
-    ("langbot-team", "N8nAgent", "0.1.10"): "0eee26b0101d166385425049727c0bf433582615d507fa36efc456b78cecac4a",
-    ("langbot-team", "TboxAgent", "0.1.8"): "387a02a2bed698b04f119042bab19c2400e53a433c6f0451a566e4c33807896f",
-    ("langbot-team", "WeKnoraAgent", "0.1.10"): "95dddd70a6f768660bd2de3adaebbe585b3aa42de7ad6ddb5a9fb6777590c9cc",
-    ("langbot-team", "LocalAgent", "0.1.10"): "a08a3f33cc10f5292d5ebafa58af1b993c8b89dbe6692df7895e924ffdd88da3",
+    (
+        "langbot-team",
+        "CozeAgent",
+        "0.1.10",
+    ): "90d9e1adbf456fd5e55ab8e022c26a17d272bf834104d711fff390c3649dc7a4",
+    (
+        "langbot-team",
+        "DashScopeAgent",
+        "0.1.10",
+    ): "ca9fe3b6cf3d891c0d5f5ef6c711c25b20a922e8fe110778997314a1f8b0559e",
+    (
+        "langbot-team",
+        "DeerFlowAgent",
+        "0.1.10",
+    ): "b35f551f9a9498f1f33d2596230725d3db1f13852edcb74330bc4a4dd681c6c9",
+    (
+        "langbot-team",
+        "DifyAgent",
+        "0.1.10",
+    ): "1dd9cb4140bf0c2f848ecd648210b8cf7c9a0f520575ddc61e91a704e3ea3280",
+    (
+        "langbot-team",
+        "LangflowAgent",
+        "0.1.10",
+    ): "b582250f2bf46e758fd904c52dea0ee6496626d61be6096a44fb9b34684583a5",
+    (
+        "langbot-team",
+        "N8nAgent",
+        "0.1.10",
+    ): "0eee26b0101d166385425049727c0bf433582615d507fa36efc456b78cecac4a",
+    (
+        "langbot-team",
+        "TboxAgent",
+        "0.1.8",
+    ): "387a02a2bed698b04f119042bab19c2400e53a433c6f0451a566e4c33807896f",
+    (
+        "langbot-team",
+        "WeKnoraAgent",
+        "0.1.10",
+    ): "95dddd70a6f768660bd2de3adaebbe585b3aa42de7ad6ddb5a9fb6777590c9cc",
+    (
+        "langbot-team",
+        "LocalAgent",
+        "0.1.10",
+    ): "a08a3f33cc10f5292d5ebafa58af1b993c8b89dbe6692df7895e924ffdd88da3",
 }
 
 
@@ -336,9 +372,11 @@ class PluginDependencyEnvironmentStore:
                     ) from exc
                 # Validate the already-installed Runtime SDK, including beta
                 # releases, rather than filtering candidates for installation.
-                compatible = PluginDependencyEnvironmentStore._runtime_sdk_requirement_satisfied(
-                    requirement,
-                    runtime_version,
+                compatible = (
+                    PluginDependencyEnvironmentStore._runtime_sdk_requirement_satisfied(
+                        requirement,
+                        runtime_version,
+                    )
                 )
                 if (
                     not compatible

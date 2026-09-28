@@ -1,4 +1,5 @@
 """Exact, dedicated-only SDK pin admission for nine reviewed marketplace archives."""
+
 import hashlib
 import importlib.metadata
 from pathlib import Path
@@ -33,8 +34,12 @@ def test_only_exact_verified_identity_and_digest_in_dedicated_mode(
         artifact(), execution_mode="dedicated"
     )[0] == ("httpx>=0.28.1",)
     for mode in (None, "shared-runtime-v1", "unexpected"):
-        with pytest.raises(DependencyEnvironmentPreparationError, match="Runtime provides"):
-            PluginDependencyEnvironmentStore._read_requirements(artifact(), execution_mode=mode)
+        with pytest.raises(
+            DependencyEnvironmentPreparationError, match="Runtime provides"
+        ):
+            PluginDependencyEnvironmentStore._read_requirements(
+                artifact(), execution_mode=mode
+            )
     with pytest.raises(DependencyEnvironmentPreparationError, match="Runtime provides"):
         PluginDependencyEnvironmentStore._read_requirements(
             artifact(actual_digest="0" * 64), execution_mode="dedicated"
@@ -46,7 +51,9 @@ def test_only_exact_verified_identity_and_digest_in_dedicated_mode(
         )
     (code / "requirements.txt").write_text("langbot-plugin==0.6.2\n")
     with pytest.raises(DependencyEnvironmentPreparationError, match="Runtime provides"):
-        PluginDependencyEnvironmentStore._read_requirements(artifact(), execution_mode="dedicated")
+        PluginDependencyEnvironmentStore._read_requirements(
+            artifact(), execution_mode="dedicated"
+        )
 
 
 def test_runtime_version_and_downloaded_archive_are_exact(tmp_path, monkeypatch):
