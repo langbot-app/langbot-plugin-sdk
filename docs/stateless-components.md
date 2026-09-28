@@ -13,7 +13,7 @@ execution:
   componentModel: stateless-v1
 ```
 
-`sharedRuntime` without `componentModel: stateless-v1` is not eligible for certification. Legacy source and unsigned packages remain compatible with the dedicated path. OSS may downgrade an untrusted or legacy certificate to dedicated according to its admission policy; Cloud may reject it before installation.
+`sharedRuntime` without `componentModel: stateless-v1` is not eligible for certification. Legacy source and unsigned packages remain compatible with the dedicated path. OSS ships no built-in issuer public key and supports dedicated execution only; configuring a certification key on OSS is unsupported. Cloud rejects an untrusted or legacy signed certificate rather than treating it as unsigned.
 
 ## Programming contract
 
@@ -56,4 +56,4 @@ Shared initialization has no tenant config, so this captures empty/stale data or
 
 ## Compatibility
 
-Legacy source and unsigned packages keep the dedicated worker and existing object/config semantics. In OSS, certificate failures may downgrade to dedicated according to admission policy; Cloud may reject an ineligible package before storage. The stateless rules are an opt-in certification contract. Adding only the manifest fields is insufficient: source review and concurrency tests must prove the implementation follows the contract.
+Legacy source and unsigned packages keep the dedicated worker and existing object/config semantics. OSS is dedicated-only and has no supported certification key configuration. Cloud must reject an invalid or legacy signed archive rather than treating it as unsigned. The stateless rules are an opt-in certification contract. Adding only the manifest fields is insufficient: source review and concurrency tests must prove the implementation follows the contract.

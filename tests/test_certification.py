@@ -91,6 +91,32 @@ def test_certificate_creation_rejects_an_explicit_null_shared_runtime():
         create_envelope(_plugin_archive(shared_runtime=None), "test-key", _sign)
 
 
+def test_certificate_creation_rejects_dedicated_manifest():
+    with pytest.raises(EnvelopeFormatError, match="sharedRuntime"):
+        create_envelope(_plugin_archive(), "test-key", _sign)
+
+
+def test_legacy_v2_dedicated_signature_is_not_valid_certification():
+    archive = _plugin_archive()
+    unsigned = {
+        "schema": "certified-plugin-envelope-v2",
+        "key_id": "test-key",
+        "plugin_id": {"author": "certifier", "name": "demo"},
+        "version": "1.2.3",
+        "digest": normalized_zip_digest(archive),
+        "shared_runtime": None,
+        "component_model": None,
+    }
+    signed = {
+        **unsigned,
+        "signature": base64.b64encode(_sign(canonical_json(unsigned))).decode("ascii"),
+    }
+    assert (
+        verify_archive(_with_comment(archive, canonical_json(signed)), _resolve).status
+        != "valid"
+    )
+
+
 def test_valid_signed_envelope_binds_shared_runtime_and_manifest_identity():
     archive = _plugin_archive(shared_runtime="shared-runtime-v1")
     certified = _certified_archive(archive)
@@ -140,14 +166,14 @@ def test_legacy_v1_envelope_remains_verifiable_but_has_no_stateless_claim():
 
 
 def test_archive_byte_tamper_reports_digest_mismatch():
-    certified = _certified_archive(_plugin_archive())
+    certified = _certified_archive(_plugin_archive(shared_runtime="shared-runtime-v1"))
     tampered = certified.replace(b"print('plugin')", b"print('tamper')", 1)
 
     assert verify_archive(tampered, _resolve).status == "digest_mismatch"
 
 
 def test_envelope_comment_tamper_reports_signature_invalid():
-    certified = _certified_archive(_plugin_archive())
+    certified = _certified_archive(_plugin_archive(shared_runtime="shared-runtime-v1"))
     envelope = read_envelope(certified)
     assert envelope is not None
     tampered = write_envelope(
@@ -159,13 +185,13 @@ def test_envelope_comment_tamper_reports_signature_invalid():
 
 
 def test_unknown_signing_key_is_reported():
-    certified = _certified_archive(_plugin_archive())
+    certified = _certified_archive(_plugin_archive(shared_runtime="shared-runtime-v1"))
 
     assert verify_archive(certified, lambda _key_id: None).status == "unknown_key"
 
 
 def test_manifest_mismatch_is_reported_after_a_valid_signature():
-    archive = _plugin_archive()
+    archive = _plugin_archive(shared_runtime="shared-runtime-v1")
     envelope = create_envelope(archive, "test-key", _sign)
     mismatched = CertificationEnvelope(
         schema=envelope.schema,
@@ -183,7 +209,7 @@ def test_manifest_mismatch_is_reported_after_a_valid_signature():
 
 
 def test_normalized_digest_ignores_zip_comment():
-    archive = _plugin_archive()
+    archive = _plugin_archive(shared_runtime="shared-runtime-v1")
     comment_one = write_envelope(archive, create_envelope(archive, "test-key", _sign))
     envelope = read_envelope(comment_one)
     assert envelope is not None
@@ -197,7 +223,7 @@ def test_normalized_digest_ignores_zip_comment():
 
 
 def test_write_refuses_an_unsupported_schema():
-    archive = _plugin_archive()
+    archive = _plugin_archive(shared_runtime="shared-runtime-v1")
     envelope = create_envelope(archive, "test-key", _sign)
 
     with pytest.raises(EnvelopeFormatError, match="unsupported"):

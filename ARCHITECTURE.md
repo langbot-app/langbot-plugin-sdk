@@ -59,7 +59,9 @@ Plugin-facing APIs live under `src/langbot_plugin/api/`.
 - `certification.py` defines optional ZIP-comment certification envelopes. It
   canonicalizes envelope JSON, normalizes the ZIP digest by removing the comment,
   and verifies the signed manifest identity and runtime profile without changing
-  legacy archive output.
+  unsigned archive output. New certificates exist only for Cloud cross-tenant
+  sharing of one Worker and one plugin/component singleton, not dedicated mode;
+  older v1 claims without signed stateless component model cannot authorize sharing.
 - `entities/` defines event/context/message/provider data models passed across LangBot, runtime, and plugin code.
 - `proxies/` defines methods plugins can call back into LangBot, such as messaging, storage, model invocation, tools, RAG, parser, and query-scoped APIs.
 

@@ -1,6 +1,6 @@
 # Certified Plugin Archives
 
-`langbot_plugin.certification` provides an opt-in archive certification format. It does not change `lbp build` output: existing `.lbpkg` archives retain an empty ZIP comment and verify as `absent`.
+`langbot_plugin.certification` provides an opt-in archive certification format **only for Cloud cross-tenant sharing of the same Worker and the same plugin/component singleton**. It does not change `lbp build` output: unsigned `.lbpkg` archives retain an empty ZIP comment and verify as `absent`; Cloud installs them on dedicated Workers. There is no dedicated certificate or intermediate trust tier.
 
 ## Manifest runtime profile
 
@@ -34,11 +34,11 @@ The envelope is compact, sorted UTF-8 JSON in the ZIP comment. New stateless cer
 }
 ```
 
-`shared_runtime` is `null` for dedicated-runtime manifests. The digest is SHA-256 of the original ZIP bytes with only its ZIP comment removed, so adding or replacing the envelope does not change the signed digest. ZIP comments are limited to 16 KiB; archive manifests are read without extraction and limited to 1 MiB.
+New v2 envelopes require `shared_runtime: shared-runtime-v1` and `component_model: stateless-v1`. Dedicated manifests must remain unsigned; historical v2 envelopes with null claims do not verify as certification. Older v1 schemas may carry null claims, but cannot grant Cloud sharing or be treated as unsigned. The digest is SHA-256 of the original ZIP bytes with only its ZIP comment removed, so adding or replacing the envelope does not change the signed digest. ZIP comments are limited to 16 KiB; archive manifests are read without extraction and limited to 1 MiB.
 
 ## Signing and verification
 
-The module is algorithm-neutral and does not add a cryptography dependency. Supply the signing callback and a trusted-key resolver from the deployment that owns issuer keys. Production integrations should use an asymmetric signature scheme such as Ed25519; do not use the test-only HMAC pattern as a trust boundary.
+The module is algorithm-neutral and does not add a cryptography dependency. Supply the signing callback and a trusted-key resolver from the deployment that owns issuer keys. Cloud issuers use Ed25519. OSS ships without a built-in issuer public key, supports one Workspace, and does not support configuring a certification key or shared-certified execution. Do not use the test-only HMAC pattern as a trust boundary.
 
 ```python
 from langbot_plugin.certification import create_envelope, verify_archive, write_envelope
@@ -53,7 +53,7 @@ if result.status != "valid":
     raise ValueError(result.status)
 ```
 
-Verification binds the envelope's `plugin_id.author`, `plugin_id.name`, `version`, normalized digest, `shared_runtime`, and `component_model` to `manifest.yaml`.
+Verification binds the envelope's `plugin_id.author`, `plugin_id.name`, `version`, normalized digest, `shared_runtime`, and `component_model` to `manifest.yaml`. Legacy v1 signatures can still verify cryptographically but never grant singleton sharing because they lack the signed `stateless-v1` claim. Malformed or untrusted signatures are not unsigned archives and Cloud must reject them. Verification alone is not placement: compare the exact downloaded artifact, public version record and deployed Core trust ring. A reviewed source candidate, `issued` badge, or shared code/dependency tree does not prove a live shared Worker.
 
 ## Verification statuses
 
