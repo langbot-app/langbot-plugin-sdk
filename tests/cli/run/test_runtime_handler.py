@@ -288,10 +288,11 @@ async def test_dedicated_initialize_uses_bound_installation_without_shared_slot(
         artifact_digest="a" * 64,
     )
     handler.plugin_container.plugin_config = {"dedicated": True}
-    handler.bind_action_context(binding)
+    assert handler.bound_action_context is None
     with handler.action_invocation_scope(
         RuntimeToPluginAction.INITIALIZE_PLUGIN.value, binding
     ):
+        assert handler.bound_action_context == binding
         capability = invocation_capability(handler)
         assert capability is not None
         assert capability.binding == binding
@@ -316,9 +317,19 @@ async def test_unattached_shared_slot_remains_rejected():
         runtime_revision=1,
         artifact_digest="a" * 64,
     )
+    handler.bind_action_context(
+        InstallationBinding(
+            instance_uuid="instance-1",
+            workspace_uuid="workspace-a",
+            placement_generation=2,
+            installation_uuid="dedicated-1",
+            runtime_revision=1,
+            artifact_digest="a" * 64,
+        )
+    )
     with pytest.raises(ValueError, match="Shared plugin slot is not attached"):
         with handler.action_invocation_scope(
-            RuntimeToPluginAction.INITIALIZE_PLUGIN.value, binding
+            RuntimeToPluginAction.GET_PLUGIN_SLOT_CONTAINER.value, binding
         ):
             pass
 

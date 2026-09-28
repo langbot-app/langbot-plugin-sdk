@@ -827,9 +827,17 @@ class PluginRuntimeHandler(Handler):
             with bind_invocation(self, config={}, binding=action_context):
                 yield
             return
-        # Dedicated workers are bound to one installation during initialization;
-        # they have no shared slot. Keep their action scope usable while fencing
-        # all other installation bindings to an attached shared slot.
+        # The first dedicated INITIALIZE_PLUGIN arrives before the handler has
+        # bound the trusted installation from Runtime. Bind it here, before
+        # entering the invocation scope, so initialize() can use Host APIs.
+        # Shared workers initialize through ATTACH_PLUGIN_SLOT instead.
+        if (
+            action == RuntimeToPluginAction.INITIALIZE_PLUGIN.value
+            and self.bound_action_context is None
+        ):
+            self.bind_action_context(action_context)
+        # Dedicated workers have no shared slot. All subsequent calls must
+        # match the exact installation binding; other bindings need a slot.
         if self.bound_action_context == action_context:
             with bind_invocation(
                 self,
