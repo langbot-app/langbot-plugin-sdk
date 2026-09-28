@@ -155,13 +155,13 @@ class NsjailBackend(BaseSandboxBackend):
             "mount_isolation": None,
             "network_isolation": None,
             # nsjail itself does not provide byte/inode accounting for bind
-            # mounts, the shared tenant skill store, or its private
+            # mounts, generic read-only mount sources, or its private
             # root/tmp/home. A future operator-owned project/subvolume quota
             # provider may override these only after it can attest both the
-            # workspace and skills/tenants/<scope> backing filesystems.
+            # workspace and mounted backing filesystems.
             # Runtime/Core payloads are intentionally not consulted.
             "hard_workspace_quota": False,
-            "hard_skill_storage_quota": False,
+            "hard_read_only_mount_quota": False,
             "bounded_ephemeral_storage": False,
             "inode_quota": False,
         }
@@ -175,7 +175,7 @@ class NsjailBackend(BaseSandboxBackend):
                     "mount_isolation": False,
                     "network_isolation": False,
                     "hard_workspace_quota": False,
-                    "hard_skill_storage_quota": False,
+                    "hard_read_only_mount_quota": False,
                     "bounded_ephemeral_storage": False,
                     "inode_quota": False,
                 }
@@ -189,7 +189,7 @@ class NsjailBackend(BaseSandboxBackend):
                     "mount_isolation": False,
                     "network_isolation": False,
                     "hard_workspace_quota": False,
-                    "hard_skill_storage_quota": False,
+                    "hard_read_only_mount_quota": False,
                     "bounded_ephemeral_storage": False,
                     "inode_quota": False,
                     "error": "managed nsjail readiness requires a durable workspace path",
@@ -206,7 +206,7 @@ class NsjailBackend(BaseSandboxBackend):
                 "mount_isolation": False,
                 "network_isolation": False,
                 "hard_workspace_quota": False,
-                "hard_skill_storage_quota": False,
+                "hard_read_only_mount_quota": False,
                 "bounded_ephemeral_storage": False,
                 "inode_quota": False,
                 "error": str(exc),

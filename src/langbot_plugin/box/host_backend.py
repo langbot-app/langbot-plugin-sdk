@@ -95,7 +95,7 @@ class HostProcessBackend(BaseSandboxBackend):
             "mount_isolation": False,
             "network_isolation": False,
             "hard_workspace_quota": False,
-            "hard_skill_storage_quota": False,
+            "hard_read_only_mount_quota": False,
             "bounded_ephemeral_storage": False,
             "inode_quota": False,
         }

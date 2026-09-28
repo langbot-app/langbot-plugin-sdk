@@ -54,7 +54,6 @@ from .models import (
     SandboxAdmissionPolicy,
     SandboxAdmissionRevocation,
 )
-from .skill_store import BoxSkillStore
 from .security import validate_shared_workspace_probe_name
 from .tenancy import (
     box_namespace,
@@ -79,6 +78,7 @@ MAX_RUNTIME_COMPLETED_PROCESSES = 10_000
 MAX_RUNTIME_ADMISSION_RECORDS = 250_000
 MAX_RUNTIME_RPC_FILE_BYTES = 100 * 1024 * 1024
 MAX_RUNTIME_COMPLETED_RETENTION_SEC = 86_400
+MAX_ADMITTED_READ_ONLY_MOUNTS = 256
 
 
 def _unsafe_soft_storage_limits_enabled() -> bool:
@@ -139,11 +139,13 @@ class _RuntimeSession:
     )
     # Signature of the extra bind mounts the container was created with. Used
     # to detect when a reused session would be missing newly-requested mounts.
-    extra_mounts_key: frozenset[tuple[str, str, str]] = frozenset()
+    extra_mounts_key: frozenset[tuple[str, str, str, str, str]] = frozenset()
     closing: bool = False
 
 
-def _compute_extra_mounts_key(spec: BoxSpec) -> frozenset[tuple[str, str, str]]:
+def _compute_extra_mounts_key(
+    spec: BoxSpec,
+) -> frozenset[tuple[str, str, str, str, str]]:
     """Signature of a spec's effective extra bind mounts.
 
     Mirrors the backend's mount filtering (``mode == "none"`` mounts are not
@@ -153,12 +155,20 @@ def _compute_extra_mounts_key(spec: BoxSpec) -> frozenset[tuple[str, str, str]]:
     session's container would be missing newly-requested mounts and must be
     recreated.
     """
-    key: set[tuple[str, str, str]] = set()
+    key: set[tuple[str, str, str, str, str]] = set()
     for mount in spec.extra_mounts:
         mode_val = mount.mode.value if hasattr(mount.mode, "value") else str(mount.mode)
         if mode_val == "none":
             continue
-        key.add((mount.host_path, mount.mount_path, mode_val))
+        key.add(
+            (
+                mount.host_path,
+                mount.mount_path,
+                mode_val,
+                str(mount.content_digest or ""),
+                str(mount.manifest_path or ""),
+            )
+        )
     return frozenset(key)
 
 
@@ -268,8 +278,6 @@ class BoxRuntime:
         self._closing_session_tasks: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self.instance_id = uuid.uuid4().hex[:12]
-        self.skill_store = BoxSkillStore(self._box_config)
-        self.skill_operation_lock = asyncio.Lock()
         self._admission_policy = SandboxAdmissionPolicy()
         self._admission_config_error: str | None = None
         self._admission_grants: dict[tuple[str, str], SandboxAdmissionGrant] = {}
@@ -372,7 +380,6 @@ class BoxRuntime:
         self.max_rpc_file_bytes = max_rpc_file_bytes
         self.completed_process_retention_sec = completed_process_retention_sec
         self._apply_config_to_backends(config)
-        self.skill_store.update_config(self._box_config)
         self._refresh_admission_policy()
         if previous_admission_policy.required and not self._admission_policy.required:
             self._admission_policy = previous_admission_policy
@@ -542,8 +549,6 @@ class BoxRuntime:
                 )
             )
 
-        skills_path = Path(self.skill_store.scoped(namespace).root)
-        host_roots.append(("skills", skills_path, "root", None))
         directories = await asyncio.to_thread(collect_storage_directories, host_roots)
         for directory in directories:
             directory["scope"] = "runtime_host"
@@ -812,6 +817,79 @@ done
         os.makedirs(workspace_path, exist_ok=True)
         return workspace_path
 
+    def _normalize_admitted_extra_mounts(
+        self,
+        mounts: list[BoxMountSpec],
+    ) -> list[BoxMountSpec]:
+        """Validate trusted Core-provided artifacts without domain semantics."""
+
+        if len(mounts) > MAX_ADMITTED_READ_ONLY_MOUNTS:
+            raise BoxAdmissionError(
+                f"Managed sandbox accepts at most {MAX_ADMITTED_READ_ONLY_MOUNTS} read-only mounts"
+            )
+        allowed_roots = self._allowed_mount_roots()
+        if mounts and not allowed_roots:
+            raise BoxAdmissionError(
+                "Managed sandbox read-only mounts require allowed_mount_roots"
+            )
+
+        normalized: list[BoxMountSpec] = []
+        destinations: set[str] = set()
+        for mount in mounts:
+            if mount.mode != BoxHostMountMode.READ_ONLY:
+                raise BoxAdmissionError(
+                    "Managed sandbox additional mounts must be read-only"
+                )
+            host_path = _resolve_local_path(mount.host_path)
+            if not os.path.isdir(host_path):
+                raise BoxAdmissionError(
+                    "Managed sandbox read-only mount source is unavailable"
+                )
+            if not any(
+                self._path_is_under(host_path, allowed_root)
+                for allowed_root in allowed_roots
+            ):
+                raise BoxAdmissionError(
+                    "Managed sandbox read-only mount source is outside allowed_mount_roots"
+                )
+            manifest_path = None
+            if mount.manifest_path is not None:
+                if mount.content_digest is None:
+                    raise BoxAdmissionError(
+                        "Managed sandbox mount manifests require content_digest"
+                    )
+                manifest_path = _resolve_local_path(mount.manifest_path)
+                if not os.path.isfile(manifest_path):
+                    raise BoxAdmissionError(
+                        "Managed sandbox read-only mount manifest is unavailable"
+                    )
+                if not any(
+                    self._path_is_under(manifest_path, allowed_root)
+                    for allowed_root in allowed_roots
+                ):
+                    raise BoxAdmissionError(
+                        "Managed sandbox read-only mount manifest is outside allowed_mount_roots"
+                    )
+            mount_path = mount.mount_path
+            if not mount_path.startswith(f"{DEFAULT_BOX_MOUNT_PATH}/"):
+                raise BoxAdmissionError(
+                    "Managed sandbox additional mount targets must stay under /workspace"
+                )
+            if mount_path in destinations:
+                raise BoxAdmissionError(
+                    "Managed sandbox additional mount targets must be unique"
+                )
+            destinations.add(mount_path)
+            normalized.append(
+                mount.model_copy(
+                    update={
+                        "host_path": host_path,
+                        "manifest_path": manifest_path,
+                    }
+                )
+            )
+        return normalized
+
     def _normalize_admitted_spec(
         self,
         spec: BoxSpec,
@@ -821,10 +899,6 @@ done
         policy = self._admission_policy
         if spec.network != BoxNetworkMode.OFF:
             raise BoxAdmissionError("Managed sandbox network access is disabled")
-        if spec.extra_mounts:
-            raise BoxAdmissionError(
-                "Managed sandbox additional host mounts are disabled"
-            )
         if spec.mount_path != DEFAULT_BOX_MOUNT_PATH:
             raise BoxAdmissionError("Managed sandbox mount_path is runtime-owned")
         if spec.workdir != DEFAULT_BOX_MOUNT_PATH and not spec.workdir.startswith(
@@ -840,22 +914,7 @@ done
             if submitted_host_path != workspace_path:
                 raise BoxAdmissionError("Managed sandbox host_path is runtime-owned")
 
-        extra_mounts: list[BoxMountSpec] = []
-        if spec.skill_name is not None:
-            scoped_store = self.skill_store.scoped(box_namespace(context))
-            try:
-                package_root = scoped_store.resolve_skill_package_root(spec.skill_name)
-            except ValueError as exc:
-                raise BoxAdmissionError(
-                    "Managed sandbox skill is unavailable in this Workspace"
-                ) from exc
-            extra_mounts.append(
-                BoxMountSpec(
-                    host_path=package_root,
-                    mount_path=f"{DEFAULT_BOX_MOUNT_PATH}/.skills/{spec.skill_name}",
-                    mode=BoxHostMountMode.READ_ONLY,
-                )
-            )
+        extra_mounts = self._normalize_admitted_extra_mounts(spec.extra_mounts)
 
         return spec.model_copy(
             update={
@@ -1521,7 +1580,7 @@ done
             "mount_isolation": False,
             "network_isolation": False,
             "hard_workspace_quota": False,
-            "hard_skill_storage_quota": False,
+            "hard_read_only_mount_quota": False,
             "bounded_ephemeral_storage": False,
             "inode_quota": False,
             "session_cap": self._admission_policy.max_sessions <= 1,
@@ -1553,7 +1612,7 @@ done
                 "mount_isolation",
                 "network_isolation",
                 "hard_workspace_quota",
-                "hard_skill_storage_quota",
+                "hard_read_only_mount_quota",
                 "bounded_ephemeral_storage",
                 "inode_quota",
             ):
@@ -1564,7 +1623,7 @@ done
                 # Namespace, mount, network and cgroup checks still fail closed.
                 for name in (
                     "hard_workspace_quota",
-                    "hard_skill_storage_quota",
+                    "hard_read_only_mount_quota",
                     "bounded_ephemeral_storage",
                     "inode_quota",
                 ):
@@ -1709,6 +1768,7 @@ done
             while True:
                 cleanup_task: asyncio.Task[None] | None = None
                 existing: _RuntimeSession | None = None
+                replacing: _RuntimeSession | None = None
                 async with self._lock:
                     if self._shutdown_in_progress:
                         raise BoxRuntimeUnavailableError("Box runtime is shutting down")
@@ -1741,16 +1801,20 @@ done
                         if existing is not None:
                             self._assert_session_compatible(existing.info, spec)
                             if existing.extra_mounts_key != new_extra_mounts_key:
+                                replacing = existing
+                            else:
+                                self._session_leases[spec.session_id] += 1
+
+                if replacing is not None:
+                    async with replacing.lock:
+                        async with self._lock:
+                            if self._sessions.get(spec.session_id) is replacing:
                                 self.logger.info(
                                     "LangBot Box session extra_mounts changed, "
                                     f"recreating: session_id={spec.session_id}"
                                 )
-                                cleanup_task = self._drop_session_locked(
-                                    spec.session_id
-                                )
-                                existing = None
-                            else:
-                                self._session_leases[spec.session_id] += 1
+                                self._drop_session_locked(spec.session_id)
+                    continue
 
                 if cleanup_task is not None:
                     await self._wait_for_session_cleanup(spec.session_id, cleanup_task)

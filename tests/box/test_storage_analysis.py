@@ -8,7 +8,7 @@ from langbot_plugin.box.tenancy import box_namespace
 from langbot_plugin.entities.io.context import ActionContext
 
 
-async def test_box_storage_analysis_reports_workspace_mcp_and_skills(tmp_path):
+async def test_box_storage_analysis_reports_workspace_mcp_without_skills(tmp_path):
     workspace_root = tmp_path / "workspaces"
     skills_root = tmp_path / "skills"
     runtime = BoxRuntime(logging.getLogger("test-box-storage"), backends=[])
@@ -17,7 +17,6 @@ async def test_box_storage_analysis_reports_workspace_mcp_and_skills(tmp_path):
             "local": {
                 "host_root": str(tmp_path),
                 "default_workspace": str(workspace_root),
-                "skills_root": str(skills_root),
                 "allowed_mount_roots": [str(tmp_path)],
             }
         }
@@ -46,8 +45,8 @@ async def test_box_storage_analysis_reports_workspace_mcp_and_skills(tmp_path):
     assert directories["mcp"]["size_bytes"] == 3
     assert directories["mcp"]["parent_key"] == "workspace"
     assert directories["outbox"]["exists"] is False
-    assert directories["skills"]["size_bytes"] == 5
-    assert result["size_bytes"] == 13
+    assert "skills" not in directories
+    assert result["size_bytes"] == 8
     assert result["active_sessions"] == 0
     assert result["managed_processes"] == 0
 
