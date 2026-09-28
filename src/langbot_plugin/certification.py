@@ -93,6 +93,13 @@ def create_envelope(
 ) -> CertificationEnvelope:
     """Create a signed envelope bound to the archive digest and manifest identity."""
     identity = _read_manifest_identity(archive)
+    if (
+        identity["shared_runtime"] != "shared-runtime-v1"
+        or identity["component_model"] != "stateless-v1"
+    ):
+        raise EnvelopeFormatError(
+            "certification requires sharedRuntime shared-runtime-v1 and componentModel stateless-v1"
+        )
     unsigned = CertificationEnvelope(
         schema=CERTIFICATION_SCHEMA,
         key_id=_required_string(key_id, "key_id"),
@@ -190,6 +197,11 @@ def verify_archive(
         return CertificationVerification("absent")
     if envelope.schema not in {CERTIFICATION_SCHEMA, LEGACY_CERTIFICATION_SCHEMA}:
         return CertificationVerification("unsupported_schema", envelope)
+    if envelope.schema == CERTIFICATION_SCHEMA and (
+        envelope.shared_runtime != "shared-runtime-v1"
+        or envelope.component_model != "stateless-v1"
+    ):
+        return CertificationVerification("malformed", envelope)
     try:
         if normalized_zip_digest(archive) != envelope.digest:
             return CertificationVerification("digest_mismatch", envelope)
@@ -253,6 +265,13 @@ def _validate_envelope(
         raise EnvelopeFormatError("certification envelope shared_runtime is invalid")
     if envelope.component_model not in {None, "stateless-v1"}:
         raise EnvelopeFormatError("certification envelope component_model is invalid")
+    if envelope.schema == CERTIFICATION_SCHEMA and (
+        envelope.shared_runtime != "shared-runtime-v1"
+        or envelope.component_model != "stateless-v1"
+    ):
+        raise EnvelopeFormatError(
+            "certification requires shared-runtime-v1 and stateless-v1"
+        )
     if (
         envelope.shared_runtime == "shared-runtime-v1"
         and envelope.component_model != "stateless-v1"
