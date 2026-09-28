@@ -41,7 +41,8 @@ async def test_exact_archive_real_worker_run_runner(tmp_path):
                 continue
 
     async def send(msg):
-        proc.stdin.write((json.dumps(msg)+'\n').encode()); await proc.stdin.drain()
+        proc.stdin.write((json.dumps(msg)+'\n').encode())
+        await proc.stdin.drain()
 
     async def response():
         while True:
