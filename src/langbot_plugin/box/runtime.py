@@ -1768,6 +1768,7 @@ done
             while True:
                 cleanup_task: asyncio.Task[None] | None = None
                 existing: _RuntimeSession | None = None
+                replacing: _RuntimeSession | None = None
                 async with self._lock:
                     if self._shutdown_in_progress:
                         raise BoxRuntimeUnavailableError("Box runtime is shutting down")
@@ -1800,16 +1801,20 @@ done
                         if existing is not None:
                             self._assert_session_compatible(existing.info, spec)
                             if existing.extra_mounts_key != new_extra_mounts_key:
+                                replacing = existing
+                            else:
+                                self._session_leases[spec.session_id] += 1
+
+                if replacing is not None:
+                    async with replacing.lock:
+                        async with self._lock:
+                            if self._sessions.get(spec.session_id) is replacing:
                                 self.logger.info(
                                     "LangBot Box session extra_mounts changed, "
                                     f"recreating: session_id={spec.session_id}"
                                 )
-                                cleanup_task = self._drop_session_locked(
-                                    spec.session_id
-                                )
-                                existing = None
-                            else:
-                                self._session_leases[spec.session_id] += 1
+                                self._drop_session_locked(spec.session_id)
+                    continue
 
                 if cleanup_task is not None:
                     await self._wait_for_session_cleanup(spec.session_id, cleanup_task)

@@ -64,7 +64,7 @@ def test_session_mount_signature_includes_content_digest():
 
 
 @pytest.mark.anyio
-async def test_concurrent_revision_change_waits_for_active_execution(logger):
+async def test_concurrent_revision_change_waits_for_queued_execution(logger):
     backend = FakeBackend(logger)
     first_started = asyncio.Event()
     release_first = asyncio.Event()
@@ -107,18 +107,28 @@ async def test_concurrent_revision_change_waits_for_active_execution(logger):
 
     first_task = asyncio.create_task(runtime.execute(spec("v1", "1")))
     await asyncio.wait_for(first_started.wait(), timeout=1)
+    queued_task = asyncio.create_task(runtime.execute(spec("queued-v1", "1")))
+    await _wait_until(lambda: runtime._active_exec_counts["revision-session"] == 2)
     second_task = asyncio.create_task(runtime.execute(spec("v2", "2")))
     await asyncio.sleep(0.05)
 
+    assert not queued_task.done()
     assert not second_task.done()
     backend.stop_session.assert_not_awaited()
 
     release_first.set()
-    first_result, second_result = await asyncio.gather(first_task, second_task)
+    results = await asyncio.wait_for(
+        asyncio.gather(first_task, queued_task, second_task, return_exceptions=True),
+        timeout=2,
+    )
 
-    assert first_result.stdout == "v1"
-    assert second_result.stdout == "v2"
-    assert backend.exec_calls == [("fake-1", "v1"), ("fake-2", "v2")]
+    assert isinstance(results[1], BoxExecutionResult), repr(results[1])
+    assert [result.stdout for result in results] == ["v1", "queued-v1", "v2"]
+    assert backend.exec_calls == [
+        ("fake-1", "v1"),
+        ("fake-1", "queued-v1"),
+        ("fake-2", "v2"),
+    ]
     backend.stop_session.assert_awaited_once()
 
 
