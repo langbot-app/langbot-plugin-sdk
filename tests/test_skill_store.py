@@ -51,18 +51,22 @@ def test_generic_store_uses_an_execution_independent_root(tmp_path):
         == 0
     )
 
-    listed = store.list_skill_resources(
-        "docs-only",
-        "references",
-        expected_revision=snapshot["revision"],
-    )
+    with mock.patch(
+        "langbot_plugin.skill_store.mimetypes.guess_type",
+        return_value=("text/plain", None),
+    ):
+        listed = store.list_skill_resources(
+            "docs-only",
+            "references",
+            expected_revision=snapshot["revision"],
+        )
+        resource = store.read_skill_resource(
+            "docs-only",
+            "references/guide.md",
+            expected_revision=snapshot["revision"],
+        )
     assert listed["entries"][0]["mime_type"] == "text/markdown"
-
-    resource = store.read_skill_resource(
-        "docs-only",
-        "references/guide.md",
-        expected_revision=snapshot["revision"],
-    )
+    assert resource["mime_type"] == "text/markdown"
     assert resource["content"].startswith("# Guide")
     assert resource["revision"] == snapshot["revision"]
 

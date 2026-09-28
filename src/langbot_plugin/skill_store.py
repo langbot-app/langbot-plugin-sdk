@@ -111,6 +111,12 @@ def skill_namespace(instance_uuid: str, workspace_uuid: str) -> str:
     return workspace_namespace(instance_uuid, workspace_uuid)
 
 
+def _resource_mime_type(path: str) -> str:
+    if Path(path).suffix.lower() == ".md":
+        return "text/markdown"
+    return mimetypes.guess_type(path)[0] or "text/plain"
+
+
 def _read_utf8_text_limited(path: str, *, subject: str) -> str:
     if os.path.getsize(path) > _MAX_SKILL_TEXT_BYTES:
         raise ValueError(f"{subject} exceeds the {_MAX_SKILL_TEXT_BYTES}-byte limit")
@@ -518,9 +524,7 @@ class SkillStore:
         result["revision"] = revision
         for entry in result.get("entries", []):
             if not entry.get("is_dir"):
-                entry["mime_type"] = (
-                    mimetypes.guess_type(str(entry.get("path", "")))[0] or "text/plain"
-                )
+                entry["mime_type"] = _resource_mime_type(str(entry.get("path", "")))
         return result
 
     def read_skill_resource(
@@ -536,7 +540,7 @@ class SkillStore:
         revision = str(skill["revision"])
         result = self._read_skill_file(skill, path)
         result["revision"] = revision
-        result["mime_type"] = mimetypes.guess_type(path)[0] or "text/plain"
+        result["mime_type"] = _resource_mime_type(path)
         return result
 
     def write_skill_file(
