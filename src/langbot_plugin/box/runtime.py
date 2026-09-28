@@ -549,8 +549,6 @@ class BoxRuntime:
                 )
             )
 
-        skills_path = Path(self.skill_store.scoped(namespace).root)
-        host_roots.append(("skills", skills_path, "root", None))
         directories = await asyncio.to_thread(collect_storage_directories, host_roots)
         for directory in directories:
             directory["scope"] = "runtime_host"
