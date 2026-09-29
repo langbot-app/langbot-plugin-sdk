@@ -48,6 +48,37 @@ from langbot_plugin.runtime.security import (
 logger = logging.getLogger(__name__)
 
 
+async def notify_installation_revoked(
+    plugin_container: PluginContainer,
+    binding: InstallationBinding,
+) -> None:
+    """Let a plugin release process-local state held for one installation.
+
+    One object graph is shared by every installation of an artifact digest and is
+    never destroyed per installation, so a revoked installation's in-process state
+    is only released here. Dedicated workers are shut down instead of detached, so
+    this runs for shared placement.
+
+    There is no active invocation, so per-invocation APIs (Host storage, config
+    and binding lookups) are unavailable; the hook may only touch process-local
+    state. Failures are logged and never block revocation.
+    """
+
+    if plugin_container.status is not RuntimeContainerStatus.INITIALIZED:
+        return
+    hook = getattr(plugin_container.plugin_instance, "on_installation_revoked", None)
+    if hook is None:
+        return
+    try:
+        await hook(binding)
+    except Exception as exc:
+        logger.warning(
+            "Plugin on_installation_revoked failed for installation %s: %s",
+            binding.installation_uuid,
+            exc,
+        )
+
+
 class _SlotHandlerProxy:
     """Bind every worker-to-Runtime call to one exact installation slot."""
 
@@ -485,7 +516,13 @@ class PluginRuntimeController:
         """Drop exactly one slot; sibling instances remain resident."""
 
         self.invalidate_slot(installation_uuid)
-        self._slot_containers.pop(installation_uuid, None)
+        slot = self._slot_containers.pop(installation_uuid, None)
+        if slot is None:
+            return
+        # The slot is no longer routable while the object graph stays resident for
+        # sibling installations, so this is the only chance to release state the
+        # plugin keyed by the revoked binding.
+        await notify_installation_revoked(self.plugin_container, slot.binding)
 
     async def cleanup_instances(self) -> None:
         """Clean up all plugin and component instances."""

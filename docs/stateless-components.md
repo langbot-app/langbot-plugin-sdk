@@ -25,10 +25,39 @@ execution:
 - Use SDK Host APIs for tenant storage, credentials, files, logging, models, tools, and RAG. Authority comes from the task-local `InstallationBinding`.
 - If identity is needed, call `get_installation_binding()` during an invocation. Do not retain it after the call returns.
 - Components must be re-entrant: invocations from different Workspaces may overlap on the same object.
-- Tenant-bearing background work is forbidden in `stateless-v1` until the SDK exposes an explicit ownership and revocation API. Do not create tenant-bearing threads or detached tasks in `initialize()` or an invocation.
-- Process-level caches may contain only public/artifact-level data. Tenant caches must include the full installation binding and be explicitly released on revocation.
+- The SDK does not track ownership of tasks you create. If you detach tenant-bearing work, keep your own registry keyed by the full installation binding and stop it in `on_installation_revoked` before returning.
+- Process-level caches may contain only public/artifact-level data. A cache that holds tenant state must include the full installation binding and be released in `BasePlugin.on_installation_revoked()`.
 
 This contract deliberately matches a future serverless execution model: component methods depend on input plus invocation context, while tenant state remains in Host services. The current release still uses long-lived workers; it does not provide a serverless deployment mode.
+
+## Installation revocation
+
+One object graph serves every installation of an artifact digest and is never
+destroyed per installation, so releasing binding-keyed process state is the
+plugin's own responsibility:
+
+```python
+class MyPlugin(BasePlugin):
+    def __init__(self) -> None:
+        super().__init__()
+        self._caches: dict[str, Cache] = {}
+
+    async def on_installation_revoked(self, binding: InstallationBinding) -> None:
+        self._caches.pop(binding.installation_uuid, None)
+```
+
+The runtime calls this once per installation, after cancelling that
+installation's in-flight messages and detaching its slot. It fires for
+uninstall, disable, Workspace removal and upgrade (the superseded binding is
+revoked when the new revision activates). Dedicated workers are shut down
+instead of detached, so this hook runs for shared placement only; dedicated
+state disappears with the process.
+
+There is no active invocation during the call, so Host APIs (storage, config,
+binding lookups) are unavailable and only the `binding` argument identifies the
+installation. Return `None`; exceptions are logged and never block revocation.
+Calls are serialized per installation but may overlap with invocations of
+sibling installations on the same object graph.
 
 ## Example
 

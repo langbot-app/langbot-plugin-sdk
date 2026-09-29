@@ -31,6 +31,23 @@ class DemoPlugin(BasePlugin):
         self.initialized = True
 
 
+class RevokeTrackingPlugin(BasePlugin):
+    initialized = False
+    fail_revoke = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.revoked: list[str] = []
+
+    async def initialize(self) -> None:
+        self.initialized = True
+
+    async def on_installation_revoked(self, binding: InstallationBinding) -> None:
+        self.revoked.append(binding.installation_uuid)
+        if self.fail_revoke:
+            raise RuntimeError("hook failure must not block revocation")
+
+
 class DemoTool(Tool):
     initialized = False
 
@@ -376,6 +393,77 @@ async def test_shared_worker_reuses_single_instances_and_scopes_config_per_invoc
 
     assert controller.plugin_container_for_slot("installation-a") is None
     assert controller.plugin_container_for_slot("installation-b") is slot_b
+
+
+def _shared_slot_controller(monkeypatch, plugin_class):
+    controller = _controller()
+    controller.handler = object()
+    component_classes = {
+        "Plugin": plugin_class,
+        "Tool": DemoTool,
+        "EventListener": DemoEventListener,
+    }
+    monkeypatch.setattr(
+        ComponentManifest,
+        "get_python_component_class",
+        lambda self: component_classes[self.kind],
+    )
+    return controller
+
+
+def _two_bindings() -> tuple[InstallationBinding, InstallationBinding]:
+    binding_a = InstallationBinding(
+        instance_uuid="instance-1",
+        workspace_uuid="workspace-a",
+        placement_generation=1,
+        installation_uuid="installation-a",
+        runtime_revision=1,
+        artifact_digest="a" * 64,
+    )
+    binding_b = binding_a.model_copy(
+        update={"workspace_uuid": "workspace-b", "installation_uuid": "installation-b"}
+    )
+    return binding_a, binding_b
+
+
+@pytest.mark.asyncio
+async def test_detach_slot_notifies_only_the_revoked_installation(monkeypatch):
+    controller = _shared_slot_controller(monkeypatch, RevokeTrackingPlugin)
+    binding_a, binding_b = _two_bindings()
+
+    await controller.initialize_slot(
+        binding_a, {"enabled": True, "priority": 1, "plugin_config": {}}
+    )
+    await controller.initialize_slot(
+        binding_b, {"enabled": True, "priority": 2, "plugin_config": {}}
+    )
+
+    plugin = controller.plugin_container.plugin_instance
+    assert plugin.revoked == []
+
+    await controller.detach_slot("installation-a")
+    assert plugin.revoked == ["installation-a"]
+    # The sibling slot keeps its state: one graph serves every installation.
+    assert controller.plugin_container_for_slot("installation-b") is not None
+
+    await controller.detach_slot("installation-b")
+    assert plugin.revoked == ["installation-a", "installation-b"]
+
+
+@pytest.mark.asyncio
+async def test_revoke_hook_failure_does_not_block_slot_detach(monkeypatch):
+    controller = _shared_slot_controller(monkeypatch, RevokeTrackingPlugin)
+    binding_a, _ = _two_bindings()
+
+    await controller.initialize_slot(
+        binding_a, {"enabled": True, "priority": 1, "plugin_config": {}}
+    )
+    plugin = controller.plugin_container.plugin_instance
+    plugin.fail_revoke = True
+
+    await controller.detach_slot("installation-a")
+
+    assert controller.plugin_container_for_slot("installation-a") is None
 
 
 @pytest.mark.asyncio
