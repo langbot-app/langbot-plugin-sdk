@@ -26,6 +26,8 @@ import typing
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
+
 # Bound every git subprocess so a network stall cannot pin the Runtime forever.
 _GIT_TIMEOUT_SECONDS = 120
 
@@ -183,6 +185,114 @@ def _commit_identity_args(cwd: str) -> list[str]:
     return args
 
 
+def _github_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _parse_github_https(url: str) -> tuple[str, str] | None:
+    parts = urlsplit(url)
+    if (parts.hostname or "").lower() not in ("github.com", "www.github.com"):
+        return None
+    segments = [segment for segment in parts.path.strip("/").split("/") if segment]
+    if len(segments) < 2:
+        return None
+    owner, repo = segments[0], segments[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    if not owner or not repo:
+        return None
+    return owner, repo
+
+
+def _remote_exists(plugin_root: str, url: str, token: str) -> bool:
+    check_url = _with_token(url, token) if token else url
+    try:
+        _run_git(plugin_root, ["ls-remote", "--heads", check_url], token=token)
+        return True
+    except GitSyncError:
+        return False
+
+
+def _ensure_github_repo(
+    plugin_root: str,
+    effective_remote: str,
+    token: str,
+) -> list[str]:
+    """Create the GitHub repository if it does not exist yet.
+
+    Only runs when a token is supplied and the remote is a github.com HTTPS URL,
+    so an accidental push never silently creates test repositories. Existing
+    repositories are left untouched.
+    """
+
+    if not token:
+        return []
+
+    parsed = _parse_github_https(effective_remote)
+    if parsed is None:
+        return []
+    owner, repo = parsed
+
+    if _remote_exists(plugin_root, effective_remote, token):
+        return []
+
+    try:
+        login_resp = httpx.get(
+            "https://api.github.com/user",
+            headers=_github_headers(token),
+            timeout=15,
+        )
+    except httpx.HTTPError as exc:
+        raise GitSyncError(_redact(f"GitHub request failed: {exc}", token)) from exc
+    if login_resp.status_code != 200:
+        raise GitSyncError(
+            _redact(
+                f"GitHub authentication failed (HTTP {login_resp.status_code}); "
+                "the repository does not exist and could not be created",
+                token,
+            )
+        )
+    login = str(login_resp.json().get("login") or "")
+
+    create_url = (
+        "https://api.github.com/user/repos"
+        if owner.lower() == login.lower()
+        else f"https://api.github.com/orgs/{owner}/repos"
+    )
+    try:
+        create_resp = httpx.post(
+            create_url,
+            headers=_github_headers(token),
+            json={"name": repo, "private": True},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise GitSyncError(_redact(f"GitHub request failed: {exc}", token)) from exc
+
+    if create_resp.status_code in (200, 201):
+        return [f"Created GitHub repository {owner}/{repo}."]
+    if create_resp.status_code == 422:
+        # Already exists (e.g. created concurrently) — nothing to do.
+        return []
+
+    detail = ""
+    try:
+        detail = str(create_resp.json().get("message") or "")
+    except Exception:  # noqa: BLE001 - best-effort error detail
+        detail = create_resp.text[:200]
+    raise GitSyncError(
+        _redact(
+            f"Failed to create GitHub repository {owner}/{repo}: "
+            f"HTTP {create_resp.status_code} {detail}",
+            token,
+        )
+    )
+
+
 def sync_plugin_to_github(
     plugin_root: str,
     *,
@@ -280,6 +390,9 @@ def sync_plugin_to_github(
             message="Committed locally; no remote to push to.",
             warnings=warnings,
         )
+
+    # Auto-create the repository when a token is supplied and it is missing.
+    warnings.extend(_ensure_github_repo(plugin_root, effective_remote, token))
 
     push_url = _with_token(effective_remote, token) if token else effective_remote
     # ``--`` separates refspecs; use an explicit URL so an override token never
