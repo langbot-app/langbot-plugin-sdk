@@ -125,10 +125,22 @@ def _is_git_repository(cwd: str) -> bool:
 
 
 def _current_branch(cwd: str) -> str:
-    output = _run_git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
-    if output and output != "HEAD":
-        return output
-    # Detached HEAD or unborn branch: fall back to the remote default or main.
+    # A freshly ``git init``-ed repository has an unborn HEAD: ``rev-parse
+    # --abbrev-ref HEAD`` fails with "ambiguous argument 'HEAD'". The symbolic
+    # ref still resolves to the intended branch name, so read it first.
+    try:
+        symbolic = _run_git(cwd, ["symbolic-ref", "--short", "HEAD"]).strip()
+        if symbolic:
+            return symbolic
+    except GitSyncError:
+        pass
+    try:
+        output = _run_git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        if output and output != "HEAD":
+            return output
+    except GitSyncError:
+        pass
+    # Detached HEAD: fall back to the remote default or main.
     try:
         symbolic = _run_git(
             cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
