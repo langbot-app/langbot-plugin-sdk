@@ -864,11 +864,28 @@ class PluginRuntimeHandler(Handler):
 
         @self.action(RuntimeToPluginAction.BUILD_PLUGIN_PACKAGE)
         async def build_plugin_package(data: dict[str, typing.Any]) -> ActionResponse:
-            """Build a ``.lbpkg`` from the plugin working directory."""
+            """Build a ``.lbpkg`` from the plugin working directory.
+
+            Publisher edits made on the upload page (label/description/version/
+            repository/icon) are written back into the plugin's own
+            ``manifest.yaml`` and assets first, so the on-disk configuration
+            matches what is packaged and published instead of only differing
+            inside the archive.
+            """
 
             plugin_root = os.getcwd()
             try:
                 extra_files, overrides = _icon_extra_files(_manifest_overrides(data))
+                await asyncio.to_thread(
+                    packaging_util.write_manifest_overrides,
+                    plugin_root,
+                    overrides,
+                )
+                await asyncio.to_thread(
+                    packaging_util.write_extra_files,
+                    plugin_root,
+                    extra_files,
+                )
                 package_bytes, filename = await asyncio.to_thread(
                     packaging_util.build_plugin_package,
                     plugin_root,
