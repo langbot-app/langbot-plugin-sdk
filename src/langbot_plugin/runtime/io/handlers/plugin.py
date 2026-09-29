@@ -1174,6 +1174,41 @@ class PluginConnectionHandler(handler.Handler):
         )
         return resp
 
+    async def build_plugin_package(
+        self,
+        manifest_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Ask the plugin process to build a ``.lbpkg`` from its working dir."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.BUILD_PLUGIN_PACKAGE,
+            {"manifest_overrides": manifest_overrides or {}},
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT,
+        )
+        return resp
+
+    async def git_sync_plugin(
+        self,
+        *,
+        repo_url: str = "",
+        token: str = "",
+        branch: str = "",
+        commit_message: str = "",
+        manifest_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Ask the plugin process to commit and push its working dir to GitHub."""
+        resp = await self.call_action(
+            RuntimeToPluginAction.GIT_SYNC_PLUGIN,
+            {
+                "repo_url": repo_url,
+                "token": token,
+                "branch": branch,
+                "commit_message": commit_message,
+                "manifest_overrides": manifest_overrides or {},
+            },
+            timeout=LONG_RUNNING_OPERATION_TIMEOUT,
+        )
+        return resp
+
     async def call_page_api(
         self,
         page_id: str,

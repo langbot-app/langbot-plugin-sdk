@@ -162,6 +162,13 @@ class RuntimeToPluginAction(ActionType):
 
     PAGE_API = "page_api"
 
+    # Plugin source packaging / GitHub synchronisation, used by the
+    # "upload a debug plugin to LangBot Space" flow. The plugin process owns
+    # its working directory, so it builds the package and performs git work
+    # on behalf of the Runtime.
+    BUILD_PLUGIN_PACKAGE = "build_plugin_package"
+    GIT_SYNC_PLUGIN = "git_sync_plugin"
+
 
 class LangBotToRuntimeAction(ActionType):
     """The action from langbot to runtime."""
@@ -223,6 +230,10 @@ class LangBotToRuntimeAction(ActionType):
 
     # Page API
     PAGE_API = "page_api"
+
+    # Plugin source packaging / GitHub synchronisation for the upload flow.
+    BUILD_PLUGIN_PACKAGE = "build_plugin_package"
+    GIT_SYNC_PLUGIN = "git_sync_plugin"
 
 
 class RuntimeToLangBotAction(ActionType):

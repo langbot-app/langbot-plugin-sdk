@@ -3252,6 +3252,78 @@ class PluginManager:
             return file_bytes, resp["mime_type"]
         return b"", ""
 
+    async def build_plugin_package(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        manifest_overrides: dict[str, typing.Any] | None = None,
+    ) -> tuple[bytes, dict[str, typing.Any]]:
+        """Build a ``.lbpkg`` from a connected plugin's live source tree.
+
+        Only a *debug* plugin can be packaged this way: an installed plugin's
+        working directory is an extracted artifact, not the developer's source.
+        """
+
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+        if not getattr(plugin, "debug", False):
+            raise ValueError(
+                "Only a plugin connected for debugging can be uploaded to LangBot Space"
+            )
+        if plugin._runtime_plugin_handler is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+
+        resp = await plugin._runtime_plugin_handler.build_plugin_package(
+            manifest_overrides=manifest_overrides or {}
+        )
+        package_file_key = resp["package_file_key"]
+        binding = self._binding_by_container_id.get(id(plugin))
+        file_kwargs = {"action_context": binding} if binding is not None else {}
+        package_bytes = await plugin._runtime_plugin_handler.read_local_file(
+            package_file_key, **file_kwargs
+        )
+        await plugin._runtime_plugin_handler.delete_local_file(
+            package_file_key, **file_kwargs
+        )
+        return package_bytes, {
+            "filename": resp.get("filename", ""),
+            "metadata": resp.get("metadata", {}),
+            "manifest": resp.get("manifest", {}),
+            "size": resp.get("size", len(package_bytes)),
+        }
+
+    async def git_sync_plugin(
+        self,
+        plugin_author: str,
+        plugin_name: str,
+        *,
+        repo_url: str = "",
+        token: str = "",
+        branch: str = "",
+        commit_message: str = "",
+        manifest_overrides: dict[str, typing.Any] | None = None,
+    ) -> dict[str, typing.Any]:
+        """Commit and push a debug plugin's working directory to GitHub."""
+
+        plugin = self.find_plugin(plugin_author, plugin_name)
+        if plugin is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} not found")
+        if not getattr(plugin, "debug", False):
+            raise ValueError(
+                "Only a plugin connected for debugging can be synchronised to GitHub"
+            )
+        if plugin._runtime_plugin_handler is None:
+            raise ValueError(f"Plugin {plugin_author}/{plugin_name} is not connected")
+
+        return await plugin._runtime_plugin_handler.git_sync_plugin(
+            repo_url=repo_url,
+            token=token,
+            branch=branch,
+            commit_message=commit_message,
+            manifest_overrides=manifest_overrides or {},
+        )
+
     async def handle_page_api(
         self,
         plugin_author: str,

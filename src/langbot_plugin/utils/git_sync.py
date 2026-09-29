@@ -1,0 +1,302 @@
+"""Git synchronisation helper for the "upload plugin to LangBot Space" flow.
+
+The upload flow optionally mirrors the local plugin directory into a GitHub
+repository. Two credential styles are supported, matching the product decision:
+
+* **Reuse local git** (default): stage, commit and ``git push`` using whatever
+  remote/credentials the developer already configured in the working copy.
+* **Explicit override**: when the upload page supplies a repository URL and/or a
+  token, the token is used only for this single ``git push`` via a temporary
+  credential-bearing URL, and never persisted to ``.git/config``.
+
+Security notes:
+* The token is never written to disk, never committed and never echoed back in
+  an error message (``redact_secrets`` strips it defensively).
+* All git invocations run with ``GIT_TERMINAL_PROMPT=0`` so a missing credential
+  fails fast instead of hanging the Runtime waiting for interactive input.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import typing
+from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
+
+# Bound every git subprocess so a network stall cannot pin the Runtime forever.
+_GIT_TIMEOUT_SECONDS = 120
+
+
+class GitSyncError(RuntimeError):
+    """Raised when a git operation fails; the message is safe to surface."""
+
+
+@dataclass(slots=True)
+class GitSyncResult:
+    """Outcome of a synchronisation attempt."""
+
+    committed: bool
+    pushed: bool
+    branch: str = ""
+    remote_url: str = ""
+    commit_sha: str = ""
+    message: str = ""
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            "committed": self.committed,
+            "pushed": self.pushed,
+            "branch": self.branch,
+            "remote_url": self.remote_url,
+            "commit_sha": self.commit_sha,
+            "message": self.message,
+            "warnings": list(self.warnings),
+        }
+
+
+def is_git_available() -> bool:
+    return shutil.which("git") is not None
+
+
+def _redact(text: str, token: str) -> str:
+    """Remove a token (and any URL-embedded credentials) from a message."""
+
+    if not text:
+        return text
+    if token:
+        text = text.replace(token, "***")
+    # ``https://user:pass@host`` -> ``https://host``
+    return re.sub(r"(https?://)[^/@\s]+@", r"\1", text)
+
+
+def _run_git(
+    cwd: str,
+    args: list[str],
+    *,
+    token: str = "",
+    extra_env: dict[str, str] | None = None,
+) -> str:
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    # A neutral identity avoids failures on machines without a global git config.
+    env.setdefault("GIT_AUTHOR_NAME", env.get("GIT_AUTHOR_NAME", "LangBot"))
+    env.setdefault("GIT_AUTHOR_EMAIL", env.get("GIT_AUTHOR_EMAIL", "noreply@langbot.app"))
+    env.setdefault("GIT_COMMITTER_NAME", env["GIT_AUTHOR_NAME"])
+    env.setdefault("GIT_COMMITTER_EMAIL", env["GIT_AUTHOR_EMAIL"])
+    if extra_env:
+        env.update(extra_env)
+
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise GitSyncError(_redact(f"Git operation timed out: {exc}", token)) from exc
+    except FileNotFoundError as exc:
+        raise GitSyncError("Git is not installed on the Runtime host") from exc
+
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise GitSyncError(
+            _redact(f"git {' '.join(args)} failed: {detail}", token)
+        )
+    return completed.stdout
+
+
+def _is_git_repository(cwd: str) -> bool:
+    if not os.path.isdir(os.path.join(cwd, ".git")):
+        return False
+    try:
+        output = _run_git(cwd, ["rev-parse", "--is-inside-work-tree"])
+    except GitSyncError:
+        return False
+    return output.strip() == "true"
+
+
+def _current_branch(cwd: str) -> str:
+    output = _run_git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if output and output != "HEAD":
+        return output
+    # Detached HEAD or unborn branch: fall back to the remote default or main.
+    try:
+        symbolic = _run_git(
+            cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]
+        ).strip()
+        if symbolic.startswith("origin/"):
+            return symbolic[len("origin/") :]
+    except GitSyncError:
+        pass
+    return "main"
+
+
+def _with_token(url: str, token: str) -> str:
+    """Inject a token into an HTTPS remote URL for one push only."""
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        # SSH remotes carry their own key material; the token is not applicable.
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    netloc = f"x-access-token:{token}@{host}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _has_remote(cwd: str, name: str = "origin") -> bool:
+    try:
+        _run_git(cwd, ["remote", "get-url", name])
+        return True
+    except GitSyncError:
+        return False
+
+
+def _commit_identity_args(cwd: str) -> list[str]:
+    """Return ``-c user.name/-c user.email`` overrides when identity is unset.
+
+    ``git commit`` aborts with "configure user.name and user.email" on a host
+    without a global identity. Passing ``-c`` satisfies the check without
+    mutating the user's global config; when an identity already exists the
+    defaults are left alone so the real author is preserved.
+    """
+
+    args: list[str] = []
+    for key, fallback in (
+        ("user.name", "LangBot"),
+        ("user.email", "noreply@langbot.app"),
+    ):
+        try:
+            configured = _run_git(cwd, ["config", "--get", key]).strip()
+        except GitSyncError:
+            configured = ""
+        if not configured:
+            args.extend(["-c", f"{key}={fallback}"])
+    return args
+
+
+def sync_plugin_to_github(
+    plugin_root: str,
+    *,
+    repo_url: str = "",
+    token: str = "",
+    branch: str = "",
+    commit_message: str = "",
+    file_name: str = "",
+) -> GitSyncResult:
+    """Commit and push the plugin directory to GitHub.
+
+    Args:
+        plugin_root: The plugin working directory.
+        repo_url: Optional remote URL to set as ``origin`` before pushing. When
+            empty, the existing ``origin`` (local git configuration) is reused.
+        token: Optional access token used only for this push.
+        branch: Optional target branch; defaults to the current branch.
+        commit_message: Optional commit message.
+        file_name: Optional filename of the package to also commit, if present
+            under ``plugin_root`` (e.g. the built ``.lbpkg`` next to the source).
+    """
+
+    if not is_git_available():
+        raise GitSyncError("Git is not available on the Runtime host")
+
+    plugin_root = os.path.abspath(plugin_root)
+    if not os.path.isdir(plugin_root):
+        raise GitSyncError("Plugin working directory is unavailable")
+
+    if not _is_git_repository(plugin_root):
+        _run_git(plugin_root, ["init"])
+        # Make ``main`` the default branch for freshly initialised repositories.
+        if not branch:
+            branch = "main"
+
+    warnings: list[str] = []
+
+    remote_url = repo_url.strip()
+    if remote_url:
+        if _has_remote(plugin_root, "origin"):
+            _run_git(plugin_root, ["remote", "set-url", "origin", remote_url])
+        else:
+            _run_git(plugin_root, ["remote", "add", "origin", remote_url])
+
+    effective_remote = ""
+    if _has_remote(plugin_root, "origin"):
+        effective_remote = _run_git(
+            plugin_root, ["remote", "get-url", "origin"]
+        ).strip()
+    else:
+        warnings.append(
+            "No git remote configured; committed locally but did not push."
+        )
+
+    target_branch = branch.strip() or _current_branch(plugin_root)
+
+    if not branch.strip():
+        # Ensure the checked-out branch has the intended name (e.g. unborn main).
+        try:
+            head_branch = _run_git(plugin_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+            if head_branch in ("HEAD", ""):
+                _run_git(plugin_root, ["checkout", "-b", target_branch])
+        except GitSyncError:
+            pass
+
+    _run_git(plugin_root, ["add", "-A"])
+
+    commit_sha = ""
+    committed = False
+    message = commit_message.strip() or "Upload plugin via LangBot"
+    try:
+        _run_git(
+            plugin_root,
+            [*_commit_identity_args(plugin_root), "commit", "-m", message],
+        )
+        committed = True
+        commit_sha = _run_git(plugin_root, ["rev-parse", "HEAD"]).strip()
+    except GitSyncError as exc:
+        # "nothing to commit" is a normal no-op, not a failure.
+        if "nothing to commit" in str(exc).lower() or "no changes added" in str(exc).lower():
+            try:
+                commit_sha = _run_git(plugin_root, ["rev-parse", "HEAD"]).strip()
+            except GitSyncError:
+                commit_sha = ""
+        else:
+            raise
+
+    if not effective_remote:
+        return GitSyncResult(
+            committed=committed,
+            pushed=False,
+            branch=target_branch,
+            remote_url="",
+            commit_sha=commit_sha,
+            message="Committed locally; no remote to push to.",
+            warnings=warnings,
+        )
+
+    push_url = _with_token(effective_remote, token) if token else effective_remote
+    # ``--`` separates refspecs; use an explicit URL so an override token never
+    # lands in ``.git/config`` (the origin remote may point elsewhere).
+    _run_git(
+        plugin_root,
+        ["push", push_url, f"HEAD:refs/heads/{target_branch}"],
+        token=token,
+    )
+
+    safe_remote = _redact(effective_remote, token)
+    return GitSyncResult(
+        committed=committed,
+        pushed=True,
+        branch=target_branch,
+        remote_url=safe_remote,
+        commit_sha=commit_sha,
+        message=f"Pushed to {safe_remote} ({target_branch}).",
+        warnings=warnings,
+    )

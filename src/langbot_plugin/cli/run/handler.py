@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import os
 import mimetypes
@@ -34,6 +35,8 @@ from langbot_plugin.api.definition.components.page import (
     PageResponse,
 )
 from langbot_plugin.api.definition.components.parser.parser import Parser
+from langbot_plugin.utils import git_sync as git_sync_util
+from langbot_plugin.utils import packaging as packaging_util
 from langbot_plugin.api.entities.builtin.rag.context import RetrievalContext
 from langbot_plugin.api.entities.builtin.rag.models import (
     IngestionContext,
@@ -803,6 +806,135 @@ class PluginRuntimeHandler(Handler):
             result = await parser_instance.parse(parse_context)
 
             return ActionResponse.success(result.model_dump(mode="json"))
+
+        # ========== Plugin source packaging / GitHub sync (upload flow) ==========
+        #
+        # These handlers run inside the plugin worker process, whose working
+        # directory *is* the plugin source tree. That makes this process the only
+        # component that can package the developer's live source and run git on
+        # it. The Runtime relays the request and LangBot orchestrates the upload.
+
+        def _manifest_overrides(data: dict[str, typing.Any]) -> dict[str, typing.Any]:
+            overrides = data.get("manifest_overrides")
+            return overrides if isinstance(overrides, dict) else {}
+
+        def _icon_extra_files(
+            overrides: dict[str, typing.Any],
+        ) -> tuple[dict[str, bytes], dict[str, typing.Any]]:
+            """Extract an uploaded base64 icon into an archive-file mapping.
+
+            Returns ``(extra_files, sanitized_overrides)``; ``icon_base64`` is
+            removed from the overrides so the manifest only carries the icon
+            path.
+            """
+
+            icon_base64 = overrides.get("icon_base64")
+            clean = {key: value for key, value in overrides.items() if key != "icon_base64"}
+            if not isinstance(icon_base64, str) or not icon_base64.strip():
+                return {}, clean
+
+            raw = icon_base64.strip()
+            if "," in raw and raw.split(",", 1)[0].startswith("data:"):
+                raw = raw.split(",", 1)[1]
+            try:
+                icon_bytes = base64.b64decode(raw, validate=True)
+            except Exception:
+                raise ValueError("Invalid plugin icon data")
+
+            # Bound the icon weight. 10MB raw is ~13.3MB base64, which stays
+            # under the 16MB single-message cap (and is mirrored by the page).
+            if len(icon_bytes) > 10 * 1024 * 1024:
+                raise ValueError("Plugin icon exceeds the 10MB limit")
+
+            content_type = ""
+            if isinstance(icon_base64, str) and icon_base64.startswith("data:"):
+                content_type = icon_base64[5:].split(";", 1)[0]
+            ext = {
+                "image/png": ".png",
+                "image/jpeg": ".jpg",
+                "image/jpg": ".jpg",
+                "image/gif": ".gif",
+                "image/webp": ".webp",
+                "image/svg+xml": ".svg",
+            }.get(content_type.lower(), ".png")
+
+            icon_path = f"assets/icon{ext}"
+            clean["icon"] = icon_path
+            return {icon_path: icon_bytes}, clean
+
+        @self.action(RuntimeToPluginAction.BUILD_PLUGIN_PACKAGE)
+        async def build_plugin_package(data: dict[str, typing.Any]) -> ActionResponse:
+            """Build a ``.lbpkg`` from the plugin working directory."""
+
+            plugin_root = os.getcwd()
+            try:
+                extra_files, overrides = _icon_extra_files(_manifest_overrides(data))
+                package_bytes, filename = await asyncio.to_thread(
+                    packaging_util.build_plugin_package,
+                    plugin_root,
+                    manifest_overrides=overrides,
+                    extra_files=extra_files,
+                )
+                manifest = await asyncio.to_thread(
+                    packaging_util.read_plugin_manifest_metadata,
+                    plugin_root,
+                )
+            except ValueError as e:
+                return ActionResponse.error(str(e))
+            except FileNotFoundError:
+                return ActionResponse.error(
+                    "Plugin manifest not found in the working directory"
+                )
+            except Exception as e:  # noqa: BLE001 - surface a readable reason
+                return ActionResponse.error(f"Failed to build plugin package: {e}")
+
+            package_file_key = await self.send_file(package_bytes, "lbpkg")
+            metadata = manifest.get("metadata") or {}
+            return ActionResponse.success(
+                {
+                    "package_file_key": package_file_key,
+                    "filename": filename,
+                    "size": len(package_bytes),
+                    "metadata": metadata,
+                    "manifest": manifest,
+                }
+            )
+
+        @self.action(RuntimeToPluginAction.GIT_SYNC_PLUGIN)
+        async def git_sync_plugin(data: dict[str, typing.Any]) -> ActionResponse:
+            """Commit and push the plugin working directory to GitHub."""
+
+            plugin_root = os.getcwd()
+            try:
+                extra_files, overrides = _icon_extra_files(_manifest_overrides(data))
+                # Persist edits (and any uploaded icon) so the synchronised
+                # repository records the same assets that are published.
+                await asyncio.to_thread(
+                    packaging_util.write_manifest_overrides,
+                    plugin_root,
+                    overrides,
+                )
+                await asyncio.to_thread(
+                    packaging_util.write_extra_files,
+                    plugin_root,
+                    extra_files,
+                )
+                result = await asyncio.to_thread(
+                    git_sync_util.sync_plugin_to_github,
+                    plugin_root,
+                    repo_url=str(data.get("repo_url") or ""),
+                    token=str(data.get("token") or ""),
+                    branch=str(data.get("branch") or ""),
+                    commit_message=str(data.get("commit_message") or ""),
+                )
+            except git_sync_util.GitSyncError as e:
+                return ActionResponse.error(str(e))
+            except ValueError as e:
+                return ActionResponse.error(str(e))
+            except Exception as e:  # noqa: BLE001 - surface a readable reason
+                return ActionResponse.error(f"Git sync failed: {e}")
+
+            return ActionResponse.success(result.to_dict())
 
     @property
     def plugin_container(self) -> PluginContainer:
