@@ -411,6 +411,118 @@ async def test_exec_success(backend, mock_e2b_module):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "mount_kind", ["read_only_primary", "read_write_primary", "read_only_extra"]
+)
+async def test_exec_syncs_mounts_before_running_command(
+    backend, mock_e2b_module, tmp_path, mount_kind
+):
+    """Exercise the real sync dispatch, including immutable materialization."""
+    (tmp_path / "input.txt").write_text("input", encoding="utf-8")
+    spec = BoxSpec(session_id="exec-mount", cmd="cat /workspace/input.txt")
+    if mount_kind == "read_only_extra":
+        spec.extra_mounts = [
+            BoxMountSpec(
+                host_path=str(tmp_path),
+                mount_path="/workspace",
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ]
+    else:
+        spec.host_path = str(tmp_path)
+        spec.host_path_mode = (
+            BoxHostMountMode.READ_ONLY
+            if mount_kind == "read_only_primary"
+            else BoxHostMountMode.READ_WRITE
+        )
+    mock_e2b_module.files = SimpleNamespace(
+        write=mock.AsyncMock(), list=mock.AsyncMock(return_value=[])
+    )
+    session = await backend.start_session(spec)
+
+    result = await backend.exec(session, spec)
+
+    assert result.status == BoxExecutionStatus.COMPLETED
+    assert result.exit_code == 0
+    commands = mock_e2b_module.commands.run.await_args_list
+    assert commands[-1].kwargs["cmd"].endswith("cat /home/user/workspace/input.txt")
+    writes = mock_e2b_module.files.write.await_args_list
+    assert writes[0].args[1] == b"input"
+    if mount_kind == "read_write_primary":
+        assert writes[0].args[0] == "/home/user/workspace/input.txt"
+        assert len(writes) == 1
+        mock_e2b_module.files.list.assert_awaited_once_with(
+            "/home/user/workspace", depth=16
+        )
+    else:
+        assert writes[0].args[0].endswith("/package/input.txt")
+        assert len(writes) == 3  # package file, manifest, ready marker
+        setup_commands = "\n".join(call.args[0] for call in commands[:-1])
+        assert setup_commands.index("python3 -c") < setup_commands.index("ln -s")
+        mock_e2b_module.files.list.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_exec_writable_primary_excludes_shadowed_extra_mounts(
+    backend, mock_e2b_module, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    shadowed = workspace / ".skills" / "demo"
+    shadowed.mkdir(parents=True)
+    (shadowed / "stale.txt").write_text("shadowed", encoding="utf-8")
+    (workspace / ".skills" / "demo.txt").write_text("sibling", encoding="utf-8")
+    (workspace / "notes.txt").write_text("notes", encoding="utf-8")
+    revision = tmp_path / "revision"
+    revision.mkdir()
+    (revision / "run.py").write_text("print('ok')", encoding="utf-8")
+    spec = BoxSpec(
+        session_id="exec-overlay",
+        cmd="python /workspace/.skills/demo/run.py",
+        host_path=str(workspace),
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        extra_mounts=[
+            BoxMountSpec(
+                host_path=str(revision),
+                mount_path="/workspace/.skills/demo",
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ],
+    )
+    mock_e2b_module.files = SimpleNamespace(
+        write=mock.AsyncMock(),
+        list=mock.AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    path="/home/user/workspace/.skills/demo/run.py",
+                    size=11,
+                    type=SimpleNamespace(value="file"),
+                )
+            ]
+        ),
+        read=mock.AsyncMock(),
+    )
+    session = await backend.start_session(spec)
+
+    result = await backend.exec(session, spec)
+
+    assert result.status == BoxExecutionStatus.COMPLETED
+    assert result.exit_code == 0
+    writes = mock_e2b_module.files.write.await_args_list
+    uploaded_paths = [call.args[0] for call in writes]
+    assert "/home/user/workspace/notes.txt" in uploaded_paths
+    assert "/home/user/workspace/.skills/demo.txt" in uploaded_paths
+    assert not any(path.endswith("/stale.txt") for path in uploaded_paths)
+    assert any(path.endswith("/package/run.py") for path in uploaded_paths)
+    assert (
+        mock_e2b_module.commands.run.await_args_list[-1]
+        .kwargs["cmd"]
+        .endswith("python /home/user/workspace/.skills/demo/run.py")
+    )
+    mock_e2b_module.files.read.assert_not_awaited()
+    assert not (shadowed / "run.py").exists()
+
+
+@pytest.mark.anyio
 async def test_exec_timeout(backend, mock_e2b_module):
     """exec handles timeout correctly."""
     backend._api_key = "test-api-key"

@@ -363,13 +363,13 @@ class E2BSandboxBackend(BaseSandboxBackend):
                     sandbox,
                     host_root=spec.host_path,
                     remote_root=_adapt_path_for_e2b(spec.mount_path),
-                    excluded_relative_paths=shadowed_paths,
                 )
             else:
                 await self._sync_host_tree_to_e2b(
                     sandbox,
                     host_root=spec.host_path,
                     remote_root=_adapt_path_for_e2b(spec.mount_path),
+                    excluded_relative_paths=shadowed_paths,
                 )
 
         for mount in spec.extra_mounts:
