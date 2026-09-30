@@ -229,29 +229,14 @@ def _remote_exists(plugin_root: str, url: str, token: str) -> bool:
         return False
 
 
-def _ensure_github_repo(
-    plugin_root: str,
-    effective_remote: str,
-    token: str,
-) -> list[str]:
-    """Create the GitHub repository if it does not exist yet.
+def _github_repo_api_url(owner: str, repo: str) -> str:
+    """Return the REST API URL for an ``owner/repo`` pair."""
 
-    Only runs when a token is supplied and the remote is a github.com HTTPS URL,
-    so an accidental push never silently creates test repositories. Existing
-    repositories are left untouched. New repositories are created public so the
-    published plugin source stays discoverable.
-    """
+    return f"https://api.github.com/repos/{owner}/{repo}"
 
-    if not token:
-        return []
 
-    parsed = _parse_github_https(effective_remote)
-    if parsed is None:
-        return []
-    owner, repo = parsed
-
-    if _remote_exists(plugin_root, effective_remote, token):
-        return []
+def _github_authenticated_login(token: str) -> str:
+    """Return the login of the token owner, failing loudly when unauthenticated."""
 
     try:
         login_resp = httpx.get(
@@ -269,8 +254,13 @@ def _ensure_github_repo(
                 token,
             )
         )
-    login = str(login_resp.json().get("login") or "")
+    return str(login_resp.json().get("login") or "")
 
+
+def _create_github_repo(owner: str, repo: str, token: str) -> list[str]:
+    """Create a new **public** GitHub repository for ``owner/repo``."""
+
+    login = _github_authenticated_login(token)
     create_url = (
         "https://api.github.com/user/repos"
         if owner.lower() == login.lower()
@@ -304,6 +294,85 @@ def _ensure_github_repo(
             token,
         )
     )
+
+
+def _ensure_github_repo_public(owner: str, repo: str, token: str) -> list[str]:
+    """Flip an existing private GitHub repository to public.
+
+    A no-op when the repository is already public or when the visibility probe
+    is inconclusive (the push itself must not be blocked by a read-only probe).
+    """
+
+    try:
+        info_resp = httpx.get(
+            _github_repo_api_url(owner, repo),
+            headers=_github_headers(token),
+            timeout=15,
+        )
+    except httpx.HTTPError as exc:
+        raise GitSyncError(_redact(f"GitHub request failed: {exc}", token)) from exc
+
+    if info_resp.status_code != 200:
+        # The token cannot read the repository metadata; leave it untouched.
+        return []
+    try:
+        is_private = bool(info_resp.json().get("private"))
+    except Exception:  # noqa: BLE001 - best-effort metadata probe
+        return []
+    if not is_private:
+        return []
+
+    try:
+        patch_resp = httpx.patch(
+            _github_repo_api_url(owner, repo),
+            headers=_github_headers(token),
+            json={"private": False},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise GitSyncError(_redact(f"GitHub request failed: {exc}", token)) from exc
+
+    if patch_resp.status_code == 200:
+        return [f"Changed GitHub repository {owner}/{repo} to public."]
+
+    detail = ""
+    try:
+        detail = str(patch_resp.json().get("message") or "")
+    except Exception:  # noqa: BLE001 - best-effort error detail
+        detail = getattr(patch_resp, "text", "")[:200]
+    raise GitSyncError(
+        _redact(
+            f"Failed to make GitHub repository {owner}/{repo} public: "
+            f"HTTP {patch_resp.status_code} {detail}",
+            token,
+        )
+    )
+
+
+def _ensure_github_repo(
+    plugin_root: str,
+    effective_remote: str,
+    token: str,
+) -> list[str]:
+    """Create the GitHub repository when missing, and always keep it public.
+
+    Only runs when a token is supplied and the remote is a github.com HTTPS URL,
+    so an accidental push never silently creates test repositories. New
+    repositories are created public; an existing private repository is flipped to
+    public so the published plugin source stays discoverable.
+    """
+
+    if not token:
+        return []
+
+    parsed = _parse_github_https(effective_remote)
+    if parsed is None:
+        return []
+    owner, repo = parsed
+
+    if not _remote_exists(plugin_root, effective_remote, token):
+        return _create_github_repo(owner, repo, token)
+    return _ensure_github_repo_public(owner, repo, token)
 
 
 def sync_plugin_to_github(

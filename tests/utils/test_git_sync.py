@@ -198,8 +198,11 @@ def test_ensure_github_repo_skips_non_github(tmp_path):
     assert gs._ensure_github_repo(str(tmp_path), "https://gitlab.com/o/r", "tok") == []
 
 
-def test_ensure_github_repo_existing(monkeypatch, tmp_path):
+def test_ensure_github_repo_existing_public_is_noop(monkeypatch, tmp_path):
     monkeypatch.setattr(gs, "_remote_exists", lambda *a, **k: True)
+    monkeypatch.setattr(
+        gs.httpx, "get", lambda *a, **k: _Response(200, {"private": False})
+    )
 
     assert gs._ensure_github_repo(str(tmp_path), "https://github.com/o/r", "tok") == []
 
@@ -208,6 +211,7 @@ class _Response:
     def __init__(self, status_code: int, payload: dict | None = None):
         self.status_code = status_code
         self._payload = payload or {}
+        self.text = ""
 
     def json(self) -> dict:
         return self._payload
@@ -236,6 +240,49 @@ def test_ensure_github_repo_create_conflict_is_noop(monkeypatch, tmp_path):
     monkeypatch.setattr(gs.httpx, "post", lambda *a, **k: _Response(422))
 
     assert gs._ensure_github_repo(str(tmp_path), "https://github.com/o/r", "tok") == []
+
+
+def test_ensure_github_repo_existing_private_is_made_public(monkeypatch, tmp_path):
+    monkeypatch.setattr(gs, "_remote_exists", lambda *a, **k: True)
+    monkeypatch.setattr(
+        gs.httpx, "get", lambda *a, **k: _Response(200, {"private": True})
+    )
+    captured: dict = {}
+
+    def _patch(url, headers=None, json=None, timeout=None):
+        captured.update(json or {})
+        return _Response(200)
+
+    monkeypatch.setattr(gs.httpx, "patch", _patch)
+
+    warnings = gs._ensure_github_repo(str(tmp_path), "https://github.com/o/r", "tok")
+
+    assert captured == {"private": False}
+    assert warnings and "public" in warnings[0]
+
+
+def test_ensure_github_repo_existing_invisible_is_untouched(monkeypatch, tmp_path):
+    # A token that cannot read the metadata (e.g. fine-grained token without the
+    # repo scope) must not block the push with a failed visibility probe.
+    monkeypatch.setattr(gs, "_remote_exists", lambda *a, **k: True)
+    monkeypatch.setattr(gs.httpx, "get", lambda *a, **k: _Response(404))
+
+    assert gs._ensure_github_repo(str(tmp_path), "https://github.com/o/r", "tok") == []
+
+
+def test_ensure_github_repo_patch_failure_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(gs, "_remote_exists", lambda *a, **k: True)
+    monkeypatch.setattr(
+        gs.httpx, "get", lambda *a, **k: _Response(200, {"private": True})
+    )
+    monkeypatch.setattr(
+        gs.httpx,
+        "patch",
+        lambda *a, **k: _Response(403, {"message": "Forbidden"}),
+    )
+
+    with pytest.raises(gs.GitSyncError, match="public"):
+        gs._ensure_github_repo(str(tmp_path), "https://github.com/o/r", "tok")
 
 
 def test_ensure_github_repo_auth_failure(monkeypatch, tmp_path):
