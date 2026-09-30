@@ -964,3 +964,27 @@ def test_linux_shared_profile_keeps_hard_limit_fence():
     )
     with pytest.raises(RuntimeError, match="require delegated cgroup v2"):
         launcher.configure(_policy(), "shared")
+
+
+def test_shared_pool_worker_mounts_a_writable_tmp(tmp_path):
+    """Pool workers strip installation mounts, so /tmp must stay writable.
+
+    The shared worker handler creates its transfer root under /tmp
+    (SHARED_WORKER_FILE_STORAGE_DIR), while nsjail mounts the chroot read-only
+    unless the launch asks for a writable mount point.
+    """
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    args = launcher.build_shared_pool_nsjail_args(_launch_spec(tmp_path))
+
+    tmpfs_index = args.index("--tmpfsmount")
+    assert args[tmpfs_index + 1] == "/tmp"
+    # nsjail options must precede the command separator, otherwise they land in
+    # the worker argv instead of the sandbox configuration.
+    assert tmpfs_index < args.index("--")

@@ -634,6 +634,10 @@ class PluginWorkerLauncher:
             index += 1
         if "HOME=/home" in cleaned:
             cleaned[cleaned.index("HOME=/home")] = "HOME=/tmp"
+        # Pool workers mount no installation-owned /tmp, but the worker handler
+        # still needs a writable transfer root (SHARED_WORKER_FILE_STORAGE_DIR).
+        separator = len(cleaned) - 1 - cleaned[::-1].index("--")
+        cleaned[separator:separator] = ["--tmpfsmount", "/tmp"]
         return cleaned
 
     def create_shared_pool_controller(
