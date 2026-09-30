@@ -829,7 +829,9 @@ class PluginRuntimeHandler(Handler):
             """
 
             icon_base64 = overrides.get("icon_base64")
-            clean = {key: value for key, value in overrides.items() if key != "icon_base64"}
+            clean = {
+                key: value for key, value in overrides.items() if key != "icon_base64"
+            }
             if not isinstance(icon_base64, str) or not icon_base64.strip():
                 return {}, clean
 

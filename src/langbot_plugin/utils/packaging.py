@@ -93,10 +93,7 @@ def should_ignore(path: str, gitignore_patterns: list[str]) -> bool:
                 return True
         # Exact matches
         else:
-            if (
-                normalized_path.endswith(f"/{pattern}")
-                or normalized_path == pattern
-            ):
+            if normalized_path.endswith(f"/{pattern}") or normalized_path == pattern:
                 return True
             if pattern in normalized_path.split("/"):
                 return True
@@ -160,7 +157,9 @@ def apply_manifest_overrides(
     return result
 
 
-def load_plugin_manifest(plugin_root: str) -> tuple[ComponentDiscoveryEngine, typing.Any]:
+def load_plugin_manifest(
+    plugin_root: str,
+) -> tuple[ComponentDiscoveryEngine, typing.Any]:
     """Load and validate the plugin manifest under ``plugin_root``."""
 
     manifest_path = os.path.join(plugin_root, "manifest.yaml")
@@ -208,9 +207,7 @@ def build_plugin_package(
         populate_plugin_pages,
     )
 
-    component_manifests = discover_plugin_components(
-        plugin_manifest, discovery_engine
-    )
+    component_manifests = discover_plugin_components(plugin_manifest, discovery_engine)
     populate_plugin_pages(plugin_manifest, component_manifests)
 
     packaging_manifest = apply_manifest_overrides(
@@ -243,9 +240,7 @@ def build_plugin_package(
             for directory in dirs:
                 dir_path = os.path.join(root, directory)
                 relative_dir_path = os.path.relpath(dir_path, plugin_root)
-                if should_ignore(
-                    relative_dir_path, gitignore_patterns
-                ) or any(
+                if should_ignore(relative_dir_path, gitignore_patterns) or any(
                     fnmatch.fnmatch(directory, pattern)
                     for pattern in ALWAYS_EXCLUDED_NAMES
                 ):
@@ -262,8 +257,7 @@ def build_plugin_package(
                 if should_ignore(relative_path, gitignore_patterns):
                     continue
                 if any(
-                    fnmatch.fnmatch(file, pattern)
-                    for pattern in ALWAYS_EXCLUDED_NAMES
+                    fnmatch.fnmatch(file, pattern) for pattern in ALWAYS_EXCLUDED_NAMES
                 ):
                     continue
 
