@@ -7,6 +7,7 @@ import logging
 
 from langbot_plugin.runtime.io import handler, connection
 from langbot_plugin.entities.io.actions.enums import (
+    ActionType,
     CommonAction,
     PluginToRuntimeAction,
     RuntimeToPluginAction,
@@ -1095,11 +1096,46 @@ class PluginConnectionHandler(handler.Handler):
         self.shared_pool_digest = digest
         self._shared_pool_bindings = set(bindings)
 
+    async def call_action(
+        self,
+        action: ActionType,
+        data: dict[str, Any],
+        timeout: float | None = 15.0,
+        action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
+        cancel_peer_on_cancel: bool = False,
+    ) -> dict[str, Any]:
+        """Dispatch to the shared worker with the in-flight installation binding.
+
+        Runtime->plugin dispatches run inside the control handler task, where the
+        installation binding is visible. Worker-originated relays run in another
+        task and cannot observe that contextvar, so the dispatch itself has to
+        carry the binding for the worker to inherit it on its own outbound calls.
+        """
+
+        if self.shared_pool_digest is not None and action_context is None:
+            control_binding = self.context.plugin_mgr._current_control_binding()
+            if control_binding in self._shared_pool_bindings:
+                action_context = control_binding
+        return await super().call_action(
+            action,
+            data,
+            timeout=timeout,
+            action_context=action_context,
+            cancel_peer_on_cancel=cancel_peer_on_cancel,
+        )
+
     def resolve_outbound_action_context(
         self,
         action_context: ActionEnvelopeContext | dict[str, Any] | None,
     ) -> ActionEnvelopeContext | None:
         if self.shared_pool_digest is not None and action_context is None:
+            # A plugin-originated relay carries the binding the worker derived from
+            # the dispatch it is serving. The control-context lookup stays as the
+            # fallback for relays that arrive without one, because a worker relay
+            # runs in another task and cannot observe that contextvar.
+            inbound = self.current_action_context
+            if inbound in self._shared_pool_bindings:
+                return inbound
             current = self.context.plugin_mgr._current_control_binding()
             if current not in self._shared_pool_bindings:
                 raise ValueError(
