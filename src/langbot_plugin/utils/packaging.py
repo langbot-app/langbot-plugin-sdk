@@ -42,10 +42,11 @@ ALWAYS_EXCLUDED_NAMES = frozenset(
     }
 )
 
-# Manifest fields a publisher may edit from the upload page. ``name``/``author``
-# are identity fields and are intentionally not editable here: changing them
-# would make the published plugin a different plugin.
-EDITABLE_METADATA_FIELDS = ("repository", "version", "icon")
+# Manifest fields a publisher may edit from the upload page. ``name`` stays a
+# fixed identity field, while ``author`` is intentionally editable so a
+# publisher can publish under a different account (the upload page surfaces this
+# explicitly). ``license`` records the chosen open-source license.
+EDITABLE_METADATA_FIELDS = ("author", "repository", "version", "icon", "license")
 
 
 def parse_gitignore(gitignore_path: str | os.PathLike[str]) -> list[str]:
@@ -129,9 +130,10 @@ def apply_manifest_overrides(
 ) -> dict[str, typing.Any]:
     """Return a copy of ``manifest`` with publisher edits applied.
 
-    Only ``label``, ``description`` and ``spec.version`` are accepted. Unknown
-    keys are ignored so a stale frontend cannot smuggle arbitrary manifest
-    fields into a published package.
+    ``label``/``description`` plus the fields in ``EDITABLE_METADATA_FIELDS``
+    (``author``/``repository``/``version``/``icon``/``license``) are accepted.
+    Unknown keys are ignored so a stale frontend cannot smuggle arbitrary
+    manifest fields into a published package.
     """
 
     if not overrides:
@@ -187,8 +189,9 @@ def build_plugin_package(
 
     Args:
         plugin_root: Directory containing ``manifest.yaml``.
-        manifest_overrides: Optional ``label`` / ``description`` / ``version`` /
-            ``repository`` / ``icon`` edits applied to the packaged manifest only.
+        manifest_overrides: Optional ``label`` / ``description`` / ``author`` /
+            ``version`` / ``repository`` / ``icon`` / ``license`` edits applied to
+            the packaged manifest only.
         extra_files: Optional mapping of archive-relative path -> bytes, used to
             inject a replacement icon without mutating the source tree.
 

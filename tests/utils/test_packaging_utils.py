@@ -80,6 +80,8 @@ def test_apply_manifest_overrides_edits_and_ignores_unknown():
             "description": "Desc",
             "version": "1.2.3",
             "repository": "https://example.com/repo",
+            "author": "new-author",
+            "license": "MIT",
             "icon": "assets/icon.png",
             "bogus": "ignored",
         },
@@ -90,6 +92,8 @@ def test_apply_manifest_overrides_edits_and_ignores_unknown():
     assert metadata["description"]["en_US"] == "Desc"
     assert metadata["version"] == "1.2.3"
     assert metadata["repository"] == "https://example.com/repo"
+    assert metadata["author"] == "new-author"
+    assert metadata["license"] == "MIT"
     assert metadata["icon"] == "assets/icon.png"
     assert "bogus" not in metadata
     # The original manifest is not mutated.
