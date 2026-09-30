@@ -34,7 +34,7 @@ _RUNTIME_SDK_COMPATIBILITY_SERIES = (0, 6)
 # dependency ABI admission only; it never grants certification or shared slots.
 # Releases that reviewed the nine digest-pinned legacy archives below. A new
 # Runtime release re-verifies dedicated behavior before extending this set.
-_LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS = frozenset({"0.7.4", "0.7.5"})
+_LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS = frozenset({"0.7.4", "0.7.5", "0.7.6"})
 
 _LEGACY_DEDICATED_SDK_061 = {
     (

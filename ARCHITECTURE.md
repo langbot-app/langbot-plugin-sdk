@@ -222,7 +222,7 @@ may select indexes or trusted hosts.
 
 The dependency admission path has one bounded historical ABI exception: nine
 explicit `langbot-team` archive identities with exact raw SHA-256 digests and
-`langbot-plugin==0.6.1` may use the Runtime-owned SDK **0.7.5** in `dedicated`
+`langbot-plugin==0.6.1` may use the Runtime-owned SDK **0.7.6** in `dedicated`
 mode only. Artifact bytes are verified before extraction; a changed archive,
 identity, requirement, Runtime version, or shared execution mode fails normal
 SDK pin validation. This does not issue a certificate or change Core placement

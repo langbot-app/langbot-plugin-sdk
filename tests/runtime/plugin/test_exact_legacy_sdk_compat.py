@@ -81,6 +81,10 @@ def test_runtime_version_and_downloaded_archive_are_exact(tmp_path, monkeypatch)
         artifact, execution_mode="dedicated"
     )[0] == ("pydantic>=2.0.0", "httpx>=0.28.1")
     monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.7.6")
+    assert PluginDependencyEnvironmentStore._read_requirements(
+        artifact, execution_mode="dedicated"
+    )[0] == ("pydantic>=2.0.0", "httpx>=0.28.1")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.7.7")
     with pytest.raises(DependencyEnvironmentPreparationError, match="Runtime provides"):
         PluginDependencyEnvironmentStore._read_requirements(
             artifact, execution_mode="dedicated"
