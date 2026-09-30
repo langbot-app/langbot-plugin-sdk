@@ -32,6 +32,10 @@ _RUNTIME_PROVIDED_DISTRIBUTIONS = frozenset({"langbot-plugin"})
 _RUNTIME_SDK_COMPATIBILITY_SERIES = (0, 6)
 # Raw archive SHA-256 digests, not normalized certification digests. This is
 # dependency ABI admission only; it never grants certification or shared slots.
+# Releases that reviewed the nine digest-pinned legacy archives below. A new
+# Runtime release re-verifies dedicated behavior before extending this set.
+_LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS = frozenset({"0.7.4", "0.7.5"})
+
 _LEGACY_DEDICATED_SDK_061 = {
     (
         "langbot-team",
@@ -380,7 +384,7 @@ class PluginDependencyEnvironmentStore:
                 )
                 if (
                     not compatible
-                    and runtime_version == "0.7.4"
+                    and runtime_version in _LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS
                     and line == "langbot-plugin==0.6.1"
                     and execution_mode == "dedicated"
                 ):

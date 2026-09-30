@@ -11,17 +11,18 @@ from langbot_plugin.runtime.plugin.dependency_environment import (
     DependencyEnvironmentPreparationError,
     PluginDependencyEnvironmentStore,
     _LEGACY_DEDICATED_SDK_061,
+    _LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS,
 )
 
 
-@pytest.fixture
-def runtime_074(monkeypatch):
-    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.7.4")
+@pytest.fixture(params=sorted(_LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS))
+def reviewed_runtime(monkeypatch, request):
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: request.param)
 
 
 @pytest.mark.parametrize("identity,digest", sorted(_LEGACY_DEDICATED_SDK_061.items()))
 def test_only_exact_verified_identity_and_digest_in_dedicated_mode(
-    tmp_path, runtime_074, identity, digest
+    tmp_path, reviewed_runtime, identity, digest
 ):
     code = tmp_path / "code"
     code.mkdir()
@@ -76,6 +77,10 @@ def test_runtime_version_and_downloaded_archive_are_exact(tmp_path, monkeypatch)
             artifact, execution_mode="shared-runtime-v1"
         )
     monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.7.5")
+    assert PluginDependencyEnvironmentStore._read_requirements(
+        artifact, execution_mode="dedicated"
+    )[0] == ("pydantic>=2.0.0", "httpx>=0.28.1")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.7.6")
     with pytest.raises(DependencyEnvironmentPreparationError, match="Runtime provides"):
         PluginDependencyEnvironmentStore._read_requirements(
             artifact, execution_mode="dedicated"
