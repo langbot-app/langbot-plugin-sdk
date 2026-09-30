@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 
 import pytest
 
@@ -288,3 +290,33 @@ def test_run_plugin_process_reports_keyboard_interrupt(monkeypatch):
     runplugin.run_plugin_process()
 
     assert prints == [("keyboard_interrupt",)]
+
+
+def test_apply_process_label_sanitizes_and_logs_the_tag(caplog):
+    with caplog.at_level(logging.INFO, logger=runplugin.__name__):
+        runplugin.apply_process_label("langbot-team/LangRAG")
+        runplugin.apply_process_label("   ")
+        runplugin.apply_process_label("bad\nname\x00")
+
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert "Plugin worker process label: langbot-team/LangRAG" in messages
+    assert "Plugin worker process label: badname" in messages
+    # A blank label records nothing.
+    assert len(messages) == 2
+
+
+def test_cli_run_forwards_the_process_tag(monkeypatch):
+    from langbot_plugin import cli as cli_module
+
+    forwarded: list = []
+    monkeypatch.setattr(
+        cli_module,
+        "run_plugin_process",
+        lambda *args, **kwargs: forwarded.append(kwargs),
+    )
+    monkeypatch.setattr(sys, "argv", ["lbp", "run", "--tag", "langbot-team/LangRAG"])
+
+    cli_module.main()
+
+    assert forwarded and forwarded[0].get("tag") == "langbot-team/LangRAG"

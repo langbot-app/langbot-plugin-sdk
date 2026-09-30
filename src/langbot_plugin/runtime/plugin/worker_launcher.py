@@ -258,8 +258,11 @@ class PluginWorkerLauncher:
             "-m",
             "langbot_plugin.cli.__init__",
             "run",
-            "--prod",
         ]
+        process_tag = self._worker_process_tag(launch_spec)
+        if process_tag:
+            worker_args.extend(["--tag", process_tag])
+        worker_args.append("--prod")
         if self.platform == "win32":
             runtime_ws_url = str(launch_spec.runtime_ws_url or "").strip()
             if not runtime_ws_url:
@@ -518,6 +521,17 @@ class PluginWorkerLauncher:
         )
         return args
 
+    @staticmethod
+    def _worker_process_tag(launch_spec: PluginWorkerLaunchSpec) -> str:
+        """Return the cosmetic `author/name` label for the worker command line."""
+
+        artifact = launch_spec.artifact
+        author = str(getattr(artifact, "plugin_author", "") or "").strip()
+        name = str(getattr(artifact, "plugin_name", "") or "").strip()
+        if author and name:
+            return f"{author}/{name}"
+        return name or author
+
     def build_nsjail_args(self, launch_spec: PluginWorkerLaunchSpec) -> list[str]:
         policy, profile = self._require_configuration()
         if profile != "shared" or not self.nsjail_path:
@@ -594,6 +608,7 @@ class PluginWorkerLauncher:
         )
 
         self._append_policy_limits(args, policy)
+        process_tag = self._worker_process_tag(launch_spec)
         args.extend(
             [
                 "--really_quiet",
@@ -603,6 +618,7 @@ class PluginWorkerLauncher:
                 "langbot_plugin.cli.__init__",
                 "run",
                 "-s",
+                *(["--tag", process_tag] if process_tag else []),
                 "--prod",
             ]
         )

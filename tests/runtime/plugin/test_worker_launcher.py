@@ -988,3 +988,42 @@ def test_shared_pool_worker_mounts_a_writable_tmp(tmp_path):
     # nsjail options must precede the command separator, otherwise they land in
     # the worker argv instead of the sandbox configuration.
     assert tmpfs_index < args.index("--")
+
+
+def test_shared_pool_worker_carries_the_plugin_process_tag(tmp_path):
+    """ps/htop must show which plugin a sandboxed worker belongs to."""
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    args = launcher.build_shared_pool_nsjail_args(_launch_spec(tmp_path))
+
+    tag_index = args.index("--tag")
+    assert args[tag_index + 1] == "tester/demo"
+    # The worker command ends with the production flag.
+    assert args.index("--prod") == tag_index + 2
+
+
+def test_oss_worker_carries_the_plugin_process_tag(tmp_path):
+    launcher = PluginWorkerLauncher(
+        nsjail_path="",
+        cgroup_v2_available=False,
+        platform="darwin",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+
+    controller = launcher.create_controller(_launch_spec(tmp_path))
+
+    assert controller.args == [
+        "-m",
+        "langbot_plugin.cli.__init__",
+        "run",
+        "--tag",
+        "tester/demo",
+        "-s",
+        "--prod",
+    ]

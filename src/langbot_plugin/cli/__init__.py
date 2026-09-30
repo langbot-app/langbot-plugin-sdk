@@ -86,6 +86,12 @@ def main():
         help="Comma-separated trusted hosts for plugin dependency installation",
         default="",
     )
+    run_parser.add_argument(
+        "--tag",
+        type=str,
+        help="Process label shown by ps/htop (for example author/plugin_name); cosmetic only",
+        default="",
+    )
 
     # login command
     login_parser = subparsers.add_parser("login", help="Login to LangBot account")
@@ -191,6 +197,7 @@ def main():
                 args.plugin_debug_key,
                 args.pypi_index_url,
                 args.pypi_trusted_host,
+                tag=args.tag,
             )
         case "build":
             build_plugin_process(args.output)
