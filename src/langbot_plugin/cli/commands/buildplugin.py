@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from typing import List
 
 from langbot_plugin.cli.i18n import cli_print
 from langbot_plugin.utils.packaging import (

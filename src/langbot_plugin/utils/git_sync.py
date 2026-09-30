@@ -86,7 +86,9 @@ def _run_git(
     env["GIT_TERMINAL_PROMPT"] = "0"
     # A neutral identity avoids failures on machines without a global git config.
     env.setdefault("GIT_AUTHOR_NAME", env.get("GIT_AUTHOR_NAME", "LangBot"))
-    env.setdefault("GIT_AUTHOR_EMAIL", env.get("GIT_AUTHOR_EMAIL", "noreply@langbot.app"))
+    env.setdefault(
+        "GIT_AUTHOR_EMAIL", env.get("GIT_AUTHOR_EMAIL", "noreply@langbot.app")
+    )
     env.setdefault("GIT_COMMITTER_NAME", env["GIT_AUTHOR_NAME"])
     env.setdefault("GIT_COMMITTER_EMAIL", env["GIT_AUTHOR_EMAIL"])
     if extra_env:
@@ -108,9 +110,7 @@ def _run_git(
 
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise GitSyncError(
-            _redact(f"git {' '.join(args)} failed: {detail}", token)
-        )
+        raise GitSyncError(_redact(f"git {' '.join(args)} failed: {detail}", token))
     return completed.stdout
 
 
@@ -238,7 +238,8 @@ def _ensure_github_repo(
 
     Only runs when a token is supplied and the remote is a github.com HTTPS URL,
     so an accidental push never silently creates test repositories. Existing
-    repositories are left untouched.
+    repositories are left untouched. New repositories are created public so the
+    published plugin source stays discoverable.
     """
 
     if not token:
@@ -279,7 +280,7 @@ def _ensure_github_repo(
         create_resp = httpx.post(
             create_url,
             headers=_github_headers(token),
-            json={"name": repo, "private": True},
+            json={"name": repo, "private": False},
             timeout=30,
         )
     except httpx.HTTPError as exc:
@@ -355,16 +356,16 @@ def sync_plugin_to_github(
             plugin_root, ["remote", "get-url", "origin"]
         ).strip()
     else:
-        warnings.append(
-            "No git remote configured; committed locally but did not push."
-        )
+        warnings.append("No git remote configured; committed locally but did not push.")
 
     target_branch = branch.strip() or _current_branch(plugin_root)
 
     if not branch.strip():
         # Ensure the checked-out branch has the intended name (e.g. unborn main).
         try:
-            head_branch = _run_git(plugin_root, ["rev-parse", "--abbrev-ref", "HEAD"]).strip()
+            head_branch = _run_git(
+                plugin_root, ["rev-parse", "--abbrev-ref", "HEAD"]
+            ).strip()
             if head_branch in ("HEAD", ""):
                 _run_git(plugin_root, ["checkout", "-b", target_branch])
         except GitSyncError:
@@ -384,7 +385,10 @@ def sync_plugin_to_github(
         commit_sha = _run_git(plugin_root, ["rev-parse", "HEAD"]).strip()
     except GitSyncError as exc:
         # "nothing to commit" is a normal no-op, not a failure.
-        if "nothing to commit" in str(exc).lower() or "no changes added" in str(exc).lower():
+        if (
+            "nothing to commit" in str(exc).lower()
+            or "no changes added" in str(exc).lower()
+        ):
             try:
                 commit_sha = _run_git(plugin_root, ["rev-parse", "HEAD"]).strip()
             except GitSyncError:
