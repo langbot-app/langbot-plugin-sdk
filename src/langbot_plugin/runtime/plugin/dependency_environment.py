@@ -10,6 +10,8 @@ import re
 import shutil
 import stat
 import tempfile
+import time
+import typing
 import weakref
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -120,9 +122,15 @@ DependencyInstaller = Callable[
 class PluginDependencyEnvironmentStore:
     """Atomically prepare and publish immutable per-artifact dependency trees."""
 
-    def __init__(self, base_path: str | os.PathLike = "data/plugin-runtime"):
+    def __init__(
+        self,
+        base_path: str | os.PathLike = "data/plugin-runtime",
+        *,
+        metrics: typing.Any | None = None,
+    ):
         self.base_path = pathlib.Path(base_path)
         self.environments_path = self.base_path / "environments" / "sha256"
+        self.metrics = metrics
         self._prepare_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
@@ -152,20 +160,42 @@ class PluginDependencyEnvironmentStore:
 
         ready = self.get_ready(digest, expected=expected)
         if ready is not None:
+            self._record_cache_hit()
             return ready
 
         lock = self._prepare_locks.setdefault(digest, asyncio.Lock())
         async with lock:
             ready = self.get_ready(digest, expected=expected)
             if ready is not None:
+                self._record_cache_hit()
                 return ready
-            return await self._prepare_locked(
-                artifact,
-                digest=digest,
-                expected=expected,
-                requirements=requirements,
-                installer=installer,
-            )
+            self._record_cache_miss()
+            started_at = time.monotonic()
+            try:
+                return await self._prepare_locked(
+                    artifact,
+                    digest=digest,
+                    expected=expected,
+                    requirements=requirements,
+                    installer=installer,
+                )
+            except BaseException:
+                if self.metrics is not None:
+                    self.metrics.dependency_prepare_failures_total += 1
+                raise
+            finally:
+                elapsed = max(time.monotonic() - started_at, 0.0)
+                if self.metrics is not None:
+                    self.metrics.dependency_prepare_seconds_total += elapsed
+                    self.metrics.dependency_prepare_seconds_last = elapsed
+
+    def _record_cache_hit(self) -> None:
+        if self.metrics is not None:
+            self.metrics.dependency_cache_hits_total += 1
+
+    def _record_cache_miss(self) -> None:
+        if self.metrics is not None:
+            self.metrics.dependency_cache_misses_total += 1
 
     def get_ready(
         self,

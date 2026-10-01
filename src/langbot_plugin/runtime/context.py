@@ -61,7 +61,12 @@ class RuntimeContext:
         self.workspace_debug_tokens = WorkspaceDebugTokenStore()
 
     def get_runtime_resource_stats(self) -> dict[str, Any]:
-        """Return aggregate O(1) counters safe for public health probes."""
+        """Return aggregate O(1) counters safe for public health probes.
+
+        The Cloud ops dashboard and the soak gate poll this payload, so every
+        value stays process-wide: no installation UUID, Workspace UUID, plugin
+        identity or artifact digest is ever reported here.
+        """
 
         plugin_manager = self.plugin_mgr
         handlers = getattr(
@@ -75,11 +80,91 @@ class RuntimeContext:
             "starting": 0,
             "failed": 0,
             "disabled": 0,
+            # Unknown lifecycle states are counted instead of dropped, so a new
+            # state can never silently disappear from the health payload.
+            "other": 0,
         }
+        installations_by_mode: dict[str, int] = {}
         for runtime in getattr(plugin_manager, "_installations", {}).values():
             state = str(getattr(runtime, "state", "disabled"))
-            if state in installation_state_counts:
-                installation_state_counts[state] += 1
+            installation_state_counts[
+                state if state in installation_state_counts else "other"
+            ] += 1
+            execution_mode = getattr(
+                getattr(runtime, "execution_mode", None),
+                "value",
+                None,
+            )
+            mode_key = str(execution_mode or "dedicated")
+            installations_by_mode[mode_key] = installations_by_mode.get(mode_key, 0) + 1
+
+        shared_workers = getattr(plugin_manager, "_shared_workers", {})
+        shared_ready = 0
+        shared_draining = 0
+        shared_slots = 0
+        for worker in shared_workers.values():
+            worker_slots = getattr(worker, "slots", {})
+            shared_slots += len(worker_slots)
+            ready_event = getattr(worker, "ready_event", None)
+            if ready_event is not None and ready_event.is_set():
+                shared_ready += 1
+            if getattr(worker, "draining", False):
+                shared_draining += 1
+
+        ops_metrics = getattr(plugin_manager, "ops_metrics", None)
+        worker_policy = self.worker_policy
+        shared_pool: dict[str, Any] = {
+            "workers": len(shared_workers),
+            "capacity": (
+                int(getattr(worker_policy, "max_workers", 0)) if worker_policy else 0
+            ),
+            "ready": shared_ready,
+            "draining": shared_draining,
+            "slots": shared_slots,
+        }
+        if ops_metrics is not None:
+            counters = ops_metrics.snapshot()
+            shared_pool.update(
+                {
+                    "processes_started_total": counters[
+                        "shared_worker_processes_started_total"
+                    ],
+                    "registrations_total": counters[
+                        "shared_worker_registrations_total"
+                    ],
+                    "launch_failures_total": counters[
+                        "shared_worker_launch_failures_total"
+                    ],
+                    "transport_timeouts_total": counters[
+                        "shared_worker_transport_timeouts_total"
+                    ],
+                    "capacity_rejections_total": counters[
+                        "shared_worker_capacity_rejections_total"
+                    ],
+                    "stops_total": counters["shared_worker_stops_total"],
+                    "slot_attach_total": counters["shared_slot_attach_total"],
+                    "slot_attach_success_total": counters[
+                        "shared_slot_attach_success_total"
+                    ],
+                    "slot_attach_failures_total": counters[
+                        "shared_slot_attach_failures_total"
+                    ],
+                    "slot_attach_timeouts_total": counters[
+                        "shared_slot_attach_timeouts_total"
+                    ],
+                    "slot_detach_total": counters["shared_slot_detach_total"],
+                }
+            )
+
+        # Expired registration capabilities are pruned before counting, so the
+        # gauge reflects capabilities that can still be redeemed.
+        prune_registrations = getattr(
+            plugin_manager,
+            "_prune_expired_registration_capabilities",
+            None,
+        )
+        if callable(prune_registrations):
+            prune_registrations()
 
         return {
             "event_loop": (
@@ -96,6 +181,44 @@ class RuntimeContext:
             ),
             "installation_runtimes": len(getattr(plugin_manager, "_installations", ())),
             "installation_states": installation_state_counts,
+            "installations_by_mode": installations_by_mode,
+            "installation_watermarks": len(
+                getattr(self, "_installation_watermarks", {})
+            ),
+            "shared_pool": shared_pool,
+            "dependency_environment": (
+                {
+                    "cache_hits_total": ops_metrics.dependency_cache_hits_total,
+                    "misses_total": ops_metrics.dependency_cache_misses_total,
+                    "failures_total": (
+                        ops_metrics.dependency_prepare_failures_total
+                    ),
+                    "prepare_seconds_total": (
+                        ops_metrics.dependency_prepare_seconds_total
+                    ),
+                    "prepare_seconds_last": (
+                        ops_metrics.dependency_prepare_seconds_last
+                    ),
+                }
+                if ops_metrics is not None
+                else {}
+            ),
+            "restart_backoff": (
+                {
+                    "shared_current_seconds": (
+                        ops_metrics.shared_backoff_current_seconds
+                    ),
+                    "shared_total_seconds": ops_metrics.shared_backoff_total_seconds,
+                    "dedicated_current_seconds": (
+                        ops_metrics.dedicated_backoff_current_seconds
+                    ),
+                    "dedicated_total_seconds": (
+                        ops_metrics.dedicated_backoff_total_seconds
+                    ),
+                }
+                if ops_metrics is not None
+                else {}
+            ),
             "pending_registrations": len(
                 getattr(plugin_manager, "_pending_registrations", ())
             ),

@@ -6,6 +6,7 @@ import io
 import os
 import stat
 import threading
+import time
 import zipfile
 from types import SimpleNamespace
 from unittest import mock
@@ -2884,8 +2885,139 @@ def test_runtime_health_reports_identity_free_installation_state_counts(tmp_path
         "starting": 1,
         "failed": 1,
         "disabled": 1,
+        "other": 0,
     }
     assert "installation-running" not in str(stats)
+
+
+def test_runtime_health_counts_unknown_installation_states(tmp_path):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-quarantined", digest, workspace_uuid="workspace-a")
+    artifact = manager.artifact_store.install_package(package, digest)
+    paths = manager.artifact_store.ensure_installation_paths(binding)
+    manager._installations[binding] = manager_module.PluginInstallationRuntime(
+        binding=binding,
+        artifact=artifact,
+        paths=paths,
+        enabled=True,
+        state="quarantined",
+    )
+
+    stats = context.get_runtime_resource_stats()
+
+    assert stats["installation_states"]["other"] == 1
+    assert stats["installation_states"]["running"] == 0
+
+
+def test_runtime_health_reports_shared_pool_and_mode_split(tmp_path):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+
+    for index, execution_mode in enumerate(
+        (PluginExecutionMode.SHARED_CERTIFIED, PluginExecutionMode.DEDICATED)
+    ):
+        binding = _binding(f"installation-{index}", digest, workspace_uuid="workspace-a")
+        artifact = manager.artifact_store.install_package(package, digest)
+        paths = manager.artifact_store.ensure_installation_paths(binding)
+        manager._installations[binding] = manager_module.PluginInstallationRuntime(
+            binding=binding,
+            artifact=artifact,
+            paths=paths,
+            enabled=True,
+            state="running",
+            execution_mode=execution_mode,
+        )
+
+    worker = manager_module.SharedPluginWorkerRuntime(
+        artifact=next(iter(manager._installations.values())).artifact,
+        dependency_environment=None,
+        paths=manager.artifact_store.ensure_shared_worker_paths(digest),
+    )
+    worker.ready_event.set()
+    worker.draining = True
+    worker.slots[next(iter(manager._installations))] = next(
+        iter(manager._installations.values())
+    )
+    manager._shared_workers[digest] = worker
+    manager.ops_metrics.shared_slot_attach_total = 3
+    manager.ops_metrics.shared_capacity_rejections_total = 2
+
+    stats = context.get_runtime_resource_stats()
+
+    assert stats["installations_by_mode"] == {
+        "shared-runtime-v1": 1,
+        "dedicated": 1,
+    }
+    assert stats["shared_pool"]["workers"] == 1
+    assert stats["shared_pool"]["ready"] == 1
+    assert stats["shared_pool"]["draining"] == 1
+    assert stats["shared_pool"]["slots"] == 1
+    assert stats["shared_pool"]["capacity"] == 16
+    assert stats["shared_pool"]["slot_attach_total"] == 3
+    assert stats["shared_pool"]["capacity_rejections_total"] == 2
+
+
+def test_runtime_health_prunes_expired_registrations_before_counting(tmp_path):
+    context, manager = _manager(tmp_path)
+    manager._pending_registrations["expired"] = manager_module._PendingPluginRegistration(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path="/tmp/demo",
+        binding=None,
+        shared_pool_digest=None,
+        expires_at=time.monotonic() - 1,
+    )
+    manager._pending_registrations["live"] = manager_module._PendingPluginRegistration(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path="/tmp/demo",
+        binding=None,
+        shared_pool_digest=None,
+        expires_at=time.monotonic() + 60,
+    )
+
+    stats = context.get_runtime_resource_stats()
+
+    assert stats["pending_registrations"] == 1
+    assert "expired" not in manager._pending_registrations
+
+
+def test_runtime_health_payload_carries_no_tenant_identity(tmp_path):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-secret",
+        digest,
+        workspace_uuid="workspace-secret",
+    )
+    artifact = manager.artifact_store.install_package(package, digest)
+    paths = manager.artifact_store.ensure_installation_paths(binding)
+    manager._installations[binding] = manager_module.PluginInstallationRuntime(
+        binding=binding,
+        artifact=artifact,
+        paths=paths,
+        enabled=True,
+        state="running",
+    )
+    manager.dependency_environment_store.metrics.dependency_cache_hits_total = 4
+
+    stats = context.get_runtime_resource_stats()
+
+    serialized = str(stats)
+    assert "installation-secret" not in serialized
+    assert "workspace-secret" not in serialized
+    assert digest not in serialized
+    assert stats["dependency_environment"]["cache_hits_total"] == 4
+    assert stats["restart_backoff"] == {
+        "shared_current_seconds": 0.0,
+        "shared_total_seconds": 0.0,
+        "dedicated_current_seconds": 0.0,
+        "dedicated_total_seconds": 0.0,
+    }
 
 
 async def test_installation_launch_failure_is_recorded_locally(

@@ -450,21 +450,18 @@ async def test_control_handler_get_debug_info_returns_workspace_token():
     assert len(response["data"]["plugin_debug_key"]) >= 32
     assert response["data"]["expires_at"].endswith("Z")
     assert response["data"]["ws_debug_port"] == 5401
-    assert response["data"]["resources"] == {
-        "event_loop": {},
-        "blocking_executor": {},
-        "plugin_handlers": 0,
-        "legacy_supervisors": 0,
-        "installation_runtimes": 0,
-        "installation_states": {
-            "running": 0,
-            "starting": 0,
-            "failed": 0,
-            "disabled": 0,
-        },
-        "pending_registrations": 0,
-        "restart_coordinator": {"configured": False},
+    resources = response["data"]["resources"]
+    assert resources["installation_states"] == {
+        "running": 0,
+        "starting": 0,
+        "failed": 0,
+        "disabled": 0,
+        "other": 0,
     }
+    assert resources["shared_pool"]["workers"] == 0
+    assert resources["shared_pool"]["slots"] == 0
+    assert resources["restart_coordinator"] == {"configured": False}
+    assert "workspace-a" not in str(resources)
 
 
 async def test_control_handler_rejects_tenant_action_without_complete_binding():

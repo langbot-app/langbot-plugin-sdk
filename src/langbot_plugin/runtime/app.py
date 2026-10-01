@@ -23,6 +23,8 @@ from langbot_plugin.runtime.bounded_executor import (
     configure_bounded_default_executor_from_env,
 )
 from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
+from langbot_plugin.runtime import ops_metrics as ops_metrics_module
+from langbot_plugin.version import __version__ as runtime_version
 
 from langbot_plugin.runtime.security import (
     PLUGIN_DEBUG_KEY_HEADER,
@@ -110,8 +112,18 @@ class RuntimeApplication:
     def _health_snapshot(self) -> dict[str, object]:
         """Return public aggregate health without credentials or tenant IDs."""
 
+        ops_metrics = getattr(self.context.plugin_mgr, "ops_metrics", None)
+        process = ops_metrics_module.sample_process_resources() if ops_metrics else {}
+        runtime: dict[str, object] = {
+            "version": runtime_version,
+            "profile": self.context.runtime_profile or "unknown",
+        }
+        if ops_metrics is not None:
+            runtime["uptime_seconds"] = ops_metrics.uptime_seconds
+        runtime.update(process)
         return {
             "live": not self._closing,
+            "runtime": runtime,
             "resources": self.context.get_runtime_resource_stats(),
         }
 
