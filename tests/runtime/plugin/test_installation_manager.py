@@ -2919,7 +2919,9 @@ def test_runtime_health_reports_shared_pool_and_mode_split(tmp_path):
     for index, execution_mode in enumerate(
         (PluginExecutionMode.SHARED_CERTIFIED, PluginExecutionMode.DEDICATED)
     ):
-        binding = _binding(f"installation-{index}", digest, workspace_uuid="workspace-a")
+        binding = _binding(
+            f"installation-{index}", digest, workspace_uuid="workspace-a"
+        )
         artifact = manager.artifact_store.install_package(package, digest)
         paths = manager.artifact_store.ensure_installation_paths(binding)
         manager._installations[binding] = manager_module.PluginInstallationRuntime(
@@ -2962,13 +2964,15 @@ def test_runtime_health_reports_shared_pool_and_mode_split(tmp_path):
 
 def test_runtime_health_prunes_expired_registrations_before_counting(tmp_path):
     context, manager = _manager(tmp_path)
-    manager._pending_registrations["expired"] = manager_module._PendingPluginRegistration(
-        plugin_author="tester",
-        plugin_name="demo",
-        plugin_path="/tmp/demo",
-        binding=None,
-        shared_pool_digest=None,
-        expires_at=time.monotonic() - 1,
+    manager._pending_registrations["expired"] = (
+        manager_module._PendingPluginRegistration(
+            plugin_author="tester",
+            plugin_name="demo",
+            plugin_path="/tmp/demo",
+            binding=None,
+            shared_pool_digest=None,
+            expires_at=time.monotonic() - 1,
+        )
     )
     manager._pending_registrations["live"] = manager_module._PendingPluginRegistration(
         plugin_author="tester",

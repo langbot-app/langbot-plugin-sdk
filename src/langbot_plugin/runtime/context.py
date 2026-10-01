@@ -190,24 +190,18 @@ class RuntimeContext:
                 {
                     "cache_hits_total": ops_metrics.dependency_cache_hits_total,
                     "misses_total": ops_metrics.dependency_cache_misses_total,
-                    "failures_total": (
-                        ops_metrics.dependency_prepare_failures_total
-                    ),
+                    "failures_total": ops_metrics.dependency_prepare_failures_total,
                     "prepare_seconds_total": (
                         ops_metrics.dependency_prepare_seconds_total
                     ),
-                    "prepare_seconds_last": (
-                        ops_metrics.dependency_prepare_seconds_last
-                    ),
+                    "prepare_seconds_last": ops_metrics.dependency_prepare_seconds_last,
                 }
                 if ops_metrics is not None
                 else {}
             ),
             "restart_backoff": (
                 {
-                    "shared_current_seconds": (
-                        ops_metrics.shared_backoff_current_seconds
-                    ),
+                    "shared_current_seconds": ops_metrics.shared_backoff_current_seconds,
                     "shared_total_seconds": ops_metrics.shared_backoff_total_seconds,
                     "dedicated_current_seconds": (
                         ops_metrics.dedicated_backoff_current_seconds

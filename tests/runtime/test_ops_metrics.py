@@ -70,9 +70,7 @@ def test_snapshot_exposes_only_aggregate_fields():
     assert snapshot["shared_worker_processes_started_total"] == 0
     assert snapshot["dependency_environment_prepare_seconds_last"] == 0.0
     assert snapshot["uptime_seconds"] >= 0.0
-    assert all(
-        isinstance(value, (int, float)) for value in snapshot.values()
-    ), snapshot
+    assert all(isinstance(value, (int, float)) for value in snapshot.values()), snapshot
 
 
 def test_backoff_helpers_track_current_and_total():
