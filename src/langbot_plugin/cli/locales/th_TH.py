@@ -32,6 +32,7 @@ messages = {
     "file_added": "  - เพิ่มแล้ว: {}",
     "file_add_error": "  - เกิดข้อผิดพลาดในการเพิ่ม {}: {}",
     "plugin_built": "บิลด์ปลั๊กอินสำเร็จ: {}",
+    "plugin_build_error": "บิลด์ปลั๊กอินล้มเหลว: {}",
     # Login
     "starting_login": "กำลังเริ่มกระบวนการเข้าสู่ระบบ LangBot CLI...",
     "generating_device_code": "กำลังสร้างรหัสอุปกรณ์...",
