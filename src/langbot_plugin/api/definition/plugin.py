@@ -25,8 +25,9 @@ class BasePlugin(abc.ABC, langbot_api.LangBotAPIProxy):
         return getattr(self, "_legacy_config", {})
 
     @config.setter
-    def config(self, value: dict[str, typing.Any]) -> None:
-        self._legacy_config = dict(value)
+    def config(self, value: dict[str, typing.Any] | None) -> None:
+        # Legacy plugins initialize this attribute to None before runtime binding.
+        self._legacy_config = {} if value is None else dict(value)
 
     def get_config(self) -> dict[str, typing.Any]:
         """Return the active invocation config, or the legacy dedicated config."""
