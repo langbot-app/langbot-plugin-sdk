@@ -62,6 +62,9 @@ FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
 MAX_INFLIGHT_ACTIONS = 128
 MAX_RESERVED_ACTIONS = 4
 MAX_STREAM_QUEUE_SIZE = 128
+STREAM_WINDOW = 8
+MAX_STREAM_FRAME_BYTES = 1024 * 1024
+MAX_STREAM_BUFFER_BYTES = STREAM_WINDOW * MAX_STREAM_FRAME_BYTES
 MAX_ACTIVE_FILE_TRANSFERS = 128
 MAX_PROTOCOL_ERROR_CHARS = 4096
 MAX_INLINE_REGISTRATION_BYTES = 16 * 1024 * 1024
@@ -75,6 +78,44 @@ _TRANSFER_OWNER_DIR = ".transfer-owners"
 _TRANSFER_LOCKS_GUARD = threading.Lock()
 _TRANSFER_LOCKS: dict[tuple[str, str], tuple[threading.RLock, int]] = {}
 _ACTIVE_TRANSFER_HANDLERS: dict[tuple[str, str], weakref.ReferenceType[Any]] = {}
+
+
+class _StreamQueue(asyncio.Queue):
+    """Bound legacy and negotiated streams by bytes as well as frame count."""
+
+    def __init__(self):
+        super().__init__(maxsize=MAX_STREAM_QUEUE_SIZE)
+        self.buffer_bytes = 0
+        self._next_size = 0
+
+    def put_response(self, response, size):
+        if (
+            size > MAX_STREAM_FRAME_BYTES
+            or self.buffer_bytes + size > MAX_STREAM_BUFFER_BYTES
+        ):
+            raise asyncio.QueueFull
+        self._next_size = size
+        try:
+            self.put_nowait(response)
+        finally:
+            self._next_size = 0
+
+    def _put(self, item):
+        self.buffer_bytes += self._next_size
+        super()._put((item, self._next_size))
+
+    def _get(self):
+        item, size = super()._get()
+        self.buffer_bytes -= size
+        return item
+
+
+@dataclass
+class _StreamSender:
+    context: ActionEnvelopeContext | None
+    ready: asyncio.Event
+    sent: int = 0
+    acknowledged: int = 0
 
 
 @dataclass
@@ -601,6 +642,9 @@ class Handler(abc.ABC):
         self.seq_id_index = random.randint(0, 100000)
         self.resp_waiters = {}
         self.resp_queues = {}
+        self._stream_senders: dict[int, _StreamSender] = {}
+        self._stream_contexts: dict[int, ActionEnvelopeContext | None] = {}
+        self._stream_cancellations: dict[int, asyncio.Task] = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
         self._action_tasks_by_seq: dict[int, asyncio.Task[None]] = {}
         self._action_task_contexts: dict[
@@ -613,6 +657,7 @@ class Handler(abc.ABC):
         self._active_tasks: set[asyncio.Task[None]] = set()
         # Reserved tasks remain in the common set for cancellation and accounting.
         self._reserved_action_tasks: set[asyncio.Task[None]] = set()
+        self._stream_ack_tasks: set[asyncio.Task[None]] = set()
         # Kept for source compatibility; every connection-owned action is
         # cancelled when the transport terminates.
         self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
@@ -711,6 +756,22 @@ class Handler(abc.ABC):
                         )
                     raise
             return ActionResponse.success({})
+
+        @self.action(CommonAction.STREAM_ACK)
+        async def stream_ack(data: dict[str, Any]) -> ActionResponse:
+            target_seq_id, index = data.get("seq_id"), data.get("index")
+            if type(target_seq_id) is not int or type(index) is not int:
+                raise ValueError(
+                    "Stream acknowledgement requires integer sequence and index"
+                )
+            sender = self._stream_senders.get(target_seq_id)
+            if sender is None or sender.context != self.current_action_context:
+                return ActionResponse.success({"accepted": False})
+            if index < sender.acknowledged or index > sender.sent:
+                raise ValueError("Invalid stream acknowledgement index")
+            sender.acknowledged = index
+            sender.ready.set()
+            return ActionResponse.success({"accepted": True})
 
         @self.action(CommonAction.CANCEL_ACTION)
         async def cancel_action(data: dict[str, Any]) -> ActionResponse:
@@ -828,6 +889,12 @@ class Handler(abc.ABC):
                 action_context=action_context,
                 blocking_scope=blocking_scope,
             )
+            if (
+                isinstance(payload, ActionResponse)
+                and payload.stream_index is not None
+                and len(encoded.encode("utf-8")) > MAX_STREAM_FRAME_BYTES
+            ):
+                raise ActionCallError("Streaming response exceeds frame byte limit")
             await self.conn.send(encoded)
 
     async def _format_protocol_error(
@@ -915,7 +982,9 @@ class Handler(abc.ABC):
 
                 seq_id = req_data.get("seq_id", -1)
                 if "code" in req_data:
-                    await self._route_response(seq_id, req_data)
+                    await self._route_response(
+                        seq_id, req_data, wire_size=len(message.encode("utf-8"))
+                    )
                     continue
 
                 if "action" not in req_data:
@@ -923,12 +992,18 @@ class Handler(abc.ABC):
                     continue
 
                 reserved = self._uses_reserved_admission(req_data)
-                if reserved:
+                stream_ack = req_data.get("action") == CommonAction.STREAM_ACK.value
+                if stream_ack:
+                    inflight = len(self._stream_ack_tasks)
+                    limit = MAX_INFLIGHT_ACTIONS
+                elif reserved:
                     inflight = len(self._reserved_action_tasks)
                     limit = MAX_RESERVED_ACTIONS
                 else:
-                    inflight = len(self._action_tasks) - len(
-                        self._reserved_action_tasks
+                    inflight = (
+                        len(self._action_tasks)
+                        - len(self._reserved_action_tasks)
+                        - len(self._stream_ack_tasks)
                     )
                     limit = MAX_INFLIGHT_ACTIONS
                 if inflight >= limit:
@@ -948,7 +1023,9 @@ class Handler(abc.ABC):
                 )
                 self._action_tasks.add(task)
                 self._action_tasks_by_seq[seq_id] = task
-                if reserved:
+                if stream_ack:
+                    self._stream_ack_tasks.add(task)
+                elif reserved:
                     self._reserved_action_tasks.add(task)
                 task.add_done_callback(
                     lambda completed, owned_seq_id=seq_id: self._action_task_done(
@@ -994,7 +1071,9 @@ class Handler(abc.ABC):
                     await self._cancel_action_tasks()
                 await self._cleanup_owned_transfers(close_root=True)
 
-    async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
+    async def _route_response(
+        self, seq_id: int, req_data: dict[str, Any], *, wire_size: int | None = None
+    ) -> None:
         try:
             response = await self._validate_message_model(
                 ActionResponse,
@@ -1013,7 +1092,15 @@ class Handler(abc.ABC):
         queue = self.resp_queues.get(seq_id)
         if queue is not None:
             try:
-                queue.put_nowait(response)
+                if isinstance(queue, _StreamQueue):
+                    queue.put_response(
+                        response,
+                        wire_size
+                        if wire_size is not None
+                        else len(json.dumps(req_data).encode("utf-8")),
+                    )
+                else:
+                    queue.put_nowait(response)
             except asyncio.QueueFull:
                 # A stalled stream consumer must not block response routing for
                 # every other action sharing this connection.
@@ -1026,6 +1113,15 @@ class Handler(abc.ABC):
                         "Streaming action consumer is too slow; response buffer full"
                     )
                 )
+                if (
+                    seq_id in self._stream_contexts
+                    and seq_id not in self._stream_cancellations
+                ):
+                    # Stop legacy producers even while the caller is paused at
+                    # yield and has not yet observed the local overflow error.
+                    self._stream_cancellations[seq_id] = asyncio.create_task(
+                        self._cancel_peer_action(seq_id, self._stream_contexts[seq_id])
+                    )
 
     async def _handle_action(
         self,
@@ -1073,11 +1169,33 @@ class Handler(abc.ABC):
                         else:
                             await self._send_message(response)
                     else:
-                        async for chunk in response:
-                            assert isinstance(chunk, ActionResponse)
-                            chunk.seq_id = seq_id
-                            chunk.chunk_status = ChunkStatus.CONTINUE
-                            await self._send_message(chunk)
+                        sender = None
+                        if request.stream_flow_control == 1:
+                            sender = _StreamSender(action_context, asyncio.Event())
+                            self._stream_senders[seq_id] = sender
+                        try:
+                            while True:
+                                if sender is not None:
+                                    while (
+                                        sender.sent - sender.acknowledged
+                                        >= STREAM_WINDOW
+                                    ):
+                                        sender.ready.clear()
+                                        await sender.ready.wait()
+                                try:
+                                    chunk = await anext(response)
+                                except StopAsyncIteration:
+                                    break
+                                assert isinstance(chunk, ActionResponse)
+                                chunk.seq_id = seq_id
+                                chunk.chunk_status = ChunkStatus.CONTINUE
+                                if sender is not None:
+                                    sender.sent += 1
+                                    chunk.stream_index = sender.sent
+                                await self._send_message(chunk)
+                        finally:
+                            self._stream_senders.pop(seq_id, None)
+                            await response.aclose()
 
                         end_response = ActionResponse.success({})
                         end_response.seq_id = seq_id
@@ -1133,7 +1251,10 @@ class Handler(abc.ABC):
 
     def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
         """Opt in to bounded control capacity, not validation or authorization."""
-        return req_data.get("action") == CommonAction.CANCEL_ACTION.value
+        return req_data.get("action") in {
+            CommonAction.CANCEL_ACTION.value,
+            CommonAction.STREAM_ACK.value,
+        }
 
     def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
         """Confirm the decoded top-level control action before isolation."""
@@ -1160,6 +1281,7 @@ class Handler(abc.ABC):
     ) -> None:
         self._action_tasks.discard(task)
         self._reserved_action_tasks.discard(task)
+        self._stream_ack_tasks.discard(task)
         if seq_id is not None and self._action_tasks_by_seq.get(seq_id) is task:
             self._action_tasks_by_seq.pop(seq_id, None)
         if task.cancelled():
@@ -1191,6 +1313,7 @@ class Handler(abc.ABC):
         self._action_tasks.clear()
         self._action_tasks_by_seq.clear()
         self._reserved_action_tasks.clear()
+        self._stream_ack_tasks.clear()
         self._active_tasks.clear()
 
     def cancel_inflight_messages(self) -> None:
@@ -1310,15 +1433,16 @@ class Handler(abc.ABC):
             data,
             resolved_context := self.resolve_outbound_action_context(action_context),
         )
+        request.stream_flow_control = 1
 
         # Create a queue for streaming responses
         if self._closed:
             raise self._close_error or ConnectionClosedError("Connection closed")
-        queue = asyncio.Queue[ActionResponse | BaseException](
-            maxsize=MAX_STREAM_QUEUE_SIZE
-        )
+        queue = _StreamQueue()
         self.resp_queues[this_seq_id] = queue
-
+        self._stream_contexts[this_seq_id] = resolved_context
+        completed = False
+        consumed = 0
         try:
             if invocation is not None:
                 invocation.require_active()
@@ -1337,8 +1461,25 @@ class Handler(abc.ABC):
                         raise ActionCallError(f"{response.message}", response.data)
 
                     if response.chunk_status == ChunkStatus.CONTINUE:
+                        if response.stream_index is not None:
+                            if response.stream_index != consumed + 1:
+                                raise ActionCallError("Out-of-order streaming response")
+                            consumed = response.stream_index
                         yield response.data
+                        # Acknowledge only after the caller has processed the
+                        # value; never block the shared transport router.
+                        if (
+                            response.stream_index is not None
+                            and consumed % (STREAM_WINDOW // 2) == 0
+                        ):
+                            await self.call_action(
+                                CommonAction.STREAM_ACK,
+                                {"seq_id": this_seq_id, "index": consumed},
+                                timeout=timeout,
+                                action_context=resolved_context,
+                            )
                     elif response.chunk_status == ChunkStatus.END:
+                        completed = True
                         break
                 except asyncio.CancelledError:
                     raise
@@ -1355,6 +1496,12 @@ class Handler(abc.ABC):
         finally:
             if this_seq_id in self.resp_queues:
                 del self.resp_queues[this_seq_id]
+            self._stream_contexts.pop(this_seq_id, None)
+            cancellation = self._stream_cancellations.pop(this_seq_id, None)
+            if cancellation is not None:
+                await cancellation
+            elif not completed and not self._closed:
+                await self._cancel_peer_action(this_seq_id, resolved_context)
 
     @property
     def bound_action_context(self) -> ActionEnvelopeContext | None:

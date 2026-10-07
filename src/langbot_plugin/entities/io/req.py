@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pydantic
-from typing import Any
+from typing import Any, Literal
 
 from langbot_plugin.entities.io.context import (
     ActionContext,
@@ -18,6 +18,7 @@ class ActionRequest(pydantic.BaseModel):
     # Keep InstallationBinding first: it must retain its revision/digest fields
     # instead of being reduced to the legacy Workspace envelope.
     context: InstallationBinding | ActionContext | None = None
+    stream_flow_control: Literal[1] | None = None
 
     @classmethod
     def make_request(

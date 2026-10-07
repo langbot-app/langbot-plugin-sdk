@@ -1,6 +1,8 @@
 # handle connection to/from plugin
 from __future__ import annotations
 
+from contextlib import aclosing
+
 from typing import Any, AsyncGenerator
 import typing
 import logging
@@ -432,12 +434,15 @@ class PluginConnectionHandler(handler.Handler):
             binding = self.resolve_effective_action_context()
             if binding is not None:
                 kwargs["action_context"] = binding
-            async for chunk in self.context.control_handler.call_action_generator(
-                PluginToRuntimeAction.INVOKE_LLM_STREAM,
-                payload,
-                **kwargs,
-            ):
-                yield handler.ActionResponse.success(chunk)
+            async with aclosing(
+                self.context.control_handler.call_action_generator(
+                    PluginToRuntimeAction.INVOKE_LLM_STREAM,
+                    payload,
+                    **kwargs,
+                )
+            ) as owned_stream:
+                async for chunk in owned_stream:
+                    yield handler.ActionResponse.success(chunk)
 
         @self.action(PluginToRuntimeAction.INVOKE_EMBEDDING)
         async def invoke_embedding(data: dict[str, Any]) -> handler.ActionResponse:

@@ -14,6 +14,7 @@ class CommonAction(ActionType):
     HEARTBEAT = "__heartbeat"
     FILE_CHUNK = "__file_chunk"
     CANCEL_ACTION = "__cancel_action"
+    STREAM_ACK = "__stream_ack"
 
 
 class PluginToRuntimeAction(ActionType):

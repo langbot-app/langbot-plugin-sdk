@@ -95,6 +95,9 @@ async def test_ping_succeeds_with_all_business_slots_occupied(peer):
         assert response["code"] == 0, response
         assert response["data"] == {"message": "pong"}
         assert all(not task.done() for task in tasks)
+        # The peer can observe PONG before its task's done callback runs.
+        await asyncio.gather(*tuple(handler._reserved_action_tasks))
+        await asyncio.sleep(0)
         assert len(handler._action_tasks) == MAX_INFLIGHT_ACTIONS
 
         gate.release.set()
@@ -436,6 +439,8 @@ async def test_control_emit_event_saturation_and_recovery(peer, monkeypatch):
         assert pong["code"] == 0, pong
         assert pong["data"] == {"message": "pong"}
         assert all(not task.done() for task in tasks)
+        await asyncio.gather(*tuple(handler._reserved_action_tasks))
+        await asyncio.sleep(0)
         assert len(handler._action_tasks) == 128
 
         overflow = await session.request(
@@ -471,6 +476,8 @@ async def test_control_emit_event_saturation_and_recovery(peer, monkeypatch):
         assert (await session.request(CommonAction.PING.value, seq_id=1003))[
             "code"
         ] == 0
+        await asyncio.gather(*tuple(handler._reserved_action_tasks))
+        await asyncio.sleep(0)
         assert not handler._action_tasks
         assert handler.conn is connection
         assert handler.context.is_active_control_handler(handler)

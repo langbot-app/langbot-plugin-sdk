@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
+
 import base64
 from copy import deepcopy
 from typing import Any
@@ -170,20 +172,23 @@ class AgentRunResourceAPIMixin:
         reasoning_level: ReasoningLevel | None = None,
     ):
         """Invoke an LLM model with streaming, permission validation."""
-        async for event in self.invoke_llm_stream_events(
-            llm_model_uuid=llm_model_uuid,
-            messages=messages,
-            funcs=funcs,
-            extra_args=extra_args,
-            **(
-                {"reasoning_level": reasoning_level}
-                if reasoning_level is not None
-                else {}
-            ),
-            remove_think=remove_think,
-        ):
-            if event.chunk is not None:
-                yield event.chunk
+        async with aclosing(
+            self.invoke_llm_stream_events(
+                llm_model_uuid=llm_model_uuid,
+                messages=messages,
+                funcs=funcs,
+                extra_args=extra_args,
+                **(
+                    {"reasoning_level": reasoning_level}
+                    if reasoning_level is not None
+                    else {}
+                ),
+                remove_think=remove_think,
+            )
+        ) as owned_stream:
+            async for event in owned_stream:
+                if event.chunk is not None:
+                    yield event.chunk
 
     async def invoke_llm_stream_events(
         self,
@@ -211,23 +216,26 @@ class AgentRunResourceAPIMixin:
         }
         if remove_think is not None:
             payload["remove_think"] = remove_think
-        async for chunk_data in self._api.plugin_runtime_handler.call_action_generator(
-            PluginToRuntimeAction.INVOKE_LLM_STREAM,
-            payload,
-            effective_timeout,
-        ):
-            event_data: dict[str, Any] = {}
-            if isinstance(chunk_data, dict) and "chunk" in chunk_data:
-                event_data["chunk"] = chunk_data["chunk"]
-            if isinstance(chunk_data, dict) and "usage" in chunk_data:
-                event_data["usage"] = chunk_data["usage"]
-            if not event_data:
-                event_data["chunk"] = self._expect_key(
-                    chunk_data,
-                    "chunk",
-                    PluginToRuntimeAction.INVOKE_LLM_STREAM,
-                )
-            yield provider_message.LLMStreamEvent.model_validate(event_data)
+        async with aclosing(
+            self._api.plugin_runtime_handler.call_action_generator(
+                PluginToRuntimeAction.INVOKE_LLM_STREAM,
+                payload,
+                effective_timeout,
+            )
+        ) as owned_stream:
+            async for chunk_data in owned_stream:
+                event_data: dict[str, Any] = {}
+                if isinstance(chunk_data, dict) and "chunk" in chunk_data:
+                    event_data["chunk"] = chunk_data["chunk"]
+                if isinstance(chunk_data, dict) and "usage" in chunk_data:
+                    event_data["usage"] = chunk_data["usage"]
+                if not event_data:
+                    event_data["chunk"] = self._expect_key(
+                        chunk_data,
+                        "chunk",
+                        PluginToRuntimeAction.INVOKE_LLM_STREAM,
+                    )
+                yield provider_message.LLMStreamEvent.model_validate(event_data)
 
     # ================= Tool APIs (delegated with validation) =================
 

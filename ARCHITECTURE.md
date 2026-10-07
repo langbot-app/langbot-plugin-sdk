@@ -97,6 +97,27 @@ Subcommand implementations live under `cli/commands/`, `cli/run/`, and `cli/gen/
 
 ## Action RPC Protocol
 
+Streaming callers may send `stream_flow_control: 1` in the request envelope.
+Supporting senders number data responses with `stream_index` starting at 1 and
+allow eight unacknowledged frames per stream. After processing four frames, the
+caller sends `__stream_ack` with the original `seq_id` and cumulative `index`,
+using the original immutable installation context. The sender validates the
+context and index before returning credit. ACK admission has its own bounded
+capacity, separate from business actions and cancellation/heartbeat capacity.
+Only that stream's producer waits for credit; the connection router never waits
+on a consumer queue. Forwarding hops negotiate independently.
+
+Each streamed frame is limited to 1 MiB of serialized UTF-8 and each receiving
+buffer to 128 frames / 8 MiB. Oversize or legacy overflow is a terminal error,
+never a silently dropped delta. Older senders ignore the optional request field;
+without `stream_index`, callers send no ACKs and retain bounded legacy routing.
+Older callers omit the field, so new senders retain legacy push behavior.
+This compatibility does not provide backpressure on legacy hops; all hops must
+be upgraded for end-to-end flow control. Unfinished/failed/closed consumers send
+best-effort scoped cancellation, and producers explicitly close their iterators.
+The wire timeout bounds idle reads and ACK waits, not arbitrary time spent by
+application code processing a yielded value.
+
 The runtime protocol is a bidirectional action RPC protocol over stdio or WebSocket. It is implemented by `runtime/io/handler.py` and data models under `entities/io/`.
 
 Request shape:
