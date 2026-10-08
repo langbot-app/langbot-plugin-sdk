@@ -1411,7 +1411,7 @@ class Handler(abc.ABC):
             ActionCallError,
             ActionCallTimeoutError,
             ConnectionClosedError,
-            TimeoutError,
+            asyncio.TimeoutError,
         ):
             logger.debug("Failed to cancel peer action %s", seq_id, exc_info=True)
 

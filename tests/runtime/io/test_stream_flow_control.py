@@ -197,7 +197,7 @@ async def test_legacy_overflow_cancels_upstream_before_consumer_resumes():
         original = producer._handle_action
 
         async def legacy(request, **kwargs):
-            request.pop('stream_flow_control', None)
+            request.pop("stream_flow_control", None)
             await original(request, **kwargs)
 
         producer._handle_action = legacy
@@ -207,7 +207,7 @@ async def test_legacy_overflow_cancels_upstream_before_consumer_resumes():
         async def produce(data):
             try:
                 while True:
-                    yield ActionResponse.success({'text': 'chunk'})
+                    yield ActionResponse.success({"text": "chunk"})
             finally:
                 closed.set()
 
@@ -216,6 +216,6 @@ async def test_legacy_overflow_cancels_upstream_before_consumer_resumes():
         # The consumer is deliberately paused, so only routing can stop the
         # legacy producer after the bounded buffer fills.
         await asyncio.wait_for(closed.wait(), 2)
-        with pytest.raises(ActionCallError, match='buffer full'):
+        with pytest.raises(ActionCallError, match="buffer full"):
             await anext(output)
         assert not consumer._stream_cancellations
