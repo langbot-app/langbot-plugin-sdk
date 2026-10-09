@@ -205,6 +205,9 @@ class EBAEvent(Event):
     Coexists with the legacy MessageEvent hierarchy.
     """
 
+    summary_field: typing.ClassVar[str] = "type"
+    """Existing field path used for display summaries; never serialized."""
+
     type: str
     """Event type identifier, e.g. 'message.received'."""
 
@@ -226,6 +229,8 @@ class EBAEvent(Event):
 
 class MessageReceivedEvent(EBAEvent):
     """New message received. Replaces legacy FriendMessage / GroupMessage."""
+
+    summary_field: typing.ClassVar[str] = "message_chain"
 
     type: str = "message.received"
 
@@ -321,6 +326,8 @@ class MessageReceivedEvent(EBAEvent):
 class MessageEditedEvent(EBAEvent):
     """Message was edited."""
 
+    summary_field: typing.ClassVar[str] = "new_content"
+
     type: str = "message.edited"
 
     message_id: typing.Union[int, str] = ""
@@ -342,6 +349,8 @@ class MessageEditedEvent(EBAEvent):
 class MessageDeletedEvent(EBAEvent):
     """Message was deleted / recalled."""
 
+    summary_field: typing.ClassVar[str] = "message_id"
+
     type: str = "message.deleted"
 
     message_id: typing.Union[int, str] = ""
@@ -357,6 +366,8 @@ class MessageDeletedEvent(EBAEvent):
 
 class MessageReactionEvent(EBAEvent):
     """Message received an emoji reaction."""
+
+    summary_field: typing.ClassVar[str] = "reaction"
 
     type: str = "message.reaction"
 
@@ -384,6 +395,8 @@ class MessageReactionEvent(EBAEvent):
 
 class FeedbackReceivedEvent(EBAEvent):
     """User feedback received for a bot response."""
+
+    summary_field: typing.ClassVar[str] = "feedback_content"
 
     type: str = "feedback.received"
 
@@ -432,6 +445,8 @@ class FeedbackReceivedEvent(EBAEvent):
 class MemberJoinedEvent(EBAEvent):
     """New member joined a group."""
 
+    summary_field: typing.ClassVar[str] = "member"
+
     type: str = "group.member_joined"
 
     group: platform_entities.UserGroup = pydantic.Field(
@@ -454,6 +469,8 @@ class MemberJoinedEvent(EBAEvent):
 class MemberLeftEvent(EBAEvent):
     """Member left a group."""
 
+    summary_field: typing.ClassVar[str] = "member"
+
     type: str = "group.member_left"
 
     group: platform_entities.UserGroup = pydantic.Field(
@@ -473,6 +490,8 @@ class MemberLeftEvent(EBAEvent):
 class MemberBannedEvent(EBAEvent):
     """Member was muted / restricted."""
 
+    summary_field: typing.ClassVar[str] = "member"
+
     type: str = "group.member_banned"
 
     group: platform_entities.UserGroup = pydantic.Field(
@@ -488,6 +507,8 @@ class MemberBannedEvent(EBAEvent):
 
 class GroupInfoUpdatedEvent(EBAEvent):
     """Group info was updated."""
+
+    summary_field: typing.ClassVar[str] = "changed_fields"
 
     type: str = "group.info_updated"
 
@@ -507,6 +528,8 @@ class GroupInfoUpdatedEvent(EBAEvent):
 class FriendRequestReceivedEvent(EBAEvent):
     """Friend request received."""
 
+    summary_field: typing.ClassVar[str] = "message"
+
     type: str = "friend.request_received"
 
     request_id: typing.Union[int, str] = ""
@@ -524,6 +547,8 @@ class FriendRequestReceivedEvent(EBAEvent):
 class FriendAddedEvent(EBAEvent):
     """Friend successfully added."""
 
+    summary_field: typing.ClassVar[str] = "user"
+
     type: str = "friend.added"
 
     user: platform_entities.User = pydantic.Field(
@@ -533,6 +558,8 @@ class FriendAddedEvent(EBAEvent):
 
 class FriendRemovedEvent(EBAEvent):
     """Friend was removed."""
+
+    summary_field: typing.ClassVar[str] = "user"
 
     type: str = "friend.removed"
 
@@ -546,6 +573,8 @@ class FriendRemovedEvent(EBAEvent):
 
 class BotInvitedToGroupEvent(EBAEvent):
     """Bot was invited to join a group."""
+
+    summary_field: typing.ClassVar[str] = "group"
 
     type: str = "bot.invited_to_group"
 
@@ -561,6 +590,8 @@ class BotInvitedToGroupEvent(EBAEvent):
 class BotRemovedFromGroupEvent(EBAEvent):
     """Bot was removed from a group."""
 
+    summary_field: typing.ClassVar[str] = "group"
+
     type: str = "bot.removed_from_group"
 
     group: platform_entities.UserGroup = pydantic.Field(
@@ -571,6 +602,8 @@ class BotRemovedFromGroupEvent(EBAEvent):
 
 class BotMutedEvent(EBAEvent):
     """Bot was muted in a group."""
+
+    summary_field: typing.ClassVar[str] = "group"
 
     type: str = "bot.muted"
 
@@ -583,6 +616,8 @@ class BotMutedEvent(EBAEvent):
 
 class BotUnmutedEvent(EBAEvent):
     """Bot was unmuted in a group."""
+
+    summary_field: typing.ClassVar[str] = "group"
 
     type: str = "bot.unmuted"
 
@@ -601,6 +636,8 @@ class PlatformSpecificEvent(EBAEvent):
     Used when the adapter cannot map an event to a standard type.
     """
 
+    summary_field: typing.ClassVar[str] = "action"
+
     type: str = "platform.specific"
 
     action: str = ""
@@ -611,6 +648,44 @@ class PlatformSpecificEvent(EBAEvent):
 
 
 # ---- Message Send Result ----
+
+
+def event_summary(event: EBAEvent | dict) -> str:
+    """Read only the summary field declared by the event class."""
+    if isinstance(event, EBAEvent):
+        event_type = event.type
+        value = getattr(event, event.summary_field, None)
+    else:
+        event_type = str(event.get("type") or "event")
+        event_class = next(
+            (cls for cls in EBAEvent.__subclasses__()
+             if cls.model_fields["type"].default == event_type), EBAEvent
+        )
+        value = event.get(event_class.summary_field)
+
+    def render(value: typing.Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, platform_message.MessageChain):
+            return str(value)
+        if isinstance(value, pydantic.BaseModel):
+            value = value.model_dump(mode="json")
+        if isinstance(value, dict):
+            if "root" in value:
+                return render(value["root"])
+            if value.get("type") == "Source":
+                return ""
+            if value.get("type") in {"Plain", "text"}:
+                return str(value.get("text") or "")
+            if "type" in value:
+                return f'[{value["type"]}]'
+            return str(value.get("nickname") or value.get("name") or value.get("id") or "")
+        if isinstance(value, (list, tuple)):
+            separator = "" if any(isinstance(item, dict) for item in value) else ", "
+            return separator.join(render(item) for item in value)
+        return str(value)
+
+    return render(value).strip() or event_type
 
 
 def parse_eba_event(data: dict) -> EBAEvent:
