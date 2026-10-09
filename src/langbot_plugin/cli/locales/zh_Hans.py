@@ -32,6 +32,7 @@ messages = {
     "file_added": "  - 已添加：{}",
     "file_add_error": "  - 添加文件 {} 时出错：{}",
     "plugin_built": "插件构建成功：{}",
+    "plugin_build_error": "构建插件失败：{}",
     # 登录
     "starting_login": "正在启动 LangBot CLI 登录流程...",
     "generating_device_code": "正在生成设备代码...",
