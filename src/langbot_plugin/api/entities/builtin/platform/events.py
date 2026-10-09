@@ -658,8 +658,12 @@ def event_summary(event: EBAEvent | dict) -> str:
     else:
         event_type = str(event.get("type") or "event")
         event_class = next(
-            (cls for cls in EBAEvent.__subclasses__()
-             if cls.model_fields["type"].default == event_type), EBAEvent
+            (
+                cls
+                for cls in EBAEvent.__subclasses__()
+                if cls.model_fields["type"].default == event_type
+            ),
+            EBAEvent,
         )
         value = event.get(event_class.summary_field)
 
@@ -678,8 +682,10 @@ def event_summary(event: EBAEvent | dict) -> str:
             if value.get("type") in {"Plain", "text"}:
                 return str(value.get("text") or "")
             if "type" in value:
-                return f'[{value["type"]}]'
-            return str(value.get("nickname") or value.get("name") or value.get("id") or "")
+                return f"[{value['type']}]"
+            return str(
+                value.get("nickname") or value.get("name") or value.get("id") or ""
+            )
         if isinstance(value, (list, tuple)):
             separator = "" if any(isinstance(item, dict) for item in value) else ", "
             return separator.join(render(item) for item in value)
