@@ -261,14 +261,15 @@ class CLISandboxBackend(BaseSandboxBackend):
         for key, value in spec.env.items():
             args.extend(["-e", f"{key}={value}"])
 
-        args.extend(
-            [
-                session.backend_session_id,
-                "sh",
-                "-lc",
-                self._build_exec_command(spec.workdir, spec.cmd),
-            ]
-        )
+        command = self._build_exec_command(spec.workdir, spec.cmd)
+        # Attachment manifests can exceed Windows CreateProcess limits (and
+        # POSIX per-argument limits). Keep large scripts out of argv.
+        input_data = None
+        if len(command.encode("utf-8")) > 8192:
+            args.append("-i")
+            input_data = command.encode("utf-8")
+            command = 'exec sh -lc "$(cat)"'
+        args.extend([session.backend_session_id, "sh", "-lc", command])
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
@@ -280,8 +281,9 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"env_keys={sorted(spec.env.keys())} cmd={cmd_preview}"
         )
 
+        run_options = {"input_data": input_data} if input_data is not None else {}
         result = await self._run_command(
-            args, timeout_sec=spec.timeout_sec, check=False
+            args, timeout_sec=spec.timeout_sec, check=False, **run_options
         )
         duration_ms = int(
             (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
@@ -435,18 +437,31 @@ class CLISandboxBackend(BaseSandboxBackend):
         args: list[str],
         timeout_sec: int,
         check: bool,
+        input_data: bytes | None = None,
     ) -> _CommandResult:
         process = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.PIPE if input_data is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout_task = asyncio.create_task(self._read_stream(process.stdout))
         stderr_task = asyncio.create_task(self._read_stream(process.stderr))
 
+        async def feed_and_wait():
+            if input_data is not None:
+                try:
+                    process.stdin.write(input_data)
+                    await process.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    process.stdin.close()
+            await process.wait()
+
         timed_out = False
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout_sec)
+            await asyncio.wait_for(feed_and_wait(), timeout=timeout_sec)
         except asyncio.TimeoutError:
             process.kill()
             timed_out = True
