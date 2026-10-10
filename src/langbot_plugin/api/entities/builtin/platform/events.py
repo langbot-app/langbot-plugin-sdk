@@ -647,6 +647,89 @@ class PlatformSpecificEvent(EBAEvent):
     """Event data; structure defined by each adapter."""
 
 
+# ---- WeCom Customer Service Events ----
+
+
+class WecomCSEnterSessionEvent(EBAEvent):
+    """Customer opened a WeCom customer-service conversation."""
+
+    summary_field: typing.ClassVar[str] = "external_userid"
+    type: str = "wecomcs.enter_session"
+    open_kfid: str = ""
+    external_userid: str = ""
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    user: typing.Optional[platform_entities.User] = None
+    data: dict = pydantic.Field(default_factory=dict)
+    scene: str = ""
+    scene_param: str = ""
+    welcome_code: str = ""
+    wechat_channels: dict = pydantic.Field(default_factory=dict)
+
+
+class WecomCSMessageSendFailedEvent(EBAEvent):
+    """WeCom reported that an outgoing customer-service message failed."""
+
+    summary_field: typing.ClassVar[str] = "fail_msgid"
+    type: str = "wecomcs.msg_send_fail"
+    open_kfid: str = ""
+    external_userid: str = ""
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    user: typing.Optional[platform_entities.User] = None
+    data: dict = pydantic.Field(default_factory=dict)
+    fail_msgid: str = ""
+    fail_type: int = 0
+
+
+class WecomCSServicerStatusChangedEvent(EBAEvent):
+    """A WeCom customer-service representative changed availability."""
+
+    summary_field: typing.ClassVar[str] = "servicer_userid"
+    type: str = "wecomcs.servicer_status_change"
+    open_kfid: str = ""
+    external_userid: str = ""
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    user: typing.Optional[platform_entities.User] = None
+    data: dict = pydantic.Field(default_factory=dict)
+    servicer_userid: str = ""
+    status: int = 0
+    stop_type: int = 0
+
+
+class WecomCSSessionStatusChangedEvent(EBAEvent):
+    """A WeCom customer-service conversation was assigned, transferred or closed."""
+
+    summary_field: typing.ClassVar[str] = "external_userid"
+    type: str = "wecomcs.session_status_change"
+    open_kfid: str = ""
+    external_userid: str = ""
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    user: typing.Optional[platform_entities.User] = None
+    data: dict = pydantic.Field(default_factory=dict)
+    change_type: int = 0
+    old_servicer_userid: str = ""
+    new_servicer_userid: str = ""
+    msg_code: str = ""
+
+
+class WecomCSRejectCustomerMessageChangedEvent(EBAEvent):
+    """A representative enabled or disabled rejection of customer messages."""
+
+    summary_field: typing.ClassVar[str] = "external_userid"
+    type: str = "wecomcs.reject_customer_msg_switch_change"
+    open_kfid: str = ""
+    external_userid: str = ""
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    user: typing.Optional[platform_entities.User] = None
+    data: dict = pydantic.Field(default_factory=dict)
+    servicer_userid: str = ""
+    reject_switch: int = 0
+
+
 # ---- Message Send Result ----
 
 
