@@ -510,3 +510,32 @@ def test_event_listener_can_handle_eba_plugin_events():
         ("MessageReactionReceived", "👍"),
         ("PlatformSpecificEventReceived", "callback_query"),
     ]
+
+
+@pytest.mark.parametrize(
+    "event_type", ["wecombot.enter_chat", "wecombot.template_card_event"]
+)
+def test_wecombot_business_event_public_round_trip(event_type):
+    from langbot_plugin.api.entities.builtin.platform.events import parse_eba_event
+
+    payload = {
+        "type": event_type,
+        "user": {"id": "visitor", "nickname": "Visitor"},
+        "chat_id": "visitor",
+        "message_id": "callback-1",
+        "data": {"event": {"eventtype": event_type.split(".")[1]}},
+    }
+    if event_type.endswith("template_card_event"):
+        payload.update(
+            task_id="card-1",
+            event_key="approve",
+            selected_items=[{"option_ids": ["yes"]}],
+        )
+    event = parse_eba_event(payload)
+    restored = parse_eba_event(event.model_dump(mode="json"))
+    assert restored.type == event_type
+    assert restored.user.id == "visitor"
+    assert restored.data == payload["data"]
+    if event_type.endswith("template_card_event"):
+        assert restored.event_key == "approve"
+        assert restored.selected_items == [{"option_ids": ["yes"]}]

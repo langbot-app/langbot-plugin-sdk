@@ -28,6 +28,10 @@ class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    def get_supported_apis(self) -> list[str]:
+        """Expose the message APIs required of every legacy adapter to Agents."""
+        return ["send_message", "reply_message"]
+
     @abc.abstractmethod
     async def send_message(
         self, target_type: str, target_id: str, message: platform_message.MessageChain

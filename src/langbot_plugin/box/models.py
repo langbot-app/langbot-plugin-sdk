@@ -426,6 +426,16 @@ class BoxProfile(pydantic.BaseModel):
 BUILTIN_PROFILES: dict[str, BoxProfile] = {
     "default": BoxProfile(
         name="default",
+        network=BoxNetworkMode.ON,
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        cpus=1.0,
+        memory_mb=512,
+        pids_limit=128,
+        read_only_rootfs=True,
+        max_timeout_sec=120,
+    ),
+    "offline": BoxProfile(
+        name="offline",
         network=BoxNetworkMode.OFF,
         host_path_mode=BoxHostMountMode.READ_WRITE,
         cpus=1.0,

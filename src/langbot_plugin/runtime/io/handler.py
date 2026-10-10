@@ -347,6 +347,8 @@ def _open_relative_file(
 ) -> int:
     """Open one file entry beneath a directory handle."""
 
+    # Windows CRT text mode translates bytes, corrupting transferred archives.
+    flags |= getattr(os, "O_BINARY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     if _DIRECTORY_HANDLE_SUPPORTED:
         return os.open(file_name, flags | no_follow, mode, dir_fd=handle)
