@@ -647,6 +647,37 @@ class PlatformSpecificEvent(EBAEvent):
     """Event data; structure defined by each adapter."""
 
 
+# ---- WeCom AI Bot Events ----
+
+
+class WecomBotEnterChatEvent(EBAEvent):
+    """User entered an AI bot conversation (not a friend-added event)."""
+
+    summary_field: typing.ClassVar[str] = "chat_id"
+    type: str = "wecombot.enter_chat"
+    user: typing.Optional[platform_entities.User] = None
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    message_id: str = ""
+    data: dict = pydantic.Field(default_factory=dict)
+
+
+class WecomBotTemplateCardEvent(EBAEvent):
+    """User clicked or submitted a non-managed AI bot template card."""
+
+    summary_field: typing.ClassVar[str] = "event_key"
+    type: str = "wecombot.template_card_event"
+    user: typing.Optional[platform_entities.User] = None
+    chat_id: str = ""
+    chat_type: platform_entities.ChatType = platform_entities.ChatType.PRIVATE
+    message_id: str = ""
+    task_id: str = ""
+    event_key: str = ""
+    card_type: str = ""
+    selected_items: list[dict] = pydantic.Field(default_factory=list)
+    data: dict = pydantic.Field(default_factory=dict)
+
+
 # ---- WeCom Customer Service Events ----
 
 
@@ -741,8 +772,12 @@ def event_summary(event: EBAEvent | dict) -> str:
     else:
         event_type = str(event.get("type") or "event")
         event_class = next(
-            (cls for cls in EBAEvent.__subclasses__()
-             if cls.model_fields["type"].default == event_type), EBAEvent
+            (
+                cls
+                for cls in EBAEvent.__subclasses__()
+                if cls.model_fields["type"].default == event_type
+            ),
+            EBAEvent,
         )
         value = event.get(event_class.summary_field)
 
@@ -761,8 +796,10 @@ def event_summary(event: EBAEvent | dict) -> str:
             if value.get("type") in {"Plain", "text"}:
                 return str(value.get("text") or "")
             if "type" in value:
-                return f'[{value["type"]}]'
-            return str(value.get("nickname") or value.get("name") or value.get("id") or "")
+                return f"[{value['type']}]"
+            return str(
+                value.get("nickname") or value.get("name") or value.get("id") or ""
+            )
         if isinstance(value, (list, tuple)):
             separator = "" if any(isinstance(item, dict) for item in value) else ", "
             return separator.join(render(item) for item in value)
