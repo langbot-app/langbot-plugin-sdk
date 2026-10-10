@@ -678,6 +678,18 @@ class WecomBotTemplateCardEvent(EBAEvent):
     data: dict = pydantic.Field(default_factory=dict)
 
 
+class DingTalkCardActionEvent(EBAEvent):
+    """A DingTalk card interaction outside managed input forms."""
+
+    summary_field: typing.ClassVar[str] = "action"
+    type: str = "dingtalk.card_action"
+    user: typing.Optional[platform_entities.User] = None
+    space_id: str = ""
+    card_instance_id: str = ""
+    action: str = ""
+    data: dict = pydantic.Field(default_factory=dict)
+
+
 # ---- WeCom Customer Service Events ----
 
 
