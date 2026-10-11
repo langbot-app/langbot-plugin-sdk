@@ -32,6 +32,7 @@ messages = {
     "file_added": "  - 追加済み：{}",
     "file_add_error": "  - ファイル {} の追加エラー：{}",
     "plugin_built": "プラグインビルドが完了しました：{}",
+    "plugin_build_error": "プラグインのビルドに失敗しました：{}",
     # ログイン
     "starting_login": "LangBot CLI ログイン処理を開始中...",
     "generating_device_code": "デバイスコードを生成中...",
