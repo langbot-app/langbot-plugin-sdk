@@ -181,8 +181,8 @@ def _handler():
 async def test_worker_ping_responds_without_plugin_initialization():
     handler, initialized = _handler()
     async with ProtocolSession(handler) as session:
-        result = await session.request('__ping', {}, seq_id=1)
-        assert result['code'] == 0
+        result = await session.request("__ping", {}, seq_id=1)
+        assert result["code"] == 0
     assert initialized == []
 
 

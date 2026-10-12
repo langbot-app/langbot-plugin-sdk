@@ -809,7 +809,9 @@ class PluginRuntimeHandler(Handler):
             return ActionResponse.success(result.model_dump(mode="json"))
 
     def _uses_reserved_admission(self, req_data):
-        return req_data.get("action") == CommonAction.PING.value or super()._uses_reserved_admission(req_data)
+        return req_data.get(
+            "action"
+        ) == CommonAction.PING.value or super()._uses_reserved_admission(req_data)
 
     @property
     def plugin_container(self) -> PluginContainer:
