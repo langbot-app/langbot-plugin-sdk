@@ -52,11 +52,19 @@ class WorkerWatchdog:
         probe_timeout: float = 10,
     ) -> None:
         while True:
+            probe_task = asyncio.ensure_future(probe())
             try:
-                await asyncio.wait_for(probe(), timeout=probe_timeout)
-                success = True
+                done, _ = await asyncio.wait({probe_task}, timeout=probe_timeout)
+                success = False
+                if probe_task in done:
+                    await probe_task
+                    success = True
             except Exception:
                 success = False
+            finally:
+                if not probe_task.done():
+                    probe_task.cancel()
+                await asyncio.gather(probe_task, return_exceptions=True)
             if self.observe(success, now=asyncio.get_running_loop().time()):
                 raise TimeoutError(
                     "plugin worker unresponsive beyond watchdog threshold"
