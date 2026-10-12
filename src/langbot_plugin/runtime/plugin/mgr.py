@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from langbot_plugin.runtime.plugin.worker_watchdog import (
+    WorkerWatchdog,
+    supervise_liveness,
+)
+from langbot_plugin.entities.io.actions.enums import CommonAction
+
 import glob
 import hashlib
 import os
@@ -139,6 +145,9 @@ class PluginInstallationRuntime:
     execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED
     shared_worker: SharedPluginWorkerRuntime | None = None
     log_buffer: typing.Any = None
+    watchdog: typing.Any = None
+    watchdog_restarts: int = 0
+    last_watchdog_restart_at: float | None = None
 
 
 @dataclass(slots=True)
@@ -161,6 +170,9 @@ class SharedPluginWorkerRuntime:
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     registration_generation: int = 0
+    watchdog: typing.Any = None
+    watchdog_restarts: int = 0
+    last_watchdog_restart_at: float | None = None
     draining: bool = False
     attach_tasks: dict[InstallationBinding, asyncio.Task[None]] = field(
         default_factory=dict
@@ -1480,6 +1492,31 @@ class PluginManager:
             self.ops_metrics.clear_shared_backoff()
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
 
+    async def _watch_worker(self, runtime):
+        monitor = WorkerWatchdog()
+        runtime.watchdog = monitor
+
+        async def probe():
+            handler = runtime.plugin_handler
+            if handler is None:
+                raise ConnectionError("worker transport unavailable")
+            if isinstance(runtime, SharedPluginWorkerRuntime):
+                binding = next(iter(runtime.slots), None)
+                if binding is None:
+                    return
+            else:
+                binding = runtime.binding
+            await handler.call_action(
+                CommonAction.PING, {}, timeout=10, action_context=binding
+            )
+
+        try:
+            await monitor.watch(probe)
+        except TimeoutError:
+            runtime.watchdog_restarts += 1
+            runtime.last_watchdog_restart_at = time.time()
+            raise
+
     async def _run_shared_worker_attempt(
         self,
         worker: SharedPluginWorkerRuntime,
@@ -1510,6 +1547,9 @@ class PluginManager:
                     f"{_SHARED_TRANSPORT_READY_TIMEOUT_SEC:.0f} seconds"
                 )
 
+            worker_task = asyncio.create_task(
+                supervise_liveness(worker_task, self._watch_worker(worker))
+            )
             permit.mark_ready()
             if not permit.is_half_open_probe:
                 await worker_task
@@ -1927,6 +1967,9 @@ class PluginManager:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if ready_task in done:
+                worker_task = asyncio.create_task(
+                    supervise_liveness(worker_task, self._watch_worker(runtime))
+                )
                 if permit is not None:
                     permit.mark_ready()
                 runtime.state = "running"

@@ -18,7 +18,7 @@ from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.api.entities import events
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
-from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
+from langbot_plugin.entities.io.actions.enums import CommonAction, PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.entities.io.context import InstallationBinding
 from langbot_plugin.api.proxies.invocation import bind_invocation, thaw_config
@@ -254,6 +254,10 @@ class PluginRuntimeHandler(Handler):
                     "plugin_container": container.plugin_container.model_dump(),
                 }
             )
+
+        @self.action(CommonAction.PING)
+        async def ping(data: dict[str, typing.Any]) -> ActionResponse:
+            return ActionResponse.success({"alive": True})
 
         @self.action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER)
         async def get_plugin_container(data: dict[str, typing.Any]) -> ActionResponse:
@@ -804,6 +808,9 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success(result.model_dump(mode="json"))
 
+    def _uses_reserved_admission(self, req_data):
+        return req_data.get("action") == CommonAction.PING.value or super()._uses_reserved_admission(req_data)
+
     @property
     def plugin_container(self) -> PluginContainer:
         return self._base_plugin_container
@@ -814,6 +821,9 @@ class PluginRuntimeHandler(Handler):
 
     @contextlib.contextmanager
     def action_invocation_scope(self, action, action_context):
+        if action == CommonAction.PING.value:
+            yield
+            return
         if not isinstance(action_context, InstallationBinding):
             yield
             return
