@@ -2491,6 +2491,62 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
     await manager._stop_shared_worker(worker)
 
 
+async def test_shared_watchdog_failure_cleans_attempt_and_counts_recovery(
+    tmp_path, monkeypatch
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher, "prepare_dependency_environment", _prepare_environment
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding].shared_worker
+    stopped = asyncio.Event()
+
+    class FastWatchdog(manager_module.WorkerWatchdog):
+        def __init__(self):
+            super().__init__(timeout_seconds=0.01)
+
+        async def watch(self, probe):
+            await super().watch(probe, interval=0.001, probe_timeout=0.005)
+
+    class Handler:
+        async def call_action(self, *args, **kwargs):
+            await asyncio.Event().wait()
+
+    class Permit:
+        is_half_open_probe = False
+
+        def mark_ready(self):
+            pass
+
+    async def launch(candidate):
+        candidate.plugin_handler = Handler()
+        candidate.transport_registered_event.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            candidate.plugin_handler = None
+            stopped.set()
+
+    monkeypatch.setattr(manager_module, "WorkerWatchdog", FastWatchdog)
+    monkeypatch.setattr(manager, "_launch_shared_worker", launch)
+    with pytest.raises(TimeoutError, match="worker unresponsive"):
+        await asyncio.wait_for(manager._run_shared_worker_attempt(worker, Permit()), 2)
+    assert stopped.is_set()
+    assert worker.watchdog_restarts == 1
+    assert worker.last_watchdog_restart_at is not None
+    assert worker.plugin_handler is None
+    assert binding in worker.slots
+
+
 async def test_shared_transport_registration_survives_slow_slot_attach(
     tmp_path,
     monkeypatch,

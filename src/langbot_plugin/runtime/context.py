@@ -166,7 +166,10 @@ class RuntimeContext:
         if callable(prune_registrations):
             prune_registrations()
 
+        from langbot_plugin.runtime.plugin.worker_observability import worker_snapshot
+
         return {
+            "workers": worker_snapshot(plugin_manager),
             "event_loop": (
                 event_loop_monitor.snapshot() if event_loop_monitor is not None else {}
             ),

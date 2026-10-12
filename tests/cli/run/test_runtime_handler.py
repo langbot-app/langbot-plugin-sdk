@@ -178,6 +178,14 @@ def _handler():
     return handler, initialized
 
 
+async def test_worker_ping_responds_without_plugin_initialization():
+    handler, initialized = _handler()
+    async with ProtocolSession(handler) as session:
+        result = await session.request("__ping", {}, seq_id=1)
+        assert result["code"] == 0
+    assert initialized == []
+
+
 def test_resolve_asset_path_accepts_assets_and_component_page_files(
     tmp_path, monkeypatch
 ):

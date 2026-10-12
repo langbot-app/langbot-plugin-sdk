@@ -642,6 +642,7 @@ class Handler(abc.ABC):
         self.conn = connection
         self.actions = {}
         self.seq_id_index = random.randint(0, 100000)
+        self.requests_total = 0
         self.resp_waiters = {}
         self.resp_queues = {}
         self._stream_senders: dict[int, _StreamSender] = {}
@@ -1347,6 +1348,7 @@ class Handler(abc.ABC):
 
         invocation = invocation_capability(self)
         self.seq_id_index += 1
+        self.requests_total += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
@@ -1428,6 +1430,7 @@ class Handler(abc.ABC):
 
         invocation = invocation_capability(self)
         self.seq_id_index += 1
+        self.requests_total += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
