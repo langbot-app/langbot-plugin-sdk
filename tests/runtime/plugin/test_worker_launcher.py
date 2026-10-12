@@ -1027,3 +1027,55 @@ def test_oss_worker_carries_the_plugin_process_tag(tmp_path):
         "-s",
         "--prod",
     ]
+
+
+def test_shared_launcher_binds_resolver_symlink_target_without_exposing_run(
+    tmp_path, monkeypatch
+):
+    resolver = tmp_path / "run" / "resolv.conf"
+    resolver.parent.mkdir()
+    resolver.write_text("nameserver 1.1.1.1\n")
+    link = tmp_path / "etc" / "resolv.conf"
+    link.parent.mkdir()
+    link.symlink_to(resolver)
+    monkeypatch.setattr(worker_launcher_module, "_READONLY_ETC_FILES", (str(link),))
+    monkeypatch.setattr(worker_launcher_module, "_READONLY_SYSTEM_MOUNTS", ())
+    root = tmp_path / "jail"
+    launcher = PluginWorkerLauncher()
+    launcher._ensure_jail_mount_targets(root)
+    target = root / str(link).lstrip("/")
+    assert target.is_file() and not target.is_symlink()
+    args = []
+    launcher._append_readonly_runtime_mounts(args, None)
+    assert args == ["--bindmount_ro", f"{resolver}:{link}"]
+    assert not (root / str(resolver).lstrip("/")).exists()
+    # Existing roots from before the fix must also replace dangling links.
+    target.unlink()
+    target.symlink_to("/run/missing-resolv.conf")
+    launcher._ensure_jail_mount_targets(root)
+    assert target.is_file() and not target.is_symlink()
+
+
+def test_shared_launcher_mounts_editable_sdk_source_readonly(tmp_path):
+    prefix = tmp_path / "venv"
+    executable = prefix / "bin" / "python"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    source = tmp_path / "sdk" / "src"
+    source.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+        python_executable=str(executable),
+        python_prefix=str(prefix),
+        runtime_import_root=str(source),
+    )
+    launcher.configure(_policy(), "shared")
+    spec = _launch_spec(tmp_path)
+    args = launcher.build_nsjail_args(spec)
+    mount = f"{source}:{source}"
+    assert args[args.index(mount) - 1] == "--bindmount_ro"
+    assert (spec.paths.jail_root_path / str(source).lstrip("/")).is_dir()
+    assert f"{source.parent}:{source.parent}" not in args
+    assert f"PYTHONPATH={source}:/plugin-dependencies" in args

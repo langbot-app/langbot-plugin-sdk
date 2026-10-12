@@ -548,9 +548,18 @@ class PluginWorkerLauncher:
         tmp_path = self._absolute_runtime_path(launch_spec.paths.tmp_path)
         data_path = self._absolute_runtime_path(launch_spec.paths.data_path)
         runtime_prefix_mount = self._python_prefix_mount()
+        runtime_mounts = [runtime_prefix_mount] if runtime_prefix_mount else []
+        # Editable SDK installs live outside the venv. Expose only their
+        # trusted source root, not the surrounding checkout or user directory.
+        source_mount = self.runtime_import_root
+        if not self._path_covered_by_system_mount(source_mount) and not (
+            source_mount == self.python_prefix
+            or self.python_prefix in source_mount.parents
+        ):
+            runtime_mounts.append(source_mount)
         self._ensure_jail_mount_targets(
             jail_root_path,
-            extra_targets=(runtime_prefix_mount,) if runtime_prefix_mount else (),
+            extra_targets=tuple(runtime_mounts),
         )
         # Plugin installations are resident workers. NsJail defaults to a
         # 600-second jail lifetime, so explicitly disable the wall-time limit;
@@ -565,6 +574,8 @@ class PluginWorkerLauncher:
         ]
         args.append("--disable_clone_newnet")
         self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
+        if source_mount in runtime_mounts:
+            args.extend(["--bindmount_ro", f"{source_mount}:{source_mount}"])
 
         args.extend(
             [
@@ -683,8 +694,8 @@ class PluginWorkerLauncher:
             if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
         for path in _READONLY_ETC_FILES:
-            if os.path.exists(path) and not os.path.islink(path):
-                args.extend(["--bindmount_ro", f"{path}:{path}"])
+            if os.path.exists(path):
+                args.extend(["--bindmount_ro", f"{os.path.realpath(path)}:{path}"])
         if runtime_prefix_mount is not None:
             args.extend(
                 [
@@ -833,7 +844,17 @@ class PluginWorkerLauncher:
         }
         for target_path in targets:
             host_target = root_path / target_path.lstrip("/")
-            if os.path.islink(target_path):
+            # Resolver files commonly point into /run, which is deliberately
+            # not exposed to workers. Bind the allowlisted file itself.
+            if target_path in _READONLY_ETC_FILES and os.path.exists(target_path):
+                host_target.parent.mkdir(parents=True, exist_ok=True)
+                if host_target.is_symlink():
+                    host_target.unlink()
+                if os.path.isdir(target_path):
+                    host_target.mkdir(exist_ok=True)
+                else:
+                    host_target.touch(exist_ok=True)
+            elif os.path.islink(target_path):
                 host_target.parent.mkdir(parents=True, exist_ok=True)
                 link_value = os.readlink(target_path)
                 if os.path.lexists(host_target):
