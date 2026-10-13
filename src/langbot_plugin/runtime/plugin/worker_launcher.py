@@ -532,8 +532,11 @@ class PluginWorkerLauncher:
             return f"{author}/{name}"
         return name or author
 
-    def build_nsjail_args(self, launch_spec: PluginWorkerLaunchSpec) -> list[str]:
+    def build_nsjail_args(
+        self, launch_spec: PluginWorkerLaunchSpec, *, execution_mode: str = "dedicated"
+    ) -> list[str]:
         policy, profile = self._require_configuration()
+        policy = policy.for_execution_mode(execution_mode, profile)
         if profile != "shared" or not self.nsjail_path:
             raise RuntimeError("nsjail arguments require the shared Runtime profile")
 
@@ -641,7 +644,7 @@ class PluginWorkerLauncher:
     ) -> list[str]:
         """Build a digest worker without mounting installation-owned paths."""
 
-        args = self.build_nsjail_args(launch_spec)
+        args = self.build_nsjail_args(launch_spec, execution_mode="shared-runtime-v1")
         private_mounts = {
             str(self._absolute_runtime_path(launch_spec.paths.home_path)),
             str(self._absolute_runtime_path(launch_spec.paths.tmp_path)),

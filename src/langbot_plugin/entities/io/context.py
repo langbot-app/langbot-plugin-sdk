@@ -36,6 +36,44 @@ class RuntimeIdentity(pydantic.BaseModel):
         return value
 
 
+class PluginWorkerResourceOverrides(pydantic.BaseModel):
+    """Optional Cloud-only limits; omitted fields inherit the instance policy."""
+
+    max_cpus: float | None = None
+    max_memory_mb: int | None = None
+    max_pids: int | None = None
+    max_open_files: int | None = None
+    max_file_size_mb: int | None = None
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+    @pydantic.field_validator("max_cpus", mode="before")
+    @classmethod
+    def validate_cpu(cls, value):
+        if value is None:
+            return value
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("max_cpus must be a positive number")
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("max_cpus must be finite and greater than 0")
+        return float(value)
+
+    @pydantic.field_validator(
+        "max_memory_mb",
+        "max_pids",
+        "max_open_files",
+        "max_file_size_mb",
+        mode="before",
+    )
+    @classmethod
+    def validate_integer(cls, value):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        ):
+            raise ValueError("must be a positive integer")
+        return value
+
+
 class PluginWorkerPolicy(pydantic.BaseModel):
     """Immutable instance policy applied to every isolated plugin worker."""
 
@@ -54,6 +92,26 @@ class PluginWorkerPolicy(pydantic.BaseModel):
     restart_failure_window_seconds: float = 30.0
     restart_circuit_open_seconds: float = 60.0
     require_hard_limits: bool = False
+    dedicated: PluginWorkerResourceOverrides | None = None
+    shared: PluginWorkerResourceOverrides | None = None
+
+    def for_execution_mode(
+        self, execution_mode: PluginExecutionMode | str, runtime_profile: str
+    ) -> PluginWorkerPolicy:
+        """Resolve Cloud worker limits without changing legacy OSS policy."""
+        if runtime_profile != "shared":
+            return self
+        mode = PluginExecutionMode(execution_mode)
+        override = (
+            self.shared
+            if mode is PluginExecutionMode.SHARED_CERTIFIED
+            else self.dedicated
+        )
+        if override is None:
+            return self
+        # Overrides are already validated. Aggregate fields describe legacy OSS
+        # admission, not Cloud desired-state worker resource reservations.
+        return self.model_copy(update=override.model_dump(exclude_none=True))
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
 
@@ -306,6 +364,13 @@ class RuntimeConfig(pydantic.BaseModel):
             False,
         )
         payload = super().model_dump(**kwargs)
+        if isinstance(payload.get("worker_policy"), dict):
+            for mode in ("dedicated", "shared"):
+                if (
+                    self.runtime_profile != "shared"
+                    or payload["worker_policy"].get(mode) is None
+                ):
+                    payload["worker_policy"].pop(mode, None)
         if not include_pending_registration_limit and isinstance(
             payload.get("worker_policy"),
             dict,
