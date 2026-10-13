@@ -31,6 +31,15 @@ def worker_snapshot(manager):
         rows.append(
             {
                 "worker_id": hashlib.sha256(f"{mode}:{key}".encode()).hexdigest()[:24],
+                "plugin_author": getattr(
+                    getattr(worker, "artifact", None), "plugin_author", None
+                ),
+                "plugin_name": getattr(
+                    getattr(worker, "artifact", None), "plugin_name", None
+                ),
+                "plugin_version": getattr(
+                    getattr(worker, "artifact", None), "plugin_version", None
+                ),
                 "mode": mode,
                 "state": state,
                 "slots": len(worker.slots) if mode == "shared" else 1,
