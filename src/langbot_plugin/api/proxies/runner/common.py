@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
+
 from typing import Any
 from copy import deepcopy
 
@@ -126,10 +128,11 @@ class _AgentRunHandlerAdapter:
         timeout: float = 15.0,
     ):
         try:
-            async for item in self._handler.call_action_generator(
-                action, data, timeout
-            ):
-                yield item
+            async with aclosing(
+                self._handler.call_action_generator(action, data, timeout)
+            ) as owned_stream:
+                async for item in owned_stream:
+                    yield item
         except ActionCallError as error:
             raise _build_agent_api_exception(action, error) from error
         except (ActionCallTimeoutError, ConnectionClosedError) as error:
