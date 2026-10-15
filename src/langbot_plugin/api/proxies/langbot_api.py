@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import aclosing
 from typing import Any, get_args
 
 from langbot_plugin.api.entities.builtin.provider.reasoning import ReasoningLevel
@@ -229,19 +230,22 @@ class LangBotAPIProxy:
         reasoning_level: ReasoningLevel | None = None,
     ):
         """Invoke an LLM model with streaming response."""
-        async for event in self.invoke_llm_stream_events(
-            llm_model_uuid=llm_model_uuid,
-            messages=messages,
-            funcs=funcs,
-            extra_args=extra_args,
-            **(
-                {"reasoning_level": reasoning_level}
-                if reasoning_level is not None
-                else {}
-            ),
-        ):
-            if event.chunk is not None:
-                yield event.chunk
+        async with aclosing(
+            self.invoke_llm_stream_events(
+                llm_model_uuid=llm_model_uuid,
+                messages=messages,
+                funcs=funcs,
+                extra_args=extra_args,
+                **(
+                    {"reasoning_level": reasoning_level}
+                    if reasoning_level is not None
+                    else {}
+                ),
+            )
+        ) as owned_stream:
+            async for event in owned_stream:
+                if event.chunk is not None:
+                    yield event.chunk
 
     @run_scoped
     async def invoke_llm_stream_events(
@@ -254,24 +258,27 @@ class LangBotAPIProxy:
         reasoning_level: ReasoningLevel | None = None,
     ):
         """Invoke an LLM model and yield chunks plus optional final usage events."""
-        async for chunk_data in self.plugin_runtime_handler.call_action_generator(
-            PluginToRuntimeAction.INVOKE_LLM_STREAM,
-            {
-                **(await self._reasoning_payload(reasoning_level)),
-                "llm_model_uuid": llm_model_uuid,
-                "messages": [m.model_dump() for m in messages],
-                "funcs": [f.model_dump() for f in funcs],
-                "extra_args": extra_args,
-            },
-        ):
-            event_data: dict[str, Any] = {}
-            if isinstance(chunk_data, dict) and "chunk" in chunk_data:
-                event_data["chunk"] = chunk_data["chunk"]
-            if isinstance(chunk_data, dict) and "usage" in chunk_data:
-                event_data["usage"] = chunk_data["usage"]
-            if not event_data:
-                event_data["chunk"] = chunk_data["chunk"]
-            yield provider_message.LLMStreamEvent.model_validate(event_data)
+        async with aclosing(
+            self.plugin_runtime_handler.call_action_generator(
+                PluginToRuntimeAction.INVOKE_LLM_STREAM,
+                {
+                    **(await self._reasoning_payload(reasoning_level)),
+                    "llm_model_uuid": llm_model_uuid,
+                    "messages": [m.model_dump() for m in messages],
+                    "funcs": [f.model_dump() for f in funcs],
+                    "extra_args": extra_args,
+                },
+            )
+        ) as owned_stream:
+            async for chunk_data in owned_stream:
+                event_data: dict[str, Any] = {}
+                if isinstance(chunk_data, dict) and "chunk" in chunk_data:
+                    event_data["chunk"] = chunk_data["chunk"]
+                if isinstance(chunk_data, dict) and "usage" in chunk_data:
+                    event_data["usage"] = chunk_data["usage"]
+                if not event_data:
+                    event_data["chunk"] = chunk_data["chunk"]
+                yield provider_message.LLMStreamEvent.model_validate(event_data)
 
     @run_scoped
     async def set_plugin_storage(self, key: str, value: bytes) -> None:

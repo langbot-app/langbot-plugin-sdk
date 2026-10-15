@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -142,8 +142,9 @@ def run_scoped(method):
         @wraps(method)
         async def stream(self, *args, **kwargs):
             fn, positional, named = target(self, args, kwargs)
-            async for item in fn(*positional, **named):
-                yield item
+            async with aclosing(fn(*positional, **named)) as owned_stream:
+                async for item in owned_stream:
+                    yield item
 
         return stream
 
