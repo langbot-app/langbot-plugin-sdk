@@ -560,7 +560,8 @@ async def test_launch_all_plugins_waits_for_trusted_workspace_binding(monkeypatc
     await launch_task
 
 
-def test_find_plugin_and_component_lists_respect_include_filters():
+@pytest.mark.asyncio
+async def test_find_plugin_and_component_lists_respect_include_filters():
     manager = _manager()
     tool = _component("Tool", "lookup")
     command = _component("Command", "admin")
@@ -573,9 +574,9 @@ def test_find_plugin_and_component_lists_respect_include_filters():
     assert manager.find_plugin("tester", "demo") is manager.plugins[0]
     assert manager.find_plugin("tester", "missing") is None
 
-    tools = asyncio.run(manager.list_tools(include_plugins=["tester/demo"]))
-    commands = asyncio.run(manager.list_commands(include_plugins=["tester/demo"]))
-    parsers = asyncio.run(manager.list_parsers())
+    tools = await manager.list_tools(include_plugins=["tester/demo"])
+    commands = await manager.list_commands(include_plugins=["tester/demo"])
+    parsers = await manager.list_parsers()
 
     assert [tool.metadata.name for tool in tools] == ["lookup"]
     assert [command.metadata.name for command in commands] == ["admin"]
@@ -1809,7 +1810,7 @@ async def test_parser_errors_for_missing_plugin_and_component():
 @pytest.mark.asyncio
 async def test_emit_event_should_report_each_emitting_plugin_once():
     manager = _manager()
-    plugin = _plugin()
+    plugin = _plugin(components=[_component("EventListener", "events")])
     plugin._runtime_plugin_handler = FakeHandler(plugin)
     manager.plugins = [plugin]
     event_context = EventContext(
@@ -1834,7 +1835,7 @@ async def test_emit_event_should_report_each_emitting_plugin_once():
 @pytest.mark.asyncio
 async def test_emit_event_rejects_plugin_query_uuid_forgery():
     manager = _manager()
-    plugin = _plugin()
+    plugin = _plugin(components=[_component("EventListener", "events")])
     plugin._runtime_plugin_handler = QueryUuidChangingFakeHandler(plugin)
     manager.plugins = [plugin]
     event_context = EventContext(
@@ -1858,9 +1859,11 @@ async def test_emit_event_rejects_plugin_query_uuid_forgery():
 
 
 @pytest.mark.asyncio
-async def test_emit_event_restores_query_uuid_dropped_by_legacy_plugin():
+async def test_emit_event_restores_query_uuid_dropped_by_legacy_plugin(
+    components=[_component("EventListener", "events")],
+):
     manager = _manager()
-    plugin = _plugin()
+    plugin = _plugin(components=[_component("EventListener", "events")])
     plugin._runtime_plugin_handler = QueryUuidDroppingFakeHandler(plugin)
     manager.plugins = [plugin]
     event_context = EventContext(
@@ -1888,8 +1891,12 @@ async def test_emit_event_restores_query_uuid_dropped_by_legacy_plugin():
 @pytest.mark.asyncio
 async def test_emit_event_reports_only_plugins_that_changed_reply_message_chain():
     manager = _manager()
-    observer = _plugin(name="observer")
-    responder = _plugin(name="responder")
+    observer = _plugin(
+        name="observer", components=[_component("EventListener", "events")]
+    )
+    responder = _plugin(
+        name="responder", components=[_component("EventListener", "events")]
+    )
     observer._runtime_plugin_handler = FakeHandler(observer)
     responder._runtime_plugin_handler = ReplyChangingFakeHandler(responder)
     manager.plugins = [observer, responder]
@@ -2022,3 +2029,123 @@ async def test_reinstall_cancellation_does_not_cancel_runtime_launch(monkeypatch
     await launch
     assert child.cancelled()
     assert not launch.cancelled()
+
+
+def _command_event():
+    return EventContext(
+        query_id=1,
+        event_name="PersonCommandSent",
+        event=PersonCommandSent(
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            command="demo",
+            params=[],
+            text_message="/demo",
+            is_admin=False,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", [None, "Runner", "Tool", "Command", "Parser", "Page", "KnowledgeEngine"]
+)
+async def test_emit_event_skips_plugins_without_listener(kind):
+    manager = _manager()
+    plugin = _plugin(
+        components=[
+            _component(
+                kind, "component", {"usages": ["agent"]} if kind == "Runner" else {}
+            )
+        ]
+        if kind
+        else []
+    )
+    handler = FakeHandler(plugin)
+    handler.emit_event = AsyncMock(side_effect=RuntimeError("must not contact worker"))
+    plugin._runtime_plugin_handler = handler
+    listener = _plugin(
+        name="listener", components=[_component("EventListener", "events")]
+    )
+    listener._runtime_plugin_handler = FakeHandler(listener)
+    manager.plugins = [plugin, listener]
+    emitted, _, _ = await manager.emit_event(_command_event())
+    assert emitted == [listener]
+    handler.emit_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prevent", [False, True])
+async def test_listener_dispatch_preserves_order_mutation_and_prevention(prevent):
+    manager = _manager()
+    calls = []
+    for name in ["first", "second", "third"]:
+        plugin = _plugin(name=name, components=[_component("EventListener", "events")])
+        handler = FakeHandler(plugin)
+
+        async def emit(context, name=name):
+            calls.append((name, context["event"]["text_message"]))
+            await asyncio.sleep(0)
+            context["event"]["text_message"] += ":" + name
+            context["is_prevent_postorder"] = prevent and name == "second"
+            return {"emitted": True, "event_context": context}
+
+        handler.emit_event = emit
+        plugin._runtime_plugin_handler = handler
+        manager.plugins.append(plugin)
+    emitted, context, _ = await manager.emit_event(_command_event())
+    expected = ["first", "second"] if prevent else ["first", "second", "third"]
+    assert [p.manifest.metadata.name for p in emitted] == expected
+    assert [c[0] for c in calls] == expected
+    assert calls[1][1] == "/demo:first"
+    assert context.event.text_message == "/demo:" + ":".join(expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError, TimeoutError, ConnectionError])
+async def test_subscriber_failures_preserve_existing_propagation(error):
+    manager = _manager()
+    first = _plugin(components=[_component("EventListener", "events")])
+    first._runtime_plugin_handler = FakeHandler(first)
+    first._runtime_plugin_handler.emit_event = AsyncMock(
+        side_effect=error("listener fault")
+    )
+    second = _plugin(name="second", components=[_component("EventListener", "events")])
+    second._runtime_plugin_handler = FakeHandler(second)
+    second._runtime_plugin_handler.emit_event = AsyncMock()
+    manager.plugins = [first, second]
+    with pytest.raises(error):
+        await manager.emit_event(_command_event())
+    second._runtime_plugin_handler.emit_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "excluded", ["disabled", "uninitialized", "disconnected", "binding"]
+)
+async def test_listener_dispatch_retains_admission_filters(excluded):
+    manager = _manager()
+    plugin = _plugin(
+        components=[
+            _component("Runner", "run", {"usages": ["agent"]}),
+            _component("EventListener", "events"),
+        ]
+    )
+    handler = FakeHandler(plugin)
+    handler.emit_event = AsyncMock(
+        side_effect=AssertionError("filtered listener contacted")
+    )
+    plugin._runtime_plugin_handler = handler
+    if excluded == "disabled":
+        plugin.enabled = False
+    elif excluded == "uninitialized":
+        plugin.status = RuntimeContainerStatus.MOUNTED
+    elif excluded == "disconnected":
+        plugin._runtime_plugin_handler = None
+    manager.plugins = [plugin]
+    emitted, _, _ = await manager.emit_event(
+        _command_event(), include_plugins=[] if excluded == "binding" else None
+    )
+    assert emitted == []
+    handler.emit_event.assert_not_awaited()
