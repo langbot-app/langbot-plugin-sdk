@@ -62,6 +62,9 @@ FILE_CHUNK_LENGTH = 1024 * 16  # 16KB
 MAX_INFLIGHT_ACTIONS = 128
 MAX_RESERVED_ACTIONS = 4
 MAX_STREAM_QUEUE_SIZE = 128
+STREAM_WINDOW = 8
+MAX_STREAM_FRAME_BYTES = 1024 * 1024
+MAX_STREAM_BUFFER_BYTES = STREAM_WINDOW * MAX_STREAM_FRAME_BYTES
 MAX_ACTIVE_FILE_TRANSFERS = 128
 MAX_PROTOCOL_ERROR_CHARS = 4096
 MAX_INLINE_REGISTRATION_BYTES = 16 * 1024 * 1024
@@ -75,6 +78,44 @@ _TRANSFER_OWNER_DIR = ".transfer-owners"
 _TRANSFER_LOCKS_GUARD = threading.Lock()
 _TRANSFER_LOCKS: dict[tuple[str, str], tuple[threading.RLock, int]] = {}
 _ACTIVE_TRANSFER_HANDLERS: dict[tuple[str, str], weakref.ReferenceType[Any]] = {}
+
+
+class _StreamQueue(asyncio.Queue):
+    """Bound legacy and negotiated streams by bytes as well as frame count."""
+
+    def __init__(self):
+        super().__init__(maxsize=MAX_STREAM_QUEUE_SIZE)
+        self.buffer_bytes = 0
+        self._next_size = 0
+
+    def put_response(self, response, size):
+        if (
+            size > MAX_STREAM_FRAME_BYTES
+            or self.buffer_bytes + size > MAX_STREAM_BUFFER_BYTES
+        ):
+            raise asyncio.QueueFull
+        self._next_size = size
+        try:
+            self.put_nowait(response)
+        finally:
+            self._next_size = 0
+
+    def _put(self, item):
+        self.buffer_bytes += self._next_size
+        super()._put((item, self._next_size))
+
+    def _get(self):
+        item, size = super()._get()
+        self.buffer_bytes -= size
+        return item
+
+
+@dataclass
+class _StreamSender:
+    context: ActionEnvelopeContext | None
+    ready: asyncio.Event
+    sent: int = 0
+    acknowledged: int = 0
 
 
 @dataclass
@@ -200,34 +241,205 @@ def _write_all(descriptor: int, data: bytes) -> None:
         remaining = remaining[written:]
 
 
+_DIRECTORY_HANDLE_SUPPORTED = bool(getattr(os, "supports_dir_fd", ())) and all(
+    operation in os.supports_dir_fd
+    for operation in (os.open, os.mkdir, os.stat, os.unlink, os.rename, os.link)
+)
+"""Whether the platform binds directories to descriptors (POSIX only)."""
+
+if not _DIRECTORY_HANDLE_SUPPORTED:  # pragma: no cover - platform dependent
+    logger.warning(
+        "File transfer runs without descriptor-relative isolation on this platform "
+        "(no os dir_fd support); deploy shared Runtime on POSIX hosts."
+    )
+
+
+class _PathDirectoryHandle:
+    """Absolute-path directory handle for platforms without ``dir_fd`` support.
+
+    Windows cannot open a directory as a descriptor and has no ``dir_fd``
+    argument, so no descriptor-relative walk exists there.  This fallback keeps
+    the namespace containment checks and the directory/regular-file checks, but
+    loses the check-to-use atomicity that only descriptors provide.  It is for
+    local development hosts; the POSIX descriptor path remains the isolation
+    boundary for shared Runtime deployments.
+    """
+
+    __slots__ = ("path", "identity")
+
+    def __init__(self, path: str, identity: tuple[int, int]) -> None:
+        self.path = path
+        self.identity = identity
+
+    @property
+    def resolved(self) -> str:
+        return os.path.realpath(self.path)
+
+
+def _directory_handle_path(handle: int | _PathDirectoryHandle) -> str | None:
+    """Return the backing path for a path-backed handle, otherwise ``None``."""
+
+    return handle.path if isinstance(handle, _PathDirectoryHandle) else None
+
+
+def _join_directory_entry(
+    handle: int | _PathDirectoryHandle,
+    name: str,
+) -> str:
+    """Resolve one single path component beneath a path-backed handle."""
+
+    path = _directory_handle_path(handle)
+    if path is None:  # pragma: no cover - POSIX callers never reach this
+        raise ValueError("Invalid file transfer capability")
+    if (
+        not name
+        or name in {".", ".."}
+        or os.sep in name
+        or (os.altsep is not None and os.altsep in name)
+        or os.path.isabs(name)
+        or os.path.splitdrive(name)[0]
+    ):
+        raise ValueError("Invalid file transfer capability")
+    candidate = os.path.join(path, name)
+    resolved = os.path.realpath(candidate)
+    root = os.path.realpath(path)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        # A junction/symlink swapped in between the walk steps would escape.
+        raise ValueError("Invalid file transfer capability")
+    return candidate
+
+
+def _directory_stat(handle: int | _PathDirectoryHandle) -> os.stat_result:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        return os.fstat(handle)
+    path = _directory_handle_path(handle)
+    assert path is not None
+    return os.stat(path, follow_symlinks=False)
+
+
+def _close_directory(handle: int | _PathDirectoryHandle) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.close(handle)
+
+
+def _chmod_directory(handle: int | _PathDirectoryHandle, mode: int) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.fchmod(handle, mode)
+        return
+    path = _directory_handle_path(handle)
+    assert path is not None
+    with contextlib.suppress(OSError):
+        os.chmod(path, mode)
+
+
+def _sync_directory(handle: int | _PathDirectoryHandle) -> None:
+    """Persist directory metadata where the platform can express it."""
+
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.fsync(handle)
+
+
+def _open_relative_file(
+    handle: int | _PathDirectoryHandle,
+    file_name: str,
+    flags: int,
+    mode: int = 0o777,
+) -> int:
+    """Open one file entry beneath a directory handle."""
+
+    # Windows CRT text mode translates bytes, corrupting transferred archives.
+    flags |= getattr(os, "O_BINARY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        return os.open(file_name, flags | no_follow, mode, dir_fd=handle)
+    path = _join_directory_entry(handle, file_name)
+    if os.path.islink(path):
+        raise ValueError("Invalid file transfer capability")
+    return os.open(path, flags, mode)
+
+
+def _remove_relative(handle: int | _PathDirectoryHandle, name: str) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.remove(name, dir_fd=handle)
+        return
+    os.remove(_join_directory_entry(handle, name))
+
+
+def _rename_relative(
+    handle: int | _PathDirectoryHandle,
+    source: str,
+    target: str,
+) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.rename(source, target, src_dir_fd=handle, dst_dir_fd=handle)
+        return
+    os.rename(
+        _join_directory_entry(handle, source),
+        _join_directory_entry(handle, target),
+    )
+
+
+def _link_relative(
+    handle: int | _PathDirectoryHandle,
+    source: str,
+    target: str,
+) -> None:
+    if _DIRECTORY_HANDLE_SUPPORTED:
+        os.link(
+            source,
+            target,
+            src_dir_fd=handle,
+            dst_dir_fd=handle,
+            follow_symlinks=False,
+        )
+        return
+    source_path = _join_directory_entry(handle, source)
+    if os.path.islink(source_path):
+        raise ValueError("Invalid file transfer capability")
+    os.link(source_path, _join_directory_entry(handle, target))
+
+
 def _open_transfer_directory(
-    root_fd: int,
+    root_handle: int | _PathDirectoryHandle,
     directory_name: str,
     *,
     create: bool,
-) -> int:
-    """Open one child directory beneath the bound transfer root descriptor."""
+) -> int | _PathDirectoryHandle:
+    """Open one child directory beneath the bound transfer root handle."""
 
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
+        if not _DIRECTORY_HANDLE_SUPPORTED:
+            child = _join_directory_entry(root_handle, directory_name)
+            if create:
+                os.makedirs(child, mode=0o700, exist_ok=True)
+            if os.path.islink(child):
+                raise ValueError("Invalid file transfer capability")
+            child_stat = os.stat(child, follow_symlinks=False)
+            if not stat.S_ISDIR(child_stat.st_mode):
+                raise ValueError("Invalid file transfer capability")
+            return _PathDirectoryHandle(
+                os.path.realpath(child),
+                (child_stat.st_dev, child_stat.st_ino),
+            )
         try:
             directory_fd = os.open(
                 directory_name,
                 directory_flags | no_follow,
-                dir_fd=root_fd,
+                dir_fd=root_handle,
             )
         except FileNotFoundError:
             if not create:
                 raise
             try:
-                os.mkdir(directory_name, mode=0o700, dir_fd=root_fd)
+                os.mkdir(directory_name, mode=0o700, dir_fd=root_handle)
             except FileExistsError:
                 pass
             directory_fd = os.open(
                 directory_name,
                 directory_flags | no_follow,
-                dir_fd=root_fd,
+                dir_fd=root_handle,
             )
         directory_stat = os.fstat(directory_fd)
         if not stat.S_ISDIR(directory_stat.st_mode):
@@ -240,13 +452,32 @@ def _open_transfer_directory(
         raise ValueError("Invalid file transfer capability") from None
 
 
-def _prepare_transfer_root(root: str) -> tuple[str, int, os.stat_result]:
+def _prepare_transfer_root(
+    root: str,
+) -> tuple[str, int | _PathDirectoryHandle, os.stat_result]:
     """Create and bind the configured root to one exact directory inode."""
 
     lexical_root = os.path.abspath(root)
     components = lexical_root.split(os.sep)
     if len(components) <= 1:
         raise ValueError("Invalid file transfer root")
+    if not _DIRECTORY_HANDLE_SUPPORTED:
+        # Windows-style fallback: create the root and keep an absolute-path
+        # handle.  The regular-directory and identity checks stay; only the
+        # descriptor-relative binding cannot be expressed on this platform.
+        try:
+            os.makedirs(lexical_root, mode=0o700, exist_ok=True)
+            root_stat = os.stat(lexical_root, follow_symlinks=False)
+        except OSError:
+            raise ValueError("Invalid file transfer root") from None
+        if not stat.S_ISDIR(root_stat.st_mode) or os.path.islink(lexical_root):
+            raise ValueError("Invalid file transfer root")
+        handle = _PathDirectoryHandle(
+            os.path.realpath(lexical_root),
+            (root_stat.st_dev, root_stat.st_ino),
+        )
+        _chmod_directory(handle, 0o700)
+        return lexical_root, handle, root_stat
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -292,20 +523,22 @@ def _prepare_transfer_root(root: str) -> tuple[str, int, os.stat_result]:
 
 
 def _read_regular_at(
-    root_fd: int,
+    root_handle: int | _PathDirectoryHandle,
     directory_name: str,
     file_name: str,
     *,
     private: bool = False,
     max_bytes: int | None = None,
 ) -> tuple[bytes, os.stat_result]:
-    directory_fd = _open_transfer_directory(root_fd, directory_name, create=False)
+    directory_handle = _open_transfer_directory(
+        root_handle, directory_name, create=False
+    )
     try:
         try:
-            descriptor = os.open(
+            descriptor = _open_relative_file(
+                directory_handle,
                 file_name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory_fd,
+                os.O_RDONLY,
             )
         except OSError as exc:
             if isinstance(exc, FileNotFoundError):
@@ -315,7 +548,10 @@ def _read_regular_at(
             file_stat = os.fstat(descriptor)
             if not stat.S_ISREG(file_stat.st_mode):
                 raise ValueError("Invalid file transfer capability")
-            if private and file_stat.st_mode & 0o077:
+            # POSIX ownership bits are the only honest signal for a private
+            # entry; platforms whose stat() synthesizes mode bits (Windows) are
+            # governed by ACLs instead and skip this check.
+            if private and _DIRECTORY_HANDLE_SUPPORTED and file_stat.st_mode & 0o077:
                 raise ValueError("Invalid file transfer capability")
             if max_bytes is not None and file_stat.st_size > max_bytes:
                 raise ValueError("File transfer exceeds the configured size limit")
@@ -325,7 +561,7 @@ def _read_regular_at(
         finally:
             os.close(descriptor)
     finally:
-        os.close(directory_fd)
+        _close_directory(directory_handle)
 
 
 def _file_storage_path(
@@ -341,12 +577,16 @@ def _file_storage_path(
     namespace = _transfer_namespace(action_context)
     namespace_path = os.path.join(os.fspath(file_storage_dir), namespace)
     if create_namespace:
-        _root, root_fd, _root_stat = _prepare_transfer_root(os.fspath(file_storage_dir))
+        _root, root_handle, _root_stat = _prepare_transfer_root(
+            os.fspath(file_storage_dir)
+        )
         try:
-            namespace_fd = _open_transfer_directory(root_fd, namespace, create=True)
-            os.close(namespace_fd)
+            namespace_handle = _open_transfer_directory(
+                root_handle, namespace, create=True
+            )
+            _close_directory(namespace_handle)
         finally:
-            os.close(root_fd)
+            _close_directory(root_handle)
     return os.path.join(namespace_path, key)
 
 
@@ -402,8 +642,12 @@ class Handler(abc.ABC):
         self.conn = connection
         self.actions = {}
         self.seq_id_index = random.randint(0, 100000)
+        self.requests_total = 0
         self.resp_waiters = {}
         self.resp_queues = {}
+        self._stream_senders: dict[int, _StreamSender] = {}
+        self._stream_contexts: dict[int, ActionEnvelopeContext | None] = {}
+        self._stream_cancellations: dict[int, asyncio.Task] = {}
         self._action_tasks: set[asyncio.Task[None]] = set()
         self._action_tasks_by_seq: dict[int, asyncio.Task[None]] = {}
         self._action_task_contexts: dict[
@@ -416,6 +660,7 @@ class Handler(abc.ABC):
         self._active_tasks: set[asyncio.Task[None]] = set()
         # Reserved tasks remain in the common set for cancellation and accounting.
         self._reserved_action_tasks: set[asyncio.Task[None]] = set()
+        self._stream_ack_tasks: set[asyncio.Task[None]] = set()
         # Kept for source compatibility; every connection-owned action is
         # cancelled when the transport terminates.
         self._cancel_active_tasks_on_close = cancel_active_tasks_on_close
@@ -514,6 +759,22 @@ class Handler(abc.ABC):
                         )
                     raise
             return ActionResponse.success({})
+
+        @self.action(CommonAction.STREAM_ACK)
+        async def stream_ack(data: dict[str, Any]) -> ActionResponse:
+            target_seq_id, index = data.get("seq_id"), data.get("index")
+            if type(target_seq_id) is not int or type(index) is not int:
+                raise ValueError(
+                    "Stream acknowledgement requires integer sequence and index"
+                )
+            sender = self._stream_senders.get(target_seq_id)
+            if sender is None or sender.context != self.current_action_context:
+                return ActionResponse.success({"accepted": False})
+            if index < sender.acknowledged or index > sender.sent:
+                raise ValueError("Invalid stream acknowledgement index")
+            sender.acknowledged = index
+            sender.ready.set()
+            return ActionResponse.success({"accepted": True})
 
         @self.action(CommonAction.CANCEL_ACTION)
         async def cancel_action(data: dict[str, Any]) -> ActionResponse:
@@ -631,6 +892,12 @@ class Handler(abc.ABC):
                 action_context=action_context,
                 blocking_scope=blocking_scope,
             )
+            if (
+                isinstance(payload, ActionResponse)
+                and payload.stream_index is not None
+                and len(encoded.encode("utf-8")) > MAX_STREAM_FRAME_BYTES
+            ):
+                raise ActionCallError("Streaming response exceeds frame byte limit")
             await self.conn.send(encoded)
 
     async def _format_protocol_error(
@@ -718,7 +985,9 @@ class Handler(abc.ABC):
 
                 seq_id = req_data.get("seq_id", -1)
                 if "code" in req_data:
-                    await self._route_response(seq_id, req_data)
+                    await self._route_response(
+                        seq_id, req_data, wire_size=len(message.encode("utf-8"))
+                    )
                     continue
 
                 if "action" not in req_data:
@@ -726,12 +995,18 @@ class Handler(abc.ABC):
                     continue
 
                 reserved = self._uses_reserved_admission(req_data)
-                if reserved:
+                stream_ack = req_data.get("action") == CommonAction.STREAM_ACK.value
+                if stream_ack:
+                    inflight = len(self._stream_ack_tasks)
+                    limit = MAX_INFLIGHT_ACTIONS
+                elif reserved:
                     inflight = len(self._reserved_action_tasks)
                     limit = MAX_RESERVED_ACTIONS
                 else:
-                    inflight = len(self._action_tasks) - len(
-                        self._reserved_action_tasks
+                    inflight = (
+                        len(self._action_tasks)
+                        - len(self._reserved_action_tasks)
+                        - len(self._stream_ack_tasks)
                     )
                     limit = MAX_INFLIGHT_ACTIONS
                 if inflight >= limit:
@@ -751,7 +1026,9 @@ class Handler(abc.ABC):
                 )
                 self._action_tasks.add(task)
                 self._action_tasks_by_seq[seq_id] = task
-                if reserved:
+                if stream_ack:
+                    self._stream_ack_tasks.add(task)
+                elif reserved:
                     self._reserved_action_tasks.add(task)
                 task.add_done_callback(
                     lambda completed, owned_seq_id=seq_id: self._action_task_done(
@@ -797,7 +1074,9 @@ class Handler(abc.ABC):
                     await self._cancel_action_tasks()
                 await self._cleanup_owned_transfers(close_root=True)
 
-    async def _route_response(self, seq_id: int, req_data: dict[str, Any]) -> None:
+    async def _route_response(
+        self, seq_id: int, req_data: dict[str, Any], *, wire_size: int | None = None
+    ) -> None:
         try:
             response = await self._validate_message_model(
                 ActionResponse,
@@ -816,7 +1095,15 @@ class Handler(abc.ABC):
         queue = self.resp_queues.get(seq_id)
         if queue is not None:
             try:
-                queue.put_nowait(response)
+                if isinstance(queue, _StreamQueue):
+                    queue.put_response(
+                        response,
+                        wire_size
+                        if wire_size is not None
+                        else len(json.dumps(req_data).encode("utf-8")),
+                    )
+                else:
+                    queue.put_nowait(response)
             except asyncio.QueueFull:
                 # A stalled stream consumer must not block response routing for
                 # every other action sharing this connection.
@@ -829,6 +1116,15 @@ class Handler(abc.ABC):
                         "Streaming action consumer is too slow; response buffer full"
                     )
                 )
+                if (
+                    seq_id in self._stream_contexts
+                    and seq_id not in self._stream_cancellations
+                ):
+                    # Stop legacy producers even while the caller is paused at
+                    # yield and has not yet observed the local overflow error.
+                    self._stream_cancellations[seq_id] = asyncio.create_task(
+                        self._cancel_peer_action(seq_id, self._stream_contexts[seq_id])
+                    )
 
     async def _handle_action(
         self,
@@ -861,28 +1157,53 @@ class Handler(abc.ABC):
                 if pending_context is not None and pending_context != action_context:
                     self._pending_action_cancellations.pop(current_task, None)
 
-            with blocking_work_scope(getattr(action_context, "workspace_uuid", None)):
-                response = self.actions[action_name](request.data)
-                if not isinstance(response, AsyncGenerator):
-                    if isinstance(response, Coroutine):
-                        response = await response
-                    response.seq_id = seq_id
-                    if control_scope == TRANSPORT_CONTROL_SCOPE:
-                        encoded = json.dumps(response.model_dump())
-                        await self.conn.send(encoded)
+            with self.action_invocation_scope(action_name, action_context):
+                with blocking_work_scope(
+                    getattr(action_context, "workspace_uuid", None)
+                ):
+                    response = self.actions[action_name](request.data)
+                    if not isinstance(response, AsyncGenerator):
+                        if isinstance(response, Coroutine):
+                            response = await response
+                        response.seq_id = seq_id
+                        if control_scope == TRANSPORT_CONTROL_SCOPE:
+                            encoded = json.dumps(response.model_dump())
+                            await self.conn.send(encoded)
+                        else:
+                            await self._send_message(response)
                     else:
-                        await self._send_message(response)
-                else:
-                    async for chunk in response:
-                        assert isinstance(chunk, ActionResponse)
-                        chunk.seq_id = seq_id
-                        chunk.chunk_status = ChunkStatus.CONTINUE
-                        await self._send_message(chunk)
+                        sender = None
+                        if request.stream_flow_control == 1:
+                            sender = _StreamSender(action_context, asyncio.Event())
+                            self._stream_senders[seq_id] = sender
+                        try:
+                            while True:
+                                if sender is not None:
+                                    while (
+                                        sender.sent - sender.acknowledged
+                                        >= STREAM_WINDOW
+                                    ):
+                                        sender.ready.clear()
+                                        await sender.ready.wait()
+                                try:
+                                    chunk = await anext(response)
+                                except StopAsyncIteration:
+                                    break
+                                assert isinstance(chunk, ActionResponse)
+                                chunk.seq_id = seq_id
+                                chunk.chunk_status = ChunkStatus.CONTINUE
+                                if sender is not None:
+                                    sender.sent += 1
+                                    chunk.stream_index = sender.sent
+                                await self._send_message(chunk)
+                        finally:
+                            self._stream_senders.pop(seq_id, None)
+                            await response.aclose()
 
-                    end_response = ActionResponse.success({})
-                    end_response.seq_id = seq_id
-                    end_response.chunk_status = ChunkStatus.END
-                    await self._send_message(end_response)
+                        end_response = ActionResponse.success({})
+                        end_response.seq_id = seq_id
+                        end_response.chunk_status = ChunkStatus.END
+                        await self._send_message(end_response)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -933,7 +1254,10 @@ class Handler(abc.ABC):
 
     def _uses_reserved_admission(self, req_data: dict[str, Any]) -> bool:
         """Opt in to bounded control capacity, not validation or authorization."""
-        return req_data.get("action") == CommonAction.CANCEL_ACTION.value
+        return req_data.get("action") in {
+            CommonAction.CANCEL_ACTION.value,
+            CommonAction.STREAM_ACK.value,
+        }
 
     def _uses_reserved_action_capacity(self, req_data: dict[str, Any]) -> bool:
         """Confirm the decoded top-level control action before isolation."""
@@ -960,6 +1284,7 @@ class Handler(abc.ABC):
     ) -> None:
         self._action_tasks.discard(task)
         self._reserved_action_tasks.discard(task)
+        self._stream_ack_tasks.discard(task)
         if seq_id is not None and self._action_tasks_by_seq.get(seq_id) is task:
             self._action_tasks_by_seq.pop(seq_id, None)
         if task.cancelled():
@@ -991,6 +1316,7 @@ class Handler(abc.ABC):
         self._action_tasks.clear()
         self._action_tasks_by_seq.clear()
         self._reserved_action_tasks.clear()
+        self._stream_ack_tasks.clear()
         self._active_tasks.clear()
 
     def cancel_inflight_messages(self) -> None:
@@ -1018,7 +1344,11 @@ class Handler(abc.ABC):
         cancel_peer_on_cancel: bool = False,
     ) -> dict[str, Any]:
         """Actively call an action provided by the peer, and wait for the response."""
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
         self.seq_id_index += 1
+        self.requests_total += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
@@ -1032,11 +1362,15 @@ class Handler(abc.ABC):
         future = asyncio.get_running_loop().create_future()
         self.resp_waiters[this_seq_id] = future
         try:
+            if invocation is not None:
+                invocation.require_active()
             await self._send_message(
                 request,
                 action_context=resolved_context,
             )
             response = await asyncio.wait_for(future, timeout)
+            if invocation is not None:
+                invocation.require_active()
             if response.code != 0:
                 raise ActionCallError(f"{response.message}", response.data)
             return response.data
@@ -1081,7 +1415,7 @@ class Handler(abc.ABC):
             ActionCallError,
             ActionCallTimeoutError,
             ConnectionClosedError,
-            TimeoutError,
+            asyncio.TimeoutError,
         ):
             logger.debug("Failed to cancel peer action %s", seq_id, exc_info=True)
 
@@ -1092,7 +1426,11 @@ class Handler(abc.ABC):
         timeout: float = 15.0,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
         self.seq_id_index += 1
+        self.requests_total += 1
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
@@ -1100,16 +1438,19 @@ class Handler(abc.ABC):
             data,
             resolved_context := self.resolve_outbound_action_context(action_context),
         )
+        request.stream_flow_control = 1
 
         # Create a queue for streaming responses
         if self._closed:
             raise self._close_error or ConnectionClosedError("Connection closed")
-        queue = asyncio.Queue[ActionResponse | BaseException](
-            maxsize=MAX_STREAM_QUEUE_SIZE
-        )
+        queue = _StreamQueue()
         self.resp_queues[this_seq_id] = queue
-
+        self._stream_contexts[this_seq_id] = resolved_context
+        completed = False
+        consumed = 0
         try:
+            if invocation is not None:
+                invocation.require_active()
             await self._send_message(
                 request,
                 action_context=resolved_context,
@@ -1117,14 +1458,33 @@ class Handler(abc.ABC):
             while True:
                 try:
                     response = await asyncio.wait_for(queue.get(), timeout)
+                    if invocation is not None:
+                        invocation.require_active()
                     if isinstance(response, BaseException):
                         raise response
                     if response.code != 0:
                         raise ActionCallError(f"{response.message}", response.data)
 
                     if response.chunk_status == ChunkStatus.CONTINUE:
+                        if response.stream_index is not None:
+                            if response.stream_index != consumed + 1:
+                                raise ActionCallError("Out-of-order streaming response")
+                            consumed = response.stream_index
                         yield response.data
+                        # Acknowledge only after the caller has processed the
+                        # value; never block the shared transport router.
+                        if (
+                            response.stream_index is not None
+                            and consumed % (STREAM_WINDOW // 2) == 0
+                        ):
+                            await self.call_action(
+                                CommonAction.STREAM_ACK,
+                                {"seq_id": this_seq_id, "index": consumed},
+                                timeout=timeout,
+                                action_context=resolved_context,
+                            )
                     elif response.chunk_status == ChunkStatus.END:
+                        completed = True
                         break
                 except asyncio.CancelledError:
                     raise
@@ -1141,6 +1501,12 @@ class Handler(abc.ABC):
         finally:
             if this_seq_id in self.resp_queues:
                 del self.resp_queues[this_seq_id]
+            self._stream_contexts.pop(this_seq_id, None)
+            cancellation = self._stream_cancellations.pop(this_seq_id, None)
+            if cancellation is not None:
+                await cancellation
+            elif not completed and not self._closed:
+                await self._cancel_peer_action(this_seq_id, resolved_context)
 
     @property
     def bound_action_context(self) -> ActionEnvelopeContext | None:
@@ -1153,6 +1519,18 @@ class Handler(abc.ABC):
         """Context of the request currently executing in this asyncio task."""
 
         return self._current_action_context.get()
+
+    @contextlib.contextmanager
+    def action_invocation_scope(
+        self,
+        action: str,
+        action_context: ActionEnvelopeContext | None,
+    ):
+        """Bind implementation-specific task-local state for one action."""
+
+        del action
+        del action_context
+        yield
 
     def bind_action_context(
         self,
@@ -1328,7 +1706,7 @@ class Handler(abc.ABC):
         with self._file_transfer_state_lock:
             self._file_transfer_closing = True
 
-    def _require_transfer_root(self) -> int:
+    def _require_transfer_root(self) -> int | _PathDirectoryHandle:
         if self._file_storage_root_fd_closed:
             raise ValueError("Invalid file transfer root")
         try:
@@ -1343,7 +1721,7 @@ class Handler(abc.ABC):
         self._transfer_race_hook("after_root_validation")
         return self._file_storage_root_fd
 
-    def _bound_transfer_root(self) -> int:
+    def _bound_transfer_root(self) -> int | _PathDirectoryHandle:
         if self._file_storage_root_fd_closed:
             raise ValueError("Invalid file transfer root")
         return self._file_storage_root_fd
@@ -1355,7 +1733,7 @@ class Handler(abc.ABC):
             or self._transfer_stages
         ):
             return
-        os.close(self._file_storage_root_fd)
+        _close_directory(self._file_storage_root_fd)
         self._file_storage_root_fd_closed = True
 
     def _read_regular(
@@ -1400,10 +1778,10 @@ class Handler(abc.ABC):
         expected_bytes: bytes | None = None,
         missing_ok: bool,
     ) -> bool:
-        root_fd = self._bound_transfer_root()
+        root_handle = self._bound_transfer_root()
         try:
-            directory_fd = _open_transfer_directory(
-                root_fd, directory_name, create=False
+            directory_handle = _open_transfer_directory(
+                root_handle, directory_name, create=False
             )
         except FileNotFoundError:
             if missing_ok:
@@ -1418,12 +1796,7 @@ class Handler(abc.ABC):
                 file_name=file_name,
             )
             try:
-                os.rename(
-                    file_name,
-                    quarantine_name,
-                    src_dir_fd=directory_fd,
-                    dst_dir_fd=directory_fd,
-                )
+                _rename_relative(directory_handle, file_name, quarantine_name)
             except FileNotFoundError:
                 if missing_ok:
                     return False
@@ -1431,10 +1804,10 @@ class Handler(abc.ABC):
 
             verified = False
             try:
-                descriptor = os.open(
+                descriptor = _open_relative_file(
+                    directory_handle,
                     quarantine_name,
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                    dir_fd=directory_fd,
+                    os.O_RDONLY,
                 )
                 try:
                     quarantined_stat = os.fstat(descriptor)
@@ -1451,26 +1824,20 @@ class Handler(abc.ABC):
                     verified = True
                 finally:
                     os.close(descriptor)
-                os.remove(quarantine_name, dir_fd=directory_fd)
+                _remove_relative(directory_handle, quarantine_name)
                 return True
             except BaseException:
                 # Never restore or remove a name that resolved to a mismatching
                 # inode. Retaining it and the owner record makes retries fail
                 # closed instead of deleting a same-UID mutator's replacement.
                 if verified:
+                    with contextlib.suppress(OSError, ValueError):
+                        _link_relative(directory_handle, quarantine_name, file_name)
                     with contextlib.suppress(OSError):
-                        os.link(
-                            quarantine_name,
-                            file_name,
-                            src_dir_fd=directory_fd,
-                            dst_dir_fd=directory_fd,
-                            follow_symlinks=False,
-                        )
-                    with contextlib.suppress(OSError):
-                        os.remove(quarantine_name, dir_fd=directory_fd)
+                        _remove_relative(directory_handle, quarantine_name)
                 raise
         finally:
-            os.close(directory_fd)
+            _close_directory(directory_handle)
 
     @classmethod
     def _serialize_transfer_record(
@@ -1572,7 +1939,7 @@ class Handler(abc.ABC):
         chunk_amount: int,
     ) -> _TransferStage:
         namespace = _transfer_namespace(transfer_context)
-        namespace_fd = _open_transfer_directory(
+        namespace_handle = _open_transfer_directory(
             self._bound_transfer_root(), namespace, create=True
         )
         temp_name = f".payload-{uuid.uuid4().hex}.tmp"
@@ -1580,18 +1947,18 @@ class Handler(abc.ABC):
             record_name = _transfer_owner_record_name(file_key)
             if record_name is not None:
                 try:
-                    owner_dir_fd = _open_transfer_directory(
+                    owner_dir_handle = _open_transfer_directory(
                         self._bound_transfer_root(), _TRANSFER_OWNER_DIR, create=False
                     )
                 except FileNotFoundError:
-                    owner_dir_fd = None
-                if owner_dir_fd is not None:
+                    owner_dir_handle = None
+                if owner_dir_handle is not None:
                     try:
                         try:
-                            owner_fd = os.open(
+                            owner_fd = _open_relative_file(
+                                owner_dir_handle,
                                 record_name,
-                                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                                dir_fd=owner_dir_fd,
+                                os.O_RDONLY,
                             )
                         except FileNotFoundError:
                             owner_fd = None
@@ -1603,14 +1970,14 @@ class Handler(abc.ABC):
                             os.close(owner_fd)
                             raise ValueError("Invalid file transfer capability")
                     finally:
-                        os.close(owner_dir_fd)
+                        _close_directory(owner_dir_handle)
             # Published names are immutable.  Opening them for write (especially
             # with O_TRUNC) would let a raced replacement be modified.
             try:
-                existing_fd = os.open(
+                existing_fd = _open_relative_file(
+                    namespace_handle,
                     file_key,
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                    dir_fd=namespace_fd,
+                    os.O_RDONLY,
                 )
             except FileNotFoundError:
                 existing_fd = None
@@ -1619,11 +1986,11 @@ class Handler(abc.ABC):
             if existing_fd is not None:
                 os.close(existing_fd)
                 raise ValueError("Invalid file transfer capability")
-            descriptor = os.open(
+            descriptor = _open_relative_file(
+                namespace_handle,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o600,
-                dir_fd=namespace_fd,
             )
             file_stat = os.fstat(descriptor)
             if not stat.S_ISREG(file_stat.st_mode):
@@ -1645,7 +2012,7 @@ class Handler(abc.ABC):
         except OSError:
             raise ValueError("Invalid file transfer capability") from None
         finally:
-            os.close(namespace_fd)
+            _close_directory(namespace_handle)
 
     def _discard_transfer_stage(
         self,
@@ -1660,23 +2027,23 @@ class Handler(abc.ABC):
             with contextlib.suppress(OSError):
                 os.close(descriptor)
         try:
-            namespace_fd = _open_transfer_directory(
+            namespace_handle = _open_transfer_directory(
                 self._bound_transfer_root(), stage.namespace, create=False
             )
         except FileNotFoundError:
-            namespace_fd = None
+            namespace_handle = None
         except (OSError, ValueError):
             return False
-        if namespace_fd is not None:
+        if namespace_handle is not None:
             try:
                 try:
-                    os.remove(stage.temp_name, dir_fd=namespace_fd)
+                    _remove_relative(namespace_handle, stage.temp_name)
                 except FileNotFoundError:
                     pass
                 except OSError:
                     return False
             finally:
-                os.close(namespace_fd)
+                _close_directory(namespace_handle)
         self._transfer_stages.pop(file_key, None)
         if clear_active:
             lock_key = (self.file_storage_dir, file_key)
@@ -1692,7 +2059,7 @@ class Handler(abc.ABC):
         record_name = _transfer_owner_record_name(file_key)
         if record_name is None or stage.claim_id is None:
             return
-        owner_dir_fd = _open_transfer_directory(
+        owner_dir_handle = _open_transfer_directory(
             self._bound_transfer_root(), _TRANSFER_OWNER_DIR, create=True
         )
         temp_name = f".owner-{uuid.uuid4().hex}.tmp"
@@ -1703,11 +2070,11 @@ class Handler(abc.ABC):
         )
         descriptor: int | None = None
         try:
-            descriptor = os.open(
+            descriptor = _open_relative_file(
+                owner_dir_handle,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
                 0o600,
-                dir_fd=owner_dir_fd,
             )
             _write_all(descriptor, serialized)
             os.fsync(descriptor)
@@ -1716,13 +2083,7 @@ class Handler(abc.ABC):
             self._transfer_race_hook(
                 "before_owner_link", file_key=file_key, record_name=record_name
             )
-            os.link(
-                temp_name,
-                record_name,
-                src_dir_fd=owner_dir_fd,
-                dst_dir_fd=owner_dir_fd,
-                follow_symlinks=False,
-            )
+            _link_relative(owner_dir_handle, temp_name, record_name)
             stage.owner_published = True
             owner_path = os.path.join(
                 self.file_storage_dir, _TRANSFER_OWNER_DIR, record_name
@@ -1737,13 +2098,13 @@ class Handler(abc.ABC):
                 stage.file_stat.st_dev,
                 stage.file_stat.st_ino,
             )
-            os.fsync(owner_dir_fd)
+            _sync_directory(owner_dir_handle)
         finally:
             if descriptor is not None:
                 os.close(descriptor)
             with contextlib.suppress(OSError):
-                os.remove(temp_name, dir_fd=owner_dir_fd)
-            os.close(owner_dir_fd)
+                _remove_relative(owner_dir_handle, temp_name)
+            _close_directory(owner_dir_handle)
 
     def _write_file_chunk(
         self,
@@ -1831,26 +2192,24 @@ class Handler(abc.ABC):
                 os.fsync(stage.descriptor)
                 with self._file_transfer_state_lock:
                     self._require_file_transfer_open()
-                    namespace_fd = _open_transfer_directory(
+                    namespace_handle = _open_transfer_directory(
                         self._bound_transfer_root(), stage.namespace, create=False
                     )
                     try:
                         try:
-                            os.link(
+                            _link_relative(
+                                namespace_handle,
                                 stage.temp_name,
                                 file_key,
-                                src_dir_fd=namespace_fd,
-                                dst_dir_fd=namespace_fd,
-                                follow_symlinks=False,
                             )
                         except FileExistsError:
                             raise ValueError(
                                 "Invalid file transfer capability"
                             ) from None
                         stage.payload_published = True
-                        os.fsync(namespace_fd)
+                        _sync_directory(namespace_handle)
                     finally:
-                        os.close(namespace_fd)
+                        _close_directory(namespace_handle)
 
                     if stage.claim_id is not None:
                         self._publish_owner_record(file_key, stage, file_path)
@@ -1939,6 +2298,9 @@ class Handler(abc.ABC):
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> str:
         """Send a file to the peer, chunk by chunk, in base64."""
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
         if self.max_file_bytes is not None and len(file_bytes) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
         if not isinstance(file_extension, str):
@@ -1953,6 +2315,8 @@ class Handler(abc.ABC):
             1, (file_length + FILE_CHUNK_LENGTH - 1) // FILE_CHUNK_LENGTH
         )
         for i in range(chunk_amount):
+            if invocation is not None:
+                invocation.require_active()
             chunk_bytes = file_bytes[
                 i * FILE_CHUNK_LENGTH : (i + 1) * FILE_CHUNK_LENGTH
             ]
@@ -1988,6 +2352,11 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> bytes:
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
+        if invocation is not None:
+            invocation.require_active()
         transfer_context, expected_payload = await self._resolve_transfer_context(
             file_key, action_context
         )
@@ -2011,6 +2380,8 @@ class Handler(abc.ABC):
                 return content
 
         content = await run_blocking_with_backpressure(read_file)
+        if invocation is not None:
+            invocation.require_active()
         if self.max_file_bytes is not None and len(content) > self.max_file_bytes:
             raise ValueError("File transfer exceeds the configured size limit")
         return content
@@ -2021,9 +2392,16 @@ class Handler(abc.ABC):
         *,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> None:
+        from langbot_plugin.api.proxies.invocation import invocation_capability
+
+        invocation = invocation_capability(self)
+        if invocation is not None:
+            invocation.require_active()
         file_key = _validate_file_key(file_key)
         effective_context = self.resolve_effective_action_context(action_context)
         async with self._file_transfer_lock:
+            if invocation is not None:
+                invocation.require_active()
             await run_blocking_with_backpressure(
                 self._delete_transfer_sync,
                 file_key,

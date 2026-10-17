@@ -128,6 +128,12 @@ class Execution(pydantic.BaseModel):
     )
     """Certified shared runtime profile; absent manifests use a dedicated runtime."""
 
+    component_model: typing.Literal["stateless-v1"] | None = pydantic.Field(
+        default=None,
+        alias="componentModel",
+    )
+    """Singleton, task-local component contract required for certification."""
+
     @pydantic.model_validator(mode="before")
     @classmethod
     def _require_supported_shared_runtime_when_present(cls, values: typing.Any):

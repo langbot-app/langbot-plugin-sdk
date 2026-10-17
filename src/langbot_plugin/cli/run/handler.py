@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import mimetypes
 import typing
@@ -17,9 +18,11 @@ from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.api.entities import events
 from langbot_plugin.api.definition.components.base import NoneComponent
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
-from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
+from langbot_plugin.entities.io.actions.enums import CommonAction, PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.entities.io.context import InstallationBinding
+from langbot_plugin.api.proxies.invocation import bind_invocation, thaw_config
+from langbot_plugin.runtime.plugin.container import PluginInstallationSlot
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
@@ -156,12 +159,12 @@ class PluginRuntimeHandler(Handler):
         super().__init__(connection)
         self.name = "FromRuntime"
         self._shutdown_task: asyncio.Task[None] | None = None
-        self._slot_containers: dict[str, PluginContainer] = {}
+        self._slot_containers: dict[str, PluginInstallationSlot] = {}
         self._slot_generations: dict[str, int] = {}
         self._slot_initialize_callback: (
             typing.Callable[
                 [InstallationBinding, dict[str, typing.Any]],
-                typing.Coroutine[typing.Any, typing.Any, PluginContainer],
+                typing.Coroutine[typing.Any, typing.Any, PluginInstallationSlot],
             ]
             | None
         ) = None
@@ -223,6 +226,9 @@ class PluginRuntimeHandler(Handler):
             if not isinstance(binding, InstallationBinding):
                 raise ValueError("Shared slot detach requires InstallationBinding")
             slot_id = binding.installation_uuid
+            slot = self._slot_containers.get(slot_id)
+            if slot is not None and slot.binding != binding:
+                raise ValueError("Shared slot detach binding is stale")
             self._slot_generations[slot_id] = self._slot_generations.get(slot_id, 0) + 1
             if self._slot_detach_callback is not None:
                 await self._slot_detach_callback(binding.installation_uuid)
@@ -240,7 +246,18 @@ class PluginRuntimeHandler(Handler):
             container = self._slot_containers.get(binding.installation_uuid)
             if container is None:
                 raise ValueError("Shared plugin slot is not attached")
-            return ActionResponse.success(container.model_dump())
+            return ActionResponse.success(
+                {
+                    "enabled": container.enabled,
+                    "priority": container.priority,
+                    "plugin_config": thaw_config(container.plugin_config),
+                    "plugin_container": container.plugin_container.model_dump(),
+                }
+            )
+
+        @self.action(CommonAction.PING)
+        async def ping(data: dict[str, typing.Any]) -> ActionResponse:
+            return ActionResponse.success({"alive": True})
 
         @self.action(RuntimeToPluginAction.GET_PLUGIN_CONTAINER)
         async def get_plugin_container(data: dict[str, typing.Any]) -> ActionResponse:
@@ -791,18 +808,65 @@ class PluginRuntimeHandler(Handler):
 
             return ActionResponse.success(result.model_dump(mode="json"))
 
+    def _uses_reserved_admission(self, req_data):
+        return req_data.get(
+            "action"
+        ) == CommonAction.PING.value or super()._uses_reserved_admission(req_data)
+
     @property
     def plugin_container(self) -> PluginContainer:
-        binding = self.current_action_context
-        if isinstance(binding, InstallationBinding):
-            slot = self._slot_containers.get(binding.installation_uuid)
-            if slot is not None:
-                return slot
         return self._base_plugin_container
 
     @plugin_container.setter
     def plugin_container(self, value: PluginContainer) -> None:
         self._base_plugin_container = value
+
+    @contextlib.contextmanager
+    def action_invocation_scope(self, action, action_context):
+        if action == CommonAction.PING.value:
+            yield
+            return
+        if not isinstance(action_context, InstallationBinding):
+            yield
+            return
+        if action == RuntimeToPluginAction.DETACH_PLUGIN_SLOT.value:
+            yield
+            return
+        if action == RuntimeToPluginAction.ATTACH_PLUGIN_SLOT.value:
+            # Attach may execute process-scoped plugin/component initialize hooks.
+            # Give those hooks a revocable capability for the attach lifetime so
+            # detached tasks cannot retain the installation binding afterwards.
+            with bind_invocation(self, config={}, binding=action_context):
+                yield
+            return
+        # The first dedicated INITIALIZE_PLUGIN arrives before the handler has
+        # bound the trusted installation from Runtime. Bind it here, before
+        # entering the invocation scope, so initialize() can use Host APIs.
+        # Shared workers initialize through ATTACH_PLUGIN_SLOT instead.
+        if (
+            action == RuntimeToPluginAction.INITIALIZE_PLUGIN.value
+            and self.bound_action_context is None
+        ):
+            self.bind_action_context(action_context)
+        # Dedicated workers have no shared slot. All subsequent calls must
+        # match the exact installation binding; other bindings need a slot.
+        if self.bound_action_context == action_context:
+            with bind_invocation(
+                self,
+                config=self.plugin_container.plugin_config,
+                binding=action_context,
+            ):
+                yield
+            return
+        slot = self._slot_containers.get(action_context.installation_uuid)
+        if slot is None or slot.binding != action_context:
+            raise ValueError("Shared plugin slot is not attached")
+        with bind_invocation(
+            self,
+            config=slot.plugin_config,
+            binding=slot.binding,
+        ):
+            yield
 
     async def register_plugin(
         self,

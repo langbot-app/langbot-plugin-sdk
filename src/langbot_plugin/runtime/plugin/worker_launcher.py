@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
+import logging
 import os
 import pathlib
 import shutil
@@ -35,6 +36,8 @@ from langbot_plugin.runtime.security import (
     PLUGIN_RUNTIME_PROFILE_ENV,
 )
 from langbot_plugin.utils.platform import get_platform
+
+logger = logging.getLogger(__name__)
 
 _READONLY_SYSTEM_MOUNTS = (
     "/bin",
@@ -164,6 +167,7 @@ class PluginWorkerLauncher:
         ).absolute()
         self.policy: PluginWorkerPolicy | None = None
         self.runtime_profile: Literal["oss_dev", "shared"] | None = None
+        self.effective_profile: Literal["oss_dev", "shared"] | None = None
 
     def configure(
         self,
@@ -176,19 +180,38 @@ class PluginWorkerLauncher:
             raise ValueError("Plugin worker launcher profile cannot be changed")
 
         if runtime_profile == "shared":
-            if self.platform != "linux":
-                raise RuntimeError("Shared plugin workers require Linux nsjail")
-            if not self.nsjail_path:
-                raise RuntimeError("Shared plugin workers require nsjail")
-            self._validate_python_runtime()
+            if self.platform == "win32":
+                # Windows cannot express nsjail or delegated cgroup v2, so a
+                # local development host executes per-plugin workers while the
+                # shared authorization contract itself is unchanged.  Linux
+                # deployments keep the fences below.
+                logger.warning(
+                    "Shared plugin workers require Linux nsjail; running per-plugin workers on this Windows host."
+                )
+                self.effective_profile = "oss_dev"
+            else:
+                if self.platform != "linux":
+                    raise RuntimeError("Shared plugin workers require Linux nsjail")
+                if not self.nsjail_path:
+                    raise RuntimeError("Shared plugin workers require nsjail")
+                self._validate_python_runtime()
+                if self.cgroup_v2_available is None:
+                    self.cgroup_v2_available = self._detect_cgroup_v2_delegation()
+                self.effective_profile = "shared"
+        else:
             if self.cgroup_v2_available is None:
-                self.cgroup_v2_available = self._detect_cgroup_v2_delegation()
-        elif self.cgroup_v2_available is None:
-            self.cgroup_v2_available = False
+                self.cgroup_v2_available = False
+            self.effective_profile = "oss_dev"
         if policy.require_hard_limits and not self.cgroup_v2_available:
-            raise RuntimeError(
-                "Plugin worker hard limits require delegated cgroup v2 controllers"
-            )
+            if self.platform == "win32":
+                logger.warning(
+                    "Plugin worker hard limits require delegated cgroup v2 controllers; "
+                    "this Windows host runs without them."
+                )
+            else:
+                raise RuntimeError(
+                    "Plugin worker hard limits require delegated cgroup v2 controllers"
+                )
 
         self.policy = policy
         self.runtime_profile = runtime_profile
@@ -235,8 +258,11 @@ class PluginWorkerLauncher:
             "-m",
             "langbot_plugin.cli.__init__",
             "run",
-            "--prod",
         ]
+        process_tag = self._worker_process_tag(launch_spec)
+        if process_tag:
+            worker_args.extend(["--tag", process_tag])
+        worker_args.append("--prod")
         if self.platform == "win32":
             runtime_ws_url = str(launch_spec.runtime_ws_url or "").strip()
             if not runtime_ws_url:
@@ -262,6 +288,8 @@ class PluginWorkerLauncher:
         self,
         store: PluginDependencyEnvironmentStore,
         artifact: PluginArtifact,
+        *,
+        execution_mode: str | None = None,
     ) -> PluginDependencyEnvironment:
         """Prepare artifact dependencies before issuing a worker capability."""
 
@@ -275,6 +303,7 @@ class PluginWorkerLauncher:
             artifact,
             runtime_fingerprint=self.dependency_runtime_fingerprint(),
             installer=installer,
+            execution_mode=execution_mode,
         )
 
     def dependency_runtime_fingerprint(self) -> str:
@@ -492,8 +521,22 @@ class PluginWorkerLauncher:
         )
         return args
 
-    def build_nsjail_args(self, launch_spec: PluginWorkerLaunchSpec) -> list[str]:
+    @staticmethod
+    def _worker_process_tag(launch_spec: PluginWorkerLaunchSpec) -> str:
+        """Return the cosmetic `author/name` label for the worker command line."""
+
+        artifact = launch_spec.artifact
+        author = str(getattr(artifact, "plugin_author", "") or "").strip()
+        name = str(getattr(artifact, "plugin_name", "") or "").strip()
+        if author and name:
+            return f"{author}/{name}"
+        return name or author
+
+    def build_nsjail_args(
+        self, launch_spec: PluginWorkerLaunchSpec, *, execution_mode: str = "dedicated"
+    ) -> list[str]:
         policy, profile = self._require_configuration()
+        policy = policy.for_execution_mode(execution_mode, profile)
         if profile != "shared" or not self.nsjail_path:
             raise RuntimeError("nsjail arguments require the shared Runtime profile")
 
@@ -508,9 +551,18 @@ class PluginWorkerLauncher:
         tmp_path = self._absolute_runtime_path(launch_spec.paths.tmp_path)
         data_path = self._absolute_runtime_path(launch_spec.paths.data_path)
         runtime_prefix_mount = self._python_prefix_mount()
+        runtime_mounts = [runtime_prefix_mount] if runtime_prefix_mount else []
+        # Editable SDK installs live outside the venv. Expose only their
+        # trusted source root, not the surrounding checkout or user directory.
+        source_mount = self.runtime_import_root
+        if not self._path_covered_by_system_mount(source_mount) and not (
+            source_mount == self.python_prefix
+            or self.python_prefix in source_mount.parents
+        ):
+            runtime_mounts.append(source_mount)
         self._ensure_jail_mount_targets(
             jail_root_path,
-            extra_targets=(runtime_prefix_mount,) if runtime_prefix_mount else (),
+            extra_targets=tuple(runtime_mounts),
         )
         # Plugin installations are resident workers. NsJail defaults to a
         # 600-second jail lifetime, so explicitly disable the wall-time limit;
@@ -525,6 +577,8 @@ class PluginWorkerLauncher:
         ]
         args.append("--disable_clone_newnet")
         self._append_readonly_runtime_mounts(args, runtime_prefix_mount)
+        if source_mount in runtime_mounts:
+            args.extend(["--bindmount_ro", f"{source_mount}:{source_mount}"])
 
         args.extend(
             [
@@ -568,6 +622,7 @@ class PluginWorkerLauncher:
         )
 
         self._append_policy_limits(args, policy)
+        process_tag = self._worker_process_tag(launch_spec)
         args.extend(
             [
                 "--really_quiet",
@@ -577,6 +632,7 @@ class PluginWorkerLauncher:
                 "langbot_plugin.cli.__init__",
                 "run",
                 "-s",
+                *(["--tag", process_tag] if process_tag else []),
                 "--prod",
             ]
         )
@@ -588,7 +644,7 @@ class PluginWorkerLauncher:
     ) -> list[str]:
         """Build a digest worker without mounting installation-owned paths."""
 
-        args = self.build_nsjail_args(launch_spec)
+        args = self.build_nsjail_args(launch_spec, execution_mode="shared-runtime-v1")
         private_mounts = {
             str(self._absolute_runtime_path(launch_spec.paths.home_path)),
             str(self._absolute_runtime_path(launch_spec.paths.tmp_path)),
@@ -608,6 +664,10 @@ class PluginWorkerLauncher:
             index += 1
         if "HOME=/home" in cleaned:
             cleaned[cleaned.index("HOME=/home")] = "HOME=/tmp"
+        # Pool workers mount no installation-owned /tmp, but the worker handler
+        # still needs a writable transfer root (SHARED_WORKER_FILE_STORAGE_DIR).
+        separator = len(cleaned) - 1 - cleaned[::-1].index("--")
+        cleaned[separator:separator] = ["--tmpfsmount", "/tmp"]
         return cleaned
 
     def create_shared_pool_controller(
@@ -637,8 +697,8 @@ class PluginWorkerLauncher:
             if os.path.exists(path) and not os.path.islink(path):
                 args.extend(["--bindmount_ro", f"{path}:{path}"])
         for path in _READONLY_ETC_FILES:
-            if os.path.exists(path) and not os.path.islink(path):
-                args.extend(["--bindmount_ro", f"{path}:{path}"])
+            if os.path.exists(path):
+                args.extend(["--bindmount_ro", f"{os.path.realpath(path)}:{path}"])
         if runtime_prefix_mount is not None:
             args.extend(
                 [
@@ -688,9 +748,13 @@ class PluginWorkerLauncher:
     def _require_configuration(
         self,
     ) -> tuple[PluginWorkerPolicy, Literal["oss_dev", "shared"]]:
-        if self.policy is None or self.runtime_profile is None:
+        if (
+            self.policy is None
+            or self.runtime_profile is None
+            or self.effective_profile is None
+        ):
             raise RuntimeError("Plugin worker launcher is not configured")
-        return self.policy, self.runtime_profile
+        return self.policy, self.effective_profile
 
     @staticmethod
     def _require_dependency_environment(
@@ -783,7 +847,17 @@ class PluginWorkerLauncher:
         }
         for target_path in targets:
             host_target = root_path / target_path.lstrip("/")
-            if os.path.islink(target_path):
+            # Resolver files commonly point into /run, which is deliberately
+            # not exposed to workers. Bind the allowlisted file itself.
+            if target_path in _READONLY_ETC_FILES and os.path.exists(target_path):
+                host_target.parent.mkdir(parents=True, exist_ok=True)
+                if host_target.is_symlink():
+                    host_target.unlink()
+                if os.path.isdir(target_path):
+                    host_target.mkdir(exist_ok=True)
+                else:
+                    host_target.touch(exist_ok=True)
+            elif os.path.islink(target_path):
                 host_target.parent.mkdir(parents=True, exist_ok=True)
                 link_value = os.readlink(target_path)
                 if os.path.lexists(host_target):

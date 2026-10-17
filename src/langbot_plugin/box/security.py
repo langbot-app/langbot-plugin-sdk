@@ -87,19 +87,23 @@ def validate_shared_workspace_probe_name(value: str) -> str:
     return name
 
 
-def validate_sandbox_security(spec: BoxSpec) -> None:
-    """Validate that a BoxSpec does not request dangerous container config.
+def _validate_host_path(host_path: str, field_name: str) -> None:
+    real = os.path.realpath(host_path)
+    sep = os.sep
+    _norm = os.path.normcase
+    for blocked in BLOCKED_HOST_PATHS:
+        if _norm(real) == _norm(blocked) or _norm(real).startswith(
+            _norm(blocked) + sep
+        ):
+            raise BoxValidationError(
+                f"{field_name} {host_path} is blocked for security"
+            )
 
-    Raises BoxValidationError when the spec contains a blocked host_path.
-    """
+
+def validate_sandbox_security(spec: BoxSpec) -> None:
+    """Reject BoxSpec host mounts into blocked paths."""
     if spec.host_path:
-        real = os.path.realpath(spec.host_path)
-        sep = os.sep
-        _norm = os.path.normcase
-        for blocked in BLOCKED_HOST_PATHS:
-            if _norm(real) == _norm(blocked) or _norm(real).startswith(
-                _norm(blocked) + sep
-            ):
-                raise BoxValidationError(
-                    f"host_path {spec.host_path} is blocked for security"
-                )
+        _validate_host_path(spec.host_path, "host_path")
+
+    for mount in spec.extra_mounts:
+        _validate_host_path(mount.host_path, "extra_mounts.host_path")

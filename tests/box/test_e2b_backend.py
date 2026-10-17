@@ -18,6 +18,7 @@ from langbot_plugin.box.e2b_backend import (
     _adapt_path_for_e2b,
     _build_e2b_host_manifest,
     _check_e2b_available,
+    _rewrite_command_paths_for_e2b,
 )
 from langbot_plugin.box.errors import BoxError
 from langbot_plugin.box.models import (
@@ -114,6 +115,19 @@ def test_extra_mount_projections_are_excluded_from_workspace_sync(backend):
     assert shadowed == {".skills/demo"}
     assert backend._path_is_shadowed(".skills/demo/run.py", shadowed) is True
     assert backend._path_is_shadowed("notes.txt", shadowed) is False
+
+
+def test_rewrite_command_paths_for_e2b_respects_path_boundaries():
+    command = (
+        "ls /workspace && echo /workspace/a && echo /workspaces && echo x/workspace"
+    )
+
+    rewritten = _rewrite_command_paths_for_e2b(command)
+
+    assert rewritten == (
+        "ls /home/user/workspace && echo /home/user/workspace/a "
+        "&& echo /workspaces && echo x/workspace"
+    )
 
 
 # ── is_available ──────────────────────────────────────────────────────
@@ -456,7 +470,7 @@ async def test_exec_syncs_mounts_before_running_command(
         )
     else:
         assert writes[0].args[0].endswith("/package/input.txt")
-        assert len(writes) == 3  # package file, manifest, ready marker
+        assert len(writes) == 2  # package file and manifest; root writes the ready marker
         setup_commands = "\n".join(call.args[0] for call in commands[:-1])
         assert setup_commands.index("python3 -c") < setup_commands.index("ln -s")
         mock_e2b_module.files.list.assert_not_awaited()
@@ -695,8 +709,8 @@ async def test_immutable_mount_is_verified_before_projection(backend, tmp_path):
     verify_index = commands_text.index("python3 -c")
     publish_index = commands_text.index("mv ")
     projection_index = commands_text.index("ln -s")
-    assert verify_index < publish_index < projection_index
-    assert files.write.await_count == 4  # two package files, manifest, ready marker
+    assert commands_text.index("cp -R -P") < verify_index < publish_index < projection_index
+    assert files.write.await_count == 3  # two package files and manifest
 
 
 @pytest.mark.anyio
@@ -816,3 +830,50 @@ def test_check_e2b_available_returns_false_on_import_error():
         result = _check_e2b_available()
 
     assert result is False
+
+
+@pytest.mark.anyio
+async def test_verifier_rejects_symlink_package_root_and_manifest(backend, tmp_path):
+    import asyncio
+
+    package = tmp_path / 'package'
+    package.mkdir()
+    (package / 'value').write_text('expected')
+    digest, manifest = _build_e2b_host_manifest(str(package))
+    manifest_path = tmp_path / 'manifest.json'
+    manifest_path.write_text(json.dumps(manifest))
+
+    async def run(command, **kwargs):
+        process = await asyncio.create_subprocess_shell(
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        return SimpleNamespace(exit_code=process.returncode, stdout=stdout.decode(), stderr=stderr.decode())
+
+    sandbox = SimpleNamespace(commands=SimpleNamespace(run=run))
+    await backend._verify_remote_manifest(sandbox, package_root=str(package), manifest_path=str(manifest_path), expected_digest=digest)
+    alias = tmp_path / 'alias'
+    alias.symlink_to(package, target_is_directory=True)
+    with pytest.raises(BoxError):
+        await backend._verify_remote_manifest(sandbox, package_root=str(alias), manifest_path=str(manifest_path), expected_digest=digest)
+    alias.unlink()
+    alias.symlink_to(manifest_path)
+    with pytest.raises(BoxError):
+        await backend._verify_remote_manifest(sandbox, package_root=str(package), manifest_path=str(alias), expected_digest=digest)
+
+
+@pytest.mark.anyio
+async def test_cancelled_upload_cleans_staging_without_publication(backend, tmp_path):
+    import asyncio
+
+    (tmp_path / 'file').write_text('data')
+    sandbox = SimpleNamespace(
+        files=SimpleNamespace(write=mock.AsyncMock(side_effect=asyncio.CancelledError())),
+        commands=SimpleNamespace(run=mock.AsyncMock(return_value=SimpleNamespace(exit_code=0, stdout='', stderr=''))),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await backend._materialize_immutable_mount(sandbox, host_root=str(tmp_path), remote_root='/test-package')
+    calls = [call.args[0] for call in sandbox.commands.run.await_args_list]
+    assert 'rm -rf' in calls[-1]
+    assert '.sealed' in calls[-1]
+    assert not any('ln -s' in command or 'mv ' in command for command in calls)

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from langbot_plugin.runtime.plugin.worker_watchdog import (
+    WorkerWatchdog,
+    supervise_liveness,
+)
+from langbot_plugin.entities.io.actions.enums import CommonAction
+
 import glob
 import hashlib
 import os
@@ -32,6 +38,7 @@ from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.runtime.io.handlers import plugin as runtime_plugin_handler_cls
 from langbot_plugin.runtime import context as context_module
 from langbot_plugin.runtime import bounded_executor
+from langbot_plugin.runtime import ops_metrics as ops_metrics_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.api.definition.components.tool.tool import Tool
@@ -138,6 +145,9 @@ class PluginInstallationRuntime:
     execution_mode: PluginExecutionMode = PluginExecutionMode.DEDICATED
     shared_worker: SharedPluginWorkerRuntime | None = None
     log_buffer: typing.Any = None
+    watchdog: typing.Any = None
+    watchdog_restarts: int = 0
+    last_watchdog_restart_at: float | None = None
 
 
 @dataclass(slots=True)
@@ -160,6 +170,9 @@ class SharedPluginWorkerRuntime:
     ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     registration_generation: int = 0
+    watchdog: typing.Any = None
+    watchdog_restarts: int = 0
+    last_watchdog_restart_at: float | None = None
     draining: bool = False
     attach_tasks: dict[InstallationBinding, asyncio.Task[None]] = field(
         default_factory=dict
@@ -250,8 +263,10 @@ class PluginManager:
         self._reconcile_operation_lock = asyncio.Lock()
         self._installation_lifecycle_limiter: asyncio.Semaphore | None = None
         self.artifact_store = PluginArtifactStore()
+        self.ops_metrics = ops_metrics_module.RuntimeOpsMetrics()
         self.dependency_environment_store = PluginDependencyEnvironmentStore(
-            self.artifact_store.base_path
+            self.artifact_store.base_path,
+            metrics=self.ops_metrics,
         )
         self.worker_launcher = PluginWorkerLauncher()
         self.restart_coordinator = PluginRestartCoordinator()
@@ -1099,13 +1114,17 @@ class PluginManager:
                     # construction; dependency state must follow that same
                     # Runtime-owned volume.
                     self.dependency_environment_store = (
-                        PluginDependencyEnvironmentStore(self.artifact_store.base_path)
+                        PluginDependencyEnvironmentStore(
+                            self.artifact_store.base_path,
+                            metrics=self.ops_metrics,
+                        )
                     )
                 try:
                     current.dependency_environment = (
                         await self.worker_launcher.prepare_dependency_environment(
                             self.dependency_environment_store,
                             artifact,
+                            execution_mode=execution_mode.value,
                         )
                     )
                 except DependencyEnvironmentPreparationError as exc:
@@ -1378,6 +1397,7 @@ class PluginManager:
             if policy is None:
                 raise ValueError("Plugin worker policy is unavailable")
             if len(self._shared_workers) >= policy.max_workers:
+                self.ops_metrics.shared_capacity_rejections_total += 1
                 raise RuntimeError("Shared plugin worker capacity reached")
             worker = SharedPluginWorkerRuntime(
                 artifact=runtime.artifact,
@@ -1450,6 +1470,7 @@ class PluginManager:
                     await permit.abandon()
                 raise
             except Exception as exc:
+                self.ops_metrics.shared_launch_failures_total += 1
                 self._record_shared_worker_failure(worker, exc)
                 logger.exception("Shared plugin worker failed: %s", digest)
             if (
@@ -1465,8 +1486,36 @@ class PluginManager:
             if uptime >= _PLUGIN_STABLE_WINDOW_SEC:
                 delay = _PLUGIN_RESTART_INITIAL_DELAY_SEC
             worker.ready_event.clear()
-            await asyncio.sleep(delay * random.uniform(0.8, 1.2))
+            restart_delay = delay * random.uniform(0.8, 1.2)
+            self.ops_metrics.record_shared_backoff(restart_delay)
+            await asyncio.sleep(restart_delay)
+            self.ops_metrics.clear_shared_backoff()
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
+
+    async def _watch_worker(self, runtime):
+        monitor = WorkerWatchdog()
+        runtime.watchdog = monitor
+
+        async def probe():
+            handler = runtime.plugin_handler
+            if handler is None:
+                raise ConnectionError("worker transport unavailable")
+            if isinstance(runtime, SharedPluginWorkerRuntime):
+                binding = next(iter(runtime.slots), None)
+                if binding is None:
+                    return
+            else:
+                binding = runtime.binding
+            await handler.call_action(
+                CommonAction.PING, {}, timeout=10, action_context=binding
+            )
+
+        try:
+            await monitor.watch(probe)
+        except TimeoutError:
+            runtime.watchdog_restarts += 1
+            runtime.last_watchdog_restart_at = time.time()
+            raise
 
     async def _run_shared_worker_attempt(
         self,
@@ -1492,11 +1541,15 @@ class PluginManager:
                     raise RuntimeError(
                         "Shared plugin worker exited before registration"
                     )
+                self.ops_metrics.shared_transport_timeouts_total += 1
                 raise TimeoutError(
                     "Shared plugin worker did not register within "
                     f"{_SHARED_TRANSPORT_READY_TIMEOUT_SEC:.0f} seconds"
                 )
 
+            worker_task = asyncio.create_task(
+                supervise_liveness(worker_task, self._watch_worker(worker))
+            )
             permit.mark_ready()
             if not permit.is_half_open_probe:
                 await worker_task
@@ -1570,6 +1623,7 @@ class PluginManager:
         task = asyncio.create_task(self._initialize_shared_slot(runtime, handler))
         worker.attach_tasks[runtime.binding] = task
         self.plugin_run_tasks.append(task)
+        self.ops_metrics.shared_slot_attach_total += 1
 
         def attach_done(completed: asyncio.Task[None]) -> None:
             if worker.attach_tasks.get(runtime.binding) is completed:
@@ -1596,6 +1650,7 @@ class PluginManager:
                     runtime.state = "failed"
                     runtime.error_code = "slot_attach_failed"
                     runtime.error_message = str(exc) or type(exc).__name__
+                self.ops_metrics.shared_slot_attach_failures_total += 1
                 logger.error(
                     "Shared plugin slot attach failed: %s",
                     runtime.binding.installation_uuid,
@@ -1625,6 +1680,7 @@ class PluginManager:
                     timeout=_SHARED_SLOT_ATTACH_TIMEOUT_SEC,
                 )
         except TimeoutError as exc:
+            self.ops_metrics.shared_slot_attach_timeouts_total += 1
             raise TimeoutError(
                 "Shared plugin slot did not initialize within "
                 f"{_SHARED_SLOT_ATTACH_TIMEOUT_SEC:.0f} seconds"
@@ -1689,8 +1745,11 @@ class PluginManager:
                 await handler.detach_plugin_slot(runtime.binding)
             return
         plugin_container = runtime_plugin_container.PluginContainer.from_dict(
-            container_data
+            container_data.get("plugin_container", container_data)
         )
+        plugin_container.enabled = bool(container_data.get("enabled", True))
+        plugin_container.priority = int(container_data.get("priority", 0))
+        plugin_container.plugin_config = dict(container_data.get("plugin_config", {}))
         self._normalize_component_owners(plugin_container)
         if (
             plugin_container.status
@@ -1711,6 +1770,7 @@ class PluginManager:
         runtime.error_code = None
         runtime.error_message = None
         runtime.ready_event.set()
+        self.ops_metrics.shared_slot_attach_success_total += 1
 
     async def _detach_shared_worker_slot(
         self,
@@ -1729,6 +1789,7 @@ class PluginManager:
                 with contextlib.suppress(Exception):
                     await handler.detach_plugin_slot(runtime.binding)
             worker.slots.pop(runtime.binding, None)
+            self.ops_metrics.shared_slot_detach_total += 1
             if handler is not None:
                 handler.set_shared_pool_bindings(worker.artifact.digest, worker.slots)
             runtime.shared_worker = None
@@ -1748,6 +1809,7 @@ class PluginManager:
                         self._shared_workers.pop(worker.artifact.digest, None)
 
     async def _stop_shared_worker(self, worker: SharedPluginWorkerRuntime) -> None:
+        self.ops_metrics.shared_stops_total += 1
         handler = worker.plugin_handler
         if handler is not None:
             handler.cancel_inflight_messages()
@@ -1879,7 +1941,9 @@ class PluginManager:
                 binding.installation_uuid,
                 restart_delay,
             )
+            self.ops_metrics.record_dedicated_backoff(restart_delay)
             await asyncio.sleep(restart_delay)
+            self.ops_metrics.clear_dedicated_backoff()
             delay = min(delay * 2, _PLUGIN_RESTART_MAX_DELAY_SEC)
             attempt_number += 1
 
@@ -1903,6 +1967,9 @@ class PluginManager:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if ready_task in done:
+                worker_task = asyncio.create_task(
+                    supervise_liveness(worker_task, self._watch_worker(runtime))
+                )
                 if permit is not None:
                     permit.mark_ready()
                 runtime.state = "running"
@@ -2013,6 +2080,7 @@ class PluginManager:
                     dependency_environment=worker.dependency_environment,
                 )
             )
+            self.ops_metrics.shared_processes_started_total += 1
             worker.controller = controller
 
             async def new_plugin_connection_callback(connection: Connection):
@@ -2696,6 +2764,7 @@ class PluginManager:
                 # take the lifecycle lock separately and revalidate identity.
                 worker.pending_plugin_handler = None
                 worker.plugin_handler = handler
+                self.ops_metrics.shared_registrations_total += 1
                 attach_runtimes = []
                 for slot_runtime in tuple(worker.slots.values()):
                     if (

@@ -64,8 +64,9 @@ def test_session_mount_signature_includes_content_digest():
 
 
 @pytest.mark.anyio
-async def test_concurrent_revision_change_waits_for_queued_execution(logger):
+async def test_execution_scoped_mounts_preserve_shared_session(logger):
     backend = FakeBackend(logger)
+    backend.execution_scoped_mounts = True
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
@@ -127,9 +128,9 @@ async def test_concurrent_revision_change_waits_for_queued_execution(logger):
     assert backend.exec_calls == [
         ("fake-1", "v1"),
         ("fake-1", "queued-v1"),
-        ("fake-2", "v2"),
+        ("fake-1", "v2"),
     ]
-    backend.stop_session.assert_awaited_once()
+    backend.stop_session.assert_not_awaited()
 
 
 @pytest.fixture
@@ -1695,3 +1696,24 @@ async def test_capacity_and_reuse_are_atomic_at_full_capacity(logger):
             )
     finally:
         await runtime.shutdown()
+
+
+@pytest.mark.anyio
+async def test_fixed_mount_conflict_preserves_existing_session(logger):
+    backend = FakeBackend(logger)
+    runtime = BoxRuntime(logger, backends=[backend])
+    original = _make_spec("fixed", cmd="before")
+    await runtime.execute(original)
+    changed = original.model_copy(
+        update={
+            "extra_mounts": [
+                BoxMountSpec(host_path="/tmp/package", mount_path="/package", mode="ro")
+            ]
+        }
+    )
+    with pytest.raises(BoxSessionConflictError, match="existing session was preserved"):
+        await runtime.execute(changed)
+    await runtime.execute(original.model_copy(update={"cmd": "after"}))
+    assert backend.started_sessions == 1
+    backend.stop_session.assert_not_awaited()
+    await runtime.shutdown()

@@ -152,8 +152,7 @@ def _compute_extra_mounts_key(
     bind-mounted; see ``DockerBackend.start_session``) so two specs that produce
     the same set of ``-v`` flags compare equal. A bind mount cannot be added to
     an already-running container, so this is used to detect when a reused
-    session's container would be missing newly-requested mounts and must be
-    recreated.
+    session would be missing newly-requested mounts and must reject reuse.
     """
     key: set[tuple[str, str, str, str, str]] = set()
     for mount in spec.extra_mounts:
@@ -871,7 +870,9 @@ done
                         "Managed sandbox read-only mount manifest is outside allowed_mount_roots"
                     )
             mount_path = mount.mount_path
-            if not mount_path.startswith(f"{DEFAULT_BOX_MOUNT_PATH}/"):
+            if not mount.is_content_addressed and not mount_path.startswith(
+                f"{DEFAULT_BOX_MOUNT_PATH}/"
+            ):
                 raise BoxAdmissionError(
                     "Managed sandbox additional mount targets must stay under /workspace"
                 )
@@ -1761,14 +1762,25 @@ done
         track_active_exec: bool = False,
         action_context: ActionContext | None = None,
     ) -> _RuntimeSession:
-        new_extra_mounts_key = _compute_extra_mounts_key(spec)
+        backend = await self._get_backend()
+        signature_spec = spec
+        if backend.content_addressed_mounts:
+            signature_spec = spec.model_copy(
+                update={
+                    "extra_mounts": [
+                        mount
+                        for mount in spec.extra_mounts
+                        if not mount.is_content_addressed
+                    ]
+                }
+            )
+        new_extra_mounts_key = _compute_extra_mounts_key(signature_spec)
         operation_lock = await self._get_session_operation_lock(spec.session_id)
 
         async with operation_lock:
             while True:
                 cleanup_task: asyncio.Task[None] | None = None
                 existing: _RuntimeSession | None = None
-                replacing: _RuntimeSession | None = None
                 async with self._lock:
                     if self._shutdown_in_progress:
                         raise BoxRuntimeUnavailableError("Box runtime is shutting down")
@@ -1800,21 +1812,16 @@ done
                         existing = self._sessions.get(spec.session_id)
                         if existing is not None:
                             self._assert_session_compatible(existing.info, spec)
-                            if existing.extra_mounts_key != new_extra_mounts_key:
-                                replacing = existing
-                            else:
-                                self._session_leases[spec.session_id] += 1
-
-                if replacing is not None:
-                    async with replacing.lock:
-                        async with self._lock:
-                            if self._sessions.get(spec.session_id) is replacing:
-                                self.logger.info(
-                                    "LangBot Box session extra_mounts changed, "
-                                    f"recreating: session_id={spec.session_id}"
+                            if (
+                                not backend.execution_scoped_mounts
+                                and existing.extra_mounts_key != new_extra_mounts_key
+                            ):
+                                raise BoxSessionConflictError(
+                                    "Box mounts differ from this session's immutable mount set; "
+                                    "acquire a Box with a distinct reuse key for different host mounts. "
+                                    "The existing session was preserved."
                                 )
-                                self._drop_session_locked(spec.session_id)
-                    continue
+                            self._session_leases[spec.session_id] += 1
 
                 if cleanup_task is not None:
                     await self._wait_for_session_cleanup(spec.session_id, cleanup_task)

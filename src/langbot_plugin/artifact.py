@@ -186,3 +186,60 @@ __all__ = [
     "load_tree_manifest",
     "validate_tree_manifest",
 ]
+
+
+def materialize_tree(
+    source: str, manifest_path: str, expected_digest: str, cache_root: str
+) -> str:
+    """Publish a complete verified tree outside the sandbox before making it visible."""
+    import shutil
+    import tempfile
+
+    max_bytes = 256 * 1024 * 1024
+    digest, manifest = load_tree_manifest(
+        manifest_path, max_files=2048, max_total_bytes=max_bytes
+    )
+    if digest != expected_digest:
+        raise ValueError("Artifact manifest does not match content_digest")
+    target = os.path.join(cache_root, digest[7:])
+    if os.path.isdir(target) and not os.path.islink(target):
+        return target
+    used = sum(
+        os.path.getsize(os.path.join(root, name))
+        for root, _, names in os.walk(cache_root)
+        for name in names
+    )
+    if len(os.listdir(cache_root)) >= 256 or used + manifest["total_bytes"] > max_bytes:
+        raise ValueError("Immutable artifact cache limit reached; acquire a new Box")
+    staging = tempfile.mkdtemp(
+        prefix="langbot-artifact-stage-", dir=os.path.dirname(cache_root)
+    )
+    try:
+        for entry in manifest["files"]:
+            source_path = os.path.join(source, *entry["path"].split("/"))
+            descriptor = os.open(
+                source_path,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
+            with os.fdopen(descriptor, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ValueError("Artifact source must be a regular file")
+                body = stream.read(entry["size"] + 1)
+            if (
+                len(body) != entry["size"]
+                or hashlib.sha256(body).hexdigest() != entry["sha256"]
+            ):
+                raise ValueError(f"Artifact source changed: {entry['path']}")
+            destination = os.path.join(staging, *entry["path"].split("/"))
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            with open(destination, "xb") as stream:
+                stream.write(body)
+            os.chmod(destination, 0o555 if entry["executable"] else 0o444)
+        os.chmod(staging, 0o755)
+        os.rename(staging, target)
+        return target
+    finally:
+        if os.path.isdir(staging):
+            shutil.rmtree(staging)

@@ -51,10 +51,12 @@ def test_execution_accepts_only_the_certified_shared_runtime_profile():
     shared = Execution(
         python={"path": "main.py", "attr": "Plugin"},
         sharedRuntime="shared-runtime-v1",
+        componentModel="stateless-v1",
     )
     dedicated = Execution(python={"path": "main.py", "attr": "Plugin"})
 
     assert shared.shared_runtime == "shared-runtime-v1"
+    assert shared.component_model == "stateless-v1"
     assert dedicated.shared_runtime is None
     with pytest.raises(ValueError):
         Execution(
@@ -66,6 +68,11 @@ def test_execution_accepts_only_the_certified_shared_runtime_profile():
             python={"path": "main.py", "attr": "Plugin"},
             sharedRuntime=None,
         )
+    legacy_shared = Execution(
+        python={"path": "main.py", "attr": "Plugin"},
+        sharedRuntime="shared-runtime-v1",
+    )
+    assert legacy_shared.component_model is None
 
 
 def test_component_manifest_properties_and_plain_dict():

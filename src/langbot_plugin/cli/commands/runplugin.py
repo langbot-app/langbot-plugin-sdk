@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dotenv
+import logging
 import os
 
 from langbot_plugin.utils.discover.engine import ComponentDiscoveryEngine
@@ -18,8 +19,30 @@ from langbot_plugin.runtime.bounded_executor import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def should_load_artifact_dotenv(runtime_profile: str) -> bool:
     return runtime_profile != "shared"
+
+
+def apply_process_label(tag: str) -> None:
+    """Record the process label carried by the worker command line.
+
+    The launcher passes ``--tag author/name`` so an operator can tell which
+    plugin a worker belongs to from ps/htop; this helper keeps the same value in
+    the worker log. It makes no syscalls and changes no process attribute, so it
+    behaves identically on every platform.
+
+    The label is cosmetic only: it is never an identity, an authorization input
+    or a routing key. The Runtime owns the real installation identity, and this
+    value may be forged by whoever starts the process.
+    """
+
+    label = "".join(ch for ch in str(tag or "") if ch.isprintable()).strip()
+    if not label:
+        return
+    logger.info("Plugin worker process label: %s", label)
 
 
 async def arun_plugin_process(
@@ -93,8 +116,10 @@ def run_plugin_process(
     plugin_debug_key: str = "",
     pypi_index_url: str = "",
     pypi_trusted_host: str = "",
+    tag: str = "",
 ) -> None:
     configure_process_logging()
+    apply_process_label(tag)
 
     try:
         asyncio.run(

@@ -10,6 +10,8 @@ import re
 import shutil
 import stat
 import tempfile
+import time
+import typing
 import weakref
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -21,7 +23,7 @@ from packaging.version import InvalidVersion, Version
 from langbot_plugin.runtime.plugin.artifact import PluginArtifact
 
 
-_ENVIRONMENT_SCHEMA_VERSION = 2
+_ENVIRONMENT_SCHEMA_VERSION = 3
 _READY_MARKER = ".ready.json"
 _MAX_REQUIREMENTS_BYTES = 1024 * 1024
 _MAX_REQUIREMENT_COUNT = 1024
@@ -30,6 +32,59 @@ _MAX_ENVIRONMENT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _RUNTIME_PROVIDED_DISTRIBUTIONS = frozenset({"langbot-plugin"})
 _RUNTIME_SDK_COMPATIBILITY_SERIES = (0, 6)
+# Raw archive SHA-256 digests, not normalized certification digests. This is
+# dependency ABI admission only; it never grants certification or shared slots.
+# Releases that reviewed the nine digest-pinned legacy archives below. A new
+# Runtime release re-verifies dedicated behavior before extending this set.
+_LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS = frozenset({"0.7.4", "0.7.5", "0.7.6"})
+
+_LEGACY_DEDICATED_SDK_061 = {
+    (
+        "langbot-team",
+        "CozeAgent",
+        "0.1.10",
+    ): "90d9e1adbf456fd5e55ab8e022c26a17d272bf834104d711fff390c3649dc7a4",
+    (
+        "langbot-team",
+        "DashScopeAgent",
+        "0.1.10",
+    ): "ca9fe3b6cf3d891c0d5f5ef6c711c25b20a922e8fe110778997314a1f8b0559e",
+    (
+        "langbot-team",
+        "DeerFlowAgent",
+        "0.1.10",
+    ): "b35f551f9a9498f1f33d2596230725d3db1f13852edcb74330bc4a4dd681c6c9",
+    (
+        "langbot-team",
+        "DifyAgent",
+        "0.1.10",
+    ): "1dd9cb4140bf0c2f848ecd648210b8cf7c9a0f520575ddc61e91a704e3ea3280",
+    (
+        "langbot-team",
+        "LangflowAgent",
+        "0.1.10",
+    ): "b582250f2bf46e758fd904c52dea0ee6496626d61be6096a44fb9b34684583a5",
+    (
+        "langbot-team",
+        "N8nAgent",
+        "0.1.10",
+    ): "0eee26b0101d166385425049727c0bf433582615d507fa36efc456b78cecac4a",
+    (
+        "langbot-team",
+        "TboxAgent",
+        "0.1.8",
+    ): "387a02a2bed698b04f119042bab19c2400e53a433c6f0451a566e4c33807896f",
+    (
+        "langbot-team",
+        "WeKnoraAgent",
+        "0.1.10",
+    ): "95dddd70a6f768660bd2de3adaebbe585b3aa42de7ad6ddb5a9fb6777590c9cc",
+    (
+        "langbot-team",
+        "LocalAgent",
+        "0.1.10",
+    ): "a08a3f33cc10f5292d5ebafa58af1b993c8b89dbe6692df7895e924ffdd88da3",
+}
 
 
 class DependencyEnvironmentPreparationError(RuntimeError):
@@ -67,9 +122,15 @@ DependencyInstaller = Callable[
 class PluginDependencyEnvironmentStore:
     """Atomically prepare and publish immutable per-artifact dependency trees."""
 
-    def __init__(self, base_path: str | os.PathLike = "data/plugin-runtime"):
+    def __init__(
+        self,
+        base_path: str | os.PathLike = "data/plugin-runtime",
+        *,
+        metrics: typing.Any | None = None,
+    ):
         self.base_path = pathlib.Path(base_path)
         self.environments_path = self.base_path / "environments" / "sha256"
+        self.metrics = metrics
         self._prepare_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
@@ -80,8 +141,11 @@ class PluginDependencyEnvironmentStore:
         *,
         runtime_fingerprint: str,
         installer: DependencyInstaller,
+        execution_mode: str | None = None,
     ) -> PluginDependencyEnvironment:
-        requirements, requirements_digest = self._read_requirements(artifact)
+        requirements, requirements_digest = self._read_requirements(
+            artifact, execution_mode=execution_mode
+        )
         digest = self._environment_digest(
             artifact.digest,
             requirements_digest,
@@ -96,20 +160,42 @@ class PluginDependencyEnvironmentStore:
 
         ready = self.get_ready(digest, expected=expected)
         if ready is not None:
+            self._record_cache_hit()
             return ready
 
         lock = self._prepare_locks.setdefault(digest, asyncio.Lock())
         async with lock:
             ready = self.get_ready(digest, expected=expected)
             if ready is not None:
+                self._record_cache_hit()
                 return ready
-            return await self._prepare_locked(
-                artifact,
-                digest=digest,
-                expected=expected,
-                requirements=requirements,
-                installer=installer,
-            )
+            self._record_cache_miss()
+            started_at = time.monotonic()
+            try:
+                return await self._prepare_locked(
+                    artifact,
+                    digest=digest,
+                    expected=expected,
+                    requirements=requirements,
+                    installer=installer,
+                )
+            except BaseException:
+                if self.metrics is not None:
+                    self.metrics.dependency_prepare_failures_total += 1
+                raise
+            finally:
+                elapsed = max(time.monotonic() - started_at, 0.0)
+                if self.metrics is not None:
+                    self.metrics.dependency_prepare_seconds_total += elapsed
+                    self.metrics.dependency_prepare_seconds_last = elapsed
+
+    def _record_cache_hit(self) -> None:
+        if self.metrics is not None:
+            self.metrics.dependency_cache_hits_total += 1
+
+    def _record_cache_miss(self) -> None:
+        if self.metrics is not None:
+            self.metrics.dependency_cache_misses_total += 1
 
     def get_ready(
         self,
@@ -262,6 +348,8 @@ class PluginDependencyEnvironmentStore:
     @staticmethod
     def _read_requirements(
         artifact: PluginArtifact,
+        *,
+        execution_mode: str | None = None,
     ) -> tuple[tuple[str, ...], str]:
         requirements_path = artifact.code_path / "requirements.txt"
         try:
@@ -318,10 +406,29 @@ class PluginDependencyEnvironmentStore:
                     ) from exc
                 # Validate the already-installed Runtime SDK, including beta
                 # releases, rather than filtering candidates for installation.
-                if not PluginDependencyEnvironmentStore._runtime_sdk_requirement_satisfied(
-                    requirement,
-                    runtime_version,
+                compatible = (
+                    PluginDependencyEnvironmentStore._runtime_sdk_requirement_satisfied(
+                        requirement,
+                        runtime_version,
+                    )
+                )
+                if (
+                    not compatible
+                    and runtime_version in _LEGACY_DEDICATED_SDK_RUNTIME_VERSIONS
+                    and line == "langbot-plugin==0.6.1"
+                    and execution_mode == "dedicated"
                 ):
+                    identity = (
+                        getattr(artifact, "plugin_author", None),
+                        getattr(artifact, "plugin_name", None),
+                        getattr(artifact, "plugin_version", None),
+                    )
+                    compatible = (
+                        all(isinstance(part, str) for part in identity)
+                        and _LEGACY_DEDICATED_SDK_061.get(identity)  # type: ignore[arg-type]
+                        == getattr(artifact, "digest", None)
+                    )
+                if not compatible:
                     raise DependencyEnvironmentPreparationError(
                         "Plugin requires "
                         f"{requirement}, but the Runtime provides "

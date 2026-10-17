@@ -49,8 +49,8 @@ def payload(event_class, populated):
             "operator": {"id": "operator"},
             "inviter": {"id": "inviter"},
             "group": {"id": 100, "name": "Group"},
-            "message_id": "99" if event_class is events.FeedbackReceivedEvent else 99,
-            "chat_id": 100,
+            "message_id": "99",
+            "chat_id": "100",
             "chat_type": "group",
             "message_chain": [
                 {"type": "Plain", "text": "Unicode 你好 🧩"},

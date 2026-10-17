@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import posixpath
+import re
 import shlex
 import uuid
 
@@ -14,6 +15,7 @@ from ..artifact import build_tree_manifest, load_tree_manifest
 from .backend import BaseSandboxBackend, _MAX_RAW_OUTPUT_BYTES
 from .errors import BoxError
 from .models import (
+    ARTIFACT_MOUNT_ROOT,
     BoxExecutionResult,
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -26,7 +28,7 @@ _MAX_E2B_SYNC_FILES = 2048
 _MAX_E2B_SYNC_ENTRIES = 2048
 _MAX_E2B_SYNC_FILE_BYTES = 10 * 1024 * 1024
 _MAX_E2B_SYNC_TOTAL_BYTES = 256 * 1024 * 1024
-_ARTIFACT_ROOT = "/home/user/.langbot-artifacts"
+_ARTIFACT_ROOT = "/opt/langbot-artifact-cache"
 
 
 def _read_e2b_host_file_limited(path: str) -> bytes:
@@ -111,7 +113,7 @@ def _adapt_path_for_e2b(path: str) -> str:
 
 def _rewrite_command_paths_for_e2b(command: str) -> str:
     """Rewrite LangBot's logical /workspace paths for E2B's real writable path."""
-    return command.replace("/workspace", E2B_WORKSPACE_DIR)
+    return re.sub(r"(?<![\w.-])/workspace(?=$|/|[^\w.-])", E2B_WORKSPACE_DIR, command)
 
 
 class E2BSandboxBackend(BaseSandboxBackend):
@@ -123,6 +125,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
     2. Configuration passed via configure() method (from LangBot config.yaml)
     """
 
+    content_addressed_mounts = True
     name = "e2b"
 
     def __init__(self, logger: logging.Logger):
@@ -438,6 +441,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
             _ARTIFACT_ROOT,
             f".{digest_hex}.staging-{uuid.uuid4().hex}",
         )
+        sealed_root = staging_root + ".sealed"
         staging_package = posixpath.join(staging_root, "package")
         try:
             await self._run_e2b_checked(
@@ -487,40 +491,48 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 sort_keys=True,
             ).encode("utf-8")
             await sandbox.files.write(manifest_path, manifest_body)
+            # Copy into root-only storage so open upload-file handles cannot alter the verified tree.
+            await self._run_e2b_checked(
+                sandbox,
+                f"mkdir -m 0700 {shlex.quote(sealed_root)} && "
+                f"cp -R -P {shlex.quote(staging_package)} {shlex.quote(manifest_path)} {shlex.quote(sealed_root)}/ && "
+                f"chown -R root:root {shlex.quote(sealed_root)} && "
+                f"chmod -R a-w {shlex.quote(sealed_root)}",
+                subject="seal immutable mount staging",
+                user="root",
+            )
             await self._verify_remote_manifest(
                 sandbox,
-                package_root=staging_package,
-                manifest_path=manifest_path,
+                package_root=posixpath.join(sealed_root, "package"),
+                manifest_path=posixpath.join(sealed_root, "manifest.json"),
                 expected_digest=digest,
-            )
-            await sandbox.files.write(
-                posixpath.join(staging_root, "ready"), digest.encode("ascii")
+                user="root",
             )
             await self._run_e2b_checked(
                 sandbox,
-                f"chmod -R a-w {shlex.quote(staging_root)} && "
-                f"chmod u+w {shlex.quote(staging_root)} && "
-                f"chmod -R u+w {shlex.quote(ready_root)} 2>/dev/null || true; "
-                f"rm -rf {shlex.quote(ready_root)} && "
-                f"mv {shlex.quote(staging_root)} {shlex.quote(ready_root)} && "
-                f"chown -R root:root {shlex.quote(ready_root)} && "
-                f"chmod -R a-w {shlex.quote(ready_root)}",
+                f"chmod u+w {shlex.quote(sealed_root)} && "
+                f"printf %s {shlex.quote(digest)} > {shlex.quote(posixpath.join(sealed_root, 'ready'))} && "
+                f"chmod 0555 {shlex.quote(sealed_root)} && "
+                f"chmod -R a+rX {shlex.quote(sealed_root)} && "
+                f"test ! -e {shlex.quote(ready_root)} && "
+                f"mv {shlex.quote(sealed_root)} {shlex.quote(ready_root)}",
                 subject="publish immutable mount revision",
                 user="root",
             )
-        except Exception as exc:
+        except BaseException as exc:
+            if not isinstance(exc, Exception) or isinstance(exc, BoxError):
+                raise
+            raise BoxError(f"Failed to materialize immutable E2B mount: {exc}") from exc
+        finally:
             try:
                 await sandbox.commands.run(
-                    f"chmod -R u+w {shlex.quote(staging_root)} 2>/dev/null || true; "
-                    f"rm -rf {shlex.quote(staging_root)}",
+                    f"chmod -R u+w {shlex.quote(staging_root)} {shlex.quote(sealed_root)} 2>/dev/null || true; "
+                    f"rm -rf {shlex.quote(staging_root)} {shlex.quote(sealed_root)}",
                     timeout=10,
                     user="root",
                 )
             except Exception:
                 pass
-            if isinstance(exc, BoxError):
-                raise
-            raise BoxError(f"Failed to materialize immutable E2B mount: {exc}") from exc
 
         await self._project_remote_revision(
             sandbox,
@@ -566,6 +578,19 @@ class E2BSandboxBackend(BaseSandboxBackend):
         ready_root: str,
         remote_root: str,
     ) -> None:
+        if remote_root.startswith(ARTIFACT_MOUNT_ROOT + "/"):
+            target = posixpath.join(ready_root, "package")
+            await self._run_e2b_checked(
+                sandbox,
+                f"mkdir -p {shlex.quote(ARTIFACT_MOUNT_ROOT)} && "
+                f"chown root:root {shlex.quote(ARTIFACT_MOUNT_ROOT)} && "
+                f"chmod 0755 {shlex.quote(ARTIFACT_MOUNT_ROOT)} && "
+                f"(ln -sT {shlex.quote(target)} {shlex.quote(remote_root)} 2>/dev/null || "
+                f'test "$(readlink {shlex.quote(remote_root)})" = {shlex.quote(target)})',
+                subject="publish immutable artifact projection",
+                user="root",
+            )
+            return
         await self._run_e2b_checked(
             sandbox,
             f"mkdir -p {shlex.quote(posixpath.dirname(remote_root))} && "
@@ -581,18 +606,24 @@ class E2BSandboxBackend(BaseSandboxBackend):
         package_root: str,
         manifest_path: str,
         expected_digest: str,
+        user: str | None = None,
     ) -> None:
         verifier = """
 import hashlib,json,os,stat,sys
 root,manifest_path,expected=sys.argv[1:]
+if not stat.S_ISDIR(os.lstat(root).st_mode) or not stat.S_ISREG(os.lstat(manifest_path).st_mode):
+    raise SystemExit(42)
 with open(manifest_path,encoding='utf-8') as f:
     manifest=json.load(f)
 actual=[]
 for current,dirs,names in os.walk(root,followlinks=False):
     dirs.sort(); names.sort()
+    if any(os.path.islink(os.path.join(current,name)) for name in dirs):
+        raise SystemExit(42)
     for name in names:
         path=os.path.join(current,name)
         info=os.stat(path,follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode): raise SystemExit(42)
         digest=hashlib.sha256()
         with open(path,'rb') as f:
             while True:
@@ -611,6 +642,7 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
             f"{shlex.quote(verifier)} {shlex.quote(package_root)} "
             f"{shlex.quote(manifest_path)} {shlex.quote(expected_digest)}",
             subject="verify immutable mount manifest",
+            user=user,
         )
 
     @staticmethod

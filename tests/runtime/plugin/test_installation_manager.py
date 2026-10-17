@@ -6,6 +6,7 @@ import io
 import os
 import stat
 import threading
+import time
 import zipfile
 from types import SimpleNamespace
 from unittest import mock
@@ -95,7 +96,7 @@ def _manager(tmp_path) -> tuple[RuntimeContext, PluginManager]:
     return context, manager
 
 
-async def _prepare_environment(store, artifact):
+async def _prepare_environment(store, artifact, *, execution_mode=None):
     root = store.base_path / "test-shared-environment"
     site_packages = root / "site-packages"
     site_packages.mkdir(parents=True, exist_ok=True)
@@ -201,7 +202,7 @@ async def test_certified_same_digest_installations_share_one_pool_worker(
     binding_b = _binding("installation-b", digest, workspace_uuid="workspace-b")
     scheduled = []
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         root = store.base_path / "shared-environment"
         site_packages = root / "site-packages"
         site_packages.mkdir(parents=True, exist_ok=True)
@@ -1527,7 +1528,7 @@ async def test_installation_lifecycle_runs_dependency_preparation_concurrently_b
     active_prepares = 0
     max_active_prepares = 0
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         nonlocal active_prepares, max_active_prepares
         active_prepares += 1
         max_active_prepares = max(max_active_prepares, active_prepares)
@@ -1938,7 +1939,7 @@ async def test_shared_apply_prepares_dependency_environment_before_worker_launch
     )
     order: list[str] = []
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         order.append("prepare")
         root = store.base_path / "test-environment"
         site_packages = root / "site-packages"
@@ -1988,7 +1989,7 @@ async def test_shared_dependency_failure_is_explicit_and_same_revision_can_retry
     )
     launch_count = 0
 
-    async def fail_prepare(store, artifact):
+    async def fail_prepare(store, artifact, *, execution_mode=None):
         raise DependencyEnvironmentPreparationError("dependency download failed")
 
     def schedule(runtime):
@@ -2020,7 +2021,7 @@ async def test_shared_dependency_failure_is_explicit_and_same_revision_can_retry
     assert runtime.launch_task is None
     assert runtime.dependency_environment is None
 
-    async def successful_prepare(store, artifact):
+    async def successful_prepare(store, artifact, *, execution_mode=None):
         root = store.base_path / "retry-environment"
         site_packages = root / "site-packages"
         site_packages.mkdir(parents=True)
@@ -2063,7 +2064,7 @@ async def test_reconcile_reports_dependency_failure_without_worker_launch(
         enabled=False,
     )
 
-    async def fail_prepare(store, artifact):
+    async def fail_prepare(store, artifact, *, execution_mode=None):
         raise DependencyEnvironmentPreparationError("dependency download failed")
 
     monkeypatch.setattr(
@@ -2179,7 +2180,7 @@ async def test_oss_desired_state_prepares_environment_before_worker_launch(
     )
     order: list[str] = []
 
-    async def prepare(store, artifact):
+    async def prepare(store, artifact, *, execution_mode=None):
         order.append("prepare")
         root = store.base_path / "test-environment"
         site_packages = root / "site-packages"
@@ -2488,6 +2489,62 @@ async def test_shared_worker_ready_timeout_cancels_hung_controller_and_records_f
     assert manager.installation_runtimes[binding].state == "failed"
     assert "did not register" in manager.installation_runtimes[binding].error_message
     await manager._stop_shared_worker(worker)
+
+
+async def test_shared_watchdog_failure_cleans_attempt_and_counts_recovery(
+    tmp_path, monkeypatch
+):
+    _, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-a", digest, workspace_uuid="workspace-a")
+    monkeypatch.setattr(
+        manager.worker_launcher, "prepare_dependency_environment", _prepare_environment
+    )
+    monkeypatch.setattr(manager, "_schedule_shared_worker", lambda _worker: None)
+    await manager.apply_plugin_installation(
+        binding,
+        artifact_package=package,
+        execution_mode=PluginExecutionMode.SHARED_CERTIFIED,
+    )
+    worker = manager.installation_runtimes[binding].shared_worker
+    stopped = asyncio.Event()
+
+    class FastWatchdog(manager_module.WorkerWatchdog):
+        def __init__(self):
+            super().__init__(timeout_seconds=0.01)
+
+        async def watch(self, probe):
+            await super().watch(probe, interval=0.001, probe_timeout=0.005)
+
+    class Handler:
+        async def call_action(self, *args, **kwargs):
+            await asyncio.Event().wait()
+
+    class Permit:
+        is_half_open_probe = False
+
+        def mark_ready(self):
+            pass
+
+    async def launch(candidate):
+        candidate.plugin_handler = Handler()
+        candidate.transport_registered_event.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            candidate.plugin_handler = None
+            stopped.set()
+
+    monkeypatch.setattr(manager_module, "WorkerWatchdog", FastWatchdog)
+    monkeypatch.setattr(manager, "_launch_shared_worker", launch)
+    with pytest.raises(TimeoutError, match="worker unresponsive"):
+        await asyncio.wait_for(manager._run_shared_worker_attempt(worker, Permit()), 2)
+    assert stopped.is_set()
+    assert worker.watchdog_restarts == 1
+    assert worker.last_watchdog_restart_at is not None
+    assert worker.plugin_handler is None
+    assert binding in worker.slots
 
 
 async def test_shared_transport_registration_survives_slow_slot_attach(
@@ -2884,8 +2941,143 @@ def test_runtime_health_reports_identity_free_installation_state_counts(tmp_path
         "starting": 1,
         "failed": 1,
         "disabled": 1,
+        "other": 0,
     }
     assert "installation-running" not in str(stats)
+
+
+def test_runtime_health_counts_unknown_installation_states(tmp_path):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding("installation-quarantined", digest, workspace_uuid="workspace-a")
+    artifact = manager.artifact_store.install_package(package, digest)
+    paths = manager.artifact_store.ensure_installation_paths(binding)
+    manager._installations[binding] = manager_module.PluginInstallationRuntime(
+        binding=binding,
+        artifact=artifact,
+        paths=paths,
+        enabled=True,
+        state="quarantined",
+    )
+
+    stats = context.get_runtime_resource_stats()
+
+    assert stats["installation_states"]["other"] == 1
+    assert stats["installation_states"]["running"] == 0
+
+
+def test_runtime_health_reports_shared_pool_and_mode_split(tmp_path):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+
+    for index, execution_mode in enumerate(
+        (PluginExecutionMode.SHARED_CERTIFIED, PluginExecutionMode.DEDICATED)
+    ):
+        binding = _binding(
+            f"installation-{index}", digest, workspace_uuid="workspace-a"
+        )
+        artifact = manager.artifact_store.install_package(package, digest)
+        paths = manager.artifact_store.ensure_installation_paths(binding)
+        manager._installations[binding] = manager_module.PluginInstallationRuntime(
+            binding=binding,
+            artifact=artifact,
+            paths=paths,
+            enabled=True,
+            state="running",
+            execution_mode=execution_mode,
+        )
+
+    worker = manager_module.SharedPluginWorkerRuntime(
+        artifact=next(iter(manager._installations.values())).artifact,
+        dependency_environment=None,
+        paths=manager.artifact_store.ensure_shared_worker_paths(digest),
+    )
+    worker.ready_event.set()
+    worker.draining = True
+    worker.slots[next(iter(manager._installations))] = next(
+        iter(manager._installations.values())
+    )
+    manager._shared_workers[digest] = worker
+    manager.ops_metrics.shared_slot_attach_total = 3
+    manager.ops_metrics.shared_capacity_rejections_total = 2
+
+    stats = context.get_runtime_resource_stats()
+
+    assert stats["installations_by_mode"] == {
+        "shared-runtime-v1": 1,
+        "dedicated": 1,
+    }
+    assert stats["shared_pool"]["workers"] == 1
+    assert stats["shared_pool"]["ready"] == 1
+    assert stats["shared_pool"]["draining"] == 1
+    assert stats["shared_pool"]["slots"] == 1
+    assert stats["shared_pool"]["capacity"] == 16
+    assert stats["shared_pool"]["slot_attach_total"] == 3
+    assert stats["shared_pool"]["capacity_rejections_total"] == 2
+
+
+def test_runtime_health_prunes_expired_registrations_before_counting(tmp_path):
+    context, manager = _manager(tmp_path)
+    manager._pending_registrations["expired"] = (
+        manager_module._PendingPluginRegistration(
+            plugin_author="tester",
+            plugin_name="demo",
+            plugin_path="/tmp/demo",
+            binding=None,
+            shared_pool_digest=None,
+            expires_at=time.monotonic() - 1,
+        )
+    )
+    manager._pending_registrations["live"] = manager_module._PendingPluginRegistration(
+        plugin_author="tester",
+        plugin_name="demo",
+        plugin_path="/tmp/demo",
+        binding=None,
+        shared_pool_digest=None,
+        expires_at=time.monotonic() + 60,
+    )
+
+    stats = context.get_runtime_resource_stats()
+
+    assert stats["pending_registrations"] == 1
+    assert "expired" not in manager._pending_registrations
+
+
+def test_runtime_health_payload_carries_no_tenant_identity(tmp_path):
+    context, manager = _manager(tmp_path)
+    package = _package()
+    digest = hashlib.sha256(package).hexdigest()
+    binding = _binding(
+        "installation-secret",
+        digest,
+        workspace_uuid="workspace-secret",
+    )
+    artifact = manager.artifact_store.install_package(package, digest)
+    paths = manager.artifact_store.ensure_installation_paths(binding)
+    manager._installations[binding] = manager_module.PluginInstallationRuntime(
+        binding=binding,
+        artifact=artifact,
+        paths=paths,
+        enabled=True,
+        state="running",
+    )
+    manager.dependency_environment_store.metrics.dependency_cache_hits_total = 4
+
+    stats = context.get_runtime_resource_stats()
+
+    serialized = str(stats)
+    assert "installation-secret" not in serialized
+    assert "workspace-secret" not in serialized
+    assert digest not in serialized
+    assert stats["dependency_environment"]["cache_hits_total"] == 4
+    assert stats["restart_backoff"] == {
+        "shared_current_seconds": 0.0,
+        "shared_total_seconds": 0.0,
+        "dedicated_current_seconds": 0.0,
+        "dedicated_total_seconds": 0.0,
+    }
 
 
 async def test_installation_launch_failure_is_recorded_locally(

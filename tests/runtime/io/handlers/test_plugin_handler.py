@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -1220,3 +1221,75 @@ async def test_reply_stream_forwarder_uses_trusted_plugin_identity():
     assert payload["caller_plugin_identity"] == "tester/demo"
     assert payload["text"] == "hello"
     assert timeout == 30
+
+
+def _shared_pool_handler(binding):
+    handler, manager, control = _handler(runtime_profile="shared")
+    handler.set_shared_pool_bindings(binding.artifact_digest, {binding})
+    return handler, manager, control
+
+
+async def test_shared_pool_dispatch_uses_inflight_control_binding():
+    """A dispatch made while a Control action runs carries that binding."""
+
+    binding = _installation_binding()
+    handler, manager, _control = _shared_pool_handler(binding)
+    manager._current_control_binding = lambda: binding
+
+    async with ProtocolSession(handler):
+        dispatch = asyncio.create_task(
+            handler.call_action(
+                RuntimeToPluginAction.INITIALIZE_PLUGIN,
+                {"plugin_settings": {}},
+            )
+        )
+        (message,) = await handler.conn.sent_messages(1)
+        await handler.conn.send_peer_response(message["seq_id"])
+        assert await dispatch == {}
+
+    assert message["context"] == binding.model_dump()
+
+
+async def test_shared_pool_dispatch_falls_back_to_task_local_binding():
+    """A worker relay runs in another task, so the dispatch carries its binding."""
+
+    binding = _installation_binding()
+    handler, manager, _control = _shared_pool_handler(binding)
+    manager._current_control_binding = lambda: None
+
+    # The in-flight plugin action owns the binding; the Control contextvar that
+    # the relay task cannot observe stays empty.
+    token = handler._current_action_context.set(binding)
+    try:
+        async with ProtocolSession(handler):
+            dispatch = asyncio.create_task(
+                handler.call_action(RuntimeToPluginAction.SHUTDOWN, {})
+            )
+            (message,) = await handler.conn.sent_messages(1)
+            await handler.conn.send_peer_response(message["seq_id"])
+            await dispatch
+    finally:
+        handler._current_action_context.reset(token)
+
+    assert message["context"] == binding.model_dump()
+
+
+async def test_shared_pool_dispatch_rejects_unattached_control_binding():
+    """A binding that is not an attached slot must never reach the worker."""
+
+    binding = _installation_binding()
+    unattached = _installation_binding(runtime_revision=2)
+    handler, manager, _control = _shared_pool_handler(binding)
+    manager._current_control_binding = lambda: unattached
+
+    with pytest.raises(ValueError, match="requires an attached binding"):
+        await handler.call_action(RuntimeToPluginAction.SHUTDOWN, {})
+
+
+def test_shared_pool_relay_requires_an_attached_binding():
+    binding = _installation_binding()
+    handler, manager, _control = _shared_pool_handler(binding)
+    manager._current_control_binding = lambda: None
+
+    with pytest.raises(ValueError, match="requires an attached binding"):
+        handler.resolve_outbound_action_context(None)

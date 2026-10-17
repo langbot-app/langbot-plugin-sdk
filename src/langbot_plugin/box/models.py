@@ -230,6 +230,9 @@ class SandboxAdmissionPolicy(pydantic.BaseModel):
         return value
 
 
+ARTIFACT_MOUNT_ROOT = "/opt/langbot-artifacts"
+
+
 class BoxMountSpec(pydantic.BaseModel):
     """A generic additional bind mount specification."""
 
@@ -279,6 +282,26 @@ class BoxMountSpec(pydantic.BaseModel):
         if not (posixpath.isabs(value) or ntpath.isabs(value)):
             raise ValueError("manifest_path must be an absolute host path")
         return value
+
+    @property
+    def is_content_addressed(self) -> bool:
+        return bool(
+            self.mode == BoxHostMountMode.READ_ONLY
+            and self.content_digest
+            and self.manifest_path
+            and self.mount_path == f"{ARTIFACT_MOUNT_ROOT}/{self.content_digest[7:]}"
+        )
+
+    @pydantic.model_validator(mode="after")
+    def validate_artifact_path(self):
+        if (
+            self.mount_path == ARTIFACT_MOUNT_ROOT
+            or self.mount_path.startswith(ARTIFACT_MOUNT_ROOT + "/")
+        ) and not self.is_content_addressed:
+            raise ValueError(
+                "Artifact paths require a read-only digest-addressed mount and manifest"
+            )
+        return self
 
 
 class BoxSpec(pydantic.BaseModel):
@@ -437,6 +460,16 @@ class BoxProfile(pydantic.BaseModel):
 BUILTIN_PROFILES: dict[str, BoxProfile] = {
     "default": BoxProfile(
         name="default",
+        network=BoxNetworkMode.ON,
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        cpus=1.0,
+        memory_mb=512,
+        pids_limit=128,
+        read_only_rootfs=True,
+        max_timeout_sec=120,
+    ),
+    "offline": BoxProfile(
+        name="offline",
         network=BoxNetworkMode.OFF,
         host_path_mode=BoxHostMountMode.READ_WRITE,
         cpus=1.0,

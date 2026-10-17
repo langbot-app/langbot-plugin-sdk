@@ -13,7 +13,7 @@ import signal
 import tempfile
 import uuid
 
-from .backend import BaseSandboxBackend, _CommandResult, _MAX_RAW_OUTPUT_BYTES
+from .backend import BaseSandboxBackend, _CommandResult
 from .errors import BoxError, BoxValidationError
 from .models import (
     BoxExecutionResult,
@@ -63,6 +63,7 @@ class _HostManagedProcess:
 class HostProcessBackend(BaseSandboxBackend):
     """Explicitly unsafe backend that runs Box commands on the Runtime host."""
 
+    execution_scoped_mounts = True
     name = "host"
     unsafe_direct_execution = True
 
@@ -159,6 +160,20 @@ class HostProcessBackend(BaseSandboxBackend):
 
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
         state = self._require_session(session)
+        mounts = {posixpath.normpath(spec.mount_path): state.workspace_path}
+        mounts.update(
+            {
+                mount.mount_path: os.path.realpath(mount.host_path)
+                for mount in spec.extra_mounts
+                if mount.mode != BoxHostMountMode.NONE
+            }
+        )
+        state = dataclasses.replace(
+            state,
+            mounts=tuple(
+                sorted(mounts.items(), key=lambda item: len(item[0]), reverse=True)
+            ),
+        )
         workdir = self._map_path(state, spec.workdir)
         os.makedirs(workdir, exist_ok=True)
         command = self._rewrite_shell_paths(state, spec.cmd)
@@ -356,39 +371,6 @@ class HostProcessBackend(BaseSandboxBackend):
             except ProcessLookupError:
                 pass
             await process.wait()
-
-    @staticmethod
-    async def _read_stream(
-        stream: asyncio.StreamReader | None,
-        limit: int = _MAX_RAW_OUTPUT_BYTES,
-    ) -> tuple[bytes, int]:
-        if stream is None:
-            return b"", 0
-        chunks = bytearray()
-        total_size = 0
-        while True:
-            chunk = await stream.read(65536)
-            if not chunk:
-                break
-            total_size += len(chunk)
-            remaining = limit - len(chunks)
-            if remaining > 0:
-                chunks.extend(chunk[:remaining])
-        return bytes(chunks), total_size
-
-    @staticmethod
-    def _clip_captured_bytes(
-        data: bytes,
-        total_size: int,
-        limit: int = _MAX_RAW_OUTPUT_BYTES,
-    ) -> str:
-        text = data.decode("utf-8", errors="replace").strip()
-        if total_size > limit:
-            text += (
-                f"\n... [raw output clipped at {limit} bytes, "
-                f"{total_size - limit} bytes discarded]"
-            )
-        return text
 
     @staticmethod
     def _preview(command: str) -> str:

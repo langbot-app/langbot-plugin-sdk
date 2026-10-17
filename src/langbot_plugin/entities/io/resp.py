@@ -16,6 +16,14 @@ class ChunkStatus(enum.Enum):
 
 
 class ActionResponse(pydantic.BaseModel):
+    stream_index: int | None = None
+
+    def model_dump(self, **kwargs):
+        result = super().model_dump(**kwargs)
+        if self.stream_index is None:
+            result.pop("stream_index", None)
+        return result
+
     seq_id: Optional[int] = None
     code: int = pydantic.Field(..., description="The code of the response")
     message: str = pydantic.Field(..., description="The message of the response")

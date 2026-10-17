@@ -4,14 +4,16 @@ import asyncio
 import os
 import typing
 import logging
-import copy
+
 
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
 from langbot_plugin.runtime.plugin.container import (
     ComponentContainer,
     PluginContainer,
+    PluginInstallationSlot,
     RuntimeContainerStatus,
 )
+from langbot_plugin.api.proxies.invocation import freeze_config
 from langbot_plugin.cli.run.handler import PluginRuntimeHandler
 from langbot_plugin.runtime.io.connection import Connection
 from langbot_plugin.runtime.io.controllers.stdio import (
@@ -44,6 +46,37 @@ from langbot_plugin.runtime.security import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def notify_installation_revoked(
+    plugin_container: PluginContainer,
+    binding: InstallationBinding,
+) -> None:
+    """Let a plugin release process-local state held for one installation.
+
+    One object graph is shared by every installation of an artifact digest and is
+    never destroyed per installation, so a revoked installation's in-process state
+    is only released here. Dedicated workers are shut down instead of detached, so
+    this runs for shared placement.
+
+    There is no active invocation, so per-invocation APIs (Host storage, config
+    and binding lookups) are unavailable; the hook may only touch process-local
+    state. Failures are logged and never block revocation.
+    """
+
+    if plugin_container.status is not RuntimeContainerStatus.INITIALIZED:
+        return
+    hook = getattr(plugin_container.plugin_instance, "on_installation_revoked", None)
+    if hook is None:
+        return
+    try:
+        await hook(binding)
+    except Exception as exc:
+        logger.warning(
+            "Plugin on_installation_revoked failed for installation %s: %s",
+            binding.installation_uuid,
+            exc,
+        )
 
 
 class _SlotHandlerProxy:
@@ -154,8 +187,9 @@ class PluginRuntimeController:
             status=RuntimeContainerStatus.UNMOUNTED,
             components=components_containers,
         )
-        self._slot_containers: dict[str, PluginContainer] = {}
+        self._slot_containers: dict[str, PluginInstallationSlot] = {}
         self._slot_generations: dict[str, int] = {}
+        self._shared_initialize_lock = asyncio.Lock()
 
     async def run(self) -> None:
         await self._controller_task
@@ -427,37 +461,48 @@ class PluginRuntimeController:
 
     async def initialize_slot(
         self,
-        installation_uuid: str | InstallationBinding,
+        installation_uuid: InstallationBinding,
         plugin_settings: dict[str, typing.Any],
-    ) -> PluginContainer:
-        """Create or replace one installation's independent object graph."""
+    ) -> PluginInstallationSlot:
+        """Attach lightweight tenant state to one process-wide object graph."""
 
-        slot_key = (
-            installation_uuid.installation_uuid
-            if isinstance(installation_uuid, InstallationBinding)
-            else installation_uuid
-        )
+        if not isinstance(installation_uuid, InstallationBinding):
+            raise ValueError("Shared plugin slots require InstallationBinding")
+        execution = self.plugin_container.manifest.execution
+        if (
+            execution is None
+            or execution.shared_runtime != "shared-runtime-v1"
+            or execution.component_model != "stateless-v1"
+        ):
+            raise ValueError(
+                "Shared plugin slots require shared-runtime-v1/stateless-v1"
+            )
+        slot_key = installation_uuid.installation_uuid
         generation = self._slot_generations.get(slot_key, 0) + 1
         self._slot_generations[slot_key] = generation
-        slot = PluginContainer.from_dict(
-            copy.deepcopy(self.plugin_container.model_dump())
-        )
-        slot.plugin_instance = NonePlugin()
-        for component in slot.components:
-            component.component_instance = NoneComponent()
-        runtime_handler: typing.Any = self.handler
-        if isinstance(installation_uuid, InstallationBinding):
-            runtime_handler = _SlotHandlerProxy(self.handler, installation_uuid)
-        await self._initialize_container(slot, runtime_handler, plugin_settings)
+        async with self._shared_initialize_lock:
+            if self.plugin_container.status is not RuntimeContainerStatus.INITIALIZED:
+                await self._initialize_container(
+                    self.plugin_container,
+                    self.handler,
+                    {"enabled": True, "priority": 0, "plugin_config": {}},
+                )
         if self._slot_generations.get(slot_key) != generation:
             raise RuntimeError("Shared plugin slot initialization was superseded")
+        slot = PluginInstallationSlot(
+            binding=installation_uuid,
+            enabled=bool(plugin_settings["enabled"]),
+            priority=int(plugin_settings["priority"]),
+            plugin_config=freeze_config(plugin_settings["plugin_config"]),
+            plugin_container=self.plugin_container,
+        )
         self._slot_containers[slot_key] = slot
         return slot
 
     def plugin_container_for_slot(
         self,
         installation_uuid: str,
-    ) -> PluginContainer | None:
+    ) -> PluginInstallationSlot | None:
         return self._slot_containers.get(installation_uuid)
 
     def invalidate_slot(self, installation_uuid: str) -> None:
@@ -471,7 +516,13 @@ class PluginRuntimeController:
         """Drop exactly one slot; sibling instances remain resident."""
 
         self.invalidate_slot(installation_uuid)
-        self._slot_containers.pop(installation_uuid, None)
+        slot = self._slot_containers.pop(installation_uuid, None)
+        if slot is None:
+            return
+        # The slot is no longer routable while the object graph stays resident for
+        # sibling installations, so this is the only chance to release state the
+        # plugin keyed by the revoked binding.
+        await notify_installation_revoked(self.plugin_container, slot.binding)
 
     async def cleanup_instances(self) -> None:
         """Clean up all plugin and component instances."""

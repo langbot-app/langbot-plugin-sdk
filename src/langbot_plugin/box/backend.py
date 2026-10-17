@@ -10,9 +10,14 @@ import re
 import shlex
 import shutil
 import uuid
+import tempfile
+
+from ..artifact import materialize_tree
+from ..runtime import bounded_executor
 
 from .errors import BoxError
 from .models import (
+    ARTIFACT_MOUNT_ROOT,
     BoxExecutionResult,
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -41,6 +46,8 @@ class _CommandResult:
 class BaseSandboxBackend(abc.ABC):
     name: str
     instance_id: str = ""
+    execution_scoped_mounts: bool = False
+    content_addressed_mounts: bool = False
 
     def __init__(self, logger: logging.Logger):
         self.logger = logger
@@ -100,6 +107,36 @@ class BaseSandboxBackend(abc.ABC):
         pass
 
     @staticmethod
+    def _clip_captured_bytes(
+        data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES
+    ) -> str:
+        text = data.decode("utf-8", errors="replace").strip()
+        if total_size > limit:
+            text += f"\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]"
+        return text
+
+    @staticmethod
+    async def _read_stream(
+        stream: asyncio.StreamReader | None,
+        limit: int = _MAX_RAW_OUTPUT_BYTES,
+    ) -> tuple[bytes, int]:
+        if stream is None:
+            return b"", 0
+
+        chunks = bytearray()
+        total_size = 0
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            remaining = limit - len(chunks)
+            if remaining > 0:
+                chunks.extend(chunk[:remaining])
+
+        return bytes(chunks), total_size
+
+    @staticmethod
     async def _terminate_process(
         process: asyncio.subprocess.Process,
         *,
@@ -124,6 +161,7 @@ class BaseSandboxBackend(abc.ABC):
 
 
 class CLISandboxBackend(BaseSandboxBackend):
+    content_addressed_mounts = True
     command: str
 
     def __init__(self, logger: logging.Logger, command: str, backend_name: str):
@@ -131,6 +169,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         self.command = command
         self.name = backend_name
         self.cpu_limit_enabled = True
+        self._artifact_roots: dict[str, str] = {}
 
     async def is_available(self) -> bool:
         if shutil.which(self.command) is None:
@@ -185,8 +224,12 @@ class CLISandboxBackend(BaseSandboxBackend):
             )
             args.extend(["-v", mount_spec])
 
+        artifact_root = tempfile.mkdtemp(prefix="langbot-box-artifacts-")
+        os.chmod(artifact_root, 0o755)
+        self._artifact_roots[container_name] = artifact_root
+        args.extend(["-v", f"{artifact_root}:{ARTIFACT_MOUNT_ROOT}:ro"])
         for mount in spec.extra_mounts:
-            if mount.mode != BoxHostMountMode.NONE:
+            if mount.mode != BoxHostMountMode.NONE and not mount.is_content_addressed:
                 args.extend(
                     ["-v", f"{mount.host_path}:{mount.mount_path}:{mount.mode.value}"]
                 )
@@ -203,7 +246,27 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"read_only_rootfs={spec.read_only_rootfs} workspace_quota_mb={spec.workspace_quota_mb}"
         )
 
-        await self._run_command(args, timeout_sec=30, check=True)
+        start_task = None
+        try:
+            await self._prepare_artifacts(container_name, spec)
+            start_task = asyncio.create_task(
+                self._run_command(args, timeout_sec=30, check=True)
+            )
+            await asyncio.shield(start_task)
+        except BaseException:
+            if start_task is not None:
+                try:
+                    await start_task
+                except BaseException:
+                    pass
+                await self._run_command(
+                    [self.command, "rm", "-f", container_name],
+                    timeout_sec=20,
+                    check=False,
+                )
+            self._artifact_roots.pop(container_name, None)
+            shutil.rmtree(artifact_root)
+            raise
 
         return BoxSessionInfo(
             session_id=spec.session_id,
@@ -224,21 +287,44 @@ class CLISandboxBackend(BaseSandboxBackend):
             last_used_at=now,
         )
 
+    async def _prepare_artifacts(self, session_id: str, spec: BoxSpec) -> None:
+        for mount in spec.extra_mounts:
+            if mount.is_content_addressed:
+                root = self._artifact_roots.get(session_id)
+                if root is None:
+                    raise BoxError(
+                        "Immutable artifact cache is unavailable; acquire a new Box"
+                    )
+                try:
+                    await bounded_executor.run_blocking_atomic(
+                        materialize_tree,
+                        mount.host_path,
+                        mount.manifest_path,
+                        mount.content_digest,
+                        root,
+                    )
+                except (OSError, ValueError) as exc:
+                    raise BoxError(
+                        f"Immutable artifact preparation failed: {exc}"
+                    ) from exc
+
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
+        await self._prepare_artifacts(session.backend_session_id, spec)
         start = dt.datetime.now(dt.timezone.utc)
         args = [self.command, "exec"]
 
         for key, value in spec.env.items():
             args.extend(["-e", f"{key}={value}"])
 
-        args.extend(
-            [
-                session.backend_session_id,
-                "sh",
-                "-lc",
-                self._build_exec_command(spec.workdir, spec.cmd),
-            ]
-        )
+        command = self._build_exec_command(spec.workdir, spec.cmd)
+        # Attachment manifests can exceed Windows CreateProcess limits (and
+        # POSIX per-argument limits). Keep large scripts out of argv.
+        input_data = None
+        if len(command.encode("utf-8")) > 8192:
+            args.append("-i")
+            input_data = command.encode("utf-8")
+            command = 'exec sh -lc "$(cat)"'
+        args.extend([session.backend_session_id, "sh", "-lc", command])
 
         cmd_preview = spec.cmd.strip()
         if len(cmd_preview) > 400:
@@ -250,8 +336,9 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"env_keys={sorted(spec.env.keys())} cmd={cmd_preview}"
         )
 
+        run_options = {"input_data": input_data} if input_data is not None else {}
         result = await self._run_command(
-            args, timeout_sec=spec.timeout_sec, check=False
+            args, timeout_sec=spec.timeout_sec, check=False, **run_options
         )
         duration_ms = int(
             (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
@@ -284,11 +371,15 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"LangBot Box backend stop_session: backend={self.name} "
             f"session_id={session.session_id} container_name={session.backend_session_id}"
         )
-        await self._run_command(
+        result = await self._run_command(
             [self.command, "rm", "-f", session.backend_session_id],
             timeout_sec=20,
             check=False,
         )
+        if result.return_code == 0:
+            root = self._artifact_roots.pop(session.backend_session_id, None)
+            if root is not None:
+                await bounded_executor.run_blocking_cleanup(shutil.rmtree, root)
 
     async def is_session_alive(self, session: BoxSessionInfo) -> bool:
         result = await self._run_command(
@@ -405,18 +496,31 @@ class CLISandboxBackend(BaseSandboxBackend):
         args: list[str],
         timeout_sec: int,
         check: bool,
+        input_data: bytes | None = None,
     ) -> _CommandResult:
         process = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.PIPE if input_data is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout_task = asyncio.create_task(self._read_stream(process.stdout))
         stderr_task = asyncio.create_task(self._read_stream(process.stderr))
 
+        async def feed_and_wait():
+            if input_data is not None:
+                try:
+                    process.stdin.write(input_data)
+                    await process.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    process.stdin.close()
+            await process.wait()
+
         timed_out = False
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout_sec)
+            await asyncio.wait_for(feed_and_wait(), timeout=timeout_sec)
         except asyncio.TimeoutError:
             process.kill()
             timed_out = True
@@ -455,36 +559,6 @@ class CLISandboxBackend(BaseSandboxBackend):
             stderr=stderr,
             timed_out=False,
         )
-
-    @staticmethod
-    def _clip_captured_bytes(
-        data: bytes, total_size: int, limit: int = _MAX_RAW_OUTPUT_BYTES
-    ) -> str:
-        text = data.decode("utf-8", errors="replace").strip()
-        if total_size > limit:
-            text += f"\n... [raw output clipped at {limit} bytes, {total_size - limit} bytes discarded]"
-        return text
-
-    @staticmethod
-    async def _read_stream(
-        stream: asyncio.StreamReader | None,
-        limit: int = _MAX_RAW_OUTPUT_BYTES,
-    ) -> tuple[bytes, int]:
-        if stream is None:
-            return b"", 0
-
-        chunks = bytearray()
-        total_size = 0
-        while True:
-            chunk = await stream.read(65536)
-            if not chunk:
-                break
-            total_size += len(chunk)
-            remaining = limit - len(chunks)
-            if remaining > 0:
-                chunks.extend(chunk[:remaining])
-
-        return bytes(chunks), total_size
 
     def _format_cli_error(self, message: str) -> str:
         message = " ".join(message.split())

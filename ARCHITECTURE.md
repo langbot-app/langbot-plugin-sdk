@@ -55,12 +55,15 @@ Plugin-facing APIs live under `src/langbot_plugin/api/`.
 - `definition/plugin.py` defines `BasePlugin`.
 - `definition/components/` defines component base classes.
 - `definition/components/manifest.py` defines component manifest models. Plugin
-  manifests may set `execution.sharedRuntime: shared-runtime-v1`; omission keeps
-  the dedicated-runtime profile.
+  manifests may set `execution.sharedRuntime: shared-runtime-v1` together with
+  `execution.componentModel: stateless-v1`; omission keeps the legacy dedicated
+  object model.
 - `certification.py` defines optional ZIP-comment certification envelopes. It
   canonicalizes envelope JSON, normalizes the ZIP digest by removing the comment,
   and verifies the signed manifest identity and runtime profile without changing
-  legacy archive output.
+  unsigned archive output. New certificates exist only for Cloud cross-tenant
+  sharing of one Worker and one plugin/component singleton, not dedicated mode;
+  older v1 claims without signed stateless component model cannot authorize sharing.
 - `entities/` defines event/context/message/provider data models passed across LangBot, runtime, and plugin code.
 - `proxies/` defines methods plugins can call back into LangBot, such as messaging, storage, model invocation, tools, RAG, parser, and query-scoped APIs.
 
@@ -95,6 +98,27 @@ Subcommands:
 Subcommand implementations live under `cli/commands/`, `cli/run/`, and `cli/gen/`. CLI i18n lives under `cli/locales/`.
 
 ## Action RPC Protocol
+
+Streaming callers may send `stream_flow_control: 1` in the request envelope.
+Supporting senders number data responses with `stream_index` starting at 1 and
+allow eight unacknowledged frames per stream. After processing four frames, the
+caller sends `__stream_ack` with the original `seq_id` and cumulative `index`,
+using the original immutable installation context. The sender validates the
+context and index before returning credit. ACK admission has its own bounded
+capacity, separate from business actions and cancellation/heartbeat capacity.
+Only that stream's producer waits for credit; the connection router never waits
+on a consumer queue. Forwarding hops negotiate independently.
+
+Each streamed frame is limited to 1 MiB of serialized UTF-8 and each receiving
+buffer to 128 frames / 8 MiB. Oversize or legacy overflow is a terminal error,
+never a silently dropped delta. Older senders ignore the optional request field;
+without `stream_index`, callers send no ACKs and retain bounded legacy routing.
+Older callers omit the field, so new senders retain legacy push behavior.
+This compatibility does not provide backpressure on legacy hops; all hops must
+be upgraded for end-to-end flow control. Unfinished/failed/closed consumers send
+best-effort scoped cancellation, and producers explicitly close their iterators.
+The wire timeout bounds idle reads and ACK waits, not arbitrary time spent by
+application code processing a yielded value.
 
 The runtime protocol is a bidirectional action RPC protocol over stdio or WebSocket. It is implemented by `runtime/io/handler.py` and data models under `entities/io/`.
 
@@ -178,9 +202,10 @@ worker immediately; stale or cross-Workspace transitions fail closed.
 Dedicated enabled installations remain owned by installation-scoped
 Supervisors. A certified shared worker is keyed by the raw artifact digest and
 currently has pool size one: the first slot attach starts it and the last slot
-detach stops it. Installations sharing that process retain separate
-`BasePlugin`, component, config, Host authority, and lifecycle slots. Updating
-one slot reinitializes that slot without restarting siblings. Revision and
+detach stops it. Installations sharing that process use one `BasePlugin` and one instance of each
+component. Lightweight slots retain immutable config snapshots, Host authority,
+revision and task ownership. Invocation-local context selects the slot; config
+updates replace that snapshot without recreating components. Revision and
 generation fencing remove the exact stale slot, cancel its in-flight actions,
 and prevent background calls after detach.
 
@@ -217,6 +242,15 @@ same ready tree. Failed or partial preparations are removed and reported as the
 stable `dependency_prepare_failed` desired-state failure. Pip control options in
 an artifact's `requirements.txt` are rejected because only Runtime configuration
 may select indexes or trusted hosts.
+
+The dependency admission path has one bounded historical ABI exception: nine
+explicit `langbot-team` archive identities with exact raw SHA-256 digests and
+`langbot-plugin==0.6.1` may use the Runtime-owned SDK **0.7.6** in `dedicated`
+mode only. Artifact bytes are verified before extraction; a changed archive,
+identity, requirement, Runtime version, or shared execution mode fails normal
+SDK pin validation. This does not issue a certificate or change Core placement
+eligibility, and it does not install an older SDK into a worker. Cache schema is
+bumped so pre-exception dependency environments are never silently reused.
 
 Workers in the shared Runtime profile launch through nsjail with policy-owned
 cgroup CPU, memory, and
@@ -414,8 +448,18 @@ active or recoverable runs. Former mutable package directories are only a
 one-time online-upgrade import source.
 
 LangBot Core composes pinned revisions into generic read-only `BoxMountSpec`
-values whose `content_digest` and publication `manifest_path` participate in
-the session mount signature. Box
+values. Ordinary fixed mounts include `content_digest` and `manifest_path` in
+the session signature; supported digest-addressed packages are excluded from it.
+Digest-addressed packages use the reserved
+`/opt/langbot-artifacts/<digest>` namespace. Docker/Podman pre-mount a read-only
+cache and atomically populate verified revisions before execution. E2B seals and
+verifies packages before publishing stable digest projections. These packages can
+be added after a Box is acquired, without replacing the session. nsjail applies
+all mounts independently per execution. Fixed ordinary host mounts still reject
+incompatible reuse; a conflict never implicitly destroys the existing session.
+The unsafe host development backend maps each execution's paths without claiming
+filesystem isolation. Cached artifacts are shared within a Box, just like its
+Workspace; version pinning is not isolation between commands sharing that Box. Box
 has no Skill model, CRUD API, or `SKILL.md` knowledge in its normal path; it only
 validates and mounts artifacts. Copy-based backends prepare a digest-specific
 staging tree, verify the complete manifest, and publish it before projecting the

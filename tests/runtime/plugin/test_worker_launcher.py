@@ -571,6 +571,7 @@ async def test_prepare_dependency_environment_selects_profile_installer(
             *,
             runtime_fingerprint,
             installer,
+            execution_mode=None,
         ):
             captured.update(
                 artifact=artifact,
@@ -926,3 +927,155 @@ def test_launcher_configuration_is_required_immutable_and_platform_fenced(tmp_pa
     )
     with pytest.raises(RuntimeError, match="require Linux"):
         non_linux.configure(_policy(), "shared")
+
+
+def test_windows_shared_profile_executes_per_plugin_workers(tmp_path):
+    """Windows cannot isolate workers with nsjail, so the launcher degrades.
+
+    The shared *authorization* contract is unchanged (the launcher keeps
+    reporting the requested profile); only the execution mechanism falls back
+    to per-plugin workers, which is what the surrounding runtime expects on a
+    development host.
+    """
+
+    if sys.platform != "win32":
+        pytest.skip("Windows-only development fallback")
+
+    launcher = PluginWorkerLauncher(
+        platform="win32",
+        cgroup_v2_available=False,
+    )
+    launcher.configure(_policy(), "shared")
+
+    assert launcher.runtime_profile == "shared"
+    assert launcher._require_configuration()[1] == "oss_dev"
+
+
+def test_linux_shared_profile_keeps_hard_limit_fence():
+    """The production fence must survive future platform relaxations."""
+
+    if sys.platform != "linux":
+        pytest.skip("Linux-only production fence")
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=False,
+        platform="linux",
+    )
+    with pytest.raises(RuntimeError, match="require delegated cgroup v2"):
+        launcher.configure(_policy(), "shared")
+
+
+def test_shared_pool_worker_mounts_a_writable_tmp(tmp_path):
+    """Pool workers strip installation mounts, so /tmp must stay writable.
+
+    The shared worker handler creates its transfer root under /tmp
+    (SHARED_WORKER_FILE_STORAGE_DIR), while nsjail mounts the chroot read-only
+    unless the launch asks for a writable mount point.
+    """
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    args = launcher.build_shared_pool_nsjail_args(_launch_spec(tmp_path))
+
+    tmpfs_index = args.index("--tmpfsmount")
+    assert args[tmpfs_index + 1] == "/tmp"
+    # nsjail options must precede the command separator, otherwise they land in
+    # the worker argv instead of the sandbox configuration.
+    assert tmpfs_index < args.index("--")
+
+
+def test_shared_pool_worker_carries_the_plugin_process_tag(tmp_path):
+    """ps/htop must show which plugin a sandboxed worker belongs to."""
+
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+    )
+    launcher.configure(_policy(), "shared")
+
+    args = launcher.build_shared_pool_nsjail_args(_launch_spec(tmp_path))
+
+    tag_index = args.index("--tag")
+    assert args[tag_index + 1] == "tester/demo"
+    # The worker command ends with the production flag.
+    assert args.index("--prod") == tag_index + 2
+
+
+def test_oss_worker_carries_the_plugin_process_tag(tmp_path):
+    launcher = PluginWorkerLauncher(
+        nsjail_path="",
+        cgroup_v2_available=False,
+        platform="darwin",
+    )
+    launcher.configure(_policy(require_hard_limits=False), "oss_dev")
+
+    controller = launcher.create_controller(_launch_spec(tmp_path))
+
+    assert controller.args == [
+        "-m",
+        "langbot_plugin.cli.__init__",
+        "run",
+        "--tag",
+        "tester/demo",
+        "-s",
+        "--prod",
+    ]
+
+
+def test_shared_launcher_binds_resolver_symlink_target_without_exposing_run(
+    tmp_path, monkeypatch
+):
+    resolver = tmp_path / "run" / "resolv.conf"
+    resolver.parent.mkdir()
+    resolver.write_text("nameserver 1.1.1.1\n")
+    link = tmp_path / "etc" / "resolv.conf"
+    link.parent.mkdir()
+    link.symlink_to(resolver)
+    monkeypatch.setattr(worker_launcher_module, "_READONLY_ETC_FILES", (str(link),))
+    monkeypatch.setattr(worker_launcher_module, "_READONLY_SYSTEM_MOUNTS", ())
+    root = tmp_path / "jail"
+    launcher = PluginWorkerLauncher()
+    launcher._ensure_jail_mount_targets(root)
+    target = root / str(link).lstrip("/")
+    assert target.is_file() and not target.is_symlink()
+    args = []
+    launcher._append_readonly_runtime_mounts(args, None)
+    assert args == ["--bindmount_ro", f"{resolver}:{link}"]
+    assert not (root / str(resolver).lstrip("/")).exists()
+    # Existing roots from before the fix must also replace dangling links.
+    target.unlink()
+    target.symlink_to("/run/missing-resolv.conf")
+    launcher._ensure_jail_mount_targets(root)
+    assert target.is_file() and not target.is_symlink()
+
+
+def test_shared_launcher_mounts_editable_sdk_source_readonly(tmp_path):
+    prefix = tmp_path / "venv"
+    executable = prefix / "bin" / "python"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    source = tmp_path / "sdk" / "src"
+    source.mkdir(parents=True)
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        cgroup_v2_available=True,
+        platform="linux",
+        python_executable=str(executable),
+        python_prefix=str(prefix),
+        runtime_import_root=str(source),
+    )
+    launcher.configure(_policy(), "shared")
+    spec = _launch_spec(tmp_path)
+    args = launcher.build_nsjail_args(spec)
+    mount = f"{source}:{source}"
+    assert args[args.index(mount) - 1] == "--bindmount_ro"
+    assert (spec.paths.jail_root_path / str(source).lstrip("/")).is_dir()
+    assert f"{source.parent}:{source.parent}" not in args
+    assert f"PYTHONPATH={source}:/plugin-dependencies" in args
