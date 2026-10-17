@@ -10,9 +10,14 @@ import re
 import shlex
 import shutil
 import uuid
+import tempfile
+
+from ..artifact import materialize_tree
+from ..runtime import bounded_executor
 
 from .errors import BoxError
 from .models import (
+    ARTIFACT_MOUNT_ROOT,
     BoxExecutionResult,
     BoxExecutionStatus,
     BoxHostMountMode,
@@ -41,6 +46,8 @@ class _CommandResult:
 class BaseSandboxBackend(abc.ABC):
     name: str
     instance_id: str = ""
+    execution_scoped_mounts: bool = False
+    content_addressed_mounts: bool = False
 
     def __init__(self, logger: logging.Logger):
         self.logger = logger
@@ -87,7 +94,7 @@ class BaseSandboxBackend(abc.ABC):
             "mount_isolation": False if strict else None,
             "network_isolation": False if strict else None,
             "hard_workspace_quota": False if strict else None,
-            "hard_skill_storage_quota": False if strict else None,
+            "hard_read_only_mount_quota": False if strict else None,
             "bounded_ephemeral_storage": False if strict else None,
             "inode_quota": False if strict else None,
         }
@@ -154,6 +161,7 @@ class BaseSandboxBackend(abc.ABC):
 
 
 class CLISandboxBackend(BaseSandboxBackend):
+    content_addressed_mounts = True
     command: str
 
     def __init__(self, logger: logging.Logger, command: str, backend_name: str):
@@ -161,6 +169,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         self.command = command
         self.name = backend_name
         self.cpu_limit_enabled = True
+        self._artifact_roots: dict[str, str] = {}
 
     async def is_available(self) -> bool:
         if shutil.which(self.command) is None:
@@ -215,8 +224,12 @@ class CLISandboxBackend(BaseSandboxBackend):
             )
             args.extend(["-v", mount_spec])
 
+        artifact_root = tempfile.mkdtemp(prefix="langbot-box-artifacts-")
+        os.chmod(artifact_root, 0o755)
+        self._artifact_roots[container_name] = artifact_root
+        args.extend(["-v", f"{artifact_root}:{ARTIFACT_MOUNT_ROOT}:ro"])
         for mount in spec.extra_mounts:
-            if mount.mode != BoxHostMountMode.NONE:
+            if mount.mode != BoxHostMountMode.NONE and not mount.is_content_addressed:
                 args.extend(
                     ["-v", f"{mount.host_path}:{mount.mount_path}:{mount.mode.value}"]
                 )
@@ -233,7 +246,27 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"read_only_rootfs={spec.read_only_rootfs} workspace_quota_mb={spec.workspace_quota_mb}"
         )
 
-        await self._run_command(args, timeout_sec=30, check=True)
+        start_task = None
+        try:
+            await self._prepare_artifacts(container_name, spec)
+            start_task = asyncio.create_task(
+                self._run_command(args, timeout_sec=30, check=True)
+            )
+            await asyncio.shield(start_task)
+        except BaseException:
+            if start_task is not None:
+                try:
+                    await start_task
+                except BaseException:
+                    pass
+                await self._run_command(
+                    [self.command, "rm", "-f", container_name],
+                    timeout_sec=20,
+                    check=False,
+                )
+            self._artifact_roots.pop(container_name, None)
+            shutil.rmtree(artifact_root)
+            raise
 
         return BoxSessionInfo(
             session_id=spec.session_id,
@@ -254,7 +287,29 @@ class CLISandboxBackend(BaseSandboxBackend):
             last_used_at=now,
         )
 
+    async def _prepare_artifacts(self, session_id: str, spec: BoxSpec) -> None:
+        for mount in spec.extra_mounts:
+            if mount.is_content_addressed:
+                root = self._artifact_roots.get(session_id)
+                if root is None:
+                    raise BoxError(
+                        "Immutable artifact cache is unavailable; acquire a new Box"
+                    )
+                try:
+                    await bounded_executor.run_blocking_atomic(
+                        materialize_tree,
+                        mount.host_path,
+                        mount.manifest_path,
+                        mount.content_digest,
+                        root,
+                    )
+                except (OSError, ValueError) as exc:
+                    raise BoxError(
+                        f"Immutable artifact preparation failed: {exc}"
+                    ) from exc
+
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
+        await self._prepare_artifacts(session.backend_session_id, spec)
         start = dt.datetime.now(dt.timezone.utc)
         args = [self.command, "exec"]
 
@@ -316,11 +371,15 @@ class CLISandboxBackend(BaseSandboxBackend):
             f"LangBot Box backend stop_session: backend={self.name} "
             f"session_id={session.session_id} container_name={session.backend_session_id}"
         )
-        await self._run_command(
+        result = await self._run_command(
             [self.command, "rm", "-f", session.backend_session_id],
             timeout_sec=20,
             check=False,
         )
+        if result.return_code == 0:
+            root = self._artifact_roots.pop(session.backend_session_id, None)
+            if root is not None:
+                await bounded_executor.run_blocking_cleanup(shutil.rmtree, root)
 
     async def is_session_alive(self, session: BoxSessionInfo) -> bool:
         result = await self._run_command(

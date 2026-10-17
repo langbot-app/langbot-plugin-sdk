@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -403,7 +405,9 @@ async def test_start_session_host_path_none_skips_mount(backend):
         await backend.start_session(spec)
 
     argv = _argv_of(mock_exec)
-    assert "-v" not in argv
+    mounts = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-v"]
+    assert len(mounts) == 1
+    assert mounts[0].endswith(":/opt/langbot-artifacts:ro")
 
 
 @pytest.mark.anyio
@@ -984,3 +988,34 @@ def test_format_cli_error_collapses_and_truncates(backend):
 def test_command_result_defaults():
     r = _CommandResult(return_code=0, stdout="out", stderr="err")
     assert r.timed_out is False
+
+
+@pytest.mark.anyio
+async def test_cancelled_container_creation_waits_then_cleans_cache(backend):
+    import asyncio
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def run(args, **kwargs):
+        calls.append(args)
+        if args[1] == "run":
+            entered.set()
+            await release.wait()
+        return SimpleNamespace(return_code=0, stdout="", stderr="", timed_out=False)
+
+    with mock.patch.object(backend, "_run_command", side_effect=run):
+        task = asyncio.create_task(
+            backend.start_session(BoxSpec(session_id="cancel-create"))
+        )
+        await entered.wait()
+        roots = list(backend._artifact_roots.values())
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert calls[-1][1:3] == ["rm", "-f"]
+    assert not backend._artifact_roots
+    assert all(not os.path.exists(root) for root in roots)

@@ -63,6 +63,7 @@ class _HostManagedProcess:
 class HostProcessBackend(BaseSandboxBackend):
     """Explicitly unsafe backend that runs Box commands on the Runtime host."""
 
+    execution_scoped_mounts = True
     name = "host"
     unsafe_direct_execution = True
 
@@ -95,7 +96,7 @@ class HostProcessBackend(BaseSandboxBackend):
             "mount_isolation": False,
             "network_isolation": False,
             "hard_workspace_quota": False,
-            "hard_skill_storage_quota": False,
+            "hard_read_only_mount_quota": False,
             "bounded_ephemeral_storage": False,
             "inode_quota": False,
         }
@@ -159,6 +160,20 @@ class HostProcessBackend(BaseSandboxBackend):
 
     async def exec(self, session: BoxSessionInfo, spec: BoxSpec) -> BoxExecutionResult:
         state = self._require_session(session)
+        mounts = {posixpath.normpath(spec.mount_path): state.workspace_path}
+        mounts.update(
+            {
+                mount.mount_path: os.path.realpath(mount.host_path)
+                for mount in spec.extra_mounts
+                if mount.mode != BoxHostMountMode.NONE
+            }
+        )
+        state = dataclasses.replace(
+            state,
+            mounts=tuple(
+                sorted(mounts.items(), key=lambda item: len(item[0]), reverse=True)
+            ),
+        )
         workdir = self._map_path(state, spec.workdir)
         os.makedirs(workdir, exist_ok=True)
         command = self._rewrite_shell_paths(state, spec.cmd)

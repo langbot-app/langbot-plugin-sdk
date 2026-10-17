@@ -16,12 +16,15 @@ import pytest
 from langbot_plugin.box.e2b_backend import (
     E2BSandboxBackend,
     _adapt_path_for_e2b,
+    _build_e2b_host_manifest,
     _check_e2b_available,
     _rewrite_command_paths_for_e2b,
 )
+from langbot_plugin.box.errors import BoxError
 from langbot_plugin.box.models import (
     BoxExecutionStatus,
     BoxHostMountMode,
+    BoxMountSpec,
     BoxNetworkMode,
     BoxSessionInfo,
     BoxSpec,
@@ -93,6 +96,25 @@ def test_adapt_path_other_paths_unchanged():
     assert _adapt_path_for_e2b("/home/user") == "/home/user"
     assert _adapt_path_for_e2b("/tmp") == "/tmp"
     assert _adapt_path_for_e2b("/code") == "/code"
+
+
+def test_extra_mount_projections_are_excluded_from_workspace_sync(backend):
+    spec = BoxSpec(
+        session_id="overlay",
+        extra_mounts=[
+            BoxMountSpec(
+                host_path="/tmp/revision",
+                mount_path="/workspace/.skills/demo",
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ],
+    )
+
+    shadowed = backend._main_mount_shadow_paths(spec)
+
+    assert shadowed == {".skills/demo"}
+    assert backend._path_is_shadowed(".skills/demo/run.py", shadowed) is True
+    assert backend._path_is_shadowed("notes.txt", shadowed) is False
 
 
 def test_rewrite_command_paths_for_e2b_respects_path_boundaries():
@@ -403,6 +425,120 @@ async def test_exec_success(backend, mock_e2b_module):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "mount_kind", ["read_only_primary", "read_write_primary", "read_only_extra"]
+)
+async def test_exec_syncs_mounts_before_running_command(
+    backend, mock_e2b_module, tmp_path, mount_kind
+):
+    """Exercise the real sync dispatch, including immutable materialization."""
+    (tmp_path / "input.txt").write_text("input", encoding="utf-8")
+    spec = BoxSpec(session_id="exec-mount", cmd="cat /workspace/input.txt")
+    if mount_kind == "read_only_extra":
+        spec.extra_mounts = [
+            BoxMountSpec(
+                host_path=str(tmp_path),
+                mount_path="/workspace",
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ]
+    else:
+        spec.host_path = str(tmp_path)
+        spec.host_path_mode = (
+            BoxHostMountMode.READ_ONLY
+            if mount_kind == "read_only_primary"
+            else BoxHostMountMode.READ_WRITE
+        )
+    mock_e2b_module.files = SimpleNamespace(
+        write=mock.AsyncMock(), list=mock.AsyncMock(return_value=[])
+    )
+    session = await backend.start_session(spec)
+
+    result = await backend.exec(session, spec)
+
+    assert result.status == BoxExecutionStatus.COMPLETED
+    assert result.exit_code == 0
+    commands = mock_e2b_module.commands.run.await_args_list
+    assert commands[-1].kwargs["cmd"].endswith("cat /home/user/workspace/input.txt")
+    writes = mock_e2b_module.files.write.await_args_list
+    assert writes[0].args[1] == b"input"
+    if mount_kind == "read_write_primary":
+        assert writes[0].args[0] == "/home/user/workspace/input.txt"
+        assert len(writes) == 1
+        mock_e2b_module.files.list.assert_awaited_once_with(
+            "/home/user/workspace", depth=16
+        )
+    else:
+        assert writes[0].args[0].endswith("/package/input.txt")
+        assert (
+            len(writes) == 2
+        )  # package file and manifest; root writes the ready marker
+        setup_commands = "\n".join(call.args[0] for call in commands[:-1])
+        assert setup_commands.index("python3 -c") < setup_commands.index("ln -s")
+        mock_e2b_module.files.list.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_exec_writable_primary_excludes_shadowed_extra_mounts(
+    backend, mock_e2b_module, tmp_path
+):
+    workspace = tmp_path / "workspace"
+    shadowed = workspace / ".skills" / "demo"
+    shadowed.mkdir(parents=True)
+    (shadowed / "stale.txt").write_text("shadowed", encoding="utf-8")
+    (workspace / ".skills" / "demo.txt").write_text("sibling", encoding="utf-8")
+    (workspace / "notes.txt").write_text("notes", encoding="utf-8")
+    revision = tmp_path / "revision"
+    revision.mkdir()
+    (revision / "run.py").write_text("print('ok')", encoding="utf-8")
+    spec = BoxSpec(
+        session_id="exec-overlay",
+        cmd="python /workspace/.skills/demo/run.py",
+        host_path=str(workspace),
+        host_path_mode=BoxHostMountMode.READ_WRITE,
+        extra_mounts=[
+            BoxMountSpec(
+                host_path=str(revision),
+                mount_path="/workspace/.skills/demo",
+                mode=BoxHostMountMode.READ_ONLY,
+            )
+        ],
+    )
+    mock_e2b_module.files = SimpleNamespace(
+        write=mock.AsyncMock(),
+        list=mock.AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    path="/home/user/workspace/.skills/demo/run.py",
+                    size=11,
+                    type=SimpleNamespace(value="file"),
+                )
+            ]
+        ),
+        read=mock.AsyncMock(),
+    )
+    session = await backend.start_session(spec)
+
+    result = await backend.exec(session, spec)
+
+    assert result.status == BoxExecutionStatus.COMPLETED
+    assert result.exit_code == 0
+    writes = mock_e2b_module.files.write.await_args_list
+    uploaded_paths = [call.args[0] for call in writes]
+    assert "/home/user/workspace/notes.txt" in uploaded_paths
+    assert "/home/user/workspace/.skills/demo.txt" in uploaded_paths
+    assert not any(path.endswith("/stale.txt") for path in uploaded_paths)
+    assert any(path.endswith("/package/run.py") for path in uploaded_paths)
+    assert (
+        mock_e2b_module.commands.run.await_args_list[-1]
+        .kwargs["cmd"]
+        .endswith("python /home/user/workspace/.skills/demo/run.py")
+    )
+    mock_e2b_module.files.read.assert_not_awaited()
+    assert not (shadowed / "run.py").exists()
+
+
+@pytest.mark.anyio
 async def test_exec_timeout(backend, mock_e2b_module):
     """exec handles timeout correctly."""
     backend._api_key = "test-api-key"
@@ -544,6 +680,132 @@ async def test_remote_sync_stream_is_bounded(backend, tmp_path, monkeypatch):
     assert not (tmp_path / "large.bin").exists()
 
 
+@pytest.mark.anyio
+async def test_immutable_mount_is_verified_before_projection(backend, tmp_path):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    (tmp_path / "run.py").write_text("print('ok')", encoding="utf-8")
+    digest, manifest = _build_e2b_host_manifest(str(tmp_path))
+    manifest_path = tmp_path.with_name(f"{tmp_path.name}-manifest.json")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    commands = SimpleNamespace(
+        run=mock.AsyncMock(
+            return_value=SimpleNamespace(exit_code=0, stdout="", stderr="")
+        )
+    )
+    files = SimpleNamespace(write=mock.AsyncMock())
+    sandbox = SimpleNamespace(commands=commands, files=files)
+
+    with mock.patch(
+        "langbot_plugin.box.e2b_backend._build_e2b_host_manifest",
+        side_effect=AssertionError("published mounts must use their manifest"),
+    ):
+        await backend._materialize_immutable_mount(
+            sandbox,
+            host_root=str(tmp_path),
+            remote_root="/home/user/workspace/.skills/demo",
+            expected_digest=digest,
+            manifest_path=str(manifest_path),
+        )
+
+    commands_text = "\n".join(call.args[0] for call in commands.run.await_args_list)
+    verify_index = commands_text.index("python3 -c")
+    publish_index = commands_text.index("mv ")
+    projection_index = commands_text.index("ln -s")
+    assert (
+        commands_text.index("cp -R -P")
+        < verify_index
+        < publish_index
+        < projection_index
+    )
+    assert files.write.await_count == 3  # two package files and manifest
+
+
+@pytest.mark.anyio
+async def test_interrupted_immutable_transfer_never_projects_partial_tree(
+    backend,
+    tmp_path,
+):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    (tmp_path / "run.py").write_text("print('ok')", encoding="utf-8")
+    digest, _manifest = _build_e2b_host_manifest(str(tmp_path))
+    commands = SimpleNamespace(
+        run=mock.AsyncMock(
+            return_value=SimpleNamespace(exit_code=0, stdout="", stderr="")
+        )
+    )
+    files = SimpleNamespace(
+        write=mock.AsyncMock(side_effect=[None, OSError("upload interrupted")])
+    )
+    sandbox = SimpleNamespace(commands=commands, files=files)
+
+    with pytest.raises(BoxError, match="materialize immutable E2B mount"):
+        await backend._materialize_immutable_mount(
+            sandbox,
+            host_root=str(tmp_path),
+            remote_root="/home/user/workspace/.skills/demo",
+            expected_digest=digest,
+        )
+
+    commands_text = "\n".join(call.args[0] for call in commands.run.await_args_list)
+    assert "ln -s" not in commands_text
+    assert "staging" in commands_text and "rm -rf" in commands_text
+
+
+@pytest.mark.anyio
+async def test_immutable_mount_rejects_declared_digest_mismatch(backend, tmp_path):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    sandbox = SimpleNamespace(
+        commands=SimpleNamespace(run=mock.AsyncMock()),
+        files=SimpleNamespace(write=mock.AsyncMock()),
+    )
+
+    with pytest.raises(BoxError, match="does not match"):
+        await backend._materialize_immutable_mount(
+            sandbox,
+            host_root=str(tmp_path),
+            remote_root="/home/user/workspace/.skills/demo",
+            expected_digest="sha256:" + "0" * 64,
+        )
+
+    sandbox.files.write.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_box_restart_reuses_only_verified_ready_revision(backend, tmp_path):
+    (tmp_path / "SKILL.md").write_text("instructions", encoding="utf-8")
+    digest, manifest = _build_e2b_host_manifest(str(tmp_path))
+    manifest_path = tmp_path.with_name(f"{tmp_path.name}-manifest.json")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    success = SimpleNamespace(exit_code=0, stdout="", stderr="")
+    commands = SimpleNamespace(
+        run=mock.AsyncMock(
+            side_effect=[
+                SimpleNamespace(exit_code=0, stdout=digest, stderr=""),
+                success,
+                success,
+            ]
+        )
+    )
+    sandbox = SimpleNamespace(
+        commands=commands,
+        files=SimpleNamespace(write=mock.AsyncMock()),
+    )
+
+    await backend._materialize_immutable_mount(
+        sandbox,
+        host_root=str(tmp_path),
+        remote_root="/home/user/workspace/.skills/demo",
+        expected_digest=digest,
+        manifest_path=str(manifest_path),
+    )
+
+    sandbox.files.write.assert_not_awaited()
+    commands_text = "\n".join(call.args[0] for call in commands.run.await_args_list)
+    assert "python3 -c" in commands_text
+    assert "ln -s" in commands_text
+    assert "staging-" not in commands_text
+
+
 # ── _check_e2b_available ──────────────────────────────────────────────
 
 
@@ -575,3 +837,75 @@ def test_check_e2b_available_returns_false_on_import_error():
         result = _check_e2b_available()
 
     assert result is False
+
+
+@pytest.mark.anyio
+async def test_verifier_rejects_symlink_package_root_and_manifest(backend, tmp_path):
+    import asyncio
+
+    package = tmp_path / "package"
+    package.mkdir()
+    (package / "value").write_text("expected")
+    digest, manifest = _build_e2b_host_manifest(str(package))
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+
+    async def run(command, **kwargs):
+        process = await asyncio.create_subprocess_shell(
+            command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        return SimpleNamespace(
+            exit_code=process.returncode, stdout=stdout.decode(), stderr=stderr.decode()
+        )
+
+    sandbox = SimpleNamespace(commands=SimpleNamespace(run=run))
+    await backend._verify_remote_manifest(
+        sandbox,
+        package_root=str(package),
+        manifest_path=str(manifest_path),
+        expected_digest=digest,
+    )
+    alias = tmp_path / "alias"
+    alias.symlink_to(package, target_is_directory=True)
+    with pytest.raises(BoxError):
+        await backend._verify_remote_manifest(
+            sandbox,
+            package_root=str(alias),
+            manifest_path=str(manifest_path),
+            expected_digest=digest,
+        )
+    alias.unlink()
+    alias.symlink_to(manifest_path)
+    with pytest.raises(BoxError):
+        await backend._verify_remote_manifest(
+            sandbox,
+            package_root=str(package),
+            manifest_path=str(alias),
+            expected_digest=digest,
+        )
+
+
+@pytest.mark.anyio
+async def test_cancelled_upload_cleans_staging_without_publication(backend, tmp_path):
+    import asyncio
+
+    (tmp_path / "file").write_text("data")
+    sandbox = SimpleNamespace(
+        files=SimpleNamespace(
+            write=mock.AsyncMock(side_effect=asyncio.CancelledError())
+        ),
+        commands=SimpleNamespace(
+            run=mock.AsyncMock(
+                return_value=SimpleNamespace(exit_code=0, stdout="", stderr="")
+            )
+        ),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await backend._materialize_immutable_mount(
+            sandbox, host_root=str(tmp_path), remote_root="/test-package"
+        )
+    calls = [call.args[0] for call in sandbox.commands.run.await_args_list]
+    assert "rm -rf" in calls[-1]
+    assert ".sealed" in calls[-1]
+    assert not any("ln -s" in command or "mv " in command for command in calls)
