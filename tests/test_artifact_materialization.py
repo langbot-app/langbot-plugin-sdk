@@ -44,25 +44,34 @@ def test_changed_or_partial_source_never_becomes_visible(tmp_path):
     assert not list(tmp_path.glob("langbot-artifact-stage-*"))
 
 
-@pytest.mark.parametrize('mode,revision,path', [
-    ('rw', 'sha256:' + '1' * 64, '/opt/langbot-artifacts/' + '1' * 64),
-    ('ro', 'sha256:' + '1' * 64, '/opt/langbot-artifacts/' + '2' * 64),
-    ('ro', None, '/opt/langbot-artifacts'),
-])
+@pytest.mark.parametrize(
+    "mode,revision,path",
+    [
+        ("rw", "sha256:" + "1" * 64, "/opt/langbot-artifacts/" + "1" * 64),
+        ("ro", "sha256:" + "1" * 64, "/opt/langbot-artifacts/" + "2" * 64),
+        ("ro", None, "/opt/langbot-artifacts"),
+    ],
+)
 def test_reserved_artifact_paths_require_exact_immutable_identity(mode, revision, path):
     from langbot_plugin.box.models import BoxMountSpec
+
     with pytest.raises(ValueError):
-        BoxMountSpec(host_path='/tmp/source', mount_path=path, mode=mode, content_digest=revision,
-                     manifest_path='/tmp/manifest.json')
+        BoxMountSpec(
+            host_path="/tmp/source",
+            mount_path=path,
+            mode=mode,
+            content_digest=revision,
+            manifest_path="/tmp/manifest.json",
+        )
 
 
 def test_artifact_cache_rejects_wrong_digest_and_capacity_exhaustion(tmp_path):
-    cache = tmp_path / 'cache'
+    cache = tmp_path / "cache"
     cache.mkdir()
-    source = publication(tmp_path, 'package', {'value': 'expected'})
-    with pytest.raises(ValueError, match='content_digest'):
-        materialize_tree(source[0], source[1], 'sha256:' + '0' * 64, str(cache))
+    source = publication(tmp_path, "package", {"value": "expected"})
+    with pytest.raises(ValueError, match="content_digest"):
+        materialize_tree(source[0], source[1], "sha256:" + "0" * 64, str(cache))
     for index in range(256):
         (cache / str(index)).mkdir()
-    with pytest.raises(ValueError, match='cache limit'):
+    with pytest.raises(ValueError, match="cache limit"):
         materialize_tree(*source, str(cache))
