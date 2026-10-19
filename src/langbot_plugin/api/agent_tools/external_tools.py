@@ -18,6 +18,10 @@ from langbot_plugin.api.entities.builtin.runner.box import BoxAcquireRequest
 from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 
+class ExportBoxArgs(pydantic.BaseModel):
+    paths: list[str] = pydantic.Field(min_length=1, description="Absolute sandbox file paths to export and clean up")
+
+
 class EmptyArgs(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(extra="forbid")
 
@@ -490,11 +494,11 @@ class AgentRunExternalTools:
 
     @agent_tool(
         name="langbot_export_box_files",
-        description="Export files placed in this run's outbox. Returns file IDs; does not send them to the user.",
-        args_model=EmptyArgs,
+        description="Validate and export selected sandbox files, then clean up accepted files. Returns file IDs; does not send them to the user.",
+        args_model=ExportBoxArgs,
     )
-    async def export_box_files(self, args: EmptyArgs):
-        return await self.api.export_box_files()
+    async def export_box_files(self, args: ExportBoxArgs):
+        return await self.api.export_box_files(args.paths)
 
     @agent_tool(
         name="langbot_reply_files",

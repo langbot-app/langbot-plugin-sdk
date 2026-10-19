@@ -43,7 +43,8 @@ async def test_context_box_operations_carry_run_and_explicit_file_refs():
     await proxy.acquire_box("global")
     await proxy.bind_box("box")
     await proxy.import_box_attachments(["attachment-0"])
-    await proxy.export_box_files()
+    await proxy.export_box_files(["/out/run/result.txt"])
+    assert handler.call_action.await_args.args[1]["paths"] == ["/out/run/result.txt"]
     assert await proxy.reply_files(["file-1"]) == {"ok": True}
     for call in handler.call_action.await_args_list:
         assert call.args[1]["run_id"] == ctx.run_id
