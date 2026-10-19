@@ -49,7 +49,10 @@ class RunnerBoxAPIMixin:
     async def export_box_files(self, paths: list[str]) -> list[BoxFile]:
         """Export selected absolute sandbox paths; does not send any message."""
         result = await self._box_call(Action.EXPORT_BOX_FILES, paths=paths)
-        return [BoxFile.model_validate({**item, "warning": result.get("warning")}) for item in result["items"]]
+        return [
+            BoxFile.model_validate({**item, "warning": result.get("warning")})
+            for item in result["items"]
+        ]
 
     async def reply_files(self, file_ids: list[str]):
         """Explicitly reply with files exported by this invocation."""
