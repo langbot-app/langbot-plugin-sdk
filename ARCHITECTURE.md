@@ -398,7 +398,13 @@ never treats it as successful cleanup or as cross-tenant access.
 A run binds one Box before native sandbox tools or file transfer. The Host does not
 choose a conversation scope or stage attachments before starting the Runner. Input
 references retain the original attachment metadata; import yields paths specific to
-the run. Output export reads only that run's outbox and returns opaque file handles.
+the run. Output export requires an explicit list of normalized absolute sandbox file paths
+and returns opaque handles scoped to the current run. File creation alone does
+not deliver an attachment. Core validates the selected batch before accepting it,
+then removes only the accepted files; unselected files remain. A cleanup warning
+is carried on the returned BoxFile handles and does not mean export failed.
+Core, LocalAgent and the SDK must upgrade together: older no-argument export
+clients are incompatible with this selected-path contract.
 `message.completed.file_ids` attaches explicitly exported files to Pipeline output;
 Agents send them explicitly with `ctx.reply_files()`, subject to event reply permission.
 The Pipeline wrapper never scans a Box. Binding ends with the run; the reusable Box

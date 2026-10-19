@@ -57,3 +57,23 @@ async def test_resource_api_without_invocation_does_not_invent_a_run():
     handler.call_action = AsyncMock(return_value={"items": []})
     assert await LangBotAPIProxy(handler).list_boxes() == []
     assert handler.call_action.await_args.args[:2] == (Action.LIST_BOXES, {})
+
+
+@pytest.mark.asyncio
+async def test_context_explicit_export_preserves_paths_and_cleanup_warning():
+    ctx = create_mock_context()
+    handler = MagicMock()
+    handler.call_action = AsyncMock(
+        return_value={
+            "items": [{"id": "file", "name": "answer.txt", "type": "File", "size": 4}],
+            "warning": "Files accepted, but cleanup failed; do not repeat delivery.",
+        }
+    )
+    ctx._api = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+    files = await ctx.export_box_files(["/workspace/artifacts/answer.txt"])
+    assert len(files) == 1 and files[0].id == "file"
+    assert files[0].warning == handler.call_action.return_value["warning"]
+    assert handler.call_action.await_args.args[:2] == (
+        Action.EXPORT_BOX_FILES,
+        {"run_id": ctx.run_id, "paths": ["/workspace/artifacts/answer.txt"]},
+    )
