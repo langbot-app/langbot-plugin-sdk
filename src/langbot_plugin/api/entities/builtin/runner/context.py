@@ -172,9 +172,9 @@ class RunnerContext(pydantic.BaseModel):
         """Import selected input refs, or all inputs, into run-specific paths."""
         return await self.api.import_box_attachments(attachment_ids)
 
-    async def export_box_files(self) -> list["BoxFile"]:
-        """Export current-run outbox files as handles; does not send them."""
-        return await self.api.export_box_files()
+    async def export_box_files(self, paths: list[str]) -> list["BoxFile"]:
+        """Export explicitly selected absolute sandbox paths; does not send them."""
+        return await self.api.export_box_files(paths)
 
     async def reply_files(self, file_ids: list[str]) -> typing.Any:
         """Explicitly reply with exported handles, subject to tool authorization."""

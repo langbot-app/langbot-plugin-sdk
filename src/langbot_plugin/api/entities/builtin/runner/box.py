@@ -30,6 +30,7 @@ class BoxFile(pydantic.BaseModel):
     type: str
     size: int
     path: str | None = None
+    warning: str | None = None
 
 
 class BoxAcquireRequest(pydantic.BaseModel):
