@@ -188,7 +188,12 @@ def test_agent_run_external_tools_are_run_authorization_filtered() -> None:
             (["attachment-0"],),
             {},
         ),
-        ("export_box_files", {}, (), {}),
+        (
+            "export_box_files",
+            {"paths": ["/workspace/out/answer.txt"]},
+            (["/workspace/out/answer.txt"],),
+            {},
+        ),
         ("reply_files", {"file_ids": ["file-1"]}, (["file-1"],), {}),
     ],
 )
@@ -870,3 +875,18 @@ def test_agent_runtime_daemon_relay_round_trips_mcp_tools() -> None:
             await hub.stop()
 
     asyncio.run(run_probe())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [{}, {"paths": []}])
+async def test_external_export_requires_selected_files_before_host_call(arguments):
+    import pydantic
+
+    ctx = _authorized_ctx()
+    ctx.context.available_apis.box = True
+    api = MagicMock()
+    api.export_box_files = AsyncMock()
+    tools = AgentRunExternalTools(api, ctx)
+    with pytest.raises(pydantic.ValidationError):
+        await tools.call_tool("langbot_export_box_files", arguments)
+    api.export_box_files.assert_not_called()

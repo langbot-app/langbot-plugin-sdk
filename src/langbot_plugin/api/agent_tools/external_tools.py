@@ -19,7 +19,9 @@ from langbot_plugin.api.proxies.runner import RunnerAPIProxy
 
 
 class ExportBoxArgs(pydantic.BaseModel):
-    paths: list[str] = pydantic.Field(min_length=1, description="Absolute sandbox file paths to export and clean up")
+    paths: list[str] = pydantic.Field(
+        min_length=1, description="Absolute sandbox file paths to export and clean up"
+    )
 
 
 class EmptyArgs(pydantic.BaseModel):
