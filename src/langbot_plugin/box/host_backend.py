@@ -357,20 +357,22 @@ class HostProcessBackend(BaseSandboxBackend):
         *,
         timeout_sec: float = 2.0,
     ) -> None:
-        if process.returncode is not None:
-            return
+        """Terminate the isolated group even if its shell has already exited."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_sec
         try:
             os.killpg(process.pid, signal.SIGTERM)
+            # A shell exit does not mean descendants exited or closed their pipes.
+            while True:
+                os.killpg(process.pid, 0)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(0.05, remaining))
+            os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        try:
-            await asyncio.wait_for(process.wait(), timeout=timeout_sec)
-        except asyncio.TimeoutError:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+        await process.wait()
 
     @staticmethod
     def _preview(command: str) -> str:

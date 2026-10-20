@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
+import signal
 
 import pytest
 
@@ -209,3 +211,78 @@ async def test_host_backend_reports_no_isolation(backend):
     assert readiness["mount_isolation"] is False
     assert readiness["network_isolation"] is False
     assert readiness["cgroup_v2"] is False
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("trigger", ["timeout", "cancel"])
+@pytest.mark.parametrize("topology", ["closed_output", "exited_parent"])
+async def test_host_backend_kills_sigterm_resistant_descendants(
+    backend, tmp_path, trigger, topology
+):
+    child_script = (
+        "trap '' TERM\n"
+        + ("exec >/dev/null 2>&1\n" if topology == "closed_output" else "")
+        + 'printf %s "$$" > child.pid\nexec sleep 30'
+    )
+    command = (
+        'printf %s "$$" > parent.pid\n'
+        + f"sh -c {shlex.quote(child_script)} &\n"
+        + "while [ ! -s child.pid ]; do sleep 0.01; done\n"
+        + ("exit 0" if topology == "exited_parent" else "wait")
+    )
+    spec = _spec(tmp_path, cmd=command, timeout_sec=1 if trigger == "timeout" else 30)
+    session = await backend.start_session(spec)
+    task = asyncio.create_task(backend.exec(session, spec))
+    parent_pid = None
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5
+        pid_file = tmp_path / "child.pid"
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            assert loop.time() < deadline, "child did not become ready"
+            await asyncio.sleep(0.01)
+        child_pid = int(pid_file.read_text())
+        parent_pid = int((tmp_path / "parent.pid").read_text())
+        assert os.getpgid(child_pid) == parent_pid
+
+        # Exercise cancellation only after the parent has already been reaped.
+        if topology == "exited_parent":
+            while True:
+                try:
+                    os.kill(parent_pid, 0)
+                except ProcessLookupError:
+                    break
+                assert loop.time() < deadline, "parent shell did not exit"
+                await asyncio.sleep(0.01)
+
+        if trigger == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=6)
+        else:
+            result = await asyncio.wait_for(asyncio.shield(task), timeout=6)
+            assert result.status == BoxExecutionStatus.TIMED_OUT
+
+        deadline = loop.time() + 1
+        while True:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            assert loop.time() < deadline, "SIGTERM-resistant child survived cleanup"
+            await asyncio.sleep(0.01)
+    finally:
+        # A failing regression must not leave a live descendant in the runner.
+        if parent_pid is None:
+            pid_file = tmp_path / "parent.pid"
+            if pid_file.exists() and pid_file.read_text().strip():
+                parent_pid = int(pid_file.read_text())
+        if parent_pid is not None:
+            try:
+                os.killpg(parent_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await backend.stop_session(session)
