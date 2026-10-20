@@ -458,7 +458,10 @@ values. Ordinary fixed mounts include `content_digest` and `manifest_path` in
 the session signature; supported digest-addressed packages are excluded from it.
 Digest-addressed packages use the reserved
 `/opt/langbot-artifacts/<digest>` namespace. Docker/Podman pre-mount a read-only
-cache and atomically populate verified revisions before execution. E2B seals and
+cache and atomically populate verified revisions before execution. Caches live
+under the configured `box.local.host_root`, outside the default writable Workspace,
+and are removed with their session. Containerized Box must share this root at the
+same absolute path as the host daemon. E2B seals and
 verifies packages before publishing stable digest projections. These packages can
 be added after a Box is acquired, without replacing the session. nsjail applies
 all mounts independently per execution. Fixed ordinary host mounts still reject
