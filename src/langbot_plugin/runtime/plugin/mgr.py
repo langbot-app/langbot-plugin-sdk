@@ -41,6 +41,7 @@ from langbot_plugin.runtime import bounded_executor
 from langbot_plugin.runtime import ops_metrics as ops_metrics_module
 from langbot_plugin.api.entities.context import EventContext
 from langbot_plugin.api.definition.components.manifest import ComponentManifest
+from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.definition.components.knowledge_engine.engine import (
@@ -3193,6 +3194,12 @@ class PluginManager:
                 )
                 if plugin_id not in include_plugins:
                     continue
+
+            if not any(
+                component.manifest.kind == EventListener.__kind__
+                for component in plugin.components
+            ):
+                continue
 
             reply_message_chain_before = _dump_reply_message_chain(event_context)
             trusted_query_id = event_context.query_id
