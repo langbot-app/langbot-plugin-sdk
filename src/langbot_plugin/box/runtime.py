@@ -22,7 +22,7 @@ import pydantic
 from langbot_plugin.entities.io.context import ActionContext
 from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
 
-from .backend import BaseSandboxBackend, DockerBackend
+from .backend import BaseSandboxBackend, CLISandboxBackend, DockerBackend
 from .host_backend import HostProcessBackend
 from .nsjail_backend import NsjailBackend
 from .errors import (
@@ -1220,6 +1220,8 @@ done
         for backend in self.backends:
             if backend is None:
                 continue
+            if isinstance(backend, CLISandboxBackend):
+                backend.artifact_cache_parent = self._host_root()
             backend_config = config.get(backend.name, {})
             if backend_config and hasattr(backend, "configure"):
                 backend.configure(backend_config)

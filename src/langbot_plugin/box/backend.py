@@ -169,6 +169,7 @@ class CLISandboxBackend(BaseSandboxBackend):
         self.command = command
         self.name = backend_name
         self.cpu_limit_enabled = True
+        self.artifact_cache_parent: str | None = None
         self._artifact_roots: dict[str, str] = {}
 
     async def is_available(self) -> bool:
@@ -224,7 +225,13 @@ class CLISandboxBackend(BaseSandboxBackend):
             )
             args.extend(["-v", mount_spec])
 
-        artifact_root = tempfile.mkdtemp(prefix="langbot-box-artifacts-")
+        # Bind sources are resolved by the daemon, not this process. When a
+        # shared host root is configured, the cache must live there as well.
+        if self.artifact_cache_parent is not None:
+            os.makedirs(self.artifact_cache_parent, exist_ok=True)
+        artifact_root = tempfile.mkdtemp(
+            prefix="langbot-box-artifacts-", dir=self.artifact_cache_parent
+        )
         os.chmod(artifact_root, 0o755)
         self._artifact_roots[container_name] = artifact_root
         args.extend(["-v", f"{artifact_root}:{ARTIFACT_MOUNT_ROOT}:ro"])
