@@ -52,7 +52,13 @@ Plugin-facing APIs live under `src/langbot_plugin/api/`.
 
 - `definition/plugin.py` defines `BasePlugin`.
 - `definition/components/` defines component base classes.
-- `definition/components/manifest.py` defines component manifest models.
+- `definition/components/manifest.py` defines component manifest models. Plugin
+  manifests may set `execution.sharedRuntime: shared-runtime-v1`; omission keeps
+  the dedicated-runtime profile.
+- `certification.py` defines optional ZIP-comment certification envelopes. It
+  canonicalizes envelope JSON, normalizes the ZIP digest by removing the comment,
+  and verifies the signed manifest identity and runtime profile without changing
+  legacy archive output.
 - `entities/` defines event/context/message/provider data models passed across LangBot, runtime, and plugin code.
 - `proxies/` defines methods plugins can call back into LangBot, such as messaging, storage, model invocation, tools, RAG, parser, and query-scoped APIs.
 

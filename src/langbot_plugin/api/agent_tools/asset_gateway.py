@@ -37,6 +37,8 @@ LANGBOT_AGENT_GATEWAY_INSTRUCTIONS = (
     "when reply permission is available."
 )
 DEFAULT_RUN_TOKEN_TTL_SECONDS = 3600.0
+MAX_HTTP_MCP_BODY_BYTES = 1024 * 1024
+_HTTP_BODY_TOO_LARGE = object()
 
 
 class _GatewayMCPResolver:
@@ -137,6 +139,12 @@ class AgentAssetGateway:
         self._thread: threading.Thread | None = None
         self._registrations: dict[str, AgentAssetGatewayRegistration] = {}
         self._lock = threading.RLock()
+        self._active_handlers = 0
+
+    @property
+    def active_handler_count(self) -> int:
+        with self._lock:
+            return self._active_handlers
 
     @property
     def endpoint(self) -> str:
@@ -156,6 +164,19 @@ class AgentAssetGateway:
         gateway = self
 
         class Handler(BaseHTTPRequestHandler):
+            def setup(self) -> None:
+                super().setup()
+                self.connection.settimeout(gateway.request_timeout)
+                with gateway._lock:
+                    gateway._active_handlers += 1
+
+            def finish(self) -> None:
+                try:
+                    super().finish()
+                finally:
+                    with gateway._lock:
+                        gateway._active_handlers -= 1
+
             def log_message(self, _format: str, *_args: typing.Any) -> None:
                 return
 
@@ -170,7 +191,13 @@ class AgentAssetGateway:
                     self.send_error(404)
                     return
 
-                payload = self._read_json_payload()
+                try:
+                    payload = self._read_json_payload()
+                except OSError:
+                    self.close_connection = True
+                    return
+                if payload is _HTTP_BODY_TOO_LARGE:
+                    return
                 if isinstance(payload, Exception):
                     self._write_json(
                         400, {"ok": False, "error": f"invalid JSON: {payload}"}
@@ -189,6 +216,12 @@ class AgentAssetGateway:
                     self._write_empty(202)
                     return
                 self._write_json(200, result)
+
+            def handle_one_request(self) -> None:
+                try:
+                    super().handle_one_request()
+                except (TimeoutError, OSError):
+                    self.close_connection = True
 
             def do_DELETE(self) -> None:
                 if self.path not in {"/mcp", "/mcp/http"}:
@@ -216,10 +249,18 @@ class AgentAssetGateway:
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
-                    length = 0
+                    return ValueError("invalid Content-Length")
+                if length < 0:
+                    return ValueError("invalid Content-Length")
+                if length > MAX_HTTP_MCP_BODY_BYTES:
+                    self._write_empty(413)
+                    self.close_connection = True
+                    return _HTTP_BODY_TOO_LARGE
                 try:
                     body = self.rfile.read(length).decode("utf-8")
                     return json.loads(body) if body else {}
+                except TimeoutError:
+                    raise
                 except Exception as e:
                     return e
 
