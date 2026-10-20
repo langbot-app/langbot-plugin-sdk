@@ -1888,8 +1888,12 @@ async def test_emit_event_restores_query_uuid_dropped_by_legacy_plugin():
 @pytest.mark.asyncio
 async def test_emit_event_reports_only_plugins_that_changed_reply_message_chain():
     manager = _manager()
-    observer = _plugin(name="observer", components=[_component("EventListener", "events")])
-    responder = _plugin(name="responder", components=[_component("EventListener", "events")])
+    observer = _plugin(
+        name="observer", components=[_component("EventListener", "events")]
+    )
+    responder = _plugin(
+        name="responder", components=[_component("EventListener", "events")]
+    )
     observer._runtime_plugin_handler = FakeHandler(observer)
     responder._runtime_plugin_handler = ReplyChangingFakeHandler(responder)
     manager.plugins = [observer, responder]
