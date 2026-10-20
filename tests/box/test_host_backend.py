@@ -225,7 +225,8 @@ async def test_host_backend_kills_sigterm_resistant_descendants(
         + 'printf %s "$$" > child.pid\nexec sleep 30'
     )
     command = (
-        'printf %s "$$" > parent.pid\n'
+        "printf before-timeout; printf before-timeout-error >&2\n"
+        + 'printf %s "$$" > parent.pid\n'
         + f"sh -c {shlex.quote(child_script)} &\n"
         + "while [ ! -s child.pid ]; do sleep 0.01; done\n"
         + ("exit 0" if topology == "exited_parent" else "wait")
@@ -262,6 +263,8 @@ async def test_host_backend_kills_sigterm_resistant_descendants(
         else:
             result = await asyncio.wait_for(asyncio.shield(task), timeout=6)
             assert result.status == BoxExecutionStatus.TIMED_OUT
+            assert result.stdout == "before-timeout"
+            assert result.stderr == "before-timeout-error"
 
         deadline = loop.time() + 1
         while True:

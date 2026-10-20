@@ -329,21 +329,25 @@ class HostProcessBackend(BaseSandboxBackend):
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
-        stdout_task = asyncio.create_task(self._read_stream(process.stdout))
-        stderr_task = asyncio.create_task(self._read_stream(process.stderr))
+        completion = asyncio.gather(
+            process.wait(),
+            self._read_stream(process.stdout),
+            self._read_stream(process.stderr),
+        )
         timed_out = False
         try:
-            await asyncio.wait_for(process.wait(), timeout=timeout_sec)
+            # Descendants can keep output pipes open after the shell exits.
+            # Keep readers alive during cleanup to preserve captured output.
+            await asyncio.wait_for(asyncio.shield(completion), timeout=timeout_sec)
         except asyncio.TimeoutError:
             timed_out = True
             await self._terminate_process_group(process)
         except asyncio.CancelledError:
             await self._terminate_process_group(process)
-            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            await completion
             raise
 
-        stdout_bytes, stdout_total = await stdout_task
-        stderr_bytes, stderr_total = await stderr_task
+        _, (stdout_bytes, stdout_total), (stderr_bytes, stderr_total) = await completion
         return _CommandResult(
             return_code=process.returncode if process.returncode is not None else -1,
             stdout=self._clip_captured_bytes(stdout_bytes, stdout_total),
