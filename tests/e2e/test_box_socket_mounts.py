@@ -54,7 +54,11 @@ async def _exercise(shared):
     )
     image = os.environ.get("LANGBOT_TEST_BOX_IMAGE", "alpine:3.21")
     empty = BoxSpec(
-        session_id="socket-mounts", image=image, cmd="printf ready", network="off"
+        session_id="socket-mounts",
+        image=image,
+        cmd="printf ready",
+        network="off",
+        host_path=str(shared / "workspace"),
     )
     cache = None
     try:
@@ -68,7 +72,11 @@ async def _exercise(shared):
         inspection = await backend._run_command(
             ["docker", "inspect", backend_id], timeout_sec=10, check=True
         )
-        mounts = json.loads(inspection.stdout)[0]["Mounts"]
+        container = json.loads(inspection.stdout)[0]
+        assert container["HostConfig"]["ReadonlyRootfs"]
+        mounts = container["Mounts"]
+        workspace_mount = next(m for m in mounts if m["Destination"] == "/workspace")
+        assert workspace_mount["Source"] == empty.host_path and workspace_mount["RW"]
         artifact_mount = next(
             m for m in mounts if m["Destination"] == ARTIFACT_MOUNT_ROOT
         )
