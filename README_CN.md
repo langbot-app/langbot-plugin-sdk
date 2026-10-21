@@ -73,6 +73,7 @@ lbp --help
 
 ## 文档
 
+- [Provider Base64 文件消息](docs/provider-base64-files.md) —— 完整消息、流式消息与平台文件组件的转换规则。
 - 插件开发教程 —— https://langbot.app/docs/zh/plugin/dev/tutor
 - 调试运行时 / CLI / SDK —— https://langbot.app/docs/zh/develop/plugin-runtime
 - 开发环境配置 —— https://langbot.app/docs/zh/develop/dev-config

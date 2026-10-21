@@ -90,6 +90,7 @@ a deployment-owned remote daemon or managed agent platform.
 
 ## Documentation
 
+- [Provider Base64 file messages (中文)](docs/provider-base64-files.md)
 - Plugin development tutorial — https://langbot.app/docs/zh/plugin/dev/tutor
 - Debugging the Runtime / CLI / SDK — https://langbot.app/docs/zh/develop/plugin-runtime
 - Dev environment setup — https://langbot.app/docs/zh/develop/dev-config
