@@ -5,7 +5,6 @@ These tests pin the resolver to the plugin directory and check that importing a
 component no longer leaves the plugin directory on ``sys.path``.
 """
 
-import os
 import sys
 import textwrap
 
@@ -17,11 +16,17 @@ from langbot_plugin.api.definition.components.manifest import ComponentManifest
 @pytest.fixture(autouse=True)
 def _clean_component_modules():
     """Drop cached component modules so each test resolves its own plugin dir."""
-    before = {name for name in sys.modules if name == "components" or name.startswith("components.")}
+    before = {
+        name
+        for name in sys.modules
+        if name == "components" or name.startswith("components.")
+    }
     for name in before:
         sys.modules.pop(name, None)
     yield
-    for name in [n for n in sys.modules if n == "components" or n.startswith("components.")]:
+    for name in [
+        n for n in sys.modules if n == "components" or n.startswith("components.")
+    ]:
         sys.modules.pop(name, None)
 
 

@@ -256,9 +256,7 @@ class ComponentManifest(pydantic.BaseModel):
                 f"execution.python.path escapes the plugin directory: {declared}"
             )
         if len(portable.split("/", 1)[0]) >= 2 and portable.split("/", 1)[0][1] == ":":
-            raise ValueError(
-                f"execution.python.path uses a drive letter: {declared}"
-            )
+            raise ValueError(f"execution.python.path uses a drive letter: {declared}")
 
         plugin_dir = os.path.abspath(self._rel_dir or ".")
         target = os.path.abspath(os.path.join(plugin_dir, portable))
