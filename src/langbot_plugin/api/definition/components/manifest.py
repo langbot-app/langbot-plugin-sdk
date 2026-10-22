@@ -231,17 +231,60 @@ class ComponentManifest(pydantic.BaseModel):
             else None
         )
 
+    def _resolve_component_module(self) -> tuple[str, str]:
+        """Return the plugin directory to import from and the module path.
+
+        ``execution.python.path`` comes from the plugin's own manifest, so it is
+        untrusted input. Only a module inside the plugin directory may be
+        imported: absolute paths, drive letters and ``..`` components are
+        rejected outright rather than relied on to fail later during import.
+        """
+        if self.execution is None:
+            raise ValueError("Execution is not set")
+        python = self.execution.python
+        declared = python.path or ""
+        if not declared or "\x00" in declared:
+            raise ValueError("execution.python.path is empty")
+
+        portable = declared.replace("\\", "/")
+        if portable.startswith("/") or os.path.isabs(declared):
+            raise ValueError(
+                f"execution.python.path must be relative to the plugin: {declared}"
+            )
+        if any(part == ".." for part in portable.split("/")):
+            raise ValueError(
+                f"execution.python.path escapes the plugin directory: {declared}"
+            )
+        if len(portable.split("/", 1)[0]) >= 2 and portable.split("/", 1)[0][1] == ":":
+            raise ValueError(f"execution.python.path uses a drive letter: {declared}")
+
+        plugin_dir = os.path.abspath(self._rel_dir or ".")
+        target = os.path.abspath(os.path.join(plugin_dir, portable))
+        if os.path.commonpath([plugin_dir, target]) != plugin_dir:
+            raise ValueError(
+                f"execution.python.path escapes the plugin directory: {declared}"
+            )
+
+        if target.endswith(".py"):
+            target = target[: -len(".py")]
+        relative = os.path.relpath(target, plugin_dir)
+        return plugin_dir, relative.replace(os.sep, ".").replace("/", ".")
+
     def get_python_component_class(self) -> typing.Type[typing.Any]:
         """获取Python组件类"""
         if self.execution is None:
             raise ValueError("Execution is not set")
-        module_path = os.path.join(self._rel_dir, self.execution.python.path)
-        if module_path.endswith(".py"):
-            module_path = module_path[:-3]
-        module_path = module_path.replace("/", ".").replace("\\", ".")
-        pwd = os.getcwd()
-        sys.path.append(pwd)
-        module = importlib.import_module(module_path)
+        plugin_dir, module_path = self._resolve_component_module()
+        # Insert for the duration of the import only: a permanent append would
+        # let one plugin shadow modules for every plugin loaded after it.
+        sys.path.insert(0, plugin_dir)
+        try:
+            module = importlib.import_module(module_path)
+        finally:
+            try:
+                sys.path.remove(plugin_dir)
+            except ValueError:  # pragma: no cover - defensive
+                pass
         return getattr(module, self.execution.python.attr)
 
     def to_plain_dict(self) -> dict:
