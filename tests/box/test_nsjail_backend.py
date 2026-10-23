@@ -573,9 +573,11 @@ async def test_exec_timeout(backend, tmp_base):
 
 
 @pytest.mark.anyio
-async def test_run_nsjail_cancellation_terminates_and_reaps_process(
+@pytest.mark.parametrize("stop_reason", ["timeout", "cancel"])
+async def test_run_nsjail_termination_allows_cleanup(
     backend,
     monkeypatch,
+    stop_reason,
 ):
     class EmptyStream:
         async def read(self, _size):
@@ -589,6 +591,7 @@ async def test_run_nsjail_cancellation_terminates_and_reaps_process(
             self.wait_started = asyncio.Event()
             self.exit_requested = asyncio.Event()
             self.terminated = False
+            self.killed = False
 
         async def wait(self):
             self.wait_started.set()
@@ -601,6 +604,7 @@ async def test_run_nsjail_cancellation_terminates_and_reaps_process(
             self.exit_requested.set()
 
         def kill(self):
+            self.killed = True
             self.exit_requested.set()
 
     process = HangingProcess()
@@ -614,14 +618,22 @@ async def test_run_nsjail_cancellation_terminates_and_reaps_process(
         create_subprocess_exec,
     )
     task = asyncio.create_task(
-        backend._run_nsjail(["nsjail", "--help"], timeout_sec=60)
+        backend._run_nsjail(
+            ["nsjail", "--help"],
+            timeout_sec=0.01 if stop_reason == "timeout" else 60,
+        )
     )
     await process.wait_started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    if stop_reason == "cancel":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        result = await task
+        assert result.timed_out is True
+        assert result.return_code == -1
     assert process.terminated is True
+    assert process.killed is False
     assert process.returncode == -15
 
 

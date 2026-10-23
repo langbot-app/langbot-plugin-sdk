@@ -780,9 +780,9 @@ class NsjailBackend(BaseSandboxBackend):
         try:
             await asyncio.wait_for(process.wait(), timeout=timeout_sec)
         except asyncio.TimeoutError:
-            process.kill()
             timed_out = True
-            await process.wait()
+            # Let nsjail reap its children and remove their cgroups before exit.
+            await self._terminate_process(process)
         except asyncio.CancelledError:
             await self._terminate_process(process)
             await asyncio.gather(
