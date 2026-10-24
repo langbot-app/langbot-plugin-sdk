@@ -32,6 +32,7 @@ messages = {
     "file_added": "  - Đã thêm: {}",
     "file_add_error": "  - Lỗi khi thêm {}: {}",
     "plugin_built": "Build plugin thành công: {}",
+    "plugin_build_error": "Build plugin thất bại: {}",
     # Login
     "starting_login": "Đang bắt đầu quá trình đăng nhập LangBot CLI...",
     "generating_device_code": "Đang tạo mã thiết bị...",
