@@ -32,6 +32,7 @@ messages = {
     "file_added": "  - Agregado: {}",
     "file_add_error": "  - Error al agregar {}: {}",
     "plugin_built": "Plugin compilado exitosamente: {}",
+    "plugin_build_error": "Error al compilar el plugin: {}",
     # Login
     "starting_login": "Iniciando proceso de inicio de sesión de LangBot CLI...",
     "generating_device_code": "Generando código de dispositivo...",

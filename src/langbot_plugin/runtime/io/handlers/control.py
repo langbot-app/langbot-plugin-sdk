@@ -70,6 +70,8 @@ TENANT_SCOPED_CONTROL_ACTIONS = frozenset(
         LangBotToRuntimeAction.LIST_PARSERS.value,
         LangBotToRuntimeAction.PARSE_DOCUMENT.value,
         LangBotToRuntimeAction.PAGE_API.value,
+        LangBotToRuntimeAction.BUILD_PLUGIN_PACKAGE.value,
+        LangBotToRuntimeAction.GIT_SYNC_PLUGIN.value,
         LangBotToRuntimeAction.LIST_RUNNERS.value,
         LangBotToRuntimeAction.RUN_RUNNER.value,
         LangBotToRuntimeAction.APPLY_PLUGIN_INSTALLATION.value,
@@ -543,6 +545,58 @@ class ControlConnectionHandler(handler.Handler):
                     "resources": self.context.get_runtime_resource_stats(),
                 }
             )
+
+        @self.action(LangBotToRuntimeAction.BUILD_PLUGIN_PACKAGE)
+        async def build_plugin_package(data: dict[str, Any]) -> handler.ActionResponse:
+            """Build a ``.lbpkg`` from a debug plugin's live source tree.
+
+            The bytes are relayed back through the Runtime's file-transfer
+            channel so the (much larger) package never inflates the control
+            JSON payload.
+            """
+
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            manifest_overrides = data.get("manifest_overrides") or {}
+            if not isinstance(manifest_overrides, dict):
+                raise ValueError("manifest_overrides must be an object")
+
+            package_bytes, info = await self.context.plugin_mgr.build_plugin_package(
+                plugin_author,
+                plugin_name,
+                manifest_overrides=manifest_overrides,
+            )
+            package_file_key = await self.send_file(package_bytes, "lbpkg")
+            return handler.ActionResponse.success(
+                {
+                    "package_file_key": package_file_key,
+                    "filename": info.get("filename", ""),
+                    "metadata": info.get("metadata", {}),
+                    "manifest": info.get("manifest", {}),
+                    "size": info.get("size", len(package_bytes)),
+                }
+            )
+
+        @self.action(LangBotToRuntimeAction.GIT_SYNC_PLUGIN)
+        async def git_sync_plugin(data: dict[str, Any]) -> handler.ActionResponse:
+            """Commit and push a debug plugin's working directory to GitHub."""
+
+            plugin_author = data["plugin_author"]
+            plugin_name = data["plugin_name"]
+            manifest_overrides = data.get("manifest_overrides") or {}
+            if not isinstance(manifest_overrides, dict):
+                raise ValueError("manifest_overrides must be an object")
+
+            result = await self.context.plugin_mgr.git_sync_plugin(
+                plugin_author,
+                plugin_name,
+                repo_url=str(data.get("repo_url") or ""),
+                token=str(data.get("token") or ""),
+                branch=str(data.get("branch") or ""),
+                commit_message=str(data.get("commit_message") or ""),
+                manifest_overrides=manifest_overrides,
+            )
+            return handler.ActionResponse.success(result)
 
         # ================= Knowledge Engine Actions =================
 
