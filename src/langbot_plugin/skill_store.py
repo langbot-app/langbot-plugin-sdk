@@ -1242,10 +1242,16 @@ class SkillStore:
         previews: list[dict] = []
         for package_root, entry_file in discovered:
             skill = self._load_skill_package(package_root, entry_file)
-            self._validate_agent_skill_package(
-                package_root, skill.get("metadata") or {}
-            )
             relative_path = os.path.relpath(package_root, root_path)
+            is_archive_root_skill = (
+                relative_path in ("", ".")
+                and os.path.basename(os.path.normpath(root_path)) == "extracted"
+            )
+            self._validate_agent_skill_package(
+                package_root,
+                skill.get("metadata") or {},
+                require_directory_name=not is_archive_root_skill,
+            )
             if relative_path in ("", "."):
                 relative_path = ""
             skill["source_path"] = relative_path.replace(os.sep, "/")
@@ -1258,7 +1264,9 @@ class SkillStore:
         return [self._serialize_skill_with_source(preview) for preview in previews]
 
     @staticmethod
-    def _validate_agent_skill_package(package_root: str, metadata: dict) -> None:
+    def _validate_agent_skill_package(
+        package_root: str, metadata: dict, *, require_directory_name: bool = True
+    ) -> None:
         name = metadata.get("name")
         if not isinstance(name, str) or not name.strip():
             raise ValueError(
@@ -1270,7 +1278,7 @@ class SkillStore:
                 "Skill name must use lowercase letters, numbers, and hyphens"
             )
         directory_name = os.path.basename(os.path.normpath(package_root))
-        if name != directory_name:
+        if require_directory_name and name != directory_name:
             raise ValueError(
                 f'Skill frontmatter name "{name}" must match directory "{directory_name}"'
             )
@@ -1341,7 +1349,18 @@ class SkillStore:
                 source_root = self._preview_source_root(
                     root_path, preview["source_path"]
                 )
-                scanned = SkillStore(self.root).scan_directory(source_root)
+                if preview["source_path"]:
+                    scanned = SkillStore(self.root).scan_directory(source_root)
+                else:
+                    entry = self._find_skill_entry(source_root)
+                    if entry is None:
+                        raise ValueError(f"No SKILL.md found in {source_root}")
+                    scanned = self._load_skill_package(entry[0], entry[1])
+                    self._validate_agent_skill_package(
+                        source_root,
+                        scanned.get("metadata") or {},
+                        require_directory_name=False,
+                    )
                 skill_name = self._validate_skill_name(scanned["name"])
                 self._ensure_legacy_packages_published()
                 with self._skill_lock(skill_name):

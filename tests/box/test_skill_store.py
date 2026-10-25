@@ -33,6 +33,20 @@ def _skill_zip(name: str = "demo") -> bytes:
     return buffer.getvalue()
 
 
+def _root_skill_zip(name: str = "demo") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(
+            "SKILL.md",
+            "---\n"
+            f"name: {name}\n"
+            "description: Demo skill\n"
+            "---\n\n"
+            "Use this skill for tests.\n",
+        )
+    return buffer.getvalue()
+
+
 def _nested_skill_zip() -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
@@ -1170,6 +1184,21 @@ def test_install_zip_upload_legacy_source_path_arg(tmp_path):
         source_path="alpha",
     )
     assert [s["name"] for s in installed] == ["alpha"]
+
+
+def test_root_level_skill_zip_uses_frontmatter_name(tmp_path):
+    store = _make_store(tmp_path)
+
+    preview = store.preview_zip_upload(
+        file_bytes=_root_skill_zip("demo"), filename="demo.zip"
+    )
+    assert preview[0]["name"] == "demo"
+    assert preview[0]["source_path"] == ""
+
+    installed = store.install_zip_upload(
+        file_bytes=_root_skill_zip("demo"), filename="demo.zip"
+    )
+    assert [skill["name"] for skill in installed] == ["demo"]
 
 
 def test_install_zip_upload_multi_top_level_uses_extract_root(tmp_path):
