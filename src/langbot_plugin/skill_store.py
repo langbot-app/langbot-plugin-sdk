@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import shutil
 import stat
 import tempfile
@@ -22,16 +23,11 @@ from .artifact import build_tree_manifest
 from .workspace import workspace_namespace
 
 
-_FRONTMATTER_FIELDS = (
-    "name",
-    "display_name",
-    "description",
-)
-
 _PUBLIC_SKILL_FIELDS = (
     "name",
     "display_name",
     "description",
+    "metadata",
     "instructions",
     "package_root",
     "manifest_path",
@@ -151,9 +147,21 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
 
 
 def build_skill_md(metadata: dict, instructions: str) -> str:
+    # Preserve complete extensible Agent Skills frontmatter.
     frontmatter = {}
-    for key in _FRONTMATTER_FIELDS:
-        value = metadata.get(key)
+    for key, value in (metadata or {}).items():
+        if key in {
+            "package_root",
+            "manifest_path",
+            "entry_file",
+            "instructions",
+            "revision",
+            "created_at",
+            "updated_at",
+            "source_path",
+            "python_project",
+        }:
+            continue
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():
@@ -352,7 +360,9 @@ class SkillStore:
             )
 
         package_root, entry_file = discovered[0]
-        return self._load_skill_package(package_root, entry_file)
+        skill = self._load_skill_package(package_root, entry_file)
+        self._validate_agent_skill_package(package_root, skill.get("metadata") or {})
+        return skill
 
     def scan_import_directory(self, path: str, *, source_root: str) -> dict:
         """Scan a trusted import source without granting arbitrary host access."""
@@ -881,15 +891,24 @@ class SkillStore:
         imported = self._read_skill_package(source_root) if source_root else None
         staging_root, package_root = self._stage_package(source_root or None)
         try:
-            metadata = {
-                "name": skill_name,
-                "display_name": self._resolve_create_field(
-                    data, "display_name", imported, default=""
-                ),
-                "description": self._resolve_create_field(
-                    data, "description", imported, default=""
-                ),
-            }
+            metadata = dict((imported or {}).get("metadata") or {})
+            metadata.update(
+                {
+                    "name": skill_name,
+                    "display_name": self._resolve_create_field(
+                        data, "display_name", imported, default=""
+                    ),
+                    "description": self._resolve_create_field(
+                        data, "description", imported, default=""
+                    ),
+                }
+            )
+            for key, value in data.items():
+                if (
+                    key not in {"name", "display_name", "description", "instructions", "package_root"}
+                    and value is not None
+                ):
+                    metadata[key] = value
             instructions = self._resolve_create_field(
                 data, "instructions", imported, default=""
             )
@@ -1137,6 +1156,7 @@ class SkillStore:
             "name": skill_name,
             "display_name": str(metadata.get("display_name") or skill_name).strip(),
             "description": str(metadata.get("description") or "").strip(),
+            "metadata": dict(metadata),
             "instructions": instructions,
             "package_root": package_root,
             "entry_file": entry_file,
@@ -1168,6 +1188,7 @@ class SkillStore:
             "entry_file": skill.get("entry_file", "SKILL.md"),
             "display_name": skill.get("display_name", ""),
             "description": skill.get("description", ""),
+            "metadata": dict(skill.get("metadata") or {}),
             "instructions": skill.get("instructions", ""),
         }
 
@@ -1204,6 +1225,7 @@ class SkillStore:
         previews: list[dict] = []
         for package_root, entry_file in discovered:
             skill = self._load_skill_package(package_root, entry_file)
+            self._validate_agent_skill_package(package_root, skill.get("metadata") or {})
             relative_path = os.path.relpath(package_root, root_path)
             if relative_path in ("", "."):
                 relative_path = ""
@@ -1215,6 +1237,31 @@ class SkillStore:
 
         previews.sort(key=lambda item: item["source_path"])
         return [self._serialize_skill_with_source(preview) for preview in previews]
+
+    @staticmethod
+    def _validate_agent_skill_package(package_root: str, metadata: dict) -> None:
+        name = metadata.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"Skill package {package_root} must declare a frontmatter name"
+            )
+        name = name.strip()
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+            raise ValueError(
+                "Skill name must use lowercase letters, numbers, and hyphens"
+            )
+        directory_name = os.path.basename(os.path.normpath(package_root))
+        if name != directory_name:
+            raise ValueError(
+                f'Skill frontmatter name "{name}" must match directory "{directory_name}"'
+            )
+        description = metadata.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(
+                f'Skill "{name}" must declare a non-empty frontmatter description'
+            )
+        if len(description) > 1024:
+            raise ValueError(f'Skill "{name}" description cannot exceed 1024 characters')
 
     @staticmethod
     def _serialize_skill_with_source(skill: dict) -> dict:

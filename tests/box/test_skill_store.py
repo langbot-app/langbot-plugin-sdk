@@ -4,6 +4,7 @@ import io
 import os
 import stat
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -37,11 +38,11 @@ def _nested_skill_zip() -> bytes:
     with zipfile.ZipFile(buffer, "w") as zf:
         zf.writestr(
             "repo/packages/alpha/SKILL.md",
-            "---\nname: alpha\ndisplay_name: Alpha\n---\n\nAlpha instructions.\n",
+            "---\nname: alpha\ndisplay_name: Alpha\ndescription: Alpha skill\n---\n\nAlpha instructions.\n",
         )
         zf.writestr(
             "repo/packages/beta/SKILL.md",
-            "---\nname: beta\ndisplay_name: Beta\n---\n\nBeta instructions.\n",
+            "---\nname: beta\ndisplay_name: Beta\ndescription: Beta skill\n---\n\nBeta instructions.\n",
         )
     return buffer.getvalue()
 
@@ -185,6 +186,39 @@ def test_skill_store_supports_source_subdir_before_selecting_candidates(tmp_path
     assert ".langbot-skill-store" in installed[0]["package_root"]
 
 
+@pytest.mark.parametrize(
+    ("directory", "frontmatter", "message"),
+    [
+        (
+            "Demo",
+            "---\nname: Demo\ndescription: Demo skill\n---\n\nBody\n",
+            "lowercase",
+        ),
+        (
+            "demo",
+            "---\nname: other\ndescription: Demo skill\n---\n\nBody\n",
+            "match directory",
+        ),
+        (
+            "demo",
+            "---\nname: demo\n---\n\nBody\n",
+            "non-empty frontmatter description",
+        ),
+    ],
+)
+def test_zip_upload_rejects_nonstandard_skill_metadata(
+    tmp_path, directory, frontmatter, message
+):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(f"{directory}/SKILL.md", frontmatter)
+
+    with pytest.raises(ValueError, match=message):
+        _make_store(tmp_path).preview_zip_upload(
+            file_bytes=buffer.getvalue(), filename="skill.zip"
+        )
+
+
 # ── parse_frontmatter ───────────────────────────────────────────────────
 
 
@@ -255,11 +289,26 @@ def test_build_skill_md_drops_blank_and_none_fields():
     assert parsed_meta == {"name": "foo"}
 
 
-def test_build_skill_md_ignores_unknown_fields():
-    metadata = {"name": "foo", "package_root": "/should/not/appear"}
+def test_build_skill_md_preserves_extensions_and_omits_runtime_fields():
+    metadata = {
+        "name": "foo",
+        "description": "desc",
+        "license": "Apache-2.0",
+        "compatibility": "Requires Python 3.10+",
+        "metadata": {"owner": "qa"},
+        "allowed-tools": ["Read", "Grep"],
+        "package_root": "/should/not/appear",
+    }
     md = build_skill_md(metadata, "body")
     parsed_meta, _ = parse_frontmatter(md)
-    assert parsed_meta == {"name": "foo"}
+    assert parsed_meta == {
+        "name": "foo",
+        "description": "desc",
+        "license": "Apache-2.0",
+        "compatibility": "Requires Python 3.10+",
+        "metadata": {"owner": "qa"},
+        "allowed-tools": ["Read", "Grep"],
+    }
 
 
 # ── root resolution ─────────────────────────────────────────────────────
@@ -301,6 +350,7 @@ def test_list_skills_returns_managed_skills_sorted_by_updated_at(tmp_path):
         "name",
         "display_name",
         "description",
+        "metadata",
         "instructions",
         "package_root",
         "manifest_path",
@@ -451,6 +501,36 @@ def test_create_skill_imports_external_package_by_copy(tmp_path):
     # Copied into an immutable content-addressed revision; extra file came along.
     assert os.path.isfile(os.path.join(created["package_root"], "extra.txt"))
     assert created["package_root"] != os.path.realpath(src)
+
+
+def test_create_skill_import_preserves_agent_skills_frontmatter(tmp_path):
+    store = _make_store(tmp_path)
+    source = tmp_path / "external" / "portable"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text(
+        "---\n"
+        "name: portable\n"
+        "description: Portable guidance\n"
+        "license: Apache-2.0\n"
+        "compatibility: Python 3.10+\n"
+        "metadata:\n"
+        "  owner: qa\n"
+        "allowed-tools:\n"
+        "  - Read\n"
+        "---\n\nInstructions.\n",
+        encoding="utf-8",
+    )
+
+    created = store.create_skill({"name": "portable", "package_root": str(source)})
+
+    assert created["metadata"]["license"] == "Apache-2.0"
+    assert created["metadata"]["compatibility"] == "Python 3.10+"
+    assert created["metadata"]["metadata"] == {"owner": "qa"}
+    assert created["metadata"]["allowed-tools"] == ["Read"]
+    published = parse_frontmatter(
+        (Path(created["package_root"]) / "SKILL.md").read_text(encoding="utf-8")
+    )[0]
+    assert published == created["metadata"]
 
 
 def test_create_skill_imports_in_place_when_package_under_root(tmp_path):
@@ -1081,8 +1161,8 @@ def test_install_zip_upload_multi_top_level_uses_extract_root(tmp_path):
     # and skills are discovered within it.
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
-        zf.writestr("alpha/SKILL.md", "---\nname: alpha\n---\n\nA\n")
-        zf.writestr("beta/SKILL.md", "---\nname: beta\n---\n\nB\n")
+        zf.writestr("alpha/SKILL.md", "---\nname: alpha\ndescription: Alpha skill\n---\n\nA\n")
+        zf.writestr("beta/SKILL.md", "---\nname: beta\ndescription: Beta skill\n---\n\nB\n")
         zf.writestr("toplevel.txt", "loose file at root")
     payload = buffer.getvalue()
 
