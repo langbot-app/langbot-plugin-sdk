@@ -1288,6 +1288,8 @@ class SkillStore:
             raise ValueError(
                 "Skill name must use lowercase letters, numbers, and hyphens"
             )
+        if len(name) > 64:
+            raise ValueError("Skill name cannot exceed 64 characters")
         directory_name = os.path.basename(os.path.normpath(package_root))
         if require_directory_name and name != directory_name:
             raise ValueError(
