@@ -238,6 +238,7 @@ class SkillStore:
                         metadata,
                         ensure_ascii=False,
                         sort_keys=True,
+                        default=str,
                         separators=(",", ":"),
                     ).encode("utf-8")
                 )
@@ -631,12 +632,15 @@ class SkillStore:
 
         tmp_dir = tempfile.mkdtemp(prefix="langbot_skill_preview_")
         try:
-            skill_root = self._extract_uploaded_skill_to_temp(file_bytes, tmp_dir)
+            skill_root, allow_root_package = self._extract_uploaded_skill_to_temp(
+                file_bytes, tmp_dir
+            )
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
             return self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
                 suffix=target_suffix,
+                allow_root_package=allow_root_package,
             )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -657,18 +661,23 @@ class SkillStore:
 
         tmp_dir = tempfile.mkdtemp(prefix="langbot_skill_upload_")
         try:
-            skill_root = self._extract_uploaded_skill_to_temp(file_bytes, tmp_dir)
+            skill_root, allow_root_package = self._extract_uploaded_skill_to_temp(
+                file_bytes, tmp_dir
+            )
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
             previews = self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
                 suffix=target_suffix,
+                allow_root_package=allow_root_package,
             )
             selected_previews = self._select_preview_candidates(
                 previews,
                 {"source_paths": source_paths or [], "source_path": source_path},
             )
-            scanned = self._install_preview_candidates(skill_root, selected_previews)
+            scanned = self._install_preview_candidates(
+                skill_root, selected_previews, allow_root_package=allow_root_package
+            )
             return scanned
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1231,7 +1240,12 @@ class SkillStore:
         return os.path.join(self.root, target_name)
 
     def _preview_skill_candidates(
-        self, root_path: str, *, base_target_name: str, suffix: str
+        self,
+        root_path: str,
+        *,
+        base_target_name: str,
+        suffix: str,
+        allow_root_package: bool = False,
     ) -> list[dict]:
         discovered = self._discover_skill_directories(root_path, max_depth=2)
         if not discovered:
@@ -1243,10 +1257,7 @@ class SkillStore:
         for package_root, entry_file in discovered:
             skill = self._load_skill_package(package_root, entry_file)
             relative_path = os.path.relpath(package_root, root_path)
-            is_archive_root_skill = (
-                relative_path in ("", ".")
-                and os.path.basename(os.path.normpath(root_path)) == "extracted"
-            )
+            is_archive_root_skill = allow_root_package and relative_path in ("", ".")
             self._validate_agent_skill_package(
                 package_root,
                 skill.get("metadata") or {},
@@ -1341,7 +1352,11 @@ class SkillStore:
         return selected
 
     def _install_preview_candidates(
-        self, root_path: str, selected_previews: list[dict]
+        self,
+        root_path: str,
+        selected_previews: list[dict],
+        *,
+        allow_root_package: bool = False,
     ) -> list[dict]:
         installed: list[dict] = []
         try:
@@ -1349,7 +1364,7 @@ class SkillStore:
                 source_root = self._preview_source_root(
                     root_path, preview["source_path"]
                 )
-                if preview["source_path"]:
+                if preview["source_path"] or not allow_root_package:
                     scanned = SkillStore(self.root).scan_directory(source_root)
                 else:
                     entry = self._find_skill_entry(source_root)
@@ -1390,7 +1405,9 @@ class SkillStore:
 
         return installed
 
-    def _extract_uploaded_skill_to_temp(self, file_bytes: bytes, tmp_dir: str) -> str:
+    def _extract_uploaded_skill_to_temp(
+        self, file_bytes: bytes, tmp_dir: str
+    ) -> tuple[str, bool]:
         extract_dir = os.path.join(tmp_dir, "extracted")
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as zf:
@@ -1400,8 +1417,8 @@ class SkillStore:
 
         entries = os.listdir(extract_dir)
         if len(entries) == 1 and os.path.isdir(os.path.join(extract_dir, entries[0])):
-            return os.path.join(extract_dir, entries[0])
-        return extract_dir
+            return os.path.join(extract_dir, entries[0]), False
+        return extract_dir, True
 
     @staticmethod
     def _validate_zip_upload_size(file_bytes: bytes) -> None:
