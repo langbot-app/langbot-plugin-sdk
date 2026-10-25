@@ -378,6 +378,22 @@ def test_list_skills_skips_corrupt_entries(tmp_path):
     assert "bad" not in names
 
 
+def test_list_skills_counts_nested_metadata_toward_text_limit(tmp_path, monkeypatch):
+    store = _make_store(tmp_path)
+    store.create_skill(
+        {
+            "name": "nested",
+            "description": "Nested metadata",
+            "metadata": {"limits": {"payload": "x" * 128}},
+            "instructions": "Body",
+        }
+    )
+    monkeypatch.setattr(skill_store_module, "_MAX_SKILL_LIST_TOTAL_TEXT_BYTES", 64)
+
+    with pytest.raises(ValueError, match="listing exceeds"):
+        store.list_skills()
+
+
 def test_skill_discovery_fails_fast_at_entry_limit(tmp_path):
     store = _make_store(tmp_path)
     root = tmp_path / "skills"
@@ -1161,8 +1177,12 @@ def test_install_zip_upload_multi_top_level_uses_extract_root(tmp_path):
     # and skills are discovered within it.
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
-        zf.writestr("alpha/SKILL.md", "---\nname: alpha\ndescription: Alpha skill\n---\n\nA\n")
-        zf.writestr("beta/SKILL.md", "---\nname: beta\ndescription: Beta skill\n---\n\nB\n")
+        zf.writestr(
+            "alpha/SKILL.md", "---\nname: alpha\ndescription: Alpha skill\n---\n\nA\n"
+        )
+        zf.writestr(
+            "beta/SKILL.md", "---\nname: beta\ndescription: Beta skill\n---\n\nB\n"
+        )
         zf.writestr("toplevel.txt", "loose file at root")
     payload = buffer.getvalue()
 

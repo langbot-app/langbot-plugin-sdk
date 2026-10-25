@@ -252,7 +252,7 @@ def test_generic_store_imports_only_from_a_fenced_source_root(tmp_path):
     draft = workspace / "draft"
     draft.mkdir(parents=True)
     (draft / "SKILL.md").write_text(
-        "---\nname: draft\n---\n\nFollow the guide.",
+        "---\nname: draft\ndescription: Draft skill\n---\n\nFollow the guide.",
         encoding="utf-8",
     )
     (draft / "guide.md").write_text("Imported resource", encoding="utf-8")

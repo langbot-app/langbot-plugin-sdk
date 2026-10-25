@@ -228,9 +228,19 @@ class SkillStore:
             skill = self._load_published_skill(skill_name)
             retained_text_bytes += sum(
                 len(value.encode("utf-8"))
-                for value in skill.values()
-                if isinstance(value, str)
+                for key, value in skill.items()
+                if key != "metadata" and isinstance(value, str)
             )
+            metadata = skill.get("metadata")
+            if metadata is not None:
+                retained_text_bytes += len(
+                    json.dumps(
+                        metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
             if retained_text_bytes > _MAX_SKILL_LIST_TOTAL_TEXT_BYTES:
                 raise ValueError("Skill listing exceeds the configured text limit")
             skills.append(skill)
@@ -905,7 +915,14 @@ class SkillStore:
             )
             for key, value in data.items():
                 if (
-                    key not in {"name", "display_name", "description", "instructions", "package_root"}
+                    key
+                    not in {
+                        "name",
+                        "display_name",
+                        "description",
+                        "instructions",
+                        "package_root",
+                    }
                     and value is not None
                 ):
                     metadata[key] = value
@@ -1225,7 +1242,9 @@ class SkillStore:
         previews: list[dict] = []
         for package_root, entry_file in discovered:
             skill = self._load_skill_package(package_root, entry_file)
-            self._validate_agent_skill_package(package_root, skill.get("metadata") or {})
+            self._validate_agent_skill_package(
+                package_root, skill.get("metadata") or {}
+            )
             relative_path = os.path.relpath(package_root, root_path)
             if relative_path in ("", "."):
                 relative_path = ""
@@ -1261,7 +1280,9 @@ class SkillStore:
                 f'Skill "{name}" must declare a non-empty frontmatter description'
             )
         if len(description) > 1024:
-            raise ValueError(f'Skill "{name}" description cannot exceed 1024 characters')
+            raise ValueError(
+                f'Skill "{name}" description cannot exceed 1024 characters'
+            )
 
     @staticmethod
     def _serialize_skill_with_source(skill: dict) -> dict:
