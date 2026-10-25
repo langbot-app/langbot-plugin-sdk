@@ -218,6 +218,11 @@ def test_skill_store_supports_source_subdir_before_selecting_candidates(tmp_path
             "---\nname: demo\n---\n\nBody\n",
             "non-empty frontmatter description",
         ),
+        (
+            "a" * 65,
+            "---\nname: " + "a" * 65 + "\ndescription: Demo skill\n---\n\nBody\n",
+            "64 characters",
+        ),
     ],
 )
 def test_zip_upload_rejects_nonstandard_skill_metadata(
