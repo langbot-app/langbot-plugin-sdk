@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import shutil
 import stat
 import tempfile
@@ -22,16 +23,11 @@ from .artifact import build_tree_manifest
 from .workspace import workspace_namespace
 
 
-_FRONTMATTER_FIELDS = (
-    "name",
-    "display_name",
-    "description",
-)
-
 _PUBLIC_SKILL_FIELDS = (
     "name",
     "display_name",
     "description",
+    "metadata",
     "instructions",
     "package_root",
     "manifest_path",
@@ -151,9 +147,21 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
 
 
 def build_skill_md(metadata: dict, instructions: str) -> str:
+    # Preserve complete extensible Agent Skills frontmatter.
     frontmatter = {}
-    for key in _FRONTMATTER_FIELDS:
-        value = metadata.get(key)
+    for key, value in (metadata or {}).items():
+        if key in {
+            "package_root",
+            "manifest_path",
+            "entry_file",
+            "instructions",
+            "revision",
+            "created_at",
+            "updated_at",
+            "source_path",
+            "python_project",
+        }:
+            continue
         if value is None:
             continue
         if isinstance(value, str) and not value.strip():
@@ -220,9 +228,20 @@ class SkillStore:
             skill = self._load_published_skill(skill_name)
             retained_text_bytes += sum(
                 len(value.encode("utf-8"))
-                for value in skill.values()
-                if isinstance(value, str)
+                for key, value in skill.items()
+                if key != "metadata" and isinstance(value, str)
             )
+            metadata = skill.get("metadata")
+            if metadata is not None:
+                retained_text_bytes += len(
+                    json.dumps(
+                        metadata,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
             if retained_text_bytes > _MAX_SKILL_LIST_TOTAL_TEXT_BYTES:
                 raise ValueError("Skill listing exceeds the configured text limit")
             skills.append(skill)
@@ -352,7 +371,9 @@ class SkillStore:
             )
 
         package_root, entry_file = discovered[0]
-        return self._load_skill_package(package_root, entry_file)
+        skill = self._load_skill_package(package_root, entry_file)
+        self._validate_agent_skill_package(package_root, skill.get("metadata") or {})
+        return skill
 
     def scan_import_directory(self, path: str, *, source_root: str) -> dict:
         """Scan a trusted import source without granting arbitrary host access."""
@@ -611,12 +632,16 @@ class SkillStore:
 
         tmp_dir = tempfile.mkdtemp(prefix="langbot_skill_preview_")
         try:
-            skill_root = self._extract_uploaded_skill_to_temp(file_bytes, tmp_dir)
+            skill_root, allow_root_package = self._extract_uploaded_skill_to_temp(
+                file_bytes, tmp_dir
+            )
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
+            allow_root_package = allow_root_package and not source_subdir.strip()
             return self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
                 suffix=target_suffix,
+                allow_root_package=allow_root_package,
             )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -637,18 +662,24 @@ class SkillStore:
 
         tmp_dir = tempfile.mkdtemp(prefix="langbot_skill_upload_")
         try:
-            skill_root = self._extract_uploaded_skill_to_temp(file_bytes, tmp_dir)
+            skill_root, allow_root_package = self._extract_uploaded_skill_to_temp(
+                file_bytes, tmp_dir
+            )
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
+            allow_root_package = allow_root_package and not source_subdir.strip()
             previews = self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
                 suffix=target_suffix,
+                allow_root_package=allow_root_package,
             )
             selected_previews = self._select_preview_candidates(
                 previews,
                 {"source_paths": source_paths or [], "source_path": source_path},
             )
-            scanned = self._install_preview_candidates(skill_root, selected_previews)
+            scanned = self._install_preview_candidates(
+                skill_root, selected_previews, allow_root_package=allow_root_package
+            )
             return scanned
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -881,15 +912,31 @@ class SkillStore:
         imported = self._read_skill_package(source_root) if source_root else None
         staging_root, package_root = self._stage_package(source_root or None)
         try:
-            metadata = {
-                "name": skill_name,
-                "display_name": self._resolve_create_field(
-                    data, "display_name", imported, default=""
-                ),
-                "description": self._resolve_create_field(
-                    data, "description", imported, default=""
-                ),
-            }
+            metadata = dict((imported or {}).get("metadata") or {})
+            metadata.update(
+                {
+                    "name": skill_name,
+                    "display_name": self._resolve_create_field(
+                        data, "display_name", imported, default=""
+                    ),
+                    "description": self._resolve_create_field(
+                        data, "description", imported, default=""
+                    ),
+                }
+            )
+            for key, value in data.items():
+                if (
+                    key
+                    not in {
+                        "name",
+                        "display_name",
+                        "description",
+                        "instructions",
+                        "package_root",
+                    }
+                    and value is not None
+                ):
+                    metadata[key] = value
             instructions = self._resolve_create_field(
                 data, "instructions", imported, default=""
             )
@@ -1137,6 +1184,7 @@ class SkillStore:
             "name": skill_name,
             "display_name": str(metadata.get("display_name") or skill_name).strip(),
             "description": str(metadata.get("description") or "").strip(),
+            "metadata": dict(metadata),
             "instructions": instructions,
             "package_root": package_root,
             "entry_file": entry_file,
@@ -1168,6 +1216,7 @@ class SkillStore:
             "entry_file": skill.get("entry_file", "SKILL.md"),
             "display_name": skill.get("display_name", ""),
             "description": skill.get("description", ""),
+            "metadata": dict(skill.get("metadata") or {}),
             "instructions": skill.get("instructions", ""),
         }
 
@@ -1193,7 +1242,12 @@ class SkillStore:
         return os.path.join(self.root, target_name)
 
     def _preview_skill_candidates(
-        self, root_path: str, *, base_target_name: str, suffix: str
+        self,
+        root_path: str,
+        *,
+        base_target_name: str,
+        suffix: str,
+        allow_root_package: bool = False,
     ) -> list[dict]:
         discovered = self._discover_skill_directories(root_path, max_depth=2)
         if not discovered:
@@ -1205,6 +1259,12 @@ class SkillStore:
         for package_root, entry_file in discovered:
             skill = self._load_skill_package(package_root, entry_file)
             relative_path = os.path.relpath(package_root, root_path)
+            is_archive_root_skill = allow_root_package and relative_path in ("", ".")
+            self._validate_agent_skill_package(
+                package_root,
+                skill.get("metadata") or {},
+                require_directory_name=not is_archive_root_skill,
+            )
             if relative_path in ("", "."):
                 relative_path = ""
             skill["source_path"] = relative_path.replace(os.sep, "/")
@@ -1215,6 +1275,37 @@ class SkillStore:
 
         previews.sort(key=lambda item: item["source_path"])
         return [self._serialize_skill_with_source(preview) for preview in previews]
+
+    @staticmethod
+    def _validate_agent_skill_package(
+        package_root: str, metadata: dict, *, require_directory_name: bool = True
+    ) -> None:
+        name = metadata.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"Skill package {package_root} must declare a frontmatter name"
+            )
+        name = name.strip()
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+            raise ValueError(
+                "Skill name must use lowercase letters, numbers, and hyphens"
+            )
+        if len(name) > 64:
+            raise ValueError("Skill name cannot exceed 64 characters")
+        directory_name = os.path.basename(os.path.normpath(package_root))
+        if require_directory_name and name != directory_name:
+            raise ValueError(
+                f'Skill frontmatter name "{name}" must match directory "{directory_name}"'
+            )
+        description = metadata.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(
+                f'Skill "{name}" must declare a non-empty frontmatter description'
+            )
+        if len(description) > 1024:
+            raise ValueError(
+                f'Skill "{name}" description cannot exceed 1024 characters'
+            )
 
     @staticmethod
     def _serialize_skill_with_source(skill: dict) -> dict:
@@ -1265,7 +1356,11 @@ class SkillStore:
         return selected
 
     def _install_preview_candidates(
-        self, root_path: str, selected_previews: list[dict]
+        self,
+        root_path: str,
+        selected_previews: list[dict],
+        *,
+        allow_root_package: bool = False,
     ) -> list[dict]:
         installed: list[dict] = []
         try:
@@ -1273,7 +1368,18 @@ class SkillStore:
                 source_root = self._preview_source_root(
                     root_path, preview["source_path"]
                 )
-                scanned = SkillStore(self.root).scan_directory(source_root)
+                if preview["source_path"] or not allow_root_package:
+                    scanned = SkillStore(self.root).scan_directory(source_root)
+                else:
+                    entry = self._find_skill_entry(source_root)
+                    if entry is None:
+                        raise ValueError(f"No SKILL.md found in {source_root}")
+                    scanned = self._load_skill_package(entry[0], entry[1])
+                    self._validate_agent_skill_package(
+                        source_root,
+                        scanned.get("metadata") or {},
+                        require_directory_name=False,
+                    )
                 skill_name = self._validate_skill_name(scanned["name"])
                 self._ensure_legacy_packages_published()
                 with self._skill_lock(skill_name):
@@ -1303,7 +1409,9 @@ class SkillStore:
 
         return installed
 
-    def _extract_uploaded_skill_to_temp(self, file_bytes: bytes, tmp_dir: str) -> str:
+    def _extract_uploaded_skill_to_temp(
+        self, file_bytes: bytes, tmp_dir: str
+    ) -> tuple[str, bool]:
         extract_dir = os.path.join(tmp_dir, "extracted")
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes), "r") as zf:
@@ -1313,8 +1421,8 @@ class SkillStore:
 
         entries = os.listdir(extract_dir)
         if len(entries) == 1 and os.path.isdir(os.path.join(extract_dir, entries[0])):
-            return os.path.join(extract_dir, entries[0])
-        return extract_dir
+            return os.path.join(extract_dir, entries[0]), False
+        return extract_dir, True
 
     @staticmethod
     def _validate_zip_upload_size(file_bytes: bytes) -> None:
