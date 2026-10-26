@@ -16,6 +16,22 @@ def split_utf8_chunks(message: str, max_bytes: int) -> list[str]:
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
     chunks: list[str] = []
+    if isinstance(max_bytes, int) and max_bytes >= 4:
+        try:
+            encoded = message.encode("utf-8")
+        except UnicodeEncodeError:
+            # Preserve the original per-character error for malformed text.
+            pass
+        else:
+            start = 0
+            while start < len(encoded):
+                end = min(start + max_bytes, len(encoded))
+                # Back up at most three continuation bytes to a code-point boundary.
+                while end < len(encoded) and encoded[end] & 0xC0 == 0x80:
+                    end -= 1
+                chunks.append(encoded[start:end].decode("utf-8"))
+                start = end
+            return chunks
     current: list[str] = []
     current_size = 0
     for char in message:

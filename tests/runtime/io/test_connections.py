@@ -408,3 +408,72 @@ def test_split_utf8_chunks_respects_byte_limit():
 def test_split_utf8_chunks_rejects_impossible_limit():
     with pytest.raises(ValueError, match="UTF-8 code point"):
         split_utf8_chunks("你", 2)
+
+
+def _reference_utf8_chunks(message, max_bytes):
+    if max_bytes <= 0:
+        raise ValueError("max_bytes must be positive")
+    chunks, current = [], []
+    current_size = 0
+    for char in message:
+        char_size = len(char.encode("utf-8"))
+        if char_size > max_bytes:
+            raise ValueError("max_bytes is smaller than one UTF-8 code point")
+        if current and current_size + char_size > max_bytes:
+            chunks.append("".join(current))
+            current, current_size = [], 0
+        current.append(char)
+        current_size += char_size
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
+def test_split_utf8_chunks_matches_reference_unicode_boundaries():
+    import random
+
+    randomizer = random.Random(2716)
+    alphabet = [
+        "a",
+        "\x00",
+        "\x7f",
+        "\u0080",
+        "\u07ff",
+        "\u0800",
+        "你",
+        "\uffff",
+        "\U00010000",
+        "😀",
+        "\U0010ffff",
+    ]
+    messages = ["", "a你b好", "a" * 65537, "a你😀" * 12000]
+    for _ in range(200):
+        messages.append(
+            "".join(randomizer.choices(alphabet, k=randomizer.randrange(400)))
+        )
+    for message in messages:
+        for limit in [1, 2, 3, 4, 5, 7, 64, 16384, 65536]:
+            try:
+                expected = _reference_utf8_chunks(message, limit)
+            except ValueError as error:
+                with pytest.raises(type(error), match=str(error)):
+                    split_utf8_chunks(message, limit)
+            else:
+                assert split_utf8_chunks(message, limit) == expected
+
+
+@pytest.mark.parametrize(
+    "message", ["", "abc", "你😀", "abc\ud800", "你\ud800", "\ud800\udfff"]
+)
+@pytest.mark.parametrize(
+    "limit", [-1, 0, False, True, 0.5, 2, 4, 4.5, float("inf"), float("nan"), None, "4"]
+)
+def test_split_utf8_chunks_preserves_invalid_input_errors(message, limit):
+    try:
+        expected = _reference_utf8_chunks(message, limit)
+    except (ValueError, TypeError) as error:
+        with pytest.raises(type(error)) as caught:
+            split_utf8_chunks(message, limit)
+        assert caught.value.args == error.args
+    else:
+        assert split_utf8_chunks(message, limit) == expected
