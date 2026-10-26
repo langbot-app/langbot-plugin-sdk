@@ -258,8 +258,10 @@ class ComponentManifest(pydantic.BaseModel):
         if len(portable.split("/", 1)[0]) >= 2 and portable.split("/", 1)[0][1] == ":":
             raise ValueError(f"execution.python.path uses a drive letter: {declared}")
 
-        plugin_dir = os.path.abspath(self._rel_dir or ".")
-        target = os.path.abspath(os.path.join(plugin_dir, portable))
+        # Workers run at the plugin root; _rel_dir is the manifest's directory.
+        # Keep that directory in the module name so relative imports still work.
+        plugin_dir = os.path.abspath(".")
+        target = os.path.abspath(os.path.join(plugin_dir, self._rel_dir, portable))
         if os.path.commonpath([plugin_dir, target]) != plugin_dir:
             raise ValueError(
                 f"execution.python.path escapes the plugin directory: {declared}"
