@@ -14,8 +14,9 @@ from langbot_plugin.api.definition.components.manifest import ComponentManifest
 
 
 @pytest.fixture(autouse=True)
-def _clean_component_modules():
+def _clean_component_modules(tmp_path, monkeypatch):
     """Drop cached component modules so each test resolves its own plugin dir."""
+    monkeypatch.chdir(tmp_path)
     before = {
         name
         for name in sys.modules
@@ -140,3 +141,43 @@ def test_importing_a_missing_component_leaves_sys_path_clean(tmp_path, monkeypat
 
     assert str(plugin) not in sys.path
     assert len(sys.path) == len(before)
+
+
+@pytest.mark.parametrize("packages", [True, False])
+def test_nested_component_preserves_package_and_relative_imports(tmp_path, packages):
+    files = {
+        "components/knowledge_engine/parser.py": 'VALUE = "parsed"',
+        "components/knowledge_engine/engine.py": """
+            from .parser import VALUE
+
+            class Component:
+                marker = VALUE
+
+                def lazy_import(self):
+                    from .parser import VALUE
+                    return VALUE
+        """,
+    }
+    if packages:
+        files.update(
+            {
+                "components/__init__.py": "",
+                "components/knowledge_engine/__init__.py": "",
+            }
+        )
+    _plugin(tmp_path, files)
+    manifest = _manifest("components/knowledge_engine/engine.yaml", "engine.py")
+    before = list(sys.path)
+
+    component = manifest.get_python_component_class()
+
+    assert component.__module__ == "components.knowledge_engine.engine"
+    assert component.marker == "parsed"
+    assert component().lazy_import() == "parsed"
+    assert sys.path == before
+
+
+def test_manifest_outside_plugin_root_is_rejected(tmp_path):
+    manifest = _manifest(str(tmp_path.parent / "outside.yaml"), "outside.py")
+    with pytest.raises(ValueError, match="escapes the plugin directory"):
+        manifest.get_python_component_class()
