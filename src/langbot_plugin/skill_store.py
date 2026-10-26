@@ -636,6 +636,7 @@ class SkillStore:
                 file_bytes, tmp_dir
             )
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
+            allow_root_package = allow_root_package and not source_subdir.strip()
             return self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
@@ -665,6 +666,7 @@ class SkillStore:
                 file_bytes, tmp_dir
             )
             skill_root = self._resolve_source_subdir_root(skill_root, source_subdir)
+            allow_root_package = allow_root_package and not source_subdir.strip()
             previews = self._preview_skill_candidates(
                 skill_root,
                 base_target_name=self._uploaded_skill_target_stem(filename),
