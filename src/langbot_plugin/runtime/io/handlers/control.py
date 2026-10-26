@@ -111,7 +111,7 @@ class ControlConnectionHandler(handler.Handler):
         @self.action(LangBotToRuntimeAction.SET_RUNTIME_CONFIG)
         async def set_runtime_config(data: dict[str, Any]) -> handler.ActionResponse:
             self.configure_runtime(RuntimeConfig.model_validate(data))
-            return handler.ActionResponse.success({})
+            return handler.ActionResponse.success({"event_batch": True})
 
         @self.action(LangBotToRuntimeAction.RECONCILE_PLUGIN_INSTALLATIONS)
         async def reconcile_plugin_installations(
@@ -389,11 +389,57 @@ class ControlConnectionHandler(handler.Handler):
                 event_context.event.inherit_execution_scope(action_context)
             include_plugins = data.get("include_plugins")
 
-            (
-                emitted_plugins,
-                event_context,
-                response_sources,
-            ) = await self.context.plugin_mgr.emit_event(event_context, include_plugins)
+            bindings = None
+            if "installation_bindings" in data:
+                raw_bindings = data["installation_bindings"]
+                if not isinstance(raw_bindings, list) or not raw_bindings:
+                    raise ValueError("Event batch requires a nonempty binding list")
+                bindings = [
+                    InstallationBinding.model_validate(item) for item in raw_bindings
+                ]
+                if bindings[0] != action_context:
+                    raise ValueError("Event batch must start with its envelope binding")
+                if len({binding.installation_uuid for binding in bindings}) != len(
+                    bindings
+                ):
+                    raise ValueError("Event batch contains duplicate installations")
+                for binding in bindings:
+                    if not action_context.same_workspace(binding):
+                        raise ValueError(
+                            "Event batch cannot cross Workspace boundaries"
+                        )
+                    if not self.context.is_current_installation_binding(binding):
+                        raise ValueError(
+                            "Event batch installation binding is not current"
+                        )
+
+            emitted_plugins = []
+            response_sources = []
+            for binding in bindings if bindings is not None else [action_context]:
+                if bindings is not None:
+                    # Recheck after each awaited plugin: reconcile or reconnect may fence it.
+                    if not self.context.is_current_installation_binding(binding):
+                        raise ValueError(
+                            "Event batch installation binding is not current"
+                        )
+                    self.validate_inbound_action_context(
+                        LangBotToRuntimeAction.EMIT_EVENT.value, binding
+                    )
+                token = self._current_action_context.set(binding)
+                try:
+                    (
+                        emitted,
+                        event_context,
+                        sources,
+                    ) = await self.context.plugin_mgr.emit_event(
+                        event_context, include_plugins
+                    )
+                finally:
+                    self._current_action_context.reset(token)
+                emitted_plugins.extend(emitted)
+                response_sources.extend(sources)
+                if event_context.is_prevented_postorder():
+                    break
 
             event_context_dump = event_context.model_dump()
 

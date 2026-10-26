@@ -369,7 +369,7 @@ async def test_control_handler_set_runtime_config_updates_cloud_service_url(
             action_context=None,
         )
 
-    assert response["data"] == {}
+    assert response["data"] == {"event_batch": True}
     assert runtime_settings.cloud_service_url == "https://space.example"
     assert handler.context.runtime_identity == TEST_RUNTIME_IDENTITY
     assert handler.context.worker_policy == TEST_WORKER_POLICY
@@ -1426,3 +1426,123 @@ async def test_control_handler_rag_actions_delegate_to_plugin_manager(
 
     assert response["data"] == expected_response
     assert manager.calls == [expected_call]
+
+
+def _batch_event_data(bindings):
+    return {
+        "installation_bindings": [binding.model_dump() for binding in bindings],
+        "event_context": {
+            "query_id": 12,
+            "event_name": "PersonCommandSent",
+            "event": {
+                "event_name": "PersonCommandSent",
+                "launcher_type": "person",
+                "launcher_id": "launcher",
+                "sender_id": "sender",
+                "command": "demo",
+                "params": [],
+                "text_message": "/demo",
+                "is_admin": False,
+            },
+        },
+    }
+
+
+def _batch_handler():
+    handler, manager = _handler(runtime_config=TEST_SHARED_RUNTIME_CONFIG)
+    first = TEST_INSTALLATION_BINDING
+    second = first.model_copy(update={"installation_uuid": "installation-2"})
+    for binding in [first, second]:
+        handler.context.activate_installation_binding(binding)
+    return handler, manager, first, second
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "workspace",
+        "instance",
+        "generation",
+        "revision",
+        "artifact",
+        "unknown",
+        "duplicate",
+        "first",
+        "empty",
+    ],
+)
+async def test_event_batch_rejects_invalid_authority_before_dispatch(invalid):
+    handler, manager, first, second = _batch_handler()
+    changes = {
+        "workspace": {"workspace_uuid": "other"},
+        "instance": {"instance_uuid": "other"},
+        "generation": {"placement_generation": 5},
+        "revision": {"runtime_revision": 3},
+        "artifact": {"artifact_digest": "b" * 64},
+        "unknown": {"installation_uuid": "unknown"},
+    }
+    bindings = [first, second.model_copy(update=changes.get(invalid, {}))]
+    if invalid == "duplicate":
+        bindings = [first, first]
+    elif invalid == "first":
+        bindings = [second, first]
+    elif invalid == "empty":
+        bindings = []
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            LangBotToRuntimeAction.EMIT_EVENT.value, _batch_event_data(bindings)
+        )
+    assert response["code"] != 0
+    assert manager.calls == []
+    assert handler.current_action_context is None
+
+
+@pytest.mark.parametrize(
+    "transition", ["revoke", "replace", "raise", "cancel", "stop", "continue"]
+)
+async def test_event_batch_scope_chain_and_lifecycle(transition):
+    handler, manager, first, second = _batch_handler()
+    calls = []
+
+    async def emit(event, include_plugins):
+        calls.append(handler.current_action_context)
+        if len(calls) == 1:
+            event.event.text_message += ":first"
+            if transition == "revoke":
+                handler.context.deactivate_installation_binding(second)
+            elif transition == "replace":
+                handler._invalidated = True
+            elif transition == "raise":
+                raise ValueError("listener failed")
+            elif transition == "cancel":
+                raise asyncio.CancelledError()
+            elif transition == "stop":
+                event.prevent_postorder()
+            await asyncio.sleep(0)
+        else:
+            assert event.event.text_message == "/demo:first"
+            event.event.text_message += ":second"
+        return [FakePlugin(name=str(len(calls)))], event, [{"step": len(calls)}]
+
+    manager.emit_event = emit
+    # Call the registered action with its validated envelope to inspect reset even on cancellation.
+    token = handler._current_action_context.set(first)
+    try:
+        action = handler.actions[LangBotToRuntimeAction.EMIT_EVENT.value]
+        if transition in {"revoke", "replace", "raise", "cancel"}:
+            error = asyncio.CancelledError if transition == "cancel" else ValueError
+            with pytest.raises(error):
+                await action(_batch_event_data([first, second]))
+        else:
+            response = await action(_batch_event_data([first, second]))
+            expected = (
+                "/demo:first:second" if transition == "continue" else "/demo:first"
+            )
+            assert response.data["event_context"]["event"]["text_message"] == expected
+            assert response.data["response_sources"] == [
+                {"step": i + 1} for i in range(len(calls))
+            ]
+        assert handler.current_action_context == first
+        assert calls == ([first, second] if transition == "continue" else [first])
+    finally:
+        handler._current_action_context.reset(token)
