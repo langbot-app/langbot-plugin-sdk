@@ -517,8 +517,11 @@ def test_build_resource_limits_rlimit_fallback(backend):
     ras_idx = args.index("--rlimit_as")
     assert args[ras_idx + 1] == "hard"
 
+    # With a stubbed UID baseline, RLIMIT_NPROC is host_threads + pids_limit.
+    backend._uid_thread_count = lambda uid=None: 50  # type: ignore[method-assign]
+    args = backend._build_resource_limits(spec)
     nproc_idx = args.index("--rlimit_nproc")
-    assert args[nproc_idx + 1] == "128"
+    assert args[nproc_idx + 1] == "178"
 
     # Safe rlimits still apply.
     assert "--rlimit_fsize" in args
@@ -868,3 +871,44 @@ def test_clip_captured_bytes_exceeds_limit():
     result = NsjailBackend._clip_captured_bytes(data, 2_000_000, limit=1_000_000)
     assert "clipped" in result
     assert "1000000" in result
+
+
+def test_uid_thread_count_parses_proc_status(tmp_path, monkeypatch):
+    proc = tmp_path / "proc"
+    (proc / "11").mkdir(parents=True)
+    (proc / "11" / "status").write_text("Name:\tfoo\nUid:\t42\t42\t42\t42\nThreads:\t3\n", encoding="utf-8")
+    (proc / "12").mkdir()
+    (proc / "12" / "status").write_text("Name:\tbar\nUid:\t7\t7\t7\t7\nThreads:\t9\n", encoding="utf-8")
+    (proc / "13").mkdir()
+    (proc / "13" / "status").write_text("Name:\tbaz\nUid:\t42\t42\t42\t42\n", encoding="utf-8")
+
+    def fake_listdir(path):
+        if str(path) in {"/proc", "/proc/"}:
+            return ["11", "12", "13", "cpuinfo"]
+        return os.listdir(path)
+
+    real_open = open
+
+    def fake_open(path, *args, **kwargs):
+        path_s = str(path)
+        mapping = {
+            "/proc/11/status": proc / "11" / "status",
+            "/proc/12/status": proc / "12" / "status",
+            "/proc/13/status": proc / "13" / "status",
+        }
+        if path_s in mapping:
+            return real_open(mapping[path_s], *args, **kwargs)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(nsjail_backend_module.os, "listdir", fake_listdir)
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert NsjailBackend._uid_thread_count(42) == 4
+
+
+def test_build_resource_limits_rlimit_adds_uid_baseline(backend, monkeypatch):
+    backend._cgroup_v2_available = False
+    monkeypatch.setattr(backend, "_uid_thread_count", lambda uid=None: 900)
+    spec = BoxSpec(session_id="s", cmd="x", memory_mb=512, pids_limit=128)
+    args = backend._build_resource_limits(spec)
+    assert args[args.index("--rlimit_nproc") + 1] == "1028"
+    assert "--cgroup_pids_max" not in args

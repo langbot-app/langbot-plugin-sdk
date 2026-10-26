@@ -695,6 +695,49 @@ class NsjailBackend(BaseSandboxBackend):
                     f"Failed to prepare nsjail mount target {target}: {exc}"
                 )
 
+
+    @staticmethod
+    def _uid_thread_count(uid: int | None = None) -> int:
+        """Count threads belonging to ``uid`` (default: current real UID).
+
+        Linux ``RLIMIT_NPROC`` is keyed by real UID and counts threads across
+        the whole account, not just the nsjail child tree. When cgroup v2 is
+        unavailable we therefore need the host baseline so a small
+        ``pids_limit`` still leaves room for sandbox forks (LangBot #2602).
+        """
+        if uid is None:
+            uid = os.getuid()
+        total = 0
+        try:
+            proc_entries = os.listdir('/proc')
+        except OSError:
+            return 0
+        for name in proc_entries:
+            if not name.isdigit():
+                continue
+            status_path = f'/proc/{name}/status'
+            try:
+                with open(status_path, encoding='utf-8') as handle:
+                    status = handle.read()
+            except OSError:
+                continue
+            real_uid: int | None = None
+            threads = 1
+            for line in status.splitlines():
+                if line.startswith('Uid:'):
+                    try:
+                        real_uid = int(line.split()[1])
+                    except (IndexError, ValueError):
+                        real_uid = None
+                elif line.startswith('Threads:'):
+                    try:
+                        threads = int(line.split()[1])
+                    except (IndexError, ValueError):
+                        threads = 1
+            if real_uid == uid:
+                total += max(threads, 1)
+        return total
+
     def _build_resource_limits(self, spec: BoxSpec) -> list[str]:
         args: list[str] = []
 
@@ -733,7 +776,16 @@ class NsjailBackend(BaseSandboxBackend):
             # compose `cgroup: host`); otherwise bound memory at the container
             # level (e.g. compose `mem_limit`). We still apply the pid cap,
             # which is a real rlimit that does not break runtimes.
-            args.extend(["--rlimit_nproc", str(spec.pids_limit)])
+            # RLIMIT_NPROC is UID-scoped on Linux: it counts every thread of
+            # the real UID, including the LangBot/Box host processes outside
+            # the jail. A bare ``pids_limit`` (default 128) is often already
+            # exhausted by the host account (see LangBot #2602), so add the
+            # current UID baseline and keep ``pids_limit`` as the sandbox
+            # headroom. Cgroup v2 still uses an exact ``cgroup_pids_max``.
+            host_threads = self._uid_thread_count()
+            args.extend(
+                ["--rlimit_nproc", str(host_threads + max(spec.pids_limit, 1))]
+            )
 
         # nsjail defaults --rlimit_as to 512 MB. RLIMIT_AS caps *virtual*
         # address space, and modern runtimes reserve huge virtual mappings up
