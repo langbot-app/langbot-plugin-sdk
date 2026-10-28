@@ -178,3 +178,6 @@ cython_debug/
 /debug/
 uv.lock
 src/.DS_Store
+
+*.pid
+data/plugin-runtime/
