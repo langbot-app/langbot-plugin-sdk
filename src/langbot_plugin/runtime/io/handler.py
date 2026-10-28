@@ -1354,8 +1354,25 @@ class Handler(abc.ABC):
             this_seq_id,
             action.value,
             data,
-            resolved_context := self.resolve_outbound_action_context(action_context),
+            self.resolve_outbound_action_context(action_context),
         )
+        return await self._call_action_request(
+            request,
+            timeout,
+            invocation=invocation,
+            cancel_peer_on_cancel=cancel_peer_on_cancel,
+        )
+
+    async def _call_action_request(
+        self,
+        request: ActionRequest,
+        timeout: float | None,
+        *,
+        invocation=None,
+        cancel_peer_on_cancel: bool = False,
+    ) -> dict[str, Any]:
+        this_seq_id = request.seq_id
+        resolved_context = request.context
         # wait for response
         if self._closed:
             raise self._close_error or ConnectionClosedError("Connection closed")
@@ -1381,7 +1398,7 @@ class Handler(abc.ABC):
         except asyncio.TimeoutError:
             if cancel_peer_on_cancel:
                 await self._cancel_peer_action(this_seq_id, resolved_context)
-            raise ActionCallTimeoutError(f"Action {action.value} call timed out")
+            raise ActionCallTimeoutError(f"Action {request.action} call timed out")
         except ActionCallError:
             raise
         except ConnectionClosedError:
@@ -1399,18 +1416,29 @@ class Handler(abc.ABC):
         seq_id: int,
         action_context: ActionEnvelopeContext | None,
     ) -> None:
-        """Best-effort cancellation for an outbound action accepted by the peer."""
+        """Finish bounded cleanup using the original request's authority."""
 
+        self.seq_id_index += 1
+        self.requests_total += 1
+        request = ActionRequest.make_request(
+            self.seq_id_index,
+            CommonAction.CANCEL_ACTION.value,
+            {"seq_id": seq_id},
+            action_context,
+        )
+        # Cleanup may outlive invocation revocation and repeated cancellation;
+        # it can only cancel this request under its captured immutable context.
+        cancellation = asyncio.create_task(
+            asyncio.wait_for(self._call_action_request(request, None), timeout=5.0)
+        )
+        interrupted = False
         try:
-            await asyncio.wait_for(
-                self.call_action(
-                    CommonAction.CANCEL_ACTION,
-                    {"seq_id": seq_id},
-                    timeout=None,
-                    action_context=action_context,
-                ),
-                timeout=5.0,
-            )
+            while not cancellation.done():
+                try:
+                    await asyncio.shield(cancellation)
+                except asyncio.CancelledError:
+                    interrupted = True
+            cancellation.result()
         except (
             ActionCallError,
             ActionCallTimeoutError,
@@ -1418,6 +1446,9 @@ class Handler(abc.ABC):
             asyncio.TimeoutError,
         ):
             logger.debug("Failed to cancel peer action %s", seq_id, exc_info=True)
+        finally:
+            if interrupted:
+                raise asyncio.CancelledError
 
     async def call_action_generator(
         self,
