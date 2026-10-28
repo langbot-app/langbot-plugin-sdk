@@ -94,13 +94,28 @@ def test_run_dispatches(monkeypatch):
     monkeypatch.setattr(
         cli,
         "run_plugin_process",
-        lambda *args: captured.setdefault("args", args),
+        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs),
     )
 
-    _run(monkeypatch, ["run", "--prod", "--plugin-debug-key", "key"])
+    _run(monkeypatch, ["run", "--prod", "--plugin-debug-key", "key", "--tag", "demo"])
 
     assert captured["args"][1] is True
     assert captured["args"][2] == "key"
+    assert captured["kwargs"]["tag"] == "demo"
+
+
+def test_run_dispatches_without_tag(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(cli, "cli_print", lambda *args: None)
+    monkeypatch.setattr(
+        cli,
+        "run_plugin_process",
+        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs),
+    )
+
+    _run(monkeypatch, ["run"])
+
+    assert captured["kwargs"]["tag"] == ""
 
 
 def test_build_dispatches(monkeypatch):
