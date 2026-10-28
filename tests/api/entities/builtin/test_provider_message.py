@@ -43,21 +43,56 @@ def test_message_string_content_converts_to_plain_message_chain_with_prefix():
     assert message.readable_str() == "user: hello"
 
 
-def test_message_list_content_converts_supported_elements_to_platform_chain():
-    message = Message(
+@pytest.mark.parametrize("message_type", [Message, MessageChunk])
+def test_message_list_content_converts_supported_elements_to_platform_chain(message_type):
+    message = message_type(
         role="user",
         content=[
             ContentElement.from_image_url("https://example.com/a.png"),
             ContentElement.from_file_url("https://example.com/a.txt", "a.txt"),
             ContentElement.from_image_base64("YmFzZTY0"),
+            ContentElement.from_file_base64("aGVsbG8=", "report.txt"),
             ContentElement.from_text("hello"),
         ],
     )
 
     chain = message.get_content_platform_message_chain(prefix_text="[p] ")
 
-    assert [type(component) for component in chain] == [Image, File, Image, Plain]
+    assert [type(component) for component in chain] == [Image, File, Image, File, Plain]
+    assert chain[3].base64 == "aGVsbG8="
+    assert chain[3].name == "report.txt"
     assert chain[-1].text == "[p] hello"
+
+
+@pytest.mark.parametrize("message_type", [Message, MessageChunk])
+@pytest.mark.parametrize("file_name", ["report.txt", None])
+def test_serialized_base64_file_survives_platform_conversion(message_type, file_name):
+    message = message_type.model_validate(
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "file_base64", "file_base64": "aGVsbG8=", "file_name": file_name}
+            ],
+        }
+    )
+
+    chain = message.get_content_platform_message_chain(prefix_text="[p] ")
+
+    assert len(chain) == 2
+    assert isinstance(chain[0], Plain)
+    assert chain[0].text == "[p] "
+    assert isinstance(chain[1], File)
+    assert chain[1].base64 == "aGVsbG8="
+    assert chain[1].name == (file_name or "")
+
+
+@pytest.mark.parametrize("message_type", [Message, MessageChunk])
+def test_base64_file_without_payload_is_skipped(message_type):
+    message = message_type(
+        role="assistant", content=[ContentElement(type="file_base64", file_name="a.txt")]
+    )
+
+    assert len(message.get_content_platform_message_chain()) == 0
 
 
 def test_message_prefix_is_inserted_when_no_text_component_exists():
