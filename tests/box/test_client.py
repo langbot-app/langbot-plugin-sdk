@@ -171,6 +171,7 @@ async def test_call_passes_action_data_and_default_timeout(client, handler):
     assert args[0] is LangBotToBoxAction.STATUS
     assert args[1] == {}
     assert kwargs["timeout"] == 15.0
+    assert kwargs["cancel_peer_on_cancel"] is False
 
 
 # ── initialize ────────────────────────────────────────────────────────
@@ -285,6 +286,7 @@ async def test_execute_sends_spec_and_parses_result(client, handler):
     assert args[0] is LangBotToBoxAction.EXEC
     assert args[1] == spec.model_dump(mode="json")
     assert kwargs["timeout"] == 300.0
+    assert kwargs["cancel_peer_on_cancel"] is True
 
 
 @pytest.mark.anyio

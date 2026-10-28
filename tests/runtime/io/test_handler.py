@@ -472,6 +472,134 @@ async def test_call_action_cancellation_cancels_peer_action():
     await asyncio.gather(caller_run, peer_run, return_exceptions=True)
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("trigger", ["cancel", "timeout"])
+@pytest.mark.parametrize("revoked", [False, True])
+async def test_peer_cancellation_survives_repeated_cancel_and_revocation(
+    streaming, trigger, revoked
+):
+    from langbot_plugin.api.proxies.invocation import (
+        bind_invocation,
+        invocation_capability,
+    )
+
+    caller, peer = Handler(ProtocolConnection()), Handler(ProtocolConnection())
+    started, sending_cancel, release_cancel, stopped = (
+        asyncio.Event() for _ in range(4)
+    )
+    context = ActionContext(
+        instance_uuid="instance", workspace_uuid="workspace", placement_generation=1
+    )
+    cancellations = []
+    requests = []
+
+    async def send(message):
+        request = json.loads(message)
+        requests.append(request)
+        if request.get("action") == CommonAction.CANCEL_ACTION.value:
+            cancellations.append(request)
+            sending_cancel.set()
+            await release_cancel.wait()
+        await peer.conn.incoming.put(message)
+
+    caller.conn.send = send
+    peer.conn.send = caller.conn.incoming.put
+
+    @peer.action(SampleAction.ECHO)
+    async def block(_data):
+        assert peer.current_action_context == context
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    async def call():
+        timeout = 0.1 if trigger == "timeout" else None
+        if streaming:
+            async for _ in caller.call_action_generator(
+                SampleAction.ECHO, {}, timeout=timeout, action_context=context
+            ):
+                pass
+        else:
+            await caller.call_action(
+                SampleAction.ECHO,
+                {},
+                timeout=timeout,
+                action_context=context,
+                cancel_peer_on_cancel=True,
+            )
+
+    loops = [asyncio.create_task(handler.run()) for handler in (caller, peer)]
+    task = None
+    try:
+        with bind_invocation(caller):
+            task = asyncio.create_task(call())
+            await asyncio.wait_for(started.wait(), 1)
+            if revoked:
+                invocation_capability(caller).active = False
+                with pytest.raises(RuntimeError, match="invocation has ended"):
+                    await caller.call_action(SampleAction.ECHO, {})
+            if trigger == "cancel":
+                task.cancel()
+            await asyncio.wait_for(sending_cancel.wait(), 1)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            release_cancel.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+        await asyncio.wait_for(stopped.wait(), 1)
+        assert len(cancellations) == 1
+        assert cancellations[0]["data"] == {"seq_id": requests[0]["seq_id"]}
+        assert cancellations[0]["context"] == requests[0]["context"]
+        assert caller.resp_waiters == {}
+        assert caller.resp_queues == {}
+        assert peer._action_tasks == set()
+    finally:
+        release_cancel.set()
+        actions = list(peer._action_tasks)
+        tasks = [*actions, *loops, *([task] if task is not None else [])]
+        for pending in tasks:
+            pending.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_repeated_cancellation_keeps_cleanup_send_bounded():
+    conn = ProtocolConnection()
+    caller = Handler(conn)
+    sending_cancel, send_closed = asyncio.Event(), asyncio.Event()
+    send = conn.send
+
+    async def blocked_send(message):
+        if json.loads(message).get("action") == CommonAction.CANCEL_ACTION.value:
+            sending_cancel.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                send_closed.set()
+        await send(message)
+
+    conn.send = blocked_send
+    task = asyncio.create_task(
+        caller.call_action(
+            SampleAction.ECHO, {}, timeout=None, cancel_peer_on_cancel=True
+        )
+    )
+    try:
+        await conn.sent_messages(1)
+        task.cancel()
+        await asyncio.wait_for(sending_cancel.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 6)
+        assert send_closed.is_set()
+        assert caller.resp_waiters == {}
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_action_timeout_clears_waiter():
     conn = QueueConnection()
     handler = Handler(conn)

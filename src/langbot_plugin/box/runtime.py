@@ -1248,6 +1248,7 @@ done
 
         result: BoxExecutionResult | None = None
         cleanup_task: asyncio.Task[None] | None = None
+        execution_cancelled = False
         try:
             async with session.lock:
                 if session.closing:
@@ -1262,24 +1263,38 @@ done
                     f"workdir={spec.workdir} "
                     f"timeout_sec={spec.timeout_sec}"
                 )
-                result = await (await self._get_backend()).exec(session.info, spec)
+                backend = await self._get_backend()
+                try:
+                    result = await backend.exec(session.info, spec)
+                except asyncio.CancelledError:
+                    execution_cancelled = True
+                    session.closing = True
+                    raise
+                if result.status == BoxExecutionStatus.TIMED_OUT:
+                    # Fence queued callers before releasing the execution lock.
+                    session.closing = True
             return result
         finally:
             async with self._lock:
-                now = dt.datetime.now(_UTC)
-                if spec.session_id in self._sessions:
-                    self._sessions[spec.session_id].info.last_used_at = now
+                if self._sessions.get(spec.session_id) is session:
+                    session.info.last_used_at = dt.datetime.now(_UTC)
+                    remaining = self._active_exec_counts.get(spec.session_id, 0) - 1
+                    if remaining > 0:
+                        self._active_exec_counts[spec.session_id] = remaining
+                    else:
+                        self._active_exec_counts.pop(spec.session_id, None)
 
-                remaining = self._active_exec_counts.get(spec.session_id, 0) - 1
-                if remaining > 0:
-                    self._active_exec_counts[spec.session_id] = remaining
-                else:
-                    self._active_exec_counts.pop(spec.session_id, None)
-
-                if result is not None and result.status == BoxExecutionStatus.TIMED_OUT:
-                    cleanup_task = self._drop_session_locked(spec.session_id)
+                    if execution_cancelled or (
+                        result is not None
+                        and result.status == BoxExecutionStatus.TIMED_OUT
+                    ):
+                        cleanup_task = self._drop_session_locked(spec.session_id)
             if cleanup_task is not None:
-                await self._wait_for_session_cleanup(spec.session_id, cleanup_task)
+                try:
+                    await self._wait_for_session_cleanup(spec.session_id, cleanup_task)
+                except Exception:
+                    if not execution_cancelled:
+                        raise
 
     def start_background_reaper(self) -> None:
         if self.session_ttl_sec <= 0 and not self.admission_required:
@@ -1812,7 +1827,9 @@ done
                     cleanup_task = self._closing_session_tasks.get(spec.session_id)
                     if cleanup_task is None:
                         existing = self._sessions.get(spec.session_id)
-                        if existing is not None:
+                        if existing is not None and existing.closing:
+                            cleanup_task = self._drop_session_locked(spec.session_id)
+                        elif existing is not None:
                             self._assert_session_compatible(existing.info, spec)
                             if (
                                 not backend.execution_scoped_mounts
@@ -2148,6 +2165,10 @@ done
         cleanup_task = asyncio.create_task(
             self._cleanup_session_resources(session_id, runtime_session, backend)
         )
+        # Reaper-triggered tasks can have no waiter; cleanup logs their failures.
+        cleanup_task.add_done_callback(
+            lambda task: task.exception() if not task.cancelled() else None
+        )
         self._closing_session_tasks[session_id] = cleanup_task
         return cleanup_task
 
@@ -2157,34 +2178,54 @@ done
         runtime_session: _RuntimeSession,
         backend: BaseSandboxBackend,
     ) -> None:
+        cleaned_up = False
         try:
             async with runtime_session.lock:
+                process_error: Exception | None = None
                 for mp in list(runtime_session.managed_processes.values()):
-                    await self._terminate_managed_process(mp)
+                    try:
+                        await self._terminate_managed_process(mp)
+                    except Exception as exc:
+                        process_error = exc
+                        self.logger.warning(
+                            f"Failed to terminate managed process in {session_id}: {exc}",
+                            exc_info=True,
+                        )
+
+                self.logger.info(
+                    "LangBot Box session cleanup: "
+                    f"session_id={session_id} "
+                    f"backend_session_id={runtime_session.info.backend_session_id} "
+                    f"backend={runtime_session.info.backend_name}"
+                )
+                await backend.stop_session(runtime_session.info)
+                if process_error is not None:
+                    raise BoxError(
+                        f"Failed to terminate managed processes in session {session_id}"
+                    ) from process_error
                 runtime_session.managed_processes.clear()
                 self._managed_process_session_ids.discard(session_id)
-
-                try:
-                    self.logger.info(
-                        "LangBot Box session cleanup: "
-                        f"session_id={session_id} "
-                        f"backend_session_id={runtime_session.info.backend_session_id} "
-                        f"backend={runtime_session.info.backend_name}"
-                    )
-                    await backend.stop_session(runtime_session.info)
-                except Exception as exc:
-                    self.logger.warning(
-                        f"Failed to clean up box session {session_id}: {exc}"
-                    )
+                cleaned_up = True
         except Exception as exc:
             self.logger.warning(
                 f"Failed to finalize box session cleanup {session_id}: {exc}",
                 exc_info=True,
             )
+            raise
         finally:
             current_task = asyncio.current_task()
             async with self._lock:
                 if self._closing_session_tasks.get(session_id) is current_task:
+                    if not cleaned_up:
+                        # Retain the fence and resources for the next acquire/delete.
+                        self._sessions[session_id] = runtime_session
+                        if runtime_session.workspace_key is not None:
+                            self._session_ids_by_workspace.setdefault(
+                                runtime_session.workspace_key, set()
+                            ).add(session_id)
+                        self._sync_managed_process_session_index(
+                            session_id, runtime_session
+                        )
                     self._closing_session_tasks.pop(session_id, None)
 
     async def _wait_for_session_cleanups(
@@ -2206,6 +2247,7 @@ done
                 f"LangBot Box session cleanup task failed{label}: {exc}",
                 exc_info=True,
             )
+            raise BoxError(f"Failed to clean up box session{label}: {exc}") from exc
 
     def _assert_session_compatible(self, session: BoxSessionInfo, spec: BoxSpec):
         _COMPAT_FIELDS = (

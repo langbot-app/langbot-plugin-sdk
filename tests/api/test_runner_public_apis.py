@@ -16,7 +16,14 @@ class Handler:
     def __init__(self):
         self.calls = []
 
-    async def call_action(self, action, data, timeout=None):
+    async def call_action(
+        self,
+        action,
+        data,
+        timeout=None,
+        action_context=None,
+        cancel_peer_on_cancel=False,
+    ):
         self.calls.append((action, data))
         await asyncio.sleep(0)
         return {

@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from types import SimpleNamespace
 
 import pytest
 
 import langbot_plugin.runtime.plugin.container  # noqa: F401
+from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.entities.builtin.runner.errors import AgentAPIException
+from langbot_plugin.api.proxies.runner import RunnerAPIProxy
+from langbot_plugin.box.actions import LangBotToBoxAction
+from langbot_plugin.box.client import ActionRPCBoxClient
+from langbot_plugin.box.models import BoxSpec
 from langbot_plugin.entities.io.actions.enums import (
     PluginToRuntimeAction,
     RuntimeToLangBotAction,
     RuntimeToPluginAction,
 )
 from langbot_plugin.entities.io.context import ActionContext, InstallationBinding
+from langbot_plugin.runtime.io.handler import ActionResponse, Handler
 from langbot_plugin.runtime.io.handlers import plugin as plugin_handler_module
 from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
 from tests.helpers.protocol import ProtocolConnection, ProtocolSession
@@ -47,6 +56,7 @@ class FakeControlHandler:
         data,
         timeout=15.0,
         action_context=None,
+        cancel_peer_on_cancel=False,
     ):
         if action_context is None:
             self.calls.append((action, data, timeout))
@@ -1008,6 +1018,147 @@ async def test_plugin_handler_forwards_runner_tool_envelope():
             180.0,
         )
     ]
+
+
+@pytest.mark.parametrize("with_binding", [False, True])
+@pytest.mark.parametrize("interruption", ["cancel", "deadline", "legacy"])
+async def test_tool_cancellation_reaches_box_only_for_run_calls(
+    with_binding, interruption
+):
+    binding = (
+        _action_context(installation_uuid="installation-1") if with_binding else None
+    )
+    relay, _manager, _control = _handler(action_context=binding)
+    caller, control, host, box_caller, box_peer = (
+        Handler(ProtocolConnection()) for _ in range(5)
+    )
+    relay.context.control_handler = control
+    if binding is not None:
+        caller.bind_action_context(binding)
+    handlers = [caller, relay, control, host, box_caller, box_peer]
+    for left, right in ((caller, relay), (control, host), (box_caller, box_peer)):
+        left.conn.send = right.conn.incoming.put
+        right.conn.send = left.conn.incoming.put
+    box_client = ActionRPCBoxClient(logger=logging.getLogger(__name__))
+    box_client.set_handler(box_caller)
+    started = {name: asyncio.Event() for name in ("target", "sibling")}
+    release = {name: asyncio.Event() for name in started}
+    cancelled = {name: asyncio.Event() for name in started}
+    finished = {name: asyncio.Event() for name in started}
+    host_finished = {name: asyncio.Event() for name in started}
+
+    @box_peer.action(LangBotToBoxAction.EXEC)
+    async def execute(data):
+        name = data["session_id"]
+        assert box_peer.current_action_context == binding
+        started[name].set()
+        try:
+            await release[name].wait()
+        except asyncio.CancelledError:
+            cancelled[name].set()
+            raise
+        finished[name].set()
+        return ActionResponse.success(
+            {
+                "session_id": name,
+                "backend_name": "test",
+                "status": "completed",
+                "exit_code": 0,
+                "stdout": name,
+                "duration_ms": 1,
+            }
+        )
+
+    @host.action(PluginToRuntimeAction.CALL_TOOL)
+    async def call_tool(data):
+        assert host.current_action_context == binding
+        parameters = data.get("parameters", data.get("tool_parameters"))
+        result = await box_client.execute(
+            BoxSpec(session_id=parameters["session_id"], cmd="sleep 8"),
+            action_context=host.current_action_context,
+        )
+        host_finished[parameters["session_id"]].set()
+        return ActionResponse.success({"result": {"stdout": result.stdout}})
+
+    def runner(name, deadline_at=None):
+        ctx = RunnerContext.model_validate(
+            {
+                "run_id": name,
+                "trigger": {"type": "user_message"},
+                "event": {
+                    "event_id": name,
+                    "event_type": "message.received",
+                    "source": "test",
+                },
+                "input": {"content": "test"},
+                "delivery": {"surface": "test"},
+                "runtime": {"deadline_at": deadline_at},
+                "resources": {
+                    "tools": [{"tool_name": "shell", "operations": ["call"]}]
+                },
+            }
+        )
+        return RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=caller)
+
+    loops = [asyncio.create_task(handler.run()) for handler in handlers]
+    sibling = asyncio.create_task(
+        runner("sibling").call_tool("shell", {"session_id": "sibling"})
+    )
+    if interruption == "legacy":
+        target_call = caller.call_action(
+            PluginToRuntimeAction.CALL_TOOL,
+            {"tool_name": "shell", "tool_parameters": {"session_id": "target"}},
+            cancel_peer_on_cancel=True,
+        )
+    else:
+        deadline_at = time.time() + 0.5 if interruption == "deadline" else None
+        target_call = runner("target", deadline_at).call_tool(
+            "shell", {"session_id": "target"}
+        )
+    target = asyncio.create_task(target_call)
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in started.values())), 2
+        )
+        relay_target = relay._action_tasks_by_seq[caller.seq_id_index]
+        if interruption == "deadline":
+            with pytest.raises(AgentAPIException) as exc:
+                await asyncio.wait_for(target, 2)
+            assert exc.value.error.code == "deadline_exceeded"
+        else:
+            target.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(target, 2)
+        if interruption == "legacy":
+            # Even an explicit cancellation at the plugin hop must leave the
+            # legacy Host action running until it completes normally.
+            await asyncio.wait_for(
+                asyncio.gather(relay_target, return_exceptions=True), 2
+            )
+            release["target"].set()
+            await asyncio.wait_for(host_finished["target"].wait(), 2)
+            assert not cancelled["target"].is_set()
+        else:
+            await asyncio.wait_for(cancelled["target"].wait(), 2)
+            assert not finished["target"].is_set()
+        assert not cancelled["sibling"].is_set()
+        assert not sibling.done()
+        release["sibling"].set()
+        assert await asyncio.wait_for(sibling, 2) == {"stdout": "sibling"}
+        assert caller.resp_waiters == {}
+    finally:
+        for event in release.values():
+            event.set()
+        for task in (target, sibling):
+            task.cancel()
+        await asyncio.gather(target, sibling, return_exceptions=True)
+        actions = [task for handler in handlers for task in handler._action_tasks]
+        for task in actions:
+            task.cancel()
+        await asyncio.gather(*actions, return_exceptions=True)
+        for task in loops:
+            task.cancel()
+        await asyncio.gather(*loops, return_exceptions=True)
 
 
 async def test_plugin_handler_lists_plugin_manifests():

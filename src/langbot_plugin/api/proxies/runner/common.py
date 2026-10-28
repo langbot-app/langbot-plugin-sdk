@@ -113,9 +113,13 @@ class _AgentRunHandlerAdapter:
         action: PluginToRuntimeAction,
         data: dict[str, Any],
         timeout: float = 15.0,
+        *,
+        cancel_peer_on_cancel: bool = False,
     ) -> dict[str, Any]:
         try:
-            return await self._handler.call_action(action, data, timeout)
+            return await self._handler.call_action(
+                action, data, timeout, cancel_peer_on_cancel=cancel_peer_on_cancel
+            )
         except ActionCallError as error:
             raise _build_agent_api_exception(action, error) from error
         except (ActionCallTimeoutError, ConnectionClosedError) as error:

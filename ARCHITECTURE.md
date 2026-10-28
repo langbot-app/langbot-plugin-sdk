@@ -482,6 +482,14 @@ retire older sessions. Managed-process relay handshakes carry Workspace and
 generation in authenticated headers; an attached relay closes as soon as that
 generation becomes stale.
 
+Run-bound tool calls propagate scoped cancellation through Plugin Runtime to Box
+EXEC. Cancellation cleanup uses the original request scope and remains bounded
+when cancellation repeats or the invocation is revoked.
+Cancelling an active execution retires its sandbox, as a command timeout
+does; persistent workspace files survive, but container-local files and managed
+processes do not. Cancelling a queued execution leaves the active sandbox alone.
+Failed cleanup keeps the session fenced until a later acquire/delete retries it.
+
 There is no supported `python -m langbot_plugin.box` entrypoint; use `lbp box`.
 
 ## Backend Selection
