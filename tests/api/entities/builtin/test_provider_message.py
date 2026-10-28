@@ -44,7 +44,9 @@ def test_message_string_content_converts_to_plain_message_chain_with_prefix():
 
 
 @pytest.mark.parametrize("message_type", [Message, MessageChunk])
-def test_message_list_content_converts_supported_elements_to_platform_chain(message_type):
+def test_message_list_content_converts_supported_elements_to_platform_chain(
+    message_type,
+):
     message = message_type(
         role="user",
         content=[
@@ -71,7 +73,11 @@ def test_serialized_base64_file_survives_platform_conversion(message_type, file_
         {
             "role": "assistant",
             "content": [
-                {"type": "file_base64", "file_base64": "aGVsbG8=", "file_name": file_name}
+                {
+                    "type": "file_base64",
+                    "file_base64": "aGVsbG8=",
+                    "file_name": file_name,
+                }
             ],
         }
     )
@@ -89,7 +95,8 @@ def test_serialized_base64_file_survives_platform_conversion(message_type, file_
 @pytest.mark.parametrize("message_type", [Message, MessageChunk])
 def test_base64_file_without_payload_is_skipped(message_type):
     message = message_type(
-        role="assistant", content=[ContentElement(type="file_base64", file_name="a.txt")]
+        role="assistant",
+        content=[ContentElement(type="file_base64", file_name="a.txt")],
     )
 
     assert len(message.get_content_platform_message_chain()) == 0
