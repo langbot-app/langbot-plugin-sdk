@@ -778,6 +778,69 @@ async def test_stop_session_argv(backend, session):
     assert argv == ["docker", "rm", "-f", session.backend_session_id]
 
 
+@pytest.mark.anyio
+async def test_stop_missing_session_cleans_cache_and_preserves_host_mount(
+    backend, session, tmp_path
+):
+    cache = tmp_path / "artifacts"
+    cache.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sentinel = workspace / "persistent"
+    sentinel.write_text("keep")
+    session.host_path = str(workspace)
+    backend._artifact_roots[session.backend_session_id] = str(cache)
+    backend._run_command = mock.AsyncMock(
+        side_effect=[
+            _CommandResult(1, "", "remove failed"),
+            _CommandResult(0, "another-container\n", ""),
+        ]
+    )
+
+    await backend.stop_session(session)
+
+    assert not cache.exists()
+    assert sentinel.read_text() == "keep"
+    assert session.backend_session_id not in backend._artifact_roots
+    backend._run_command.assert_awaited_with(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"name={session.backend_session_id}",
+            "--format",
+            "{{.Names}}",
+        ],
+        timeout_sec=5,
+        check=True,
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("probe", ["present", "daemon_error", "timeout"])
+async def test_stop_failure_preserves_cache_and_reports_error(
+    backend, session, tmp_path, probe
+):
+    cache = tmp_path / "artifacts"
+    cache.mkdir()
+    backend._artifact_roots[session.backend_session_id] = str(cache)
+    probes = {
+        "present": _CommandResult(0, session.backend_session_id + "\n", ""),
+        "daemon_error": BoxError("daemon unavailable"),
+        "timeout": _CommandResult(-1, "", "", timed_out=True),
+    }
+    backend._run_command = mock.AsyncMock(
+        side_effect=[_CommandResult(1, "", "remove failed"), probes[probe]]
+    )
+
+    with pytest.raises(BoxError):
+        await backend.stop_session(session)
+
+    assert cache.is_dir()
+    assert backend._artifact_roots[session.backend_session_id] == str(cache)
+
+
 # ── is_session_alive ──────────────────────────────────────────────────
 
 

@@ -55,10 +55,21 @@ class MockHandler:
         self.call_action_generator_mock = AsyncMock()
 
     async def call_action(
-        self, action: PluginToRuntimeAction, data: dict, timeout: float = 120
+        self,
+        action: PluginToRuntimeAction,
+        data: dict,
+        timeout: float = 120,
+        action_context=None,
+        cancel_peer_on_cancel: bool = False,
     ):
         """Mock call_action that returns expected response."""
-        return await self.call_action_mock(action, data, timeout)
+        return await self.call_action_mock(
+            action,
+            data,
+            timeout,
+            action_context=action_context,
+            cancel_peer_on_cancel=cancel_peer_on_cancel,
+        )
 
     def call_action_generator(
         self, action: PluginToRuntimeAction, data: dict, timeout: float = 120

@@ -383,10 +383,36 @@ class CLISandboxBackend(BaseSandboxBackend):
             timeout_sec=20,
             check=False,
         )
-        if result.return_code == 0:
-            root = self._artifact_roots.pop(session.backend_session_id, None)
-            if root is not None:
-                await bounded_executor.run_blocking_cleanup(shutil.rmtree, root)
+        if result.return_code != 0 or result.timed_out:
+            # A missing container is already stopped; daemon failures are not.
+            remaining = await self._run_command(
+                [
+                    self.command,
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"name={session.backend_session_id}",
+                    "--format",
+                    "{{.Names}}",
+                ],
+                timeout_sec=5,
+                check=True,
+            )
+            if (
+                remaining.timed_out
+                or remaining.return_code != 0
+                or session.backend_session_id in remaining.stdout.splitlines()
+            ):
+                raise BoxError(
+                    self._format_cli_error(
+                        result.stderr
+                        or f"Failed to remove container {session.backend_session_id}"
+                    )
+                )
+        root = self._artifact_roots.get(session.backend_session_id)
+        if root is not None:
+            await bounded_executor.run_blocking_cleanup(shutil.rmtree, root)
+            self._artifact_roots.pop(session.backend_session_id, None)
 
     async def is_session_alive(self, session: BoxSessionInfo) -> bool:
         result = await self._run_command(

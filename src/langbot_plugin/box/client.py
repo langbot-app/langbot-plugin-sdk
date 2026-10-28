@@ -166,7 +166,11 @@ class ActionRPCBoxClient(BoxRuntimeClient):
     ) -> dict[str, Any]:
         try:
             return await self.handler.call_action(
-                action, data, timeout=timeout, action_context=action_context
+                action,
+                data,
+                timeout=timeout,
+                action_context=action_context,
+                cancel_peer_on_cancel=action == LangBotToBoxAction.EXEC,
             )
         except BoxRuntimeUnavailableError:
             raise

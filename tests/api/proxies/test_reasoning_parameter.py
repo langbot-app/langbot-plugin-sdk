@@ -114,10 +114,18 @@ async def test_public_plugin_method_retains_runner_scope_with_explicit_level():
     runner, transport = component(run)
     original = transport.call_action
 
-    async def call(action, data, timeout=None):
+    async def call(
+        action, data, timeout=None, action_context=None, cancel_peer_on_cancel=False
+    ):
         if action == Action.GET_LANGBOT_VERSION:
             return {"api_features": ["llm.reasoning_level"]}
-        return await original(action, data, timeout)
+        return await original(
+            action,
+            data,
+            timeout,
+            action_context=action_context,
+            cancel_peer_on_cancel=cancel_peer_on_cancel,
+        )
 
     transport.call_action = call
     _ = [result async for result in runner.invoke(context())]

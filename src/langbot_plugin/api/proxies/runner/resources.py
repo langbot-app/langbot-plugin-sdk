@@ -282,6 +282,7 @@ class AgentRunResourceAPIMixin:
                 "parameters": parameters,
             },
             timeout,
+            cancel_peer_on_cancel=True,
         )
         return self._expect_key(resp, "result", PluginToRuntimeAction.CALL_TOOL)
 

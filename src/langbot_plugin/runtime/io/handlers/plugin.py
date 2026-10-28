@@ -162,6 +162,10 @@ class PluginConnectionHandler(handler.Handler):
                 if binding is None:
                     raise ValueError("Plugin Runtime is not bound to a Workspace")
 
+            cancel_peer_on_cancel = (
+                action == PluginToRuntimeAction.CALL_TOOL
+                and payload.get("run_id") is not None
+            )
             if binding is None:
                 # Compatibility for non-Workspace APIs used with an older
                 # single-tenant host. Workspace storage never takes this path.
@@ -169,12 +173,14 @@ class PluginConnectionHandler(handler.Handler):
                     action,
                     payload,
                     timeout=timeout,
+                    cancel_peer_on_cancel=cancel_peer_on_cancel,
                 )
             return await self.context.control_handler.call_action(
                 action,
                 payload,
                 timeout=timeout,
                 action_context=binding,
+                cancel_peer_on_cancel=cancel_peer_on_cancel,
             )
 
         def scoped_plugins():

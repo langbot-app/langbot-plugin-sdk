@@ -17,7 +17,14 @@ class FakeHandler:
         self.local_files = {"file-key": b"file-bytes"}
         self.deleted_files: list[str] = []
 
-    async def call_action(self, action, data, timeout=None):
+    async def call_action(
+        self,
+        action,
+        data,
+        timeout=None,
+        action_context=None,
+        cancel_peer_on_cancel=False,
+    ):
         self.calls.append((action, data, timeout))
         response = self.responses.get(action)
         if callable(response):

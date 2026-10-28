@@ -22,6 +22,7 @@ from langbot_plugin.box.backend import BaseSandboxBackend, DockerBackend
 from langbot_plugin.box.errors import (
     BoxBackendUnavailableError,
     BoxCapacityExceededError,
+    BoxError,
     BoxManagedProcessNotFoundError,
     BoxSessionConflictError,
     BoxSessionNotFoundError,
@@ -978,6 +979,179 @@ async def test_execute_cancel_clears_active_counter(logger):
         await task
 
     assert not runtime._active_exec_counts
+    assert "cancel" not in runtime._sessions
+    backend.stop_session.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_cancelling_queued_execute_preserves_running_session(logger):
+    backend = FakeBackend(logger)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_exec = backend.exec
+
+    async def blocking_exec(session, spec):
+        started.set()
+        await release.wait()
+        return await original_exec(session, spec)
+
+    backend.exec = blocking_exec
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+    running = asyncio.create_task(runtime.execute(_make_spec("shared")))
+    await started.wait()
+    old_session = runtime._sessions["shared"]
+    queued = asyncio.create_task(runtime.execute(_make_spec("shared")))
+    await _wait_until(lambda: runtime._active_exec_counts["shared"] == 2)
+
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    assert runtime._sessions["shared"] is old_session
+    assert not old_session.closing
+    assert runtime._active_exec_counts["shared"] == 1
+    backend.stop_session.assert_not_awaited()
+
+    release.set()
+    assert (await running).ok
+    assert backend.exec_calls == [("fake-1", "echo hi")]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("interrupt", ["cancel", "timeout"])
+async def test_interrupted_execute_fences_queued_work_before_unlock(logger, interrupt):
+    backend = FakeBackend(logger)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    entered_commands = []
+    original_exec = backend.exec
+
+    async def blocking_exec(session, spec):
+        entered_commands.append(spec.cmd)
+        if spec.cmd == "blocked":
+            started.set()
+            await release.wait()
+            result = await original_exec(session, spec)
+            return result.model_copy(update={"status": BoxExecutionStatus.TIMED_OUT})
+        return await original_exec(session, spec)
+
+    backend.exec = blocking_exec
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+    other = await runtime.create_session(_make_spec("other"))
+    running = asyncio.create_task(runtime.execute(_make_spec("shared", cmd="blocked")))
+    await started.wait()
+    old_session = runtime._sessions["shared"]
+    queued = asyncio.create_task(runtime.execute(_make_spec("shared", cmd="queued")))
+    await _wait_until(lambda: runtime._active_exec_counts["shared"] == 2)
+
+    # Hold the global lock so retirement cannot hide a missing execution fence.
+    async with runtime._lock:
+        if interrupt == "cancel":
+            running.cancel()
+        else:
+            release.set()
+        await asyncio.wait_for(old_session.lock.acquire(), timeout=1)
+        old_session.lock.release()
+        assert old_session.closing
+        assert entered_commands == ["blocked"]
+
+    with pytest.raises(BoxSessionNotFoundError):
+        await queued
+    if interrupt == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await running
+    else:
+        assert (await running).status == BoxExecutionStatus.TIMED_OUT
+    assert "shared" not in runtime._sessions
+    backend.stop_session.assert_awaited_once_with(old_session.info)
+    assert (
+        runtime._sessions["other"].info.backend_session_id
+        == other["backend_session_id"]
+    )
+
+    assert (await runtime.execute(_make_spec("shared", cmd="fresh"))).ok
+    assert (
+        runtime._sessions["shared"].info.backend_session_id
+        != old_session.info.backend_session_id
+    )
+    assert entered_commands == ["blocked", "fresh"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("retry", ["acquire", "delete"])
+async def test_failed_cleanup_retains_fence_and_can_be_retried(logger, retry):
+    backend = FakeBackend(logger)
+    backend.stop_session.side_effect = RuntimeError("cannot stop container")
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend], max_sessions=1)
+    await runtime.create_session(_make_spec("failed"))
+    old_session = runtime._sessions["failed"]
+
+    with pytest.raises(BoxError, match="cannot stop container"):
+        await runtime.delete_session("failed")
+    assert runtime._sessions["failed"] is old_session
+    assert old_session.closing
+    assert not runtime._closing_session_tasks
+    with pytest.raises(BoxCapacityExceededError):
+        await runtime.create_session(_make_spec("other"))
+    with pytest.raises(BoxError, match="cannot stop container"):
+        await asyncio.wait_for(runtime.create_session(_make_spec("failed")), timeout=1)
+    assert backend.started_sessions == 1
+    assert backend.exec_calls == []
+
+    backend.stop_session.side_effect = backend._stop_session
+    if retry == "delete":
+        await runtime.delete_session("failed")
+    fresh = await runtime.create_session(_make_spec("failed"))
+    assert fresh["backend_session_id"] != old_session.info.backend_session_id
+    assert not runtime._sessions["failed"].closing
+
+
+@pytest.mark.anyio
+async def test_cancelled_execute_keeps_cancellation_when_cleanup_fails(logger):
+    backend = FakeBackend(logger)
+    started = asyncio.Event()
+
+    async def blocking_exec(session, spec):
+        started.set()
+        await asyncio.Event().wait()
+
+    backend.exec = blocking_exec
+    backend.stop_session.side_effect = RuntimeError("cannot stop container")
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+    running = asyncio.create_task(runtime.execute(_make_spec("failed")))
+    await started.wait()
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert runtime._sessions["failed"].closing
+    assert not runtime._active_exec_counts
+    backend.stop_session.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_managed_process_cleanup_failure_still_stops_backend(logger):
+    backend = FakeBackend(logger)
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+    await runtime.create_session(_make_spec("managed"))
+    await runtime.start_managed_process(
+        "managed", BoxManagedProcessSpec(command="daemon")
+    )
+    with mock.patch.object(
+        runtime,
+        "_terminate_managed_process",
+        side_effect=RuntimeError("terminate failed"),
+    ):
+        with pytest.raises(BoxError, match="Failed to terminate managed processes"):
+            await runtime.delete_session("managed")
+    backend.stop_session.assert_awaited_once()
+    assert runtime._sessions["managed"].closing
+    assert "default" in runtime._sessions["managed"].managed_processes
+    await runtime.delete_session("managed")
+    assert "managed" not in runtime._sessions
 
 
 @pytest.mark.anyio
