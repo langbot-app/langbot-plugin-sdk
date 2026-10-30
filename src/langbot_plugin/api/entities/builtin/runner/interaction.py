@@ -64,7 +64,9 @@ class InteractionAction(pydantic.BaseModel):
 class InteractionRequest(pydantic.BaseModel):
     """A runner request for Host-owned structured user interaction."""
 
-    interaction_id: str = pydantic.Field(default_factory=lambda: uuid.uuid4().hex, min_length=1, max_length=255)
+    interaction_id: str = pydantic.Field(
+        default_factory=lambda: uuid.uuid4().hex, min_length=1, max_length=255
+    )
     kind: typing.Literal["form", "confirmation", "choice"] = "form"
     title: str = pydantic.Field(min_length=1, max_length=1000)
     description: str | None = pydantic.Field(default=None, max_length=10000)
@@ -73,7 +75,9 @@ class InteractionRequest(pydantic.BaseModel):
         default_factory=list, max_length=20
     )
     expires_at: int | None = None
-    fallback_text: str | None = pydantic.Field(default=None, min_length=1, max_length=20000)
+    fallback_text: str | None = pydantic.Field(
+        default=None, min_length=1, max_length=20000
+    )
 
     model_config = pydantic.ConfigDict(extra="forbid")
 
@@ -135,9 +139,10 @@ class InteractionResult(pydantic.BaseModel):
 class InteractionNotSupportedError(Exception):
     def __init__(self, issues: list[dict[str, str]]):
         self.issues = issues
-        super().__init__("Interaction is not supported: " + ", ".join(
-            f"{issue['path']}: {issue['reason']}" for issue in issues
-        ))
+        super().__init__(
+            "Interaction is not supported: "
+            + ", ".join(f"{issue['path']}: {issue['reason']}" for issue in issues)
+        )
 
 
 __all__ = [

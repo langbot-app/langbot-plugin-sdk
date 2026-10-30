@@ -163,7 +163,11 @@ class PluginConnectionHandler(handler.Handler):
                     raise ValueError("Plugin Runtime is not bound to a Workspace")
 
             cancel_peer_on_cancel = (
-                action in {PluginToRuntimeAction.CALL_TOOL, PluginToRuntimeAction.REQUEST_INTERACTION}
+                action
+                in {
+                    PluginToRuntimeAction.CALL_TOOL,
+                    PluginToRuntimeAction.REQUEST_INTERACTION,
+                }
                 and payload.get("run_id") is not None
             )
             if binding is None:
@@ -844,9 +848,13 @@ class PluginConnectionHandler(handler.Handler):
             try:
                 timeout = float(data["timeout"])
             except (KeyError, TypeError, ValueError):
-                return handler.ActionResponse.error("A valid interaction timeout is required")
+                return handler.ActionResponse.error(
+                    "A valid interaction timeout is required"
+                )
             if not 0 < timeout <= 86400:
-                return handler.ActionResponse.error("Interaction timeout exceeds 24 hours")
+                return handler.ActionResponse.error(
+                    "Interaction timeout exceeds 24 hours"
+                )
             return await forward_agent_action(
                 PluginToRuntimeAction.REQUEST_INTERACTION,
                 data,

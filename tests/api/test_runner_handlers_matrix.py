@@ -37,6 +37,8 @@ def payload(event_class, populated):
     data = {"type": event_class.model_fields["type"].default}
     if event_class is events.FeedbackReceivedEvent:
         data.update(feedback_id="feedback-1", feedback_type=1)
+    if event_class is events.InteractionCallbackEvent:
+        data["callback_token"] = "test-token"
     if populated:
         values = {
             "timestamp": 1788820000.25,

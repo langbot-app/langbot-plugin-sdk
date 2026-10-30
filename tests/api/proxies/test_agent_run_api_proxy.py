@@ -29,7 +29,10 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
 from langbot_plugin.api.entities.builtin.runner.interaction import InteractionRequest
-from langbot_plugin.api.entities.builtin.platform.events import InteractionCallbackEvent, parse_eba_event
+from langbot_plugin.api.entities.builtin.platform.events import (
+    InteractionCallbackEvent,
+    parse_eba_event,
+)
 from langbot_plugin.api.entities.builtin.runner.resources import (
     AgentResources,
     ModelResource,
@@ -142,10 +145,12 @@ class TestRunnerAPIProxyRestrictedAPISurface:
         )
 
     def test_standard_interaction_callback_round_trips(self):
-        event = InteractionCallbackEvent(callback_token='token', values={'choice': 'yes'}, actor_id='user')
-        parsed = parse_eba_event(event.model_dump(mode='json'))
+        event = InteractionCallbackEvent(
+            callback_token="token", values={"choice": "yes"}, actor_id="user"
+        )
+        parsed = parse_eba_event(event.model_dump(mode="json"))
         assert isinstance(parsed, InteractionCallbackEvent)
-        assert parsed.callback_token == 'token'
+        assert parsed.callback_token == "token"
 
     async def test_send_message_retains_run_authorization(self):
         from langbot_plugin.api.entities.builtin.platform.message import (
@@ -162,14 +167,22 @@ class TestRunnerAPIProxyRestrictedAPISurface:
         )
         assert handler.call_action.await_args.args[1]["run_id"] == ctx.run_id
 
-    async def test_request_interaction_uses_independent_timeout_and_updates_deadline(self):
+    async def test_request_interaction_uses_independent_timeout_and_updates_deadline(
+        self,
+    ):
         ctx = create_mock_context(deadline_at=time.time() + 10)
         handler = MagicMock()
-        handler.call_action = AsyncMock(return_value={
-            "status": "submitted",
-            "submission": {"interaction_id": "one", "action_id": "yes", "values": {}},
-            "deadline_at": 1234567890.0,
-        })
+        handler.call_action = AsyncMock(
+            return_value={
+                "status": "submitted",
+                "submission": {
+                    "interaction_id": "one",
+                    "action_id": "yes",
+                    "values": {},
+                },
+                "deadline_at": 1234567890.0,
+            }
+        )
         proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
 
         result = await proxy.request_interaction(

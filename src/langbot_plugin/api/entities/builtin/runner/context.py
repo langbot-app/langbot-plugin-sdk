@@ -37,7 +37,10 @@ from langbot_plugin.api.entities.builtin.runner.context_access import (
     ContextAccess,
 )
 from langbot_plugin.api.entities.builtin.runner.delivery import DeliveryContext
-from langbot_plugin.api.entities.builtin.runner.interaction import InteractionRequest, InteractionResult
+from langbot_plugin.api.entities.builtin.runner.interaction import (
+    InteractionRequest,
+    InteractionResult,
+)
 
 
 class AdapterContext(pydantic.BaseModel):
