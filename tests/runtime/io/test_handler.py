@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import errno
 import json
 import os
 import shutil
@@ -50,6 +51,32 @@ def _transfer_entry_name(path: str | os.PathLike[str]) -> str:
     return os.path.basename(os.fspath(path))
 
 
+def _confine_absolute_opens(monkeypatch, granted) -> None:
+    """Deny absolute-path opens outside ``granted``, like an app sandbox.
+
+    A confinement profile grants one subtree instead of relying on UNIX
+    permissions, so every component above the grant is refused even though the
+    granted subtree stays reachable by its full path.  Relative (``dir_fd``)
+    opens always target something inside the grant and stay allowed.
+    """
+
+    real_open = os.open
+
+    def confinement_open(path, flags, *args, **kwargs):
+        target = os.fspath(path)
+        if os.path.isabs(target):
+            resolved = os.path.realpath(target)
+            if resolved != str(granted) and not resolved.startswith(
+                str(granted) + os.sep
+            ):
+                raise PermissionError(
+                    errno.EACCES, "denied by confinement profile", target
+                )
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "open", confinement_open)
+
+
 def _symlinks_supported() -> bool:
     """Whether this host may create symlinks (Windows needs a privilege)."""
 
@@ -73,6 +100,14 @@ requires_symlinks = pytest.mark.skipif(
 requires_descriptor_root = pytest.mark.skipif(
     not DESCRIPTOR_ROOT_SUPPORTED,
     reason="asserts descriptor-relative transfer root semantics (POSIX only)",
+)
+requires_path_only_open = pytest.mark.skipif(
+    getattr(os, "O_PATH", None) is None,
+    reason="needs O_PATH to inspect a directory without read permission",
+)
+requires_unreadable_directories = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="permission bits only restrict non-root POSIX users",
 )
 
 
@@ -2218,6 +2253,293 @@ def test_prepared_transfer_root_matches_platform_capability(tmp_path):
     with pytest.raises(ValueError, match="Invalid file transfer capability"):
         handler_module._join_directory_entry(handle, "..")
     handler_module._close_directory(handle)
+
+
+@requires_descriptor_root
+@requires_unreadable_directories
+@pytest.mark.asyncio
+async def test_transfer_root_binds_under_unreadable_ancestor(tmp_path):
+    """A deployment may deny reading the ancestors it still lets us traverse.
+
+    fnOS applications reach their own ``data`` directory while a read-only open
+    of the volume above it is refused.  The root must bind and stay usable
+    instead of rejecting every file transfer.
+    """
+
+    volume = tmp_path / "vol2"
+    root = volume / "@appshare" / "langbot" / "data" / "lbp"
+    root.mkdir(parents=True)
+    os.chmod(volume, 0o111)
+    try:
+        handler = Handler(ProtocolConnection(), file_storage_dir=root)
+        try:
+            file_key = f"ft1_{'8' * 64}.bin"
+            await _write_chunk(handler, file_key, b"unreadable-ancestor")
+            assert await handler.read_local_file(file_key) == b"unreadable-ancestor"
+        finally:
+            await handler.close()
+    finally:
+        os.chmod(volume, 0o755)
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+
+
+@requires_descriptor_root
+@pytest.mark.asyncio
+async def test_transfer_root_binds_below_sandboxed_ancestors(tmp_path, monkeypatch):
+    """A profile that grants only the application subtree still binds the root.
+
+    Confinement profiles (fnOS app sandboxes, hardened containers) deny the
+    walk above the granted subtree even though the subtree itself is reachable
+    by absolute path, so binding has to start at the deepest directory the
+    profile still allows without dropping the checks below that point.
+    """
+
+    granted = tmp_path / "vol2" / "@appshare" / "langbot" / "data" / "lbp"
+    granted.mkdir(parents=True)
+    _confine_absolute_opens(monkeypatch, granted)
+
+    with pytest.raises(PermissionError):
+        os.open(tmp_path, os.O_RDONLY)
+
+    handler = Handler(ProtocolConnection(), file_storage_dir=granted)
+    try:
+        file_key = f"ft1_{'9' * 64}.bin"
+        await _write_chunk(handler, file_key, b"sandboxed-ancestors")
+        assert await handler.read_local_file(file_key) == b"sandboxed-ancestors"
+    finally:
+        await handler.close()
+
+
+@requires_descriptor_root
+@pytest.mark.asyncio
+async def test_transfer_root_creates_missing_root_below_sandboxed_ancestors(
+    tmp_path, monkeypatch
+):
+    """A missing storage root is still created inside the granted subtree."""
+
+    granted = tmp_path / "vol2" / "@appshare" / "langbot" / "data"
+    granted.mkdir(parents=True)
+    root = granted / "lbp"
+    _confine_absolute_opens(monkeypatch, granted)
+
+    handler = Handler(ProtocolConnection(), file_storage_dir=root)
+    try:
+        file_key = f"ft2_{'9' * 64}.bin"
+        await _write_chunk(handler, file_key, b"created-in-sandbox")
+        assert await handler.read_local_file(file_key) == b"created-in-sandbox"
+    finally:
+        await handler.close()
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+
+
+@requires_descriptor_root
+@requires_symlinks
+def test_transfer_root_rejects_symlinked_ancestor_under_sandbox(tmp_path, monkeypatch):
+    """The re-anchored walk still refuses the ancestors it can inspect."""
+
+    external = tmp_path / "external"
+    (external / "lbp").mkdir(parents=True)
+    volume = tmp_path / "volume"
+    volume.symlink_to(external, target_is_directory=True)
+    root = volume / "lbp"
+    # A profile grants the resolved subtree, exactly like a Landlock rule.
+    _confine_absolute_opens(monkeypatch, external / "lbp")
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        handler_module._prepare_transfer_root(str(root))
+
+    assert list((external / "lbp").iterdir()) == []
+
+
+@requires_descriptor_root
+def test_transfer_root_rejects_when_no_ancestor_is_reachable(tmp_path, monkeypatch):
+    """A profile that grants nothing reachable still rejects the root."""
+
+    root = tmp_path / "vol2" / "lbp"
+    root.mkdir(parents=True)
+    _confine_absolute_opens(monkeypatch, tmp_path / "elsewhere")
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        handler_module._prepare_transfer_root(str(root))
+
+
+@requires_descriptor_root
+def test_symlink_inspection_skips_ancestors_the_profile_denies(tmp_path, monkeypatch):
+    """An ancestor nobody can inspect cannot be proven to be a symlink.
+
+    The re-anchored walk verifies every ancestor it can see and only skips
+    the ones the profile itself refuses to describe.
+    """
+
+    components = [
+        part for part in str(tmp_path / "outer" / "lbp").split(os.sep) if part
+    ]
+    real_lstat = os.lstat
+
+    def deny_outer(path, *args, **kwargs):
+        if os.fspath(path) == str(tmp_path / "outer"):
+            raise PermissionError(
+                errno.EACCES, "denied by confinement profile", os.fspath(path)
+            )
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "lstat", deny_outer)
+
+    handler_module._reject_symlinked_root_prefixes(components, len(components))
+
+
+@requires_descriptor_root
+@requires_path_only_open
+@pytest.mark.asyncio
+async def test_transfer_root_walks_when_filesystem_root_is_unreadable(
+    tmp_path, monkeypatch
+):
+    """A sandbox that denies the whole chain is walked path-only from `/`.
+
+    Landlock-style profiles refuse ``/`` and every ancestor while granting the
+    application subtree, so the walk has to start path-only too instead of
+    giving up on the first component.
+    """
+
+    root = tmp_path / "vol2" / "@appshare" / "langbot" / "data" / "lbp"
+    root.mkdir(parents=True)
+    real_open = os.open
+    denied: list[str] = []
+
+    def deny_read_only_system_root(path, flags, *args, **kwargs):
+        target = os.fspath(path)
+        if (
+            target == os.sep
+            and not flags & os.O_PATH
+            and flags & os.O_ACCMODE == os.O_RDONLY
+        ):
+            denied.append(target)
+            raise PermissionError(errno.EACCES, "denied by confinement profile", target)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "open", deny_read_only_system_root)
+
+    handler = Handler(ProtocolConnection(), file_storage_dir=root)
+    try:
+        file_key = f"ft3_{'7' * 64}.bin"
+        await _write_chunk(handler, file_key, b"path-only-walk")
+        assert await handler.read_local_file(file_key) == b"path-only-walk"
+    finally:
+        await handler.close()
+
+    assert denied
+
+
+@requires_descriptor_root
+@requires_path_only_open
+def test_transfer_root_path_stat_falls_back_to_path_only_open(tmp_path, monkeypatch):
+    """The drift check re-opens the root by path when ``stat`` is refused.
+
+    Denying the ancestors also denies ``stat`` on the full path, and a
+    path-only open answers the same identity question without following a
+    symlink.
+    """
+
+    root = tmp_path / "transfer-root"
+    root.mkdir()
+    expected = os.stat(root)
+    real_stat = os.stat
+    denied: list[str] = []
+
+    def deny_root_path(path, *args, **kwargs):
+        if os.fspath(path) == str(root):
+            denied.append(os.fspath(path))
+            raise PermissionError(
+                errno.EACCES, "denied by confinement profile", os.fspath(path)
+            )
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(handler_module.os, "stat", deny_root_path)
+
+    root_stat = handler_module._transfer_root_path_stat(str(root))
+
+    assert denied
+    assert stat.S_ISDIR(root_stat.st_mode)
+    assert (root_stat.st_dev, root_stat.st_ino) == (expected.st_dev, expected.st_ino)
+
+    # Anything the path-only retry cannot fix still fails: a vanished path is
+    # not a permission problem.
+    with pytest.raises(OSError):
+        handler_module._transfer_root_path_stat(str(root / "missing"))
+
+
+@requires_descriptor_root
+@requires_symlinks
+def test_transfer_root_still_rejects_symlinked_ancestor(tmp_path):
+    """Relaxing the ancestor open must not relax the symlink refusal."""
+
+    external = tmp_path / "external"
+    (external / "data" / "lbp").mkdir(parents=True)
+    link = tmp_path / "volume"
+    link.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        handler_module._prepare_transfer_root(str(link / "data" / "lbp"))
+
+    assert list((external / "data" / "lbp").iterdir()) == []
+
+
+@requires_descriptor_root
+def test_transfer_root_rejects_non_directory_ancestor(tmp_path):
+    """A component that is a file is refused, not created around."""
+
+    blocker = tmp_path / "data"
+    blocker.write_bytes(b"not a directory")
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        handler_module._prepare_transfer_root(str(blocker / "lbp"))
+
+
+@requires_descriptor_root
+@requires_unreadable_directories
+def test_transfer_root_rejects_unreadable_non_directory_ancestor(tmp_path):
+    """The path-only retry still refuses something that is not a directory."""
+
+    blocker = tmp_path / "data"
+    blocker.write_bytes(b"not a directory")
+    os.chmod(blocker, 0o000)
+    try:
+        with pytest.raises(ValueError, match="Invalid file transfer root"):
+            handler_module._prepare_transfer_root(str(blocker / "lbp"))
+    finally:
+        os.chmod(blocker, 0o644)
+
+
+def test_transfer_root_rejects_filesystem_root():
+    """The storage root may not be the filesystem root itself."""
+
+    with pytest.raises(ValueError, match="Invalid file transfer root"):
+        handler_module._prepare_transfer_root(os.sep)
+
+
+@requires_descriptor_root
+@requires_symlinks
+@requires_unreadable_directories
+def test_transfer_root_rejects_symlinked_ancestor_below_unreadable_parent(
+    tmp_path,
+):
+    """The path-only ancestor open keeps refusing links, not just the read open."""
+
+    volume = tmp_path / "vol2"
+    volume.mkdir()
+    external = tmp_path / "external"
+    (external / "lbp").mkdir(parents=True)
+    (volume / "data").symlink_to(external, target_is_directory=True)
+    os.chmod(volume, 0o111)
+    try:
+        with pytest.raises(ValueError, match="Invalid file transfer root"):
+            handler_module._prepare_transfer_root(str(volume / "data" / "lbp"))
+    finally:
+        os.chmod(volume, 0o755)
+
+    assert list((external / "lbp").iterdir()) == []
 
 
 @pytest.mark.asyncio

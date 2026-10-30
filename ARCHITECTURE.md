@@ -292,6 +292,16 @@ Core mechanics:
   explicit current context must still match, and the receiver never scans other
   namespaces. Legacy opaque basenames remain supported. Absolute paths,
   separators, `..`, and unsafe extensions are rejected.
+- The transfer root is created and bound to one exact directory inode by walking
+  every component from `/` without following links, so a swapped component cannot
+  redirect a transfer. Deployments that deny inspecting the ancestors while still
+  reaching the root itself (fnOS applications inside `/vol2/@appshare/...`,
+  sandboxed containers) keep working: ancestors are opened path-only when a
+  read-only open is refused, and a root whose ancestors are entirely denied is
+  bound `O_NOFOLLOW` at the deepest reachable directory. Every component below
+  that point, the root descriptor, and all later operations keep the same
+  no-link, relative-only guarantees; the per-transfer drift check re-identifies
+  the configured path the same way.
 
 Action enums are the protocol contract:
 
