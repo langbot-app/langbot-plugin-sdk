@@ -452,14 +452,183 @@ def _open_transfer_directory(
         raise ValueError("Invalid file transfer capability") from None
 
 
+_TRANSFER_ROOT_DENIED_ERRNOS = frozenset({errno.EACCES, errno.EPERM})
+"""Denials that only mean this process may not inspect an ancestor.
+
+Deployments such as fnOS applications keep the storage root itself reachable
+while refusing the walk above it: opening ``/vol2`` read-only is denied even
+though the application's own ``data`` directory inside that volume works.
+Only these two errors may relax the walk; a symlink, a regular file, or a
+missing path keeps the strict verdict.
+"""
+
+
+def _open_transfer_root_entry(
+    name: str,
+    parent_fd: int | None,
+    *,
+    readable: bool,
+) -> int:
+    """Open one entry of the transfer root's own ancestor chain.
+
+    ``readable`` marks the root directory itself, which transfers really read
+    and therefore has to open as a plain read-only descriptor.  The components
+    above it only have to prove that the chain contains no symlink, so a
+    denied read open retries once with ``O_PATH``: that resolves the same
+    chain, refuses the same links (the descriptor is still checked to be a
+    directory), and needs search permission instead of read permission.
+    """
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        return os.open(name, directory_flags | no_follow, dir_fd=parent_fd)
+    except OSError as exc:
+        path_only_flags = getattr(os, "O_PATH", None)
+        if (
+            readable
+            or path_only_flags is None
+            or exc.errno not in _TRANSFER_ROOT_DENIED_ERRNOS
+        ):
+            raise
+    descriptor = os.open(
+        name,
+        path_only_flags | no_follow,
+        dir_fd=parent_fd,
+    )
+    # The descriptor decides what was really opened: ``O_PATH`` without
+    # ``O_DIRECTORY`` hands back a link or a regular file instead of failing,
+    # and that explicit check does not depend on the kernel honouring
+    # ``O_DIRECTORY`` together with ``O_PATH``.
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise OSError(errno.ENOTDIR, "transfer root component is not a directory", name)
+    return descriptor
+
+
+def _create_transfer_root_component(component: str, parent_fd: int) -> None:
+    """Create one missing component; the open that follows owns the verdict.
+
+    A component that already exists reports ``FileExistsError`` before the
+    permission check, so a denied ``mkdir`` only ever happens on something the
+    walk is about to open anyway; denying here instead of failing keeps
+    unreadable-but-existing ancestors from breaking the walk.
+    """
+
+    try:
+        os.mkdir(component, mode=0o700, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        if exc.errno not in _TRANSFER_ROOT_DENIED_ERRNOS:
+            raise
+
+
+def _walk_transfer_root(anchor_fd: int, components: list[str]) -> int:
+    """Create and open ``components`` beneath ``anchor_fd``.
+
+    Takes ownership of ``anchor_fd`` and always closes it; the returned
+    descriptor is the deepest component and belongs to the caller.
+    """
+
+    current_fd = anchor_fd
+    try:
+        for index, component in enumerate(components):
+            _create_transfer_root_component(component, current_fd)
+            next_fd = _open_transfer_root_entry(
+                component,
+                current_fd,
+                readable=index == len(components) - 1,
+            )
+            os.close(current_fd)
+            current_fd = next_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
+    return current_fd
+
+
+def _reject_symlinked_root_prefixes(components: list[str], anchor: int) -> None:
+    """Reject the ancestors above ``anchor`` that this process can inspect."""
+
+    for inspected in range(1, anchor):
+        prefix = os.sep + os.path.join(*components[:inspected])
+        try:
+            prefix_stat = os.lstat(prefix)
+        except OSError:
+            # Inspecting this ancestor is exactly what the confinement
+            # profile denies, which is why the walk re-anchored below it.
+            continue
+        if stat.S_ISLNK(prefix_stat.st_mode):
+            raise ValueError("Invalid file transfer root")
+
+
+def _bind_transfer_root_under_sandboxed_ancestors(components: list[str]) -> int:
+    """Bind the root when an ancestor refuses even a path-only open.
+
+    A confinement profile that grants the application only its own subtree
+    (instead of relying on UNIX permissions) denies the walk above that
+    subtree completely, so that part of the chain cannot be inspected at all.
+    Everything transfers actually depend on still holds: the root is opened
+    ``O_NOFOLLOW`` at the inode the configured path names, every component
+    below the deepest reachable ancestor is opened relative to its parent
+    without following links, and every later operation runs on the bound
+    descriptor.  What is lost is only the "no symlink above the root" proof,
+    which the profile denies; ancestors that can be inspected are still
+    refused when they are symlinks.
+    """
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    for anchor in range(len(components), 0, -1):
+        prefix = os.sep + os.path.join(*components[:anchor])
+        try:
+            anchor_fd = os.open(prefix, directory_flags | no_follow)
+        except OSError:
+            continue
+        break
+    else:
+        raise ValueError("Invalid file transfer root")
+    try:
+        _reject_symlinked_root_prefixes(components, anchor)
+    except BaseException:
+        os.close(anchor_fd)
+        raise
+    return _walk_transfer_root(anchor_fd, components[anchor:])
+
+
+def _transfer_root_path_stat(lexical_root: str) -> os.stat_result:
+    """Identify the directory the configured path currently names.
+
+    A plain ``lstat`` needs search permission on every ancestor; a profile
+    that denies it still answers through a path-only open of the same path,
+    which cannot follow a symlink either.
+    """
+
+    try:
+        return os.stat(lexical_root, follow_symlinks=False)
+    except OSError as exc:
+        path_only_flags = getattr(os, "O_PATH", None)
+        if path_only_flags is None or exc.errno not in _TRANSFER_ROOT_DENIED_ERRNOS:
+            raise
+    descriptor = os.open(
+        lexical_root,
+        path_only_flags | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        return os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _prepare_transfer_root(
     root: str,
 ) -> tuple[str, int | _PathDirectoryHandle, os.stat_result]:
     """Create and bind the configured root to one exact directory inode."""
 
     lexical_root = os.path.abspath(root)
-    components = lexical_root.split(os.sep)
-    if len(components) <= 1:
+    components = [component for component in lexical_root.split(os.sep) if component]
+    if not components:
         raise ValueError("Invalid file transfer root")
     if not _DIRECTORY_HANDLE_SUPPORTED:
         # Windows-style fallback: create the root and keep an absolute-path
@@ -478,35 +647,28 @@ def _prepare_transfer_root(
         )
         _chmod_directory(handle, 0o700)
         return lexical_root, handle, root_stat
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    no_follow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        current_fd = os.open(os.sep, directory_flags)
-    except OSError:
-        raise ValueError("Invalid file transfer root") from None
+        root_fd = _walk_transfer_root(
+            _open_transfer_root_entry(os.sep, None, readable=False), components
+        )
+    except OSError as exc:
+        if exc.errno not in _TRANSFER_ROOT_DENIED_ERRNOS:
+            raise ValueError("Invalid file transfer root") from None
+        # The platform refuses to let this process inspect an ancestor of the
+        # storage root, so the walk cannot start at '/' here.
+        logger.debug(
+            "Transfer root %s re-anchored below an unreadable ancestor", lexical_root
+        )
+        try:
+            root_fd = _bind_transfer_root_under_sandboxed_ancestors(components)
+        except OSError:
+            raise ValueError("Invalid file transfer root") from None
     try:
-        for component in components[1:]:
-            if not component:
-                continue
-            try:
-                os.mkdir(component, mode=0o700, dir_fd=current_fd)
-            except FileExistsError:
-                pass
-            try:
-                next_fd = os.open(
-                    component,
-                    directory_flags | no_follow,
-                    dir_fd=current_fd,
-                )
-            except OSError:
-                raise ValueError("Invalid file transfer root") from None
-            os.close(current_fd)
-            current_fd = next_fd
-        root_stat = os.fstat(current_fd)
+        root_stat = os.fstat(root_fd)
         if not stat.S_ISDIR(root_stat.st_mode):
             raise ValueError("Invalid file transfer root")
-        os.fchmod(current_fd, 0o700)
-        path_stat = os.stat(lexical_root, follow_symlinks=False)
+        os.fchmod(root_fd, 0o700)
+        path_stat = _transfer_root_path_stat(lexical_root)
         if (
             not stat.S_ISDIR(path_stat.st_mode)
             or path_stat.st_dev != root_stat.st_dev
@@ -514,12 +676,12 @@ def _prepare_transfer_root(
         ):
             raise ValueError("Invalid file transfer root")
     except OSError:
-        os.close(current_fd)
+        os.close(root_fd)
         raise ValueError("Invalid file transfer root") from None
     except BaseException:
-        os.close(current_fd)
+        os.close(root_fd)
         raise
-    return lexical_root, current_fd, root_stat
+    return lexical_root, root_fd, root_stat
 
 
 def _read_regular_at(
@@ -1741,7 +1903,7 @@ class Handler(abc.ABC):
         if self._file_storage_root_fd_closed:
             raise ValueError("Invalid file transfer root")
         try:
-            path_stat = os.stat(self.file_storage_dir, follow_symlinks=False)
+            path_stat = _transfer_root_path_stat(self.file_storage_dir)
         except OSError:
             raise ValueError("Invalid file transfer root") from None
         if (
