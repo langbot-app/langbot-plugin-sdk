@@ -273,6 +273,20 @@ class AgentRunResourceAPIMixin:
     ) -> dict[str, Any]:
         """Call a tool with permission validation."""
         self._validate_tool_access(tool_name, "call")
+        if tool_name == "request_interaction":
+            from langbot_plugin.api.entities.builtin.runner.interaction import InteractionRequest
+
+            request = InteractionRequest.model_validate({
+                key: value for key, value in parameters.items()
+                if key not in {"expires_in_seconds", "timeout", "on_unsupported", "responders"}
+            })
+            result = await self.request_interaction(
+                request,
+                timeout=parameters.get("timeout", parameters.get("expires_in_seconds", 600)),
+                on_unsupported=parameters.get("on_unsupported", "degrade"),
+                responders=parameters.get("responders", "actor"),
+            )
+            return result.model_dump(mode="json")
         timeout = self._bounded_timeout(default=180.0)
         resp = await self._api.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.CALL_TOOL,

@@ -10,6 +10,12 @@ import langbot_plugin.api.entities.builtin.platform.events as platform_events
 import langbot_plugin.api.entities.builtin.platform.entities as platform_entities
 import langbot_plugin.api.definition.abstract.platform.event_logger as abstract_platform_logger
 from langbot_plugin.api.entities.builtin.platform.errors import NotSupportedError
+from langbot_plugin.api.entities.builtin.runner.interaction import (
+    InteractionDeliveryCapabilities,
+    InteractionHandle,
+    InteractionRequest,
+    InteractionSubmission,
+)
 
 
 class AbstractMessagePlatformAdapter(pydantic.BaseModel, metaclass=abc.ABCMeta):
@@ -166,6 +172,28 @@ class AbstractPlatformAdapter(AbstractMessagePlatformAdapter):
     def get_supported_apis(self) -> list[str]:
         """Return the list of APIs supported by this adapter."""
         return ["send_message", "reply_message"]
+
+    def get_interaction_capabilities(self) -> InteractionDeliveryCapabilities:
+        """Return native interaction capabilities; empty means no native cards."""
+        return InteractionDeliveryCapabilities()
+
+    async def send_interaction(
+        self,
+        target_type: str,
+        target_id: str,
+        request: InteractionRequest,
+        callback_token: str,
+        reply_to: str | None = None,
+    ) -> InteractionHandle:
+        raise NotSupportedError("send_interaction")
+
+    async def update_interaction(
+        self,
+        handle: InteractionHandle,
+        state: typing.Literal["submitted", "expired", "cancelled"],
+        submission: InteractionSubmission | None = None,
+    ) -> InteractionHandle:
+        raise NotSupportedError("update_interaction")
 
     # ---- Optional Message Methods ----
 
