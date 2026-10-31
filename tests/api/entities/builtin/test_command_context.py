@@ -96,3 +96,40 @@ def test_command_not_found_error_default_message_should_be_constructible():
 )
 def test_command_errors_prefix_user_visible_message(error, expected):
     assert str(error) == expected
+
+
+def _context(**kwargs) -> ExecuteContext:
+    return ExecuteContext(
+        query_id=1,
+        session=_session(),
+        command_text="draw cat",
+        full_command_text="/draw cat",
+        command="draw",
+        crt_command="draw",
+        params=["cat"],
+        crt_params=["cat"],
+        privilege=1,
+        **kwargs,
+    )
+
+
+def test_execute_context_config_defaults_to_empty_mapping():
+    context = _context()
+
+    assert context.config == {}
+    assert context.model_dump(mode="json")["config"] == {}
+
+
+def test_execute_context_config_round_trips_over_the_wire():
+    context = _context(config={"style": "anime", "count": 2})
+
+    restored = ExecuteContext.model_validate(context.model_dump(mode="json"))
+
+    assert restored.config == {"style": "anime", "count": 2}
+
+
+def test_execute_context_accepts_payloads_from_hosts_without_config():
+    payload = _context().model_dump(mode="json")
+    payload.pop("config")
+
+    assert ExecuteContext.model_validate(payload).config == {}
