@@ -4673,6 +4673,18 @@
           "default": null,
           "title": "Labels"
         },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
         "limit": {
           "default": 50,
           "exclusiveMinimum": 0,
@@ -4746,10 +4758,16 @@
       "additionalProperties": false,
       "properties": {
         "stale_after_seconds": {
-          "default": 60,
-          "exclusiveMinimum": 0,
-          "title": "Stale After Seconds",
-          "type": "integer"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stale After Seconds"
         }
       },
       "title": "ExecutionRuntimeReconcileInput",

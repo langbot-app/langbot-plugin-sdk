@@ -43,6 +43,42 @@ def test_catalog_operations_map_to_sdk_action_enums():
     assert not missing, f"Catalog operations missing from SDK action enums: {missing}"
 
 
+def test_runtime_forwards_all_catalog_operations_and_storage_proxies():
+    """Verify all 65 catalog actions have Runtime handlers and storage operations have dedicated proxy methods."""
+    from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
+
+    catalog = _load_catalog()
+    catalog_actions = {item["id"].replace("execution.", "") for item in catalog}
+    storage_actions = {
+        "set_binary_storage",
+        "get_binary_storage",
+        "delete_binary_storage",
+        "get_binary_storage_keys",
+    }
+    non_storage_actions = catalog_actions - storage_actions
+
+    runtime_handler = PluginConnectionHandler(Mock(), None)
+    missing_from_runtime = non_storage_actions - set(runtime_handler.actions.keys())
+    assert not missing_from_runtime, (
+        f"Runtime handler missing actions: {missing_from_runtime}"
+    )
+
+    # Verify dedicated storage proxy methods exist on LangBotAPIProxy
+    for method_name in [
+        "set_plugin_storage",
+        "get_plugin_storage",
+        "delete_plugin_storage",
+        "get_plugin_storage_keys",
+        "set_workspace_storage",
+        "get_workspace_storage",
+        "delete_workspace_storage",
+        "get_workspace_storage_keys",
+    ]:
+        assert hasattr(LangBotAPIProxy, method_name), (
+            f"Missing storage proxy method: {method_name}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_execution_proxy_invoke_unary():
     handler = Mock()

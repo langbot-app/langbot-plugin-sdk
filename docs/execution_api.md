@@ -38,6 +38,16 @@ async for chunk in api.execution.stream(
 
 在 Runner 上下文中（如 `ctx.api.execution.invoke(...)`），`run_id` 会由代理自动注入，确保上下文安全传递。
 
+> **注意：存储类操作的调用限制**
+> 
+> `set_binary_storage`、`get_binary_storage`、`delete_binary_storage`、`get_binary_storage_keys` 这 4 个操作属于底层 Runtime 转 LangBot Core 的存储协议动作（属于 `RuntimeToLangBotAction`）。Runtime 侧并未暴露面向插件进程的直接同名 action 处理函数，因此通过 `api.execution.invoke('get_binary_storage', ...)` 直接调用会提示 `Action ... not found`。
+> 
+> 插件与 Runner 应对此使用 SDK 提供的专用存储代理方法：
+> - 插件作用域存储：`api.set_plugin_storage` / `api.get_plugin_storage` / `api.delete_plugin_storage` / `api.get_plugin_storage_keys`
+> - 工作区作用域存储：`api.set_workspace_storage` / `api.get_workspace_storage` / `api.delete_workspace_storage` / `api.get_workspace_storage_keys`
+> 
+> Runtime 在接收到上述方法调用后，会自动解析插件身份与租户边界，组装 `owner_type` 与 `owner` 后转发至 Core 的二进制存储 ExecutionAPI。
+
 ### 2. Box 专用代理方法
 
 在 `LangBotAPIProxy` 上，新增了与 Runner 一致的 Box 沙箱绑定与文件流转方法（均具备 `@run_scoped` 保护）：
