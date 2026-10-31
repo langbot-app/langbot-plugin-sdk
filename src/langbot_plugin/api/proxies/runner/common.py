@@ -181,6 +181,17 @@ class AgentRunProxyBase:
         """Unique identifier for this agent run."""
         return self.ctx.run_id
 
+    @property
+    def execution(self):
+        """Generic ExecutionAPI entry point bound to this agent run."""
+        if not hasattr(self, "_execution_proxy"):
+            from langbot_plugin.api.proxies.execution import ExecutionProxy
+
+            self._execution_proxy = ExecutionProxy(
+                self._api.plugin_runtime_handler, run_id=self.run_id
+            )
+        return self._execution_proxy
+
     def _remaining_deadline_seconds(self) -> float | None:
         return remaining_deadline_seconds(self.ctx.runtime.deadline_at)
 

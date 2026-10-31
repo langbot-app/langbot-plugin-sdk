@@ -88,11 +88,20 @@ harness execution policy, process launch details, authentication, workspace
 selection, and provider-specific behavior belong to the runner/plugin package or
 a deployment-owned remote daemon or managed agent platform.
 
+## ExecutionAPI 操作一览与作用域说明
+
+LangBot Core 通过统一的 `ExecutionAPI` facade 暴露 69 项核心业务能力。插件与 Agent Runner 统一经由该 facade 与 SDK 入口访问。
+
+- **通用执行入口**: `api.execution.invoke(operation_id, **arguments)` 与 `api.execution.stream(...)`。
+- **Box 沙箱代理扩展**: `LangBotAPIProxy` 现已提供 `@run_scoped` 的 `bind_box`, `import_box_attachments`, `export_box_files`。
+- **完整清单与作用域契约**: 详见 [docs/execution_api.md](docs/execution_api.md)。
+
 ## Documentation
 
 - Plugin development tutorial — https://langbot.app/docs/zh/plugin/dev/tutor
 - Debugging the Runtime / CLI / SDK — https://langbot.app/docs/zh/develop/plugin-runtime
 - Dev environment setup — https://langbot.app/docs/zh/develop/dev-config
+- ExecutionAPI 操作一览与作用域说明 — [docs/execution_api.md](docs/execution_api.md)
 
 ## License
 
