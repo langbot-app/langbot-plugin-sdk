@@ -23,6 +23,15 @@ class LangBotAPIProxy:
     def __init__(self, plugin_runtime_handler: Handler):
         self.plugin_runtime_handler = plugin_runtime_handler
 
+    @property
+    def execution(self):
+        """Generic ExecutionAPI entry point for Core operations."""
+        if not hasattr(self, "_execution_proxy"):
+            from langbot_plugin.api.proxies.execution import ExecutionProxy
+
+            self._execution_proxy = ExecutionProxy(self.plugin_runtime_handler)
+        return self._execution_proxy
+
     async def _reasoning_payload(self, level: ReasoningLevel | None) -> dict[str, Any]:
         """Keep legacy calls unchanged and reject unsupported explicit options."""
         if level is None:
@@ -70,6 +79,44 @@ class LangBotAPIProxy:
                 180,
             )
         )
+
+    @run_scoped
+    async def bind_box(self, box_id: str):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxBinding
+
+        return BoxBinding.model_validate(
+            await self.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.BIND_BOX,
+                {"box_id": box_id},
+                180,
+            )
+        )
+
+    @run_scoped
+    async def import_box_attachments(self, attachment_ids: list[str] | None = None):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxFile
+
+        result = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.IMPORT_BOX_ATTACHMENTS,
+            {"attachment_ids": attachment_ids},
+            180,
+        )
+        return [BoxFile.model_validate(item) for item in result.get("items", [])]
+
+    @run_scoped
+    async def export_box_files(self, paths: list[str] | None = None):
+        from langbot_plugin.api.entities.builtin.runner.box import BoxFile
+
+        result = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.EXPORT_BOX_FILES,
+            {"paths": paths},
+            180,
+        )
+        warning = result.get("warning")
+        return [
+            BoxFile.model_validate({**item, "warning": warning})
+            for item in result.get("items", [])
+        ]
 
     @run_scoped
     async def get_langbot_version(self) -> str:

@@ -1514,7 +1514,7 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
-            action.value,
+            getattr(action, "value", str(action)),
             data,
             self.resolve_outbound_action_context(action_context),
         )
@@ -1627,7 +1627,7 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
-            action.value,
+            getattr(action, "value", str(action)),
             data,
             resolved_context := self.resolve_outbound_action_context(action_context),
         )
