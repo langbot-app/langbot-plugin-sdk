@@ -132,6 +132,7 @@ def test_all_builtin_eba_types_deserialize(event_class):
             "type": event_class.model_fields["type"].default,
             "feedback_id": "test",
             "feedback_type": 1,
+            "callback_token": "test-token",
         }
     )
     assert type(event) is event_class
