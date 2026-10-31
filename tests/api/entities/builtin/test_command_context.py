@@ -133,3 +133,14 @@ def test_execute_context_accepts_payloads_from_hosts_without_config():
     payload.pop("config")
 
     assert ExecuteContext.model_validate(payload).config == {}
+
+
+def test_command_plugin_config_remains_independent_of_instance_config():
+    from types import SimpleNamespace
+    from langbot_plugin.api.definition.components.command.command import Command
+
+    component = Command()
+    component.plugin = SimpleNamespace(get_config=lambda: {"style": "plugin"})
+    context = _context(config={"style": "instance"})
+    assert component.get_plugin_config() == {"style": "plugin"}
+    assert context.config == {"style": "instance"}
