@@ -39,8 +39,6 @@ from langbot_plugin.api.entities.builtin.runner.context_access import (
 )
 from langbot_plugin.api.entities.builtin.runner.delivery import DeliveryContext
 from langbot_plugin.api.entities.builtin.runner.interaction import (
-    INTERACTION_REQUESTED_ACTION,
-    INTERACTION_SUBMITTED_EVENT,
     InteractionAction,
     InteractionActionStyle,
     InteractionDeliveryCapabilities,
@@ -139,8 +137,6 @@ __all__ = [
     "InlineContextPolicy",
     "ContextAPICapabilities",
     "DeliveryContext",
-    "INTERACTION_REQUESTED_ACTION",
-    "INTERACTION_SUBMITTED_EVENT",
     "InteractionAction",
     "InteractionActionStyle",
     "InteractionDeliveryCapabilities",

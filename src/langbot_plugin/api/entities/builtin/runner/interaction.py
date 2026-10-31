@@ -8,10 +8,6 @@ import uuid
 import pydantic
 
 
-# Deprecated: use RunnerContext.request_interaction for a blocking response.
-INTERACTION_REQUESTED_ACTION = "interaction.requested"
-INTERACTION_SUBMITTED_EVENT = "interaction.submitted"
-
 InteractionFieldType = typing.Literal[
     "text",
     "textarea",
@@ -146,8 +142,6 @@ class InteractionNotSupportedError(Exception):
 
 
 __all__ = [
-    "INTERACTION_REQUESTED_ACTION",
-    "INTERACTION_SUBMITTED_EVENT",
     "InteractionAction",
     "InteractionActionStyle",
     "InteractionDeliveryCapabilities",

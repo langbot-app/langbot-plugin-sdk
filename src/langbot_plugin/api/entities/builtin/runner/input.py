@@ -65,7 +65,7 @@ class AgentInput(pydantic.BaseModel):
     """Current-event attachment metadata."""
 
     interaction: InteractionSubmission | None = None
-    """Host-validated submission when the current event is interaction.submitted."""
+    """Host-validated interaction submission for the current event."""
 
     def to_text(self) -> str:
         """Extract plain text from input.

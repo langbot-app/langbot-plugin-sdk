@@ -171,7 +171,16 @@ class AbstractPlatformAdapter(AbstractMessagePlatformAdapter):
 
     def get_supported_apis(self) -> list[str]:
         """Return the list of APIs supported by this adapter."""
-        return ["send_message", "reply_message"]
+        apis = ["send_message", "reply_message"]
+        if type(self).send_interaction is not AbstractPlatformAdapter.send_interaction:
+            apis.append("send_interaction")
+            apis.append("get_interaction_capabilities")
+        if (
+            type(self).update_interaction
+            is not AbstractPlatformAdapter.update_interaction
+        ):
+            apis.append("update_interaction")
+        return apis
 
     def get_interaction_capabilities(self) -> InteractionDeliveryCapabilities:
         """Return native interaction capabilities; empty means no native cards."""
