@@ -65,7 +65,12 @@ class WorkspaceOperationsProxy:
                 "error": {"code": "execution_error", "message": str(exc)},
             }
 
-    async def call(self, operation_id: str, **arguments: Any) -> dict[str, Any]:
+    async def call(
+        self,
+        operation_id: str,
+        _timeout: float | None = None,
+        **arguments: Any,
+    ) -> dict[str, Any]:
         """Directly call an authorized Application API operation.
 
         Returns structured result from Core without raising business exceptions.
@@ -77,12 +82,7 @@ class WorkspaceOperationsProxy:
         if self._run_id is not None:
             payload["run_id"] = self._run_id
 
-        timeout = 180.0
-        if "timeout" in payload["arguments"]:
-            try:
-                timeout = float(payload["arguments"].pop("timeout")) or 180.0
-            except (ValueError, TypeError):
-                timeout = 180.0
+        timeout = _timeout if _timeout is not None else 180.0
 
         try:
             result = await self._handler.call_action(
