@@ -192,6 +192,17 @@ class AgentRunProxyBase:
             )
         return self._execution_proxy
 
+    @property
+    def workspace(self):
+        """Workspace operations proxy bound to this agent run."""
+        if not hasattr(self, "_workspace_proxy"):
+            from langbot_plugin.api.proxies.workspace import WorkspaceOperationsProxy
+
+            self._workspace_proxy = WorkspaceOperationsProxy(
+                self._api.plugin_runtime_handler, run_id=self.run_id
+            )
+        return self._workspace_proxy
+
     def _remaining_deadline_seconds(self) -> float | None:
         return remaining_deadline_seconds(self.ctx.runtime.deadline_at)
 

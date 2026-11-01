@@ -32,6 +32,17 @@ class LangBotAPIProxy:
             self._execution_proxy = ExecutionProxy(self.plugin_runtime_handler)
         return self._execution_proxy
 
+    @property
+    def workspace(self):
+        """Workspace operations proxy for listing and executing authorized operations."""
+        if not hasattr(self, "_workspace_proxy"):
+            from langbot_plugin.api.proxies.workspace import WorkspaceOperationsProxy
+
+            self._workspace_proxy = WorkspaceOperationsProxy(
+                self.plugin_runtime_handler
+            )
+        return self._workspace_proxy
+
     async def _reasoning_payload(self, level: ReasoningLevel | None) -> dict[str, Any]:
         """Keep legacy calls unchanged and reject unsupported explicit options."""
         if level is None:

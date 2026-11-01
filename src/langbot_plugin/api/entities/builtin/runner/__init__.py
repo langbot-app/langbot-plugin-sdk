@@ -19,6 +19,7 @@ from langbot_plugin.api.entities.builtin.runner.resources import (
     KnowledgeBaseResource,
     SkillResource,
     StorageResource,
+    WorkspaceOperationResource,
 )
 from langbot_plugin.api.entities.builtin.runner.runtime import AgentRuntimeContext
 from langbot_plugin.api.entities.builtin.runner.state import (
@@ -122,6 +123,7 @@ __all__ = [
     "KnowledgeBaseResource",
     "SkillResource",
     "StorageResource",
+    "WorkspaceOperationResource",
     "AgentRuntimeContext",
     "AgentRunState",
     "VALID_STATE_SCOPES",

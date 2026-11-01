@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import typing
 import pydantic
+
+_WORKSPACE_OPERATION_REGEX = re.compile(r"^[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+$")
 
 
 # I18n object: maps locale code to localized string
@@ -110,6 +113,19 @@ class RunnerPermissions(pydantic.BaseModel):
 
     interactions: list[typing.Literal["request"]] = pydantic.Field(default_factory=list)
     """Structured interaction operations allowed."""
+
+    workspace_operations: list[str] = pydantic.Field(default_factory=list)
+    """Application API workspace operations requested by the Runner."""
+
+    @pydantic.field_validator("workspace_operations")
+    @classmethod
+    def _validate_workspace_operations(cls, v: list[str]) -> list[str]:
+        for op in v:
+            if not isinstance(op, str) or not _WORKSPACE_OPERATION_REGEX.match(op):
+                raise ValueError(
+                    f"Invalid workspace operation format: {op!r}. Expected format like 'domain.xxx'."
+                )
+        return v
 
     model_config = pydantic.ConfigDict(extra="forbid")
 

@@ -176,3 +176,48 @@ async def test_langbot_api_proxy_box_methods():
     exported = await api.export_box_files(["/out/out.txt"])
     assert len(exported) == 1
     assert exported[0].id == "f-2"
+
+
+@pytest.mark.asyncio
+async def test_workspace_operations_consistency():
+    """Verify list_application_operations and call_application_operation consistency."""
+    from langbot_plugin.runtime.io.handlers.plugin import PluginConnectionHandler
+
+    assert (
+        PluginToRuntimeAction.LIST_APPLICATION_OPERATIONS.value
+        == "list_application_operations"
+    )
+    assert (
+        PluginToRuntimeAction.CALL_APPLICATION_OPERATION.value
+        == "call_application_operation"
+    )
+
+    runtime_handler = PluginConnectionHandler(Mock(), None)
+    assert "list_application_operations" in runtime_handler.actions
+    assert "call_application_operation" in runtime_handler.actions
+
+    handler = Mock()
+    handler.call_action = AsyncMock(
+        side_effect=lambda action, data, timeout=180.0: {
+            PluginToRuntimeAction.LIST_APPLICATION_OPERATIONS: {
+                "operations": [{"id": "bot.list", "risk": "read"}],
+                "domains": [{"domain": "bot"}],
+            },
+            PluginToRuntimeAction.CALL_APPLICATION_OPERATION: {
+                "ok": True,
+                "result": {"bots": []},
+                "operation": {"id": "bot.list"},
+            },
+        }.get(action, {})
+    )
+
+    api = LangBotAPIProxy(handler)
+    assert hasattr(api, "workspace")
+
+    list_res = await api.workspace.list()
+    assert len(list_res["operations"]) == 1
+    assert list_res["operations"][0]["id"] == "bot.list"
+
+    call_res = await api.workspace.call("bot.list")
+    assert call_res["ok"] is True
+    assert call_res["result"] == {"bots": []}

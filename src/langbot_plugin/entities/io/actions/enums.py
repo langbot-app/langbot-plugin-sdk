@@ -131,6 +131,10 @@ class PluginToRuntimeAction(ActionType):
     STATE_DELETE = "state_delete"
     STATE_LIST = "state_list"
 
+    """Application API Operations (run-scoped)"""
+    LIST_APPLICATION_OPERATIONS = "list_application_operations"
+    CALL_APPLICATION_OPERATION = "call_application_operation"
+
 
 class RuntimeToPluginAction(ActionType):
     """The action from runtime to plugin."""

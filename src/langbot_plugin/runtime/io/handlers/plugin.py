@@ -1039,6 +1039,24 @@ class PluginConnectionHandler(handler.Handler):
                 PluginToRuntimeAction.RUNNER_STATS, data, 30
             )
 
+        @self.action(PluginToRuntimeAction.LIST_APPLICATION_OPERATIONS)
+        async def list_application_operations(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.LIST_APPLICATION_OPERATIONS, data, 15
+            )
+
+        @self.action(PluginToRuntimeAction.CALL_APPLICATION_OPERATION)
+        async def call_application_operation(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.CALL_APPLICATION_OPERATION,
+                data,
+                LONG_RUNNING_OPERATION_TIMEOUT,
+            )
+
     def validate_inbound_action_context(
         self,
         action: str,
