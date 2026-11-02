@@ -12,6 +12,8 @@ spec:
   usages:
     - agent
     - event
+  events:
+    - "*"
   supported_event_patterns:
     - "*"
   capabilities:
