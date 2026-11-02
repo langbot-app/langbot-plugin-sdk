@@ -13,7 +13,6 @@ from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.entities.io.errors import ActionCallTimeoutError
 from langbot_plugin.runtime.plugin import container as runtime_plugin_container
 from langbot_plugin.utils.deadline import (
-    anext_with_deadline,
     remaining_deadline_seconds,
 )
 
@@ -22,15 +21,6 @@ logger = logging.getLogger(__name__)
 
 def _remaining_deadline_seconds(context: dict[str, typing.Any]) -> float | None:
     return remaining_deadline_seconds((context.get("runtime") or {}).get("deadline_at"))
-
-
-def _runner_action_timeout(context: dict[str, typing.Any]) -> float:
-    remaining = _remaining_deadline_seconds(context)
-    if remaining is None:
-        return 300
-    if remaining <= 0:
-        return 0.001
-    return max(remaining + 1.0, 0.001)
 
 
 def _ensure_result_sequence(
@@ -152,23 +142,18 @@ class RunnerRuntimeService:
 
         sequence = 0
         try:
+            if (remaining := _remaining_deadline_seconds(context)) is not None and remaining <= 0:
+                raise asyncio.TimeoutError
             gen = target_plugin._runtime_plugin_handler.call_action_generator(
                 RuntimeToPluginAction.RUN_RUNNER,
                 {
                     "runner_name": runner_name,
                     "context": context,
                 },
-                timeout=_runner_action_timeout(context),
+                timeout=None,
             )
 
-            while True:
-                try:
-                    result_data = await anext_with_deadline(
-                        gen,
-                        (context.get("runtime") or {}).get("deadline_at"),
-                    )
-                except StopAsyncIteration:
-                    break
+            async for result_data in gen:
                 sequence += 1
                 yield _ensure_result_sequence(result_data, sequence)
 

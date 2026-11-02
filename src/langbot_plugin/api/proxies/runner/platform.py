@@ -1,5 +1,6 @@
 """Platform APIs with the same signatures as the shared plugin API."""
 
+import time
 from typing import Any
 from langbot_plugin.api.entities.builtin.platform.message import MessageChain
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
@@ -27,25 +28,36 @@ class RunnerPlatformAPIMixin:
             raise ValueError("on_unsupported must be 'error' or 'degrade'")
         if (target_type is None) != (target_id is None):
             raise ValueError("target_type and target_id must be provided together")
-        response = await self._api.plugin_runtime_handler.call_action(
-            PluginToRuntimeAction.REQUEST_INTERACTION,
-            {
-                "run_id": self.run_id,
-                "request": request.model_dump(mode="json"),
-                "timeout": timeout,
-                "on_unsupported": on_unsupported,
-                "responders": responders,
-                "target_type": target_type,
-                "target_id": target_id,
-            },
-            timeout + 30,
-            cancel_peer_on_cancel=True,
-        )
-        if response.get("unsupported"):
-            raise InteractionNotSupportedError(response["unsupported"])
-        result = InteractionResult.model_validate(response)
+        original_deadline = self.ctx.runtime.deadline_at
+        started_at = time.time()
+        if original_deadline is not None:
+            self.ctx.runtime.deadline_at = float(original_deadline) + timeout + 30
+        try:
+            response = await self._api.plugin_runtime_handler.call_action(
+                PluginToRuntimeAction.REQUEST_INTERACTION,
+                {
+                    "run_id": self.run_id,
+                    "request": request.model_dump(mode="json"),
+                    "timeout": timeout,
+                    "on_unsupported": on_unsupported,
+                    "responders": responders,
+                    "target_type": target_type,
+                    "target_id": target_id,
+                },
+                timeout + 30,
+                cancel_peer_on_cancel=True,
+            )
+            if response.get("unsupported"):
+                raise InteractionNotSupportedError(response["unsupported"])
+            result = InteractionResult.model_validate(response)
+        except BaseException:
+            if original_deadline is not None:
+                self.ctx.runtime.deadline_at = float(original_deadline) + (time.time() - started_at)
+            raise
         if result.deadline_at is not None:
             self.ctx.runtime.deadline_at = result.deadline_at
+        elif original_deadline is not None:
+            self.ctx.runtime.deadline_at = float(original_deadline) + (time.time() - started_at)
         return result
 
     async def call_platform_api(
