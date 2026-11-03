@@ -654,9 +654,12 @@ async def test_writable_upload_batches_and_recovers_independent_files(
         f"/remote/{i}.txt" for i in range(70)
     }
 
+    uploaded = {}
+
     async def write(path, data):
         if path == "/remote/0.txt":
             raise OSError("one file rejected")
+        uploaded[path] = data
 
     files.write.side_effect = write
     files.write_files.side_effect = OSError("batch rejected")
@@ -664,6 +667,7 @@ async def test_writable_upload_batches_and_recovers_independent_files(
         sandbox, host_root=str(tmp_path), remote_root="/remote"
     )
     assert files.write.await_count == 70
+    assert uploaded == {f"/remote/{i}.txt": b"data" for i in range(1, 70)}
 
 
 @pytest.mark.anyio
@@ -783,6 +787,7 @@ async def test_download_aliases_keep_sequential_write_order(backend, tmp_path):
         (tmp_path / name).symlink_to("target")
     active = 0
     peak = 0
+    completed = []
 
     class Files:
         async def list(self, root, depth):
@@ -799,8 +804,9 @@ async def test_download_aliases_keep_sequential_write_order(backend, tmp_path):
                 active += 1
                 peak = max(peak, active)
                 try:
-                    await asyncio.sleep(0.001)
+                    await asyncio.sleep(0.01 if path.endswith("/a") else 0.001)
                     yield path[-1:].encode()
+                    completed.append(path[-1:])
                 finally:
                     active -= 1
 
@@ -809,8 +815,122 @@ async def test_download_aliases_keep_sequential_write_order(backend, tmp_path):
     await backend._sync_e2b_tree_to_host(
         SimpleNamespace(files=Files()), host_root=str(tmp_path), remote_root="/remote"
     )
-    assert peak == 1
+    assert peak == 2
+    assert completed == ["b", "a"]
     assert (tmp_path / "target").read_bytes() == b"b"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["stream", "write"])
+async def test_failed_download_does_not_consume_successful_byte_budget(
+    backend, tmp_path, monkeypatch, failure
+):
+    import langbot_plugin.box.e2b_backend as module
+
+    monkeypatch.setattr(module, "_MAX_E2B_SYNC_TOTAL_BYTES", 6)
+    original_write = module._write_e2b_host_file
+
+    def write(path, data):
+        if failure == "write" and path.endswith("/a"):
+            raise OSError("disk write rejected")
+        original_write(path, data)
+
+    monkeypatch.setattr(module, "_write_e2b_host_file", write)
+
+    class Files:
+        async def list(self, root, depth):
+            return [
+                SimpleNamespace(
+                    path=f"{root}/{name}", size=0, type=SimpleNamespace(value="file")
+                )
+                for name in ("a", "b")
+            ]
+
+        async def read(self, path, **kwargs):
+            async def chunks():
+                yield b"bad!" if path.endswith("/a") else b"good"
+                if path.endswith("/a"):
+                    await asyncio.sleep(0.01)
+                    if failure == "stream":
+                        raise OSError("stream interrupted after a chunk")
+
+            return chunks()
+
+    await backend._sync_e2b_tree_to_host(
+        SimpleNamespace(files=Files()), host_root=str(tmp_path), remote_root="/remote"
+    )
+    assert not (tmp_path / "a").exists()
+    assert (tmp_path / "b").read_bytes() == b"good"
+
+
+@pytest.mark.anyio
+async def test_byte_limit_keeps_listing_order_not_download_completion_order(
+    backend, tmp_path, monkeypatch
+):
+    import langbot_plugin.box.e2b_backend as module
+
+    monkeypatch.setattr(module, "_MAX_E2B_SYNC_TOTAL_BYTES", 6)
+    bodies = {"a": b"aaaa", "b": b"bbbb", "c": b"cc"}
+
+    class Files:
+        async def list(self, root, depth):
+            return [
+                SimpleNamespace(
+                    path=f"{root}/{name}", size=0, type=SimpleNamespace(value="file")
+                )
+                for name in bodies
+            ]
+
+        async def read(self, path, **kwargs):
+            async def chunks():
+                if path.endswith("/a"):
+                    await asyncio.sleep(0.01)
+                yield bodies[path.rsplit("/", 1)[-1]]
+
+            return chunks()
+
+    await backend._sync_e2b_tree_to_host(
+        SimpleNamespace(files=Files()), host_root=str(tmp_path), remote_root="/remote"
+    )
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == {
+        "a": b"aaaa",
+        "c": b"cc",
+    }
+
+
+@pytest.mark.anyio
+async def test_failed_download_does_not_use_file_count_slot(
+    backend, tmp_path, monkeypatch
+):
+    import langbot_plugin.box.e2b_backend as module
+
+    monkeypatch.setattr(module, "_MAX_E2B_SYNC_FILES", 2)
+
+    class Files:
+        async def list(self, root, depth):
+            return [
+                SimpleNamespace(
+                    path=f"{root}/{name}", size=1, type=SimpleNamespace(value="file")
+                )
+                for name in ("a", "b", "c")
+            ]
+
+        async def read(self, path, **kwargs):
+            if path.endswith("/a"):
+                raise OSError("file unavailable")
+
+            async def chunks():
+                yield path[-1:].encode()
+
+            return chunks()
+
+    await backend._sync_e2b_tree_to_host(
+        SimpleNamespace(files=Files()), host_root=str(tmp_path), remote_root="/remote"
+    )
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == {
+        "b": b"b",
+        "c": b"c",
+    }
 
 
 # ── stop_session ──────────────────────────────────────────────────────

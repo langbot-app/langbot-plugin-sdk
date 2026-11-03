@@ -811,8 +811,7 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
         synced_bytes = 0
         pending = []
 
-        async def download(remote_path, host_path):
-            nonlocal synced_bytes
+        async def download(remote_path):
             try:
                 stream = await sandbox.files.read(
                     remote_path, format="stream", request_timeout=30
@@ -821,22 +820,38 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                 async for chunk in stream:
                     if len(data) + len(chunk) > _MAX_E2B_SYNC_FILE_BYTES:
                         raise ValueError("E2B remote sync file exceeds the size limit")
-                    if synced_bytes + len(chunk) > _MAX_E2B_SYNC_TOTAL_BYTES:
+                    if (
+                        synced_bytes + len(data) + len(chunk)
+                        > _MAX_E2B_SYNC_TOTAL_BYTES
+                    ):
                         raise ValueError("E2B remote sync exceeds the total size limit")
-                    # No await between checking and reserving this shared byte budget.
-                    synced_bytes += len(chunk)
                     data.extend(chunk)
-                await asyncio.to_thread(_write_e2b_host_file, host_path, bytes(data))
+                return bytes(data)
             except Exception as exc:
                 self.logger.debug(
                     f"Failed to sync E2B file to host {remote_path}: {exc}"
                 )
 
         async def flush_downloads():
+            nonlocal synced_files, synced_bytes
             if len(pending) == 1:
-                await download(*pending[0])
+                bodies = [await download(pending[0][0])]
             else:
-                await asyncio.gather(*(download(*item) for item in pending))
+                bodies = await asyncio.gather(*(download(path) for path, _ in pending))
+            # Commit in listing order; failed reads/writes must not consume quota.
+            for (remote_path, host_path), data in zip(pending, bodies):
+                if data is None:
+                    continue
+                try:
+                    if synced_bytes + len(data) > _MAX_E2B_SYNC_TOTAL_BYTES:
+                        raise ValueError("E2B remote sync exceeds the total size limit")
+                    await asyncio.to_thread(_write_e2b_host_file, host_path, data)
+                    synced_files += 1
+                    synced_bytes += len(data)
+                except Exception as exc:
+                    self.logger.debug(
+                        f"Failed to sync E2B file to host {remote_path}: {exc}"
+                    )
             pending.clear()
 
         excluded = excluded_relative_paths or set()
@@ -871,12 +886,10 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                     declared_size = int(getattr(entry, "size", 0) or 0)
                     if declared_size > _MAX_E2B_SYNC_FILE_BYTES:
                         continue
-                    # Local symlinks can make different entries share one target.
-                    if any(path == host_path for _, path in pending):
-                        await flush_downloads()
-                    synced_files += 1
                     pending.append((remote_path, host_path))
-                    if len(pending) >= _E2B_DOWNLOAD_CONCURRENCY:
+                    if len(pending) >= min(
+                        _E2B_DOWNLOAD_CONCURRENCY, _MAX_E2B_SYNC_FILES - synced_files
+                    ):
                         await flush_downloads()
             except Exception as exc:
                 self.logger.debug(
