@@ -884,7 +884,7 @@ async def test_is_session_alive_false_when_missing(backend, session):
 
 
 @pytest.mark.anyio
-async def test_cleanup_orphaned_removes_other_instances(backend):
+async def test_cleanup_orphaned_removes_only_own_instance(backend):
     ps_proc = _FakeProcess(
         returncode=0,
         # Includes a blank line (skipped) plus an unlabeled container ('ccc').
@@ -900,17 +900,15 @@ async def test_cleanup_orphaned_removes_other_instances(backend):
     ps_argv = _argv_of(mock_exec, 0)
     assert ps_argv[:4] == ["docker", "ps", "-a", "--filter"]
     assert "label=langbot.box=true" in ps_argv
+    assert "label=langbot.box.instance_id=inst-test" in ps_argv
 
-    # Second call removes only the non-matching / unlabeled containers.
     rm_argv = _argv_of(mock_exec, 1)
     assert rm_argv[:3] == ["docker", "rm", "-f"]
-    assert set(rm_argv[3:]) == {"aaa", "ccc"}
-    assert "bbb" not in rm_argv
+    assert rm_argv[3:] == ["bbb"]
 
 
 @pytest.mark.anyio
 async def test_cleanup_orphaned_handles_line_without_label_field(backend):
-    # 'ddd' has no tab separator at all -> empty label, treated as orphan.
     ps_proc = _FakeProcess(returncode=0, stdout=b"ddd\n")
     rm_proc = _FakeProcess(returncode=0)
     mock_exec = mock.AsyncMock(side_effect=[ps_proc, rm_proc])
@@ -918,8 +916,7 @@ async def test_cleanup_orphaned_handles_line_without_label_field(backend):
     with mock.patch("asyncio.create_subprocess_exec", mock_exec):
         await backend.cleanup_orphaned_containers("inst-test")
 
-    rm_argv = _argv_of(mock_exec, 1)
-    assert rm_argv == ["docker", "rm", "-f", "ddd"]
+    assert mock_exec.call_count == 1
 
 
 @pytest.mark.anyio
@@ -935,8 +932,8 @@ async def test_cleanup_orphaned_noop_when_nothing_listed(backend):
 
 
 @pytest.mark.anyio
-async def test_cleanup_orphaned_noop_when_all_current(backend):
-    ps_proc = _FakeProcess(returncode=0, stdout=b"bbb\tinst-test\n")
+async def test_cleanup_orphaned_noop_when_all_foreign(backend):
+    ps_proc = _FakeProcess(returncode=0, stdout=b"bbb\tother-instance\n")
     mock_exec = mock.AsyncMock(return_value=ps_proc)
 
     with mock.patch("asyncio.create_subprocess_exec", mock_exec):

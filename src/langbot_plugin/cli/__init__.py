@@ -157,6 +157,10 @@ def main():
     # box command
     box_parser = subparsers.add_parser("box", help="Run the sandbox box runtime")
     box_parser.add_argument("--host", default="0.0.0.0", help="Bind address")
+    box_parser.add_argument("--instance-id", help="Stable Box instance ID")
+    box_parser.add_argument(
+        "--data-dir", help="Persistent Box identity and lock directory"
+    )
     box_parser.add_argument(
         "-s",
         "--stdio-control",

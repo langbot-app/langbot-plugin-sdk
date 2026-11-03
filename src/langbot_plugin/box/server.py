@@ -750,7 +750,7 @@ class BoxServerHandler(Handler):
         @self.action(LangBotToBoxAction.SHUTDOWN)
         async def shutdown(data: dict[str, Any]) -> ActionResponse:
             self._require_host_control()
-            await self._runtime.shutdown()
+            await self._runtime.shutdown(release_identity=False)
             return ActionResponse.success({})
 
 
@@ -1073,7 +1073,13 @@ def create_ws_relay_app(
 # ── Entry point ──────────────────────────────────────────────────────
 
 
-async def _run_server(host: str, port: int, mode: str) -> None:
+async def _run_server(
+    host: str,
+    port: int,
+    mode: str,
+    instance_id: str | None = None,
+    data_dir: str | None = None,
+) -> None:
     blocking_executor = configure_bounded_default_executor_from_env(
         thread_name_prefix="langbot-box-runtime-blocking",
     )
@@ -1090,7 +1096,7 @@ async def _run_server(host: str, port: int, mode: str) -> None:
     if configured_instance_uuid is not None:
         configured_instance_uuid = normalize_instance_uuid(configured_instance_uuid)
 
-    runtime = BoxRuntime(logger=logger)
+    runtime = BoxRuntime(logger=logger, instance_id=instance_id, data_dir=data_dir)
     runtime.blocking_executor = blocking_executor
     runtime_box_config = getattr(runtime, "_box_config", {})
     if (
@@ -1179,6 +1185,14 @@ def main(args: argparse.Namespace) -> None:
 
     configure_process_logging(stream=sys.stderr)
     try:
-        asyncio.run(_run_server(args.host, args.ws_control_port, control_mode))
+        asyncio.run(
+            _run_server(
+                args.host,
+                args.ws_control_port,
+                control_mode,
+                getattr(args, "instance_id", None),
+                getattr(args, "data_dir", None),
+            )
+        )
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt, Box runtime stopped")
