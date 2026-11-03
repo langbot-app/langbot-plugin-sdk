@@ -22,14 +22,40 @@ def _load_catalog() -> list[dict]:
         return json.load(f)
 
 
-def test_catalog_has_all_69_operations():
+def test_catalog_has_all_operations():
     catalog = _load_catalog()
-    assert len(catalog) == 69
+    assert len(catalog) == 72
+    assert "execution.request_interaction" in {item["id"] for item in catalog}
     for item in catalog:
         assert item["id"].startswith("execution.")
         assert "input_schema" in item
         assert "output_schema" in item
         assert "scope" in item
+
+
+def test_docs_table_matches_catalog():
+    """The operation table in docs/execution_api.md must list exactly the catalog."""
+    import re
+
+    docs_path = Path(__file__).resolve().parents[2] / "docs" / "execution_api.md"
+    text = docs_path.read_text(encoding="utf-8")
+    rows = {
+        match.group(1): (match.group(2), match.group(3), match.group(4))
+        for match in re.finditer(
+            r"^\| `(execution\.[a-z_]+)` \| `([a-z_]+)` \| (是|否) \| (是|否) \|",
+            text,
+            re.MULTILINE,
+        )
+    }
+    catalog = {
+        item["id"]: (
+            item["scope"],
+            "是" if item["side_effect"] else "否",
+            "是" if item["streaming"] else "否",
+        )
+        for item in _load_catalog()
+    }
+    assert rows == catalog
 
 
 def test_catalog_operations_map_to_sdk_action_enums():

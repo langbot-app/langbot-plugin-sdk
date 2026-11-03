@@ -714,6 +714,111 @@
     }
   },
   {
+    "id": "execution.request_interaction",
+    "version": "1",
+    "scope": "run",
+    "authorization": "installation_binding_and_existing_host_capabilities",
+    "side_effect": true,
+    "streaming": false,
+    "input_schema": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": false,
+      "properties": {
+        "request": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Request",
+          "type": "object"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": 600,
+          "gt": 0,
+          "le": 86400,
+          "title": "Timeout"
+        },
+        "on_unsupported": {
+          "default": "error",
+          "enum": [
+            "error",
+            "degrade"
+          ],
+          "title": "On Unsupported",
+          "type": "string"
+        },
+        "responders": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "default": "actor",
+          "title": "Responders"
+        },
+        "target_type": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Type"
+        },
+        "target_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Id"
+        }
+      },
+      "required": [
+        "request"
+      ],
+      "title": "ExecutionInteractionInput",
+      "type": "object"
+    },
+    "output_schema": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "properties": {},
+      "title": "ExecutionInteractionOutput",
+      "type": "object"
+    }
+  },
+  {
     "id": "execution.get_llm_models",
     "version": "1",
     "scope": "plugin",
@@ -5179,6 +5284,129 @@
         "status"
       ],
       "title": "ExecutionRunOutput",
+      "type": "object"
+    }
+  },
+  {
+    "id": "execution.list_application_operations",
+    "version": "1",
+    "scope": "run",
+    "authorization": "installation_binding_and_existing_host_capabilities",
+    "side_effect": false,
+    "streaming": false,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "ExecutionEmptyInput",
+      "type": "object"
+    },
+    "output_schema": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "properties": {
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Operations",
+          "type": "array"
+        },
+        "domains": {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "operations",
+        "domains"
+      ],
+      "title": "ExecutionListApplicationOperationsOutput",
+      "type": "object"
+    }
+  },
+  {
+    "id": "execution.call_application_operation",
+    "version": "1",
+    "scope": "run",
+    "authorization": "installation_binding_and_existing_host_capabilities",
+    "side_effect": true,
+    "streaming": false,
+    "input_schema": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "minLength": 1,
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "default": {},
+          "title": "Arguments",
+          "type": "object"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "title": "ExecutionCallApplicationOperationInput",
+      "type": "object"
+    },
+    "output_schema": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "title": "ExecutionCallApplicationOperationOutput",
       "type": "object"
     }
   }
