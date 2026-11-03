@@ -19,6 +19,7 @@ from unittest import mock
 import pytest
 
 from langbot_plugin.box.backend import (
+    CLISandboxBackend,
     DockerBackend,
     _CommandResult,
 )
@@ -1082,3 +1083,126 @@ async def test_cancelled_container_creation_waits_then_cleans_cache(backend):
     assert calls[-1][1:3] == ["rm", "-f"]
     assert not backend._artifact_roots
     assert all(not os.path.exists(root) for root in roots)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("command_name", ["docker", "podman"])
+async def test_availability_coalesces_only_concurrent_probes(logger, command_name):
+    backend = CLISandboxBackend(logger, command_name, command_name)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def probe(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return _CommandResult(0, "ready", "")
+
+    with (
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+        mock.patch.object(backend, "_run_command", side_effect=probe) as command,
+    ):
+        checks = [asyncio.create_task(backend.is_available()) for _ in range(12)]
+        await entered.wait()
+        release.set()
+        assert await asyncio.gather(*checks) == [True] * 12
+        assert command.await_count == 1
+        command.side_effect = None
+        command.return_value = _CommandResult(1, "", "daemon stopped")
+        assert await backend.is_available() is False
+        command.return_value = _CommandResult(0, "ready", "")
+        assert await backend.is_available() is True
+        assert command.await_count == 3
+
+
+@pytest.mark.anyio
+async def test_availability_cancelled_waiter_does_not_cancel_peers(backend):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def probe(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return _CommandResult(0, "ready", "")
+
+    with (
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+        mock.patch.object(backend, "_run_command", side_effect=probe) as command,
+    ):
+        first = asyncio.create_task(backend.is_available())
+        second = asyncio.create_task(backend.is_available())
+        await entered.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        release.set()
+        assert await second is True
+        assert command.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_availability_last_cancelled_waiter_reaps_probe(backend):
+    entered = asyncio.Event()
+    terminated = asyncio.Event()
+
+    async def probe(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            terminated.set()
+
+    with (
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+        mock.patch.object(backend, "_run_command", side_effect=probe) as command,
+    ):
+        checks = [asyncio.create_task(backend.is_available()) for _ in range(2)]
+        await entered.wait()
+        for task in checks:
+            task.cancel()
+        results = await asyncio.gather(*checks, return_exceptions=True)
+        assert all(isinstance(x, asyncio.CancelledError) for x in results)
+        assert terminated.is_set()
+        command.side_effect = None
+        command.return_value = _CommandResult(0, "ready", "")
+        assert await backend.is_available() is True
+        assert command.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_availability_probe_failure_is_not_cached(backend):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def probe(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        raise OSError("probe failed")
+
+    with (
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+        mock.patch.object(backend, "_run_command", side_effect=probe) as command,
+    ):
+        checks = [asyncio.create_task(backend.is_available()) for _ in range(2)]
+        await entered.wait()
+        release.set()
+        results = await asyncio.gather(*checks, return_exceptions=True)
+        assert all(isinstance(x, OSError) and str(x) == "probe failed" for x in results)
+        assert command.await_count == 1
+        command.side_effect = None
+        command.return_value = _CommandResult(0, "ready", "")
+        assert await backend.is_available() is True
+
+
+@pytest.mark.anyio
+async def test_cancelled_availability_probe_terminates_and_reaps_cli(backend):
+    proc = _FakeProcess(returncode=None, hang=True)
+    patcher, command = _patch_exec(proc)
+    with mock.patch("shutil.which", return_value="/usr/bin/docker"), patcher:
+        checks = [asyncio.create_task(backend.is_available()) for _ in range(2)]
+        await proc.wait_started.wait()
+        for task in checks:
+            task.cancel()
+        await asyncio.gather(*checks, return_exceptions=True)
+    assert command.await_count == 1
+    assert proc.terminated is True
+    assert proc._hang is False

@@ -8,6 +8,7 @@ These tests verify that RunnerAPIProxy:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -28,6 +29,11 @@ from langbot_plugin.entities.io.errors import (
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.provider.message import Message
 from langbot_plugin.api.entities.builtin.runner.context import RunnerContext
+from langbot_plugin.api.entities.builtin.runner.interaction import InteractionRequest
+from langbot_plugin.api.entities.builtin.platform.events import (
+    InteractionCallbackEvent,
+    parse_eba_event,
+)
 from langbot_plugin.api.entities.builtin.runner.resources import (
     AgentResources,
     ModelResource,
@@ -139,6 +145,14 @@ class TestRunnerAPIProxyRestrictedAPISurface:
             "RunnerAPIProxy should not expose get_bots (use RunnerResult.action_requested)"
         )
 
+    def test_standard_interaction_callback_round_trips(self):
+        event = InteractionCallbackEvent(
+            callback_token="token", values={"choice": "yes"}, actor_id="user"
+        )
+        parsed = parse_eba_event(event.model_dump(mode="json"))
+        assert isinstance(parsed, InteractionCallbackEvent)
+        assert parsed.callback_token == "token"
+
     async def test_send_message_retains_run_authorization(self):
         from langbot_plugin.api.entities.builtin.platform.message import (
             MessageChain,
@@ -153,6 +167,77 @@ class TestRunnerAPIProxyRestrictedAPISurface:
             "bot", "group", "group", MessageChain([Plain(text="hi")])
         )
         assert handler.call_action.await_args.args[1]["run_id"] == ctx.run_id
+
+    async def test_request_interaction_uses_independent_timeout_and_updates_deadline(
+        self,
+    ):
+        ctx = create_mock_context(deadline_at=time.time() + 10)
+        handler = MagicMock()
+        handler.call_action = AsyncMock(
+            return_value={
+                "status": "submitted",
+                "submission": {
+                    "interaction_id": "one",
+                    "action_id": "yes",
+                    "values": {},
+                },
+                "deadline_at": 1234567890.0,
+            }
+        )
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+
+        result = await proxy.request_interaction(
+            InteractionRequest(interaction_id="one", title="Approve"), timeout=600
+        )
+
+        assert result.submission.action_id == "yes"
+        assert ctx.runtime.deadline_at == 1234567890.0
+        args = handler.call_action.await_args
+        assert args.args[0] is PluginToRuntimeAction.REQUEST_INTERACTION
+        assert args.args[2] == 630
+        assert args.kwargs["cancel_peer_on_cancel"] is True
+
+    async def test_request_interaction_extends_worker_deadline_before_waiting(self):
+        original_deadline = time.time() + 0.03
+        ctx = create_mock_context(deadline_at=original_deadline)
+        handler = MagicMock()
+
+        async def delayed_response(*args, **kwargs):
+            assert ctx.runtime.deadline_at > original_deadline + 0.1
+            await asyncio.sleep(0.06)
+            return {
+                "status": "submitted",
+                "submission": {
+                    "interaction_id": "one",
+                    "action_id": "yes",
+                    "values": {},
+                },
+                "deadline_at": original_deadline + 0.06,
+            }
+
+        handler.call_action = AsyncMock(side_effect=delayed_response)
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+
+        result = await proxy.request_interaction(
+            InteractionRequest(interaction_id="one", title="Approve"), timeout=0.2
+        )
+
+        assert result.status == "submitted"
+        assert ctx.runtime.deadline_at == original_deadline + 0.06
+
+    async def test_request_interaction_restores_deadline_on_invalid_response(self):
+        original_deadline = time.time() + 10
+        ctx = create_mock_context(deadline_at=original_deadline)
+        handler = MagicMock()
+        handler.call_action = AsyncMock(return_value={"status": "invalid"})
+        proxy = RunnerAPIProxy(ctx=ctx, plugin_runtime_handler=handler)
+
+        with pytest.raises(Exception):
+            await proxy.request_interaction(
+                InteractionRequest(interaction_id="one", title="Approve"), timeout=600
+            )
+
+        assert original_deadline <= ctx.runtime.deadline_at < original_deadline + 1
 
     async def test_list_tools_does_not_list_ungranted_resources(self):
         ctx = create_mock_context()

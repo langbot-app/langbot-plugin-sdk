@@ -15,10 +15,6 @@ from langbot_plugin.api.entities.builtin.runner.state import (
     VALID_STATE_SCOPES,
     STATE_SCOPE_LITERAL,
 )
-from langbot_plugin.api.entities.builtin.runner.interaction import (
-    INTERACTION_REQUESTED_ACTION,
-    InteractionRequest,
-)
 
 
 class RunnerResultType(str, enum.Enum):
@@ -407,25 +403,6 @@ class RunnerResult(pydantic.BaseModel):
             run_id=run_id,
             type=RunnerResultType.ACTION_REQUESTED,
             data=result_payload.model_dump(mode="json"),
-            sequence=sequence,
-            timestamp=timestamp,
-        )
-
-    @classmethod
-    def interaction_requested(
-        cls,
-        run_id: str,
-        request: InteractionRequest | dict[str, typing.Any],
-        *,
-        sequence: int | None = None,
-        timestamp: int | None = None,
-    ) -> "RunnerResult":
-        """Request an interaction on the current run's frozen delivery target."""
-        interaction = InteractionRequest.model_validate(request)
-        return cls.action_requested(
-            run_id=run_id,
-            action=INTERACTION_REQUESTED_ACTION,
-            payload=interaction.model_dump(mode="json"),
             sequence=sequence,
             timestamp=timestamp,
         )

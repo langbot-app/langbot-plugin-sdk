@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import typing
 from unittest.mock import Mock
@@ -821,6 +822,38 @@ class TestRunAgent:
         assert results[0]["type"] == "run.failed"
         assert results[0]["data"]["code"] == "runner.timeout"
         assert results[0]["data"]["retryable"] is True
+
+    @pytest.mark.anyio
+    async def test_runtime_forwarding_waits_past_initial_deadline(self):
+        from langbot_plugin.runtime.plugin.mgr import PluginManager
+        from langbot_plugin.runtime.context import RuntimeContext
+
+        mgr = PluginManager(Mock(spec=RuntimeContext))
+        plugin = create_mock_plugin(
+            "test-author",
+            "test-plugin",
+            [("default", None)],
+            mock_handler_responses=[[{"type": "run.completed", "data": {}}]],
+        )
+
+        async def delayed_result(action, data, timeout=300):
+            assert timeout is None
+            await asyncio.sleep(0.05)
+            yield {"type": "run.completed", "data": {"finish_reason": "stop"}}
+
+        plugin._runtime_plugin_handler.call_action_generator = delayed_result
+        mgr.plugins = [plugin]
+        ctx = create_run_context()
+        ctx.runtime.deadline_at = time.time() + 0.01
+
+        results = [
+            result
+            async for result in mgr.run_runner(
+                "test-author", "test-plugin", "default", ctx.model_dump(mode="json")
+            )
+        ]
+
+        assert results[0]["type"] == "run.completed"
 
 
 @pytest.mark.anyio

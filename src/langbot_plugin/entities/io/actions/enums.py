@@ -47,6 +47,7 @@ class PluginToRuntimeAction(ActionType):
     SEND_MESSAGE = "send_message"
     REPLY_STREAM = "reply_stream"
     CALL_PLATFORM_API = "call_platform_api"
+    REQUEST_INTERACTION = "request_interaction"
 
     GET_LLM_MODELS = "get_llm_models"
     # GET_LLM_MODEL_INFO = "get_llm_model_info"

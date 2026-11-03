@@ -9,10 +9,7 @@ import pytest
 import yaml
 
 from langbot_plugin.api.entities.builtin.runner import (
-    INTERACTION_REQUESTED_ACTION,
-    INTERACTION_SUBMITTED_EVENT,
     AgentInput,
-    RunnerResult,
     RunnerCapabilities,
     RunnerPermissions,
     DeliveryContext,
@@ -110,17 +107,6 @@ def test_manifest_declares_interaction_capability_and_permission() -> None:
         RunnerPermissions(interactions=["submit"])
 
 
-def test_interaction_requested_factory_uses_whitelisted_action_without_target() -> None:
-    result = RunnerResult.interaction_requested("run-1", _request(), sequence=3)
-
-    assert result.type.value == "action.requested"
-    assert result.data["action"] == INTERACTION_REQUESTED_ACTION
-    assert result.data["target"] is None
-    assert result.data["payload"]["interaction_id"] == "approval-1"
-    assert result.sequence == 3
-    assert INTERACTION_SUBMITTED_EVENT == "interaction.submitted"
-
-
 def test_runner_templates_include_interaction_contract() -> None:
     root = Path(__file__).resolve().parents[5]
     template_dir = (
@@ -148,6 +134,5 @@ def test_runner_templates_include_interaction_contract() -> None:
 
     assert manifest["spec"]["capabilities"]["interactions"] is False
     assert manifest["spec"]["permissions"]["interactions"] == []
-    assert "RunnerResult.interaction_requested" in runner_source
-    assert "INTERACTION_SUBMITTED_EVENT" in runner_source
-    assert "ctx.input.interaction" in runner_source
+    assert "ctx.request_interaction" in runner_source
+    assert "RunnerResult.interaction_requested" not in runner_source

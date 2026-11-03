@@ -107,7 +107,7 @@ async def _iter_runner_results_with_deadline(
             try:
                 result = await anext_with_deadline(
                     result_gen,
-                    run_context.runtime.deadline_at,
+                    lambda: run_context.runtime.deadline_at,
                 )
             except StopAsyncIteration:
                 break

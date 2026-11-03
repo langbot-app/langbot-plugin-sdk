@@ -28,6 +28,9 @@ _MAX_E2B_SYNC_FILES = 2048
 _MAX_E2B_SYNC_ENTRIES = 2048
 _MAX_E2B_SYNC_FILE_BYTES = 10 * 1024 * 1024
 _MAX_E2B_SYNC_TOTAL_BYTES = 256 * 1024 * 1024
+_E2B_UPLOAD_BATCH_FILES = 32
+_E2B_UPLOAD_BATCH_BYTES = 8 * 1024 * 1024
+_E2B_DOWNLOAD_CONCURRENCY = 8
 _ARTIFACT_ROOT = "/opt/langbot-artifact-cache"
 
 
@@ -700,6 +703,36 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
 
         synced_files = 0
         synced_bytes = 0
+        pending = []
+        pending_bytes = 0
+
+        async def flush():
+            nonlocal synced_files, synced_bytes, pending_bytes
+            if not pending:
+                return
+            try:
+                if len(pending) == 1:
+                    await sandbox.files.write(pending[0]["path"], pending[0]["data"])
+                else:
+                    await sandbox.files.write_files(list(pending))
+                synced_files += len(pending)
+                synced_bytes += pending_bytes
+            except Exception as exc:
+                self.logger.debug(f"Failed to upload E2B sync batch: {exc}")
+                if len(pending) > 1:
+                    # A failed batch must not prevent independent files from syncing.
+                    for entry in pending:
+                        try:
+                            await sandbox.files.write(entry["path"], entry["data"])
+                            synced_files += 1
+                            synced_bytes += len(entry["data"])
+                        except Exception as file_exc:
+                            self.logger.debug(
+                                f"Failed to sync host file to E2B {entry['path']}: {file_exc}"
+                            )
+            pending.clear()
+            pending_bytes = 0
+
         excluded = excluded_relative_paths or set()
         for root, dirs, files in os.walk(host_root):
             rel_dir = os.path.relpath(root, host_root)
@@ -730,7 +763,8 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                 relative_file = posixpath.join(portable_rel_dir, filename).lstrip("/")
                 if self._path_is_shadowed(relative_file, excluded):
                     continue
-                if synced_files >= _MAX_E2B_SYNC_FILES:
+                if synced_files + len(pending) >= _MAX_E2B_SYNC_FILES:
+                    await flush()
                     return
                 host_file = os.path.join(root, filename)
                 try:
@@ -738,16 +772,24 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                         _read_e2b_host_file_limited,
                         host_file,
                     )
-                    if synced_bytes + len(data) > _MAX_E2B_SYNC_TOTAL_BYTES:
+                    if (
+                        synced_bytes + pending_bytes + len(data)
+                        > _MAX_E2B_SYNC_TOTAL_BYTES
+                    ):
+                        await flush()
                         return
                     remote_file = posixpath.join(remote_dir, filename)
-                    await sandbox.files.write(remote_file, data)
-                    synced_files += 1
-                    synced_bytes += len(data)
+                    if pending and pending_bytes + len(data) > _E2B_UPLOAD_BATCH_BYTES:
+                        await flush()
+                    pending.append({"path": remote_file, "data": data})
+                    pending_bytes += len(data)
+                    if len(pending) >= _E2B_UPLOAD_BATCH_FILES:
+                        await flush()
                 except Exception as exc:
                     self.logger.debug(
                         f"Failed to sync host file to E2B {host_file}: {exc}"
                     )
+        await flush()
 
     async def _sync_e2b_tree_to_host(
         self,
@@ -767,6 +809,51 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
 
         synced_files = 0
         synced_bytes = 0
+        pending = []
+
+        async def download(remote_path):
+            try:
+                stream = await sandbox.files.read(
+                    remote_path, format="stream", request_timeout=30
+                )
+                data = bytearray()
+                async for chunk in stream:
+                    if len(data) + len(chunk) > _MAX_E2B_SYNC_FILE_BYTES:
+                        raise ValueError("E2B remote sync file exceeds the size limit")
+                    if (
+                        synced_bytes + len(data) + len(chunk)
+                        > _MAX_E2B_SYNC_TOTAL_BYTES
+                    ):
+                        raise ValueError("E2B remote sync exceeds the total size limit")
+                    data.extend(chunk)
+                return bytes(data)
+            except Exception as exc:
+                self.logger.debug(
+                    f"Failed to sync E2B file to host {remote_path}: {exc}"
+                )
+
+        async def flush_downloads():
+            nonlocal synced_files, synced_bytes
+            if len(pending) == 1:
+                bodies = [await download(pending[0][0])]
+            else:
+                bodies = await asyncio.gather(*(download(path) for path, _ in pending))
+            # Commit in listing order; failed reads/writes must not consume quota.
+            for (remote_path, host_path), data in zip(pending, bodies):
+                if data is None:
+                    continue
+                try:
+                    if synced_bytes + len(data) > _MAX_E2B_SYNC_TOTAL_BYTES:
+                        raise ValueError("E2B remote sync exceeds the total size limit")
+                    await asyncio.to_thread(_write_e2b_host_file, host_path, data)
+                    synced_files += 1
+                    synced_bytes += len(data)
+                except Exception as exc:
+                    self.logger.debug(
+                        f"Failed to sync E2B file to host {remote_path}: {exc}"
+                    )
+            pending.clear()
+
         excluded = excluded_relative_paths or set()
         for entry in entries[:_MAX_E2B_SYNC_ENTRIES]:
             remote_path = str(getattr(entry, "path", "") or "")
@@ -795,37 +882,21 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                     await asyncio.to_thread(os.makedirs, host_path, exist_ok=True)
                 elif entry_type == "file":
                     if synced_files >= _MAX_E2B_SYNC_FILES:
-                        return
+                        break
                     declared_size = int(getattr(entry, "size", 0) or 0)
                     if declared_size > _MAX_E2B_SYNC_FILE_BYTES:
                         continue
-                    stream = await sandbox.files.read(
-                        remote_path,
-                        format="stream",
-                        request_timeout=30,
-                    )
-                    data = bytearray()
-                    async for chunk in stream:
-                        data.extend(chunk)
-                        if len(data) > _MAX_E2B_SYNC_FILE_BYTES:
-                            raise ValueError(
-                                "E2B remote sync file exceeds the size limit"
-                            )
-                        if synced_bytes + len(data) > _MAX_E2B_SYNC_TOTAL_BYTES:
-                            raise ValueError(
-                                "E2B remote sync exceeds the total size limit"
-                            )
-                    await asyncio.to_thread(
-                        _write_e2b_host_file,
-                        host_path,
-                        bytes(data),
-                    )
-                    synced_files += 1
-                    synced_bytes += len(data)
+                    pending.append((remote_path, host_path))
+                    if len(pending) >= min(
+                        _E2B_DOWNLOAD_CONCURRENCY, _MAX_E2B_SYNC_FILES - synced_files
+                    ):
+                        await flush_downloads()
             except Exception as exc:
                 self.logger.debug(
                     f"Failed to sync E2B file to host {remote_path}: {exc}"
                 )
+        if pending:
+            await flush_downloads()
 
     @staticmethod
     def _main_mount_shadow_paths(spec: BoxSpec) -> set[str]:
