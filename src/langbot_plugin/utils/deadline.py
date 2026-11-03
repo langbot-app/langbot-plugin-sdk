@@ -34,7 +34,9 @@ async def anext_with_deadline(
             try:
                 if remaining is None:
                     return await next_result
-                return await asyncio.wait_for(asyncio.shield(next_result), timeout=max(remaining, 0))
+                return await asyncio.wait_for(
+                    asyncio.shield(next_result), timeout=max(remaining, 0)
+                )
             except asyncio.TimeoutError:
                 remaining = remaining_deadline_seconds(current_deadline())
                 if next_result.done() or (remaining is not None and remaining <= 0):

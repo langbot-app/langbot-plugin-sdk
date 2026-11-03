@@ -52,12 +52,16 @@ class RunnerPlatformAPIMixin:
             result = InteractionResult.model_validate(response)
         except BaseException:
             if original_deadline is not None:
-                self.ctx.runtime.deadline_at = float(original_deadline) + (time.time() - started_at)
+                self.ctx.runtime.deadline_at = float(original_deadline) + (
+                    time.time() - started_at
+                )
             raise
         if result.deadline_at is not None:
             self.ctx.runtime.deadline_at = result.deadline_at
         elif original_deadline is not None:
-            self.ctx.runtime.deadline_at = float(original_deadline) + (time.time() - started_at)
+            self.ctx.runtime.deadline_at = float(original_deadline) + (
+                time.time() - started_at
+            )
         return result
 
     async def call_platform_api(

@@ -40,8 +40,11 @@ async def test_anext_with_deadline_observes_extension_while_waiting():
 
     extension = asyncio.create_task(extend())
     try:
-        assert await deadline.anext_with_deadline(
-            delayed_result(), lambda: state["deadline_at"]
-        ) == "submitted"
+        assert (
+            await deadline.anext_with_deadline(
+                delayed_result(), lambda: state["deadline_at"]
+            )
+            == "submitted"
+        )
     finally:
         await extension

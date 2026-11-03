@@ -830,7 +830,9 @@ class TestRunAgent:
 
         mgr = PluginManager(Mock(spec=RuntimeContext))
         plugin = create_mock_plugin(
-            "test-author", "test-plugin", [("default", None)],
+            "test-author",
+            "test-plugin",
+            [("default", None)],
             mock_handler_responses=[[{"type": "run.completed", "data": {}}]],
         )
 
@@ -845,7 +847,8 @@ class TestRunAgent:
         ctx.runtime.deadline_at = time.time() + 0.01
 
         results = [
-            result async for result in mgr.run_runner(
+            result
+            async for result in mgr.run_runner(
                 "test-author", "test-plugin", "default", ctx.model_dump(mode="json")
             )
         ]

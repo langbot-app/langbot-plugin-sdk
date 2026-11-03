@@ -207,7 +207,11 @@ class TestRunnerAPIProxyRestrictedAPISurface:
             await asyncio.sleep(0.06)
             return {
                 "status": "submitted",
-                "submission": {"interaction_id": "one", "action_id": "yes", "values": {}},
+                "submission": {
+                    "interaction_id": "one",
+                    "action_id": "yes",
+                    "values": {},
+                },
                 "deadline_at": original_deadline + 0.06,
             }
 

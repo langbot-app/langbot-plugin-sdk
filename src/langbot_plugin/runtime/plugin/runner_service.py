@@ -142,7 +142,9 @@ class RunnerRuntimeService:
 
         sequence = 0
         try:
-            if (remaining := _remaining_deadline_seconds(context)) is not None and remaining <= 0:
+            if (
+                remaining := _remaining_deadline_seconds(context)
+            ) is not None and remaining <= 0:
                 raise asyncio.TimeoutError
             gen = target_plugin._runtime_plugin_handler.call_action_generator(
                 RuntimeToPluginAction.RUN_RUNNER,
