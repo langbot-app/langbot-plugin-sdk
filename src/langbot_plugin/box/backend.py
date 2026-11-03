@@ -171,11 +171,32 @@ class CLISandboxBackend(BaseSandboxBackend):
         self.cpu_limit_enabled = True
         self.artifact_cache_parent: str | None = None
         self._artifact_roots: dict[str, str] = {}
+        self._availability_task: asyncio.Task[bool] | None = None
+        self._availability_waiters: dict[asyncio.Task[bool], int] = {}
 
     async def is_available(self) -> bool:
         if shutil.which(self.command) is None:
             return False
 
+        task = self._availability_task
+        if task is None or task.done():
+            task = asyncio.create_task(self._probe_availability())
+            self._availability_task = task
+        self._availability_waiters[task] = self._availability_waiters.get(task, 0) + 1
+        try:
+            # Share only in-flight work; cancelling one query must not cancel others.
+            return await asyncio.shield(task)
+        finally:
+            self._availability_waiters[task] -= 1
+            if not self._availability_waiters[task]:
+                del self._availability_waiters[task]
+                if self._availability_task is task:
+                    self._availability_task = None
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def _probe_availability(self) -> bool:
         result = await self._run_command(
             [self.command, "info"], timeout_sec=5, check=False
         )
