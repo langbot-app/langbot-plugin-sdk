@@ -647,6 +647,22 @@ class PlatformSpecificEvent(EBAEvent):
     """Event data; structure defined by each adapter."""
 
 
+class InteractionCallbackEvent(EBAEvent):
+    """A platform callback for a Host-owned interaction."""
+
+    summary_field: typing.ClassVar[str] = "callback_token"
+    type: str = "interaction.callback"
+    callback_token: str
+    values: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    action_id: str | None = None
+    actor_id: str | None = None
+    conversation_id: str | None = None
+    target_type: str | None = None
+    target_id: str | None = None
+    callback_context: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    raw_submission: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+
+
 # ---- WeCom AI Bot Events ----
 
 

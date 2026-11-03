@@ -22,17 +22,15 @@ not bypass Host authorization.
 
 ## Request
 
-Emit an SDK `InteractionRequest` through the whitelisted result factory:
+Call the blocking SDK method while the current Runner is active:
 
 ```python
 from langbot_plugin.api.entities.builtin.runner import (
-    RunnerResult,
     InteractionAction,
     InteractionRequest,
 )
 
-yield RunnerResult.interaction_requested(
-    ctx.run_id,
+result = await ctx.request_interaction(
     InteractionRequest(
         interaction_id="provider-neutral-correlation-id",
         kind="confirmation",
@@ -43,40 +41,27 @@ yield RunnerResult.interaction_requested(
         ],
         fallback_text="Approval is required to continue.",
     ),
+    timeout=600,
+    on_unsupported="degrade",
 )
+if result.submission is not None:
+    selected_action = result.submission.action_id
 ```
 
 Use `ctx.delivery.interactions` to inspect the current surface's supported
 field types, action styles, update support, and field limit. Always provide a
-plain-text fallback.
+plain-text fallback. A form with multiple fields requires a native card; the
+Host rejects a text fallback for that structure.
 
 ## Continuation
 
-Provider-private values must not cross the Host interaction boundary. Store
-tokens, workflow IDs, CLI checkpoints, and provider user tags in authorized
-plugin storage or Host state, keyed by the public `interaction_id`.
-
-On a later run, the Host sets both:
-
-```python
-ctx.event.event_type == "interaction.submitted"
-ctx.input.interaction  # InteractionSubmission
-```
-
-Load the private continuation using `interaction_id`, validate the submitted
-action and values against the provider mapping, resume the provider, and delete
-the continuation after a successful terminal event. If the provider pauses
-again, persist a new continuation and emit a new interaction request before
-deleting the old one.
-
-Do not keep the only continuation copy in a module-level dictionary. Plugin
-process restarts and multi-process runtimes make in-memory correlation
-unreliable.
+The call waits in the same run and returns an `InteractionResult`. Check
+`status` before reading `submission`; a timeout has no submission. The Host
+validates callback token, actor, fields, options, and repeated submissions.
+On cancellation or Host restart, the pending card becomes invalid.
 
 ## Long-Lived Processes
 
-Some CLI or harness permission protocols wait for a response on the same live
-stdin/stdout channel. A Host interaction callback arrives as a later AgentRun,
-so such runners need a durable daemon or checkpoint/resume mechanism before
-declaring interaction support. Do not enable the capability solely because the
-CLI can display an interactive terminal prompt.
+CLI and harness protocols may wait on their live stdin/stdout channel. Keep
+that process alive while `ctx.request_interaction` waits, then write the
+validated answer to the same channel.

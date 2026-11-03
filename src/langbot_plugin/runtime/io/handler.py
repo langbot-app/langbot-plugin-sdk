@@ -1616,7 +1616,7 @@ class Handler(abc.ABC):
         self,
         action: ActionType,
         data: dict[str, Any],
-        timeout: float = 15.0,
+        timeout: float | None = 15.0,
         action_context: ActionEnvelopeContext | dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         from langbot_plugin.api.proxies.invocation import invocation_capability

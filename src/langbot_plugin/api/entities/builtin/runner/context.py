@@ -37,6 +37,10 @@ from langbot_plugin.api.entities.builtin.runner.context_access import (
     ContextAccess,
 )
 from langbot_plugin.api.entities.builtin.runner.delivery import DeliveryContext
+from langbot_plugin.api.entities.builtin.runner.interaction import (
+    InteractionRequest,
+    InteractionResult,
+)
 
 
 class AdapterContext(pydantic.BaseModel):
@@ -189,6 +193,26 @@ class RunnerContext(pydantic.BaseModel):
     ) -> dict[str, typing.Any]:
         """Call an authorized event, platform, or plugin tool in the current context."""
         return await self.api.call_tool(tool_name, parameters or {})
+
+    async def request_interaction(
+        self,
+        request: InteractionRequest,
+        *,
+        timeout: float = 600,
+        on_unsupported: str = "error",
+        responders: str | list[str] = "actor",
+        target_type: str | None = None,
+        target_id: str | None = None,
+    ) -> InteractionResult:
+        """Wait for a user submission in this run."""
+        return await self.api.request_interaction(
+            request,
+            timeout=timeout,
+            on_unsupported=on_unsupported,
+            responders=responders,
+            target_type=target_type,
+            target_id=target_id,
+        )
 
     async def get_bot_uuid(self) -> str:
         """Get the source bot UUID, or fail when this event has no platform bot."""
