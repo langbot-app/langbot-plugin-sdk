@@ -1079,3 +1079,131 @@ def test_shared_launcher_mounts_editable_sdk_source_readonly(tmp_path):
     assert (spec.paths.jail_root_path / str(source).lstrip("/")).is_dir()
     assert f"{source.parent}:{source.parent}" not in args
     assert f"PYTHONPATH={source}:/plugin-dependencies" in args
+
+
+def _fake_cgroup_tree(
+    tmp_path: pathlib.Path,
+    *,
+    relative: str = "/kubepods/pod1/ctr",
+    procs: str = "1\n42\n",
+    memory_max: str | None = "12884901888",
+    controllers: str = "cpuset cpu io memory pids",
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    root = tmp_path / "cgroup"
+    runtime = root / relative.lstrip("/")
+    runtime.mkdir(parents=True)
+    (runtime / "cgroup.procs").write_text(procs)
+    (runtime / "cgroup.controllers").write_text(controllers)
+    (runtime / "cgroup.subtree_control").write_text("")
+    if memory_max is not None:
+        (runtime / "memory.max").write_text(memory_max + "\n")
+    # The kernel populates interface files when a child cgroup is created;
+    # pre-create them because the fake tree is a plain directory.
+    for child in ("langbot-runtime", "langbot-plugin-workers"):
+        (runtime / child).mkdir()
+        (runtime / child / "cgroup.procs").write_text("")
+        (runtime / child / "cgroup.subtree_control").write_text("")
+    proc_self = tmp_path / "proc-self-cgroup"
+    proc_self.write_text(f"0::{relative}\n")
+    return root, runtime, proc_self
+
+
+def _prepare(root, proc_self, pid=42):
+    return worker_launcher_module.prepare_worker_cgroup_v2_parent(
+        cgroup_root=root, proc_self_cgroup=proc_self, pid=pid
+    )
+
+
+def test_worker_cgroup_parent_is_nested_under_runtime_cgroup(tmp_path, monkeypatch):
+    monkeypatch.delenv(
+        worker_launcher_module.RUNTIME_MEMORY_RESERVE_MB_ENV, raising=False
+    )
+    root, runtime, proc_self = _fake_cgroup_tree(tmp_path)
+
+    workers = _prepare(root, proc_self)
+
+    assert workers == runtime / "langbot-plugin-workers"
+    # Runtime processes are evacuated into a leaf so controllers can be
+    # delegated to the sibling workers subtree.
+    assert (runtime / "langbot-runtime" / "cgroup.procs").exists()
+    assert (runtime / "cgroup.subtree_control").read_text() == "+cpu +memory +pids"
+    assert (workers / "cgroup.subtree_control").read_text() == "+cpu +memory +pids"
+    assert int((workers / "memory.max").read_text()) == 12884901888 - 2048 * 1024 * 1024
+
+
+def test_worker_cgroup_parent_honours_runtime_reserve_env(tmp_path, monkeypatch):
+    monkeypatch.setenv(worker_launcher_module.RUNTIME_MEMORY_RESERVE_MB_ENV, "1024")
+    root, runtime, proc_self = _fake_cgroup_tree(tmp_path, memory_max="4294967296")
+
+    workers = _prepare(root, proc_self)
+
+    assert int((workers / "memory.max").read_text()) == 3 * 1024 * 1024 * 1024
+
+
+def test_worker_cgroup_parent_works_in_private_cgroup_namespace(tmp_path):
+    root, runtime, proc_self = _fake_cgroup_tree(tmp_path, relative="/")
+
+    assert _prepare(root, proc_self) == root / "langbot-plugin-workers"
+
+
+def test_worker_cgroup_parent_rejects_host_root_cgroup(tmp_path):
+    # The incident shape: host /sys/fs/cgroup mounted, Runtime sees "0::/"
+    # from a private namespace, so the mount root is the host root cgroup.
+    root, _, proc_self = _fake_cgroup_tree(tmp_path, relative="/", memory_max=None)
+
+    assert _prepare(root, proc_self) is None
+    assert (
+        root / "langbot-plugin-workers" / "cgroup.subtree_control"
+    ).read_text() == ""
+
+
+def test_worker_cgroup_parent_rejects_mismatched_cgroup_namespace(tmp_path):
+    root, _, proc_self = _fake_cgroup_tree(tmp_path, relative="/", procs="1\n7\n")
+
+    assert _prepare(root, proc_self) is None
+    assert (
+        root / "langbot-plugin-workers" / "cgroup.subtree_control"
+    ).read_text() == ""
+
+
+def test_worker_cgroup_parent_requires_delegated_controllers(tmp_path):
+    root, _, proc_self = _fake_cgroup_tree(tmp_path, controllers="cpu pids")
+
+    assert _prepare(root, proc_self) is None
+
+
+def test_shared_launcher_passes_worker_cgroup_parent_to_nsjail(tmp_path, monkeypatch):
+    python_prefix = tmp_path / "runtime" / ".venv"
+    python_executable = python_prefix / "bin" / "python"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.touch()
+    workers = tmp_path / "cgroup" / "langbot-plugin-workers"
+    monkeypatch.setattr(
+        worker_launcher_module,
+        "prepare_worker_cgroup_v2_parent",
+        lambda: workers,
+    )
+    launcher = PluginWorkerLauncher(
+        nsjail_path="/usr/bin/nsjail",
+        platform="linux",
+        python_executable=str(python_executable),
+        python_prefix=str(python_prefix),
+    )
+    launcher.configure(_policy(require_hard_limits=True), "shared")
+
+    args = launcher.build_nsjail_args(_launch_spec(tmp_path))
+
+    assert launcher.cgroup_v2_available is True
+    index = args.index("--cgroupv2_mount")
+    assert args[index + 1] == str(workers)
+    assert "--use_cgroupv2" in args
+
+
+def test_shared_launcher_fails_closed_without_worker_cgroup_parent(monkeypatch):
+    monkeypatch.setattr(
+        worker_launcher_module, "prepare_worker_cgroup_v2_parent", lambda: None
+    )
+    launcher = PluginWorkerLauncher(nsjail_path="/usr/bin/nsjail", platform="linux")
+
+    with pytest.raises(RuntimeError, match="delegated cgroup v2"):
+        launcher.configure(_policy(require_hard_limits=True), "shared")
