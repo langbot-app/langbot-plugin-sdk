@@ -457,6 +457,18 @@ Important modules:
 - `skill_store.py`: generic Skill package CRUD, revision, and read-only resource helpers; it does not start or connect to Box.
 - `box/security.py`: path/security helper logic.
 
+On POSIX hosts with no-follow descriptor operations, writable E2B mount sync
+propagates confirmed file deletions from completed executions to the host. Only
+files successfully uploaded for that execution are eligible: a direct no-follow
+probe must confirm absence, and the host directory identity, file version and
+content must still match the upload. Failed verification or conflicting host edits
+retain the affected files and fail synchronization explicitly. Read-only and nested
+mount projections are excluded; directories are not recursively deleted. Hosts
+without these filesystem operations retain host files and log a warning.
+Workspace files remain shared across its Boxes. This is not a distributed lock or
+deletion ledger: active readers are not protected, and stale copies in another Box
+can still reintroduce files. Shared writers must coordinate concurrent mutations.
+
 Default Box WebSocket endpoints on port `5410`:
 
 - `/rpc/ws`: action RPC control channel.
