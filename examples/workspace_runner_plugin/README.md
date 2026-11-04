@@ -4,7 +4,7 @@ A minimal Runner plugin demonstrating listing and executing authorized LangBot A
 
 ## Features
 
-- **Manifest Declarations**: Declares permissions for 2 read operations (`bot.list` and `stats.basic`).
+- **Plugin Manifest Declarations**: Requests `bot.list` and `stats.basic` in plugin-level `spec.permissions.workspace_operations`. A member must confirm installation grants in WebUI before the plugin can run.
 - **Runtime Execution**:
   - Invokes `await ctx.api.workspace.list()` to inspect authorized operations and domains.
   - Invokes `await ctx.api.workspace.call("bot.list")` to directly call an authorized operation.

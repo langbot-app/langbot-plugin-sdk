@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from langbot_plugin.api.entities.builtin.runner.manifest import (
     RunnerPermissions,
 )
+from langbot_plugin.api.entities.permissions import PluginPermissions
 from langbot_plugin.api.entities.builtin.runner.resources import (
     AgentResources,
     WorkspaceOperationResource,
@@ -22,8 +23,8 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.errors import ActionCallError
 
 
-def test_runner_permissions_workspace_operations_valid():
-    perms = RunnerPermissions(
+def test_plugin_permissions_workspace_operations_valid():
+    perms = PluginPermissions(
         workspace_operations=["bot.list", "stats.basic", "pipeline.extensions.update"]
     )
     assert perms.workspace_operations == [
@@ -33,22 +34,27 @@ def test_runner_permissions_workspace_operations_valid():
     ]
 
 
-def test_runner_permissions_workspace_operations_default_empty():
-    perms = RunnerPermissions()
+def test_plugin_permissions_workspace_operations_default_empty():
+    perms = PluginPermissions()
     assert perms.workspace_operations == []
+    assert perms.capabilities == []
 
 
-def test_runner_permissions_workspace_operations_invalid_format():
-    invalid_cases = [
-        ["invalid_no_dot"],
-        ["domain."],
-        [".action"],
-        [""],
-        ["domain..action"],
-    ]
+def test_plugin_permissions_workspace_operations_invalid_type():
+    invalid_cases = ["bot.list", [1], [None]]
     for case in invalid_cases:
         with pytest.raises(ValidationError):
-            RunnerPermissions(workspace_operations=case)
+            PluginPermissions(workspace_operations=case)
+
+
+def test_runner_permissions_cannot_declare_workspace_operations():
+    with pytest.raises(ValidationError):
+        RunnerPermissions(workspace_operations=["bot.list"])
+
+
+def test_plugin_permissions_extra_forbid():
+    with pytest.raises(ValidationError):
+        PluginPermissions(unknown_field="not_allowed")
 
 
 def test_runner_permissions_extra_forbid():
@@ -218,8 +224,8 @@ def test_example_runner_plugin_manifest_structure():
     assert manifest_file.exists()
     assert runner_yaml.exists()
 
-    with open(runner_yaml, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    with open(manifest_file, encoding="utf-8") as manifest_stream:
+        data = yaml.safe_load(manifest_stream)
 
     assert "spec" in data
     assert "permissions" in data["spec"]
@@ -228,6 +234,10 @@ def test_example_runner_plugin_manifest_structure():
     assert "bot.list" in perms["workspace_operations"]
     assert "stats.basic" in perms["workspace_operations"]
 
-    # Validate with RunnerPermissions
-    validated_perms = RunnerPermissions.model_validate(perms)
+    validated_perms = PluginPermissions.model_validate(perms)
     assert "bot.list" in validated_perms.workspace_operations
+    with open(runner_yaml, encoding="utf-8") as runner_stream:
+        runner = yaml.safe_load(runner_stream)
+    runner_permissions = runner["spec"]["permissions"]
+    assert "workspace_operations" not in runner_permissions
+    RunnerPermissions.model_validate(runner_permissions)

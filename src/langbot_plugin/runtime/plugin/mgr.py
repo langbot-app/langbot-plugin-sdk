@@ -2818,6 +2818,7 @@ class PluginManager:
                         "plugin_name": plugin_name,
                         "install_source": PluginInstallSource.DEBUG.value,
                         "install_info": {},
+                        "manifest": plugin_container.manifest.manifest,
                     },
                     action_context=runtime_binding,
                 )

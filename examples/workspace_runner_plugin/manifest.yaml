@@ -12,6 +12,11 @@ metadata:
     en_US: Workspace Runner Example
     zh_Hans: 工作区 Runner 示例
 spec:
+  permissions:
+    workspace_operations:
+      - bot.list
+      - stats.basic
+    capabilities: []
   config: []
   components:
     Runner:

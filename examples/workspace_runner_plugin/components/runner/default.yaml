@@ -33,9 +33,6 @@ spec:
     events: []
     storage: []
     interactions: []
-    workspace_operations:
-      - bot.list
-      - stats.basic
   config: []
 execution:
   python:
