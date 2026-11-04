@@ -510,6 +510,12 @@ Failed cleanup keeps the session fenced until a later acquire/delete retries it.
 
 There is no supported `python -m langbot_plugin.box` entrypoint; use `lbp box`.
 
+Box ownership is stable across restarts. `box/identity.py` resolves a configured
+or persisted instance ID and holds its local ownership lock. Startup cleanup
+only removes resources owned by that ID; RPC initialization cannot change it.
+See [Box instance identity](docs/box-instance-identity.md) for configuration,
+deployment persistence, and shared-daemon upgrade requirements.
+
 ## Backend Selection
 
 Box can execute through multiple sandbox backends:

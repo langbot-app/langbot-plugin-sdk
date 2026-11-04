@@ -813,6 +813,12 @@ async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
     current_dir = tmp_base / "test123_sess2_def"
     current_dir.mkdir()
     (current_dir / "workspace").mkdir()
+    (current_dir / "meta.json").write_text('{"instance_id":"test123"}')
+    prefix_collision = tmp_base / "test123_other_sess3_abc"
+    prefix_collision.mkdir()
+    (prefix_collision / "meta.json").write_text('{"instance_id":"test123_other"}')
+    unlabeled = tmp_base / "test123_legacy"
+    unlabeled.mkdir()
 
     with mock.patch.object(
         backend,
@@ -821,8 +827,10 @@ async def test_cleanup_orphaned_removes_old_sessions(backend, tmp_base):
         await backend.cleanup_orphaned_containers("test123")
 
     kill_processes.assert_called_once_with("test123")
-    assert not old_dir.exists()
-    assert current_dir.exists()
+    assert old_dir.exists()
+    assert not current_dir.exists()
+    assert prefix_collision.exists()
+    assert unlabeled.exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="NsJail process cleanup is Linux-only")
@@ -844,6 +852,9 @@ def test_kill_orphaned_processes_scans_proc_once(
         (f"nsjail\0--chroot\0{tmp_base}/test123_sess2_def/root\0").encode()
     )
     (unrelated_pid / "cmdline").write_bytes(b"python\0worker.py\0")
+    current_dir = tmp_base / "test123_sess2_def"
+    current_dir.mkdir(parents=True)
+    (current_dir / "meta.json").write_text('{"instance_id":"test123"}')
 
     with mock.patch("os.kill") as kill:
         backend._kill_orphaned_session_processes_sync(
@@ -851,7 +862,7 @@ def test_kill_orphaned_processes_scans_proc_once(
             proc_dir=proc_dir,
         )
 
-    kill.assert_called_once_with(101, 9)
+    kill.assert_called_once_with(102, 9)
 
 
 # ── output clipping ──────────────────────────────────────────────────
