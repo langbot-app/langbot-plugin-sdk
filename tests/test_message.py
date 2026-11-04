@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest  # type: ignore
 from datetime import datetime
@@ -109,6 +111,51 @@ def test_message_chain_concatenation():
     chain1 += chain2
     assert len(chain1) == 2
     assert str(chain1) == "HelloWorld"
+
+
+def test_quote_str():
+    quote = Quote(id="1", origin=MessageChain([Plain(text="x")]))
+
+    assert str(quote) == ""
+
+
+@pytest.mark.parametrize("quote_first", [False, True])
+@pytest.mark.parametrize("origin_text", [None, "quoted content"])
+def test_message_chain_str_with_quote(quote_first, origin_text):
+    origin = MessageChain([] if origin_text is None else [Plain(text=origin_text)])
+    quote = Quote(id="1", origin=origin)
+    plain = Plain(text="!help")
+    chain = MessageChain([quote, plain] if quote_first else [plain, quote])
+
+    assert str(chain) == "!help"
+
+
+def test_quote_serialization():
+    quote = Quote(
+        id="1",
+        group_id="group",
+        sender_id="sender",
+        target_id="target",
+        origin=MessageChain([Plain(text="x")]),
+    )
+    expected = {
+        "type": "Quote",
+        "id": "1",
+        "group_id": "group",
+        "sender_id": "sender",
+        "target_id": "target",
+        "origin": [{"type": "Plain", "text": "x"}],
+    }
+
+    assert str(quote) == ""
+    assert quote.model_dump() == expected
+    assert json.loads(quote.model_dump_json()) == expected
+    chain = MessageChain([quote])
+    assert chain.model_dump() == [expected]
+    assert json.loads(chain.model_dump_json()) == [expected]
+    restored = MessageChain.model_validate(chain.model_dump())
+    assert restored[0] == quote
+    assert restored[0].origin[0].text == "x"
 
 
 def test_message_chain_serialization():
