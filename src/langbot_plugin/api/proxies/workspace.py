@@ -7,11 +7,12 @@ from typing import Any
 
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.entities.io.errors import ActionCallError
+from .workspace_domains import WorkspaceDomains
 
 logger = logging.getLogger(__name__)
 
 
-class WorkspaceOperationsProxy:
+class WorkspaceOperationsProxy(WorkspaceDomains):
     """Proxy for interacting with authorized LangBot workspace operations."""
 
     def __init__(self, handler: Any, run_id: str | None = None):
@@ -22,6 +23,7 @@ class WorkspaceOperationsProxy:
         else:
             self._handler = handler
         self._run_id = run_id
+        super().__init__(self)
 
     async def list(self) -> dict[str, Any]:
         """List authorized Application API operations and domains for the current run.
