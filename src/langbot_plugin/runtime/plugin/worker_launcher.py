@@ -53,6 +53,13 @@ _READONLY_ETC_FILES = (
     "/etc/ssl",
 )
 _DEV_NODES = ("/dev/null", "/dev/random", "/dev/urandom")
+_CGROUP_V2_ROOT = pathlib.Path("/sys/fs/cgroup")
+_PROC_SELF_CGROUP = pathlib.Path("/proc/self/cgroup")
+_CGROUP_V2_CONTROLLERS = ("cpu", "memory", "pids")
+_RUNTIME_CGROUP_NAME = "langbot-runtime"
+_WORKERS_CGROUP_NAME = "langbot-plugin-workers"
+RUNTIME_MEMORY_RESERVE_MB_ENV = "LANGBOT_PLUGIN_RUNTIME_MEMORY_RESERVE_MB"
+_DEFAULT_RUNTIME_MEMORY_RESERVE_MB = 2048
 _DEPENDENCY_INSTALL_TIMEOUT_SECONDS = 600
 _DEPENDENCY_INSTALLER_SCHEMA_VERSION = 2
 _WINDOWS_WORKER_ENV_ALLOWLIST = frozenset(
@@ -157,6 +164,10 @@ class PluginWorkerLauncher:
             nsjail_path if nsjail_path is not None else shutil.which("nsjail")
         )
         self.cgroup_v2_available = cgroup_v2_available
+        # Parent cgroup for nsjail-created worker cgroups. It is nested under
+        # the Runtime's own cgroup so the container memory limit and
+        # accounting also cover every sandbox.
+        self.cgroup_v2_mount: pathlib.Path | None = None
         self.platform = platform or get_platform()
         self.python_executable = pathlib.Path(
             python_executable or sys.executable
@@ -196,7 +207,8 @@ class PluginWorkerLauncher:
                     raise RuntimeError("Shared plugin workers require nsjail")
                 self._validate_python_runtime()
                 if self.cgroup_v2_available is None:
-                    self.cgroup_v2_available = self._detect_cgroup_v2_delegation()
+                    self.cgroup_v2_mount = prepare_worker_cgroup_v2_parent()
+                    self.cgroup_v2_available = self.cgroup_v2_mount is not None
                 self.effective_profile = "shared"
         else:
             if self.cgroup_v2_available is None:
@@ -719,6 +731,8 @@ class PluginWorkerLauncher:
         policy: PluginWorkerPolicy,
     ) -> None:
         if self.cgroup_v2_available:
+            if self.cgroup_v2_mount is not None:
+                args.extend(["--cgroupv2_mount", str(self.cgroup_v2_mount)])
             args.extend(
                 [
                     "--use_cgroupv2",
@@ -914,28 +928,144 @@ class PluginWorkerLauncher:
             for root in _READONLY_SYSTEM_MOUNTS
         )
 
-    @staticmethod
-    def _detect_cgroup_v2_delegation() -> bool:
-        cgroup_root = pathlib.Path("/sys/fs/cgroup")
-        controllers_path = cgroup_root / "cgroup.controllers"
-        subtree_path = cgroup_root / "cgroup.subtree_control"
-        try:
-            available = set(controllers_path.read_text().split())
-            enabled = set(subtree_path.read_text().split())
-        except OSError:
-            return False
-        required = {"cpu", "memory", "pids"}
-        if not required.issubset(available):
-            return False
 
-        for controller in ("memory", "pids", "cpu"):
-            try:
-                subtree_path.write_text(f"+{controller}")
-            except OSError:
-                return False
-            if controller not in enabled:
+def _read_cgroup_list(path: pathlib.Path) -> list[str]:
+    return path.read_text().split()
+
+
+def _enable_cgroup_controllers(cgroup: pathlib.Path) -> None:
+    enabled = set(_read_cgroup_list(cgroup / "cgroup.subtree_control"))
+    missing = [c for c in _CGROUP_V2_CONTROLLERS if c not in enabled]
+    if missing:
+        (cgroup / "cgroup.subtree_control").write_text(
+            " ".join(f"+{c}" for c in missing)
+        )
+
+
+def _runtime_memory_reserve_bytes() -> int:
+    raw = os.environ.get(RUNTIME_MEMORY_RESERVE_MB_ENV, "")
+    try:
+        reserve_mb = int(raw) if raw else _DEFAULT_RUNTIME_MEMORY_RESERVE_MB
+    except ValueError:
+        logger.warning(
+            f"Ignoring invalid {RUNTIME_MEMORY_RESERVE_MB_ENV}={raw!r}; "
+            f"using {_DEFAULT_RUNTIME_MEMORY_RESERVE_MB} MiB"
+        )
+        reserve_mb = _DEFAULT_RUNTIME_MEMORY_RESERVE_MB
+    return max(reserve_mb, 0) * 1024 * 1024
+
+
+def prepare_worker_cgroup_v2_parent(
+    cgroup_root: pathlib.Path = _CGROUP_V2_ROOT,
+    proc_self_cgroup: pathlib.Path = _PROC_SELF_CGROUP,
+    pid: int | None = None,
+) -> pathlib.Path | None:
+    """Create a delegated cgroup v2 parent for worker sandboxes.
+
+    nsjail creates ``NSJAIL.<pid>`` cgroups directly below its
+    ``--cgroupv2_mount``. Pointing that at the cgroup v2 mount root lets
+    sandboxes escape the Runtime container when the host cgroup tree is
+    mounted, so their memory is neither accounted to nor limited by the
+    container. Instead the Runtime moves its own processes into a leaf and
+    creates a sibling workers cgroup below its *own* cgroup:
+
+        <runtime cgroup>/
+            langbot-runtime/          Runtime processes
+            langbot-plugin-workers/   nsjail NSJAIL.<pid> cgroups
+
+    The workers cgroup is capped below the Runtime cgroup's ``memory.max`` so
+    sandbox pressure triggers OOM inside the workers subtree instead of
+    killing the Runtime itself. Returns ``None`` when delegation is
+    impossible or would place sandboxes outside the Runtime's cgroup.
+    """
+
+    pid = os.getpid() if pid is None else pid
+    try:
+        relative = None
+        for line in proc_self_cgroup.read_text().splitlines():
+            if line.startswith("0::"):
+                relative = line[3:].strip()
+                break
+        if relative is None:
+            logger.warning("cgroup v2 unified hierarchy not found for the Runtime")
+            return None
+
+        runtime_cgroup = cgroup_root / relative.lstrip("/")
+        if not (runtime_cgroup / "cgroup.procs").is_file():
+            logger.warning(
+                f"Runtime cgroup {relative!r} is not visible under {cgroup_root}; "
+                "the mounted cgroup tree does not match the Runtime's cgroup "
+                "namespace (do not bind-mount the host /sys/fs/cgroup)"
+            )
+            return None
+        if not (runtime_cgroup / "memory.max").is_file():
+            # Only the real host root cgroup lacks memory.max. Worker
+            # sandboxes there would escape every container limit.
+            logger.warning(
+                "Runtime runs in the host root cgroup; refusing to create "
+                "plugin worker cgroups outside a bounded parent"
+            )
+            return None
+        procs = _read_cgroup_list(runtime_cgroup / "cgroup.procs")
+        if str(pid) not in procs:
+            leaf = runtime_cgroup / _RUNTIME_CGROUP_NAME
+            if not (
+                (leaf / "cgroup.procs").is_file()
+                and str(pid) in _read_cgroup_list(leaf / "cgroup.procs")
+            ):
+                logger.warning(
+                    f"Runtime process is not a member of {runtime_cgroup}; "
+                    "the mounted cgroup tree does not match the Runtime's "
+                    "cgroup namespace (do not bind-mount the host /sys/fs/cgroup)"
+                )
+                return None
+            # Already delegated by an earlier launcher in this process.
+            runtime_cgroup_is_leaf = False
+        else:
+            runtime_cgroup_is_leaf = True
+
+        available = set(_read_cgroup_list(runtime_cgroup / "cgroup.controllers"))
+        if not set(_CGROUP_V2_CONTROLLERS).issubset(available):
+            logger.warning(
+                f"cgroup v2 controllers {_CGROUP_V2_CONTROLLERS} are not all "
+                f"delegated to {runtime_cgroup} (available: {sorted(available)})"
+            )
+            return None
+
+        if runtime_cgroup_is_leaf:
+            # cgroup v2 forbids enabling controllers for children while the
+            # cgroup itself still holds processes.
+            leaf = runtime_cgroup / _RUNTIME_CGROUP_NAME
+            leaf.mkdir(exist_ok=True)
+            for member in procs:
                 try:
-                    subtree_path.write_text(f"-{controller}")
-                except OSError:
-                    return False
-        return True
+                    (leaf / "cgroup.procs").write_text(member)
+                except ProcessLookupError:
+                    continue
+        _enable_cgroup_controllers(runtime_cgroup)
+
+        workers = runtime_cgroup / _WORKERS_CGROUP_NAME
+        workers.mkdir(exist_ok=True)
+        _enable_cgroup_controllers(workers)
+
+        parent_limit = (runtime_cgroup / "memory.max").read_text().strip()
+        if parent_limit != "max":
+            workers_limit = int(parent_limit) - _runtime_memory_reserve_bytes()
+            if workers_limit > 0:
+                (workers / "memory.max").write_text(str(workers_limit))
+            else:
+                logger.warning(
+                    f"Runtime cgroup memory.max ({parent_limit}) leaves no room "
+                    "after the Runtime reserve; workers share the Runtime limit"
+                )
+        else:
+            logger.warning(
+                f"Runtime cgroup {runtime_cgroup} has no memory.max; plugin "
+                "workers have no aggregate memory limit"
+            )
+    except OSError as exc:
+        logger.warning(f"cgroup v2 delegation for plugin workers failed: {exc}")
+        return None
+
+    logger.info(f"Plugin worker sandboxes use cgroup v2 parent {workers}")
+    return workers
