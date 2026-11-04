@@ -912,6 +912,7 @@ async def test_plugin_handler_get_knowledge_file_stream_returns_empty_result():
 async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
     handler, manager, control = _handler()
     manager.tools = [FakeTool("weather")]
+    control.results[PluginToRuntimeAction.LIST_TOOLS] = {"tools": [{"name": "weather"}]}
     control.results[PluginToRuntimeAction.GET_TOOL_DETAIL] = {
         "tool": {"name": "missing"},
     }
@@ -927,11 +928,12 @@ async def test_plugin_handler_lists_tools_and_reports_missing_tool_detail():
     assert listed["data"] == {"tools": [{"name": "weather"}]}
     assert missing["data"] == {"tool": {"name": "missing"}}
     assert control.calls == [
+        (PluginToRuntimeAction.LIST_TOOLS, {}, 30),
         (
             PluginToRuntimeAction.GET_TOOL_DETAIL,
             {"tool_name": "missing"},
             30,
-        )
+        ),
     ]
 
 
@@ -1162,8 +1164,11 @@ async def test_tool_cancellation_reaches_box_only_for_run_calls(
 
 
 async def test_plugin_handler_lists_plugin_manifests():
-    handler, manager, _control = _handler()
+    handler, manager, control = _handler()
     manager.plugins = [FakePluginContainer()]
+    control.results[PluginToRuntimeAction.LIST_PLUGINS_MANIFEST] = {
+        "plugins": [{"metadata": {"author": "tester", "name": "demo"}}]
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(
@@ -1173,16 +1178,21 @@ async def test_plugin_handler_lists_plugin_manifests():
     assert response["data"] == {
         "plugins": [{"metadata": {"author": "tester", "name": "demo"}}]
     }
+    assert control.calls == [(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST, {}, 30)]
 
 
 async def test_plugin_handler_lists_commands():
-    handler, manager, _control = _handler()
+    handler, manager, control = _handler()
     manager.commands = [Dumpable({"name": "admin"})]
+    control.results[PluginToRuntimeAction.LIST_COMMANDS] = {
+        "commands": [{"name": "admin"}]
+    }
 
     async with ProtocolSession(handler) as session:
         response = await session.request(PluginToRuntimeAction.LIST_COMMANDS.value)
 
     assert response["data"] == {"commands": [{"name": "admin"}]}
+    assert control.calls == [(PluginToRuntimeAction.LIST_COMMANDS, {}, 30)]
 
 
 async def test_plugin_connection_handler_peer_call_helpers(monkeypatch):
