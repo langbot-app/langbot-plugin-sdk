@@ -98,6 +98,7 @@ from langbot_plugin.api.entities.builtin.runner.errors import (
     AgentAPIException,
 )
 from langbot_plugin.api.entities.builtin.runner.steering import (
+    SteeringAckResult,
     SteeringInputItem,
     SteeringPullResult,
 )
@@ -186,6 +187,7 @@ __all__ = [
     # Steering API
     "SteeringInputItem",
     "SteeringPullResult",
+    "SteeringAckResult",
     # Error model
     "AgentAPIError",
     "AgentAPIException",
