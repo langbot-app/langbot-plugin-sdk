@@ -1007,7 +1007,9 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.RUN_RESUME)
         async def run_resume(data: dict[str, Any]) -> handler.ActionResponse:
-            return await forward_agent_action(PluginToRuntimeAction.RUN_RESUME, data, 15)
+            return await forward_agent_action(
+                PluginToRuntimeAction.RUN_RESUME, data, 15
+            )
 
         @self.action(PluginToRuntimeAction.RUN_APPEND_RESULT)
         async def run_append_result(data: dict[str, Any]) -> handler.ActionResponse:
