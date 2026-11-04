@@ -299,6 +299,9 @@ class Quote(MessageComponent):
     origin: MessageChain
     """The message chain object of the original message to be quoted."""
 
+    def __str__(self):
+        return ""
+
 
 class At(MessageComponent):
     """At someone."""
