@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 import stat
 import time
-import uuid
 import weakref
 from typing import TYPE_CHECKING
 
@@ -24,6 +23,7 @@ from langbot_plugin.runtime.event_loop_monitor import EventLoopLagMonitor
 
 from .backend import BaseSandboxBackend, CLISandboxBackend, DockerBackend
 from .host_backend import HostProcessBackend
+from .identity import BoxIdentity
 from .nsjail_backend import NsjailBackend
 from .errors import (
     BoxAdmissionError,
@@ -181,6 +181,8 @@ class BoxRuntime:
         max_managed_processes: int = 64,
         max_completed_processes: int = 256,
         completed_process_retention_sec: int = 300,
+        instance_id: str | None = None,
+        data_dir: str | Path | None = None,
     ):
         self.logger = logger
         self._unsafe_soft_storage_limits = _unsafe_soft_storage_limits_enabled()
@@ -276,7 +278,20 @@ class BoxRuntime:
         self._active_exec_counts: collections.Counter[str] = collections.Counter()
         self._closing_session_tasks: dict[str, asyncio.Task[None]] = {}
         self._background_tasks: set[asyncio.Task] = set()
-        self.instance_id = uuid.uuid4().hex[:12]
+        self._identity = BoxIdentity(
+            logger,
+            instance_id
+            if instance_id is not None
+            else (
+                os.environ.get("LANGBOT_BOX_INSTANCE_ID")
+                or self._box_config.get("instance_id")
+            ),
+            data_dir,
+        )
+        self.instance_id = self._identity.instance_id
+        for backend in self.backends:
+            if backend is not None:
+                backend.instance_id = self.instance_id
         self._admission_policy = SandboxAdmissionPolicy()
         self._admission_config_error: str | None = None
         self._admission_grants: dict[tuple[str, str], SandboxAdmissionGrant] = {}
@@ -306,14 +321,18 @@ class BoxRuntime:
             self._ensure_default_workspace()
 
         self._backend = await self._select_backend()
+        can_cleanup = self._identity.acquire()
         if self._backend is not None:
-            self._backend.instance_id = self.instance_id
-            try:
-                await self._backend.cleanup_orphaned_containers(self.instance_id)
-            except Exception as exc:
-                self.logger.warning(
-                    f"LangBot Box orphan container cleanup failed: {exc}"
-                )
+            if can_cleanup:
+                try:
+                    await self._backend.cleanup_orphaned_containers(self.instance_id)
+                except Exception as exc:
+                    self.logger.warning(
+                        f"LangBot Box orphan container cleanup failed: {exc}"
+                    )
+                except BaseException:
+                    self._identity.release()
+                    raise
 
         self.start_background_reaper()
         self.event_loop_monitor.start()
@@ -323,6 +342,10 @@ class BoxRuntime:
 
         Called via RPC (INIT action) when connecting over WebSocket.
         """
+        if "instance_id" in config and config["instance_id"] != self.instance_id:
+            raise ValueError(
+                "Box instance_id is fixed at startup; configure it before launching the runtime"
+            )
         previous_admission_policy = self._admission_policy
         candidate_config = dict(self._box_config)
         candidate_config.update(config)
@@ -1333,7 +1356,7 @@ done
                     f"LangBot Box background reaper failed: {exc}", exc_info=True
                 )
 
-    async def shutdown(self):
+    async def shutdown(self, *, release_identity: bool = True):
         self._shutdown_in_progress = True
         try:
             while True:
@@ -1362,6 +1385,8 @@ done
                 await asyncio.gather(*tasks, return_exceptions=True)
             self._background_tasks.clear()
         finally:
+            if release_identity:
+                self._identity.release()
             self._shutdown_in_progress = False
 
     async def create_session(

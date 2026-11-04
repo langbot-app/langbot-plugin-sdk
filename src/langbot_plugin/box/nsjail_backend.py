@@ -502,15 +502,21 @@ class NsjailBackend(BaseSandboxBackend):
         linear instead.
         """
 
-        if not self._base_dir.exists():
+        if not current_instance_id or not self._base_dir.exists():
             return
         self._kill_orphaned_session_processes_sync(current_instance_id)
-        current_prefix = f"{current_instance_id}_" if current_instance_id else None
+        current_prefix = f"{current_instance_id}_"
         for entry in self._base_dir.iterdir():
             try:
                 if not entry.is_dir():
                     continue
-                if current_prefix is not None and entry.name.startswith(current_prefix):
+                if not entry.name.startswith(
+                    current_prefix
+                ) or not self._session_owned_by(entry, current_instance_id):
+                    self.logger.debug(
+                        "Skipping nsjail session dir owned by another instance: %s",
+                        entry,
+                    )
                     continue
             except OSError as exc:
                 self.logger.warning(
@@ -526,6 +532,16 @@ class NsjailBackend(BaseSandboxBackend):
                 )
 
     # ── nsjail argument construction ──────────────────────────────────
+
+    def _session_owned_by(self, session_dir: pathlib.Path, instance_id: str) -> bool:
+        try:
+            metadata = json.loads((session_dir / "meta.json").read_text())
+            return (
+                isinstance(metadata, dict)
+                and metadata.get("instance_id") == instance_id
+            )
+        except (OSError, ValueError):
+            return False
 
     def _build_nsjail_args(
         self,
@@ -918,10 +934,10 @@ class NsjailBackend(BaseSandboxBackend):
         """Kill nsjail processes under stale session directories in one pass."""
 
         proc_dir = proc_dir or pathlib.Path("/proc")
-        if not proc_dir.exists():
+        if not current_instance_id or not proc_dir.exists():
             return
         base_prefix = f"{self._base_dir}{os.sep}"
-        current_prefix = f"{current_instance_id}_" if current_instance_id else None
+        current_prefix = f"{current_instance_id}_"
         for pid_dir in proc_dir.iterdir():
             if not pid_dir.name.isdigit():
                 continue
@@ -937,8 +953,10 @@ class NsjailBackend(BaseSandboxBackend):
                 session_name = tail.split("/", 1)[0].split("\0", 1)[0]
                 if not session_name:
                     continue
-                if current_prefix is not None and session_name.startswith(
-                    current_prefix
+                if not session_name.startswith(current_prefix):
+                    continue
+                if not self._session_owned_by(
+                    self._base_dir / session_name, current_instance_id
                 ):
                     continue
                 pid = int(pid_dir.name)

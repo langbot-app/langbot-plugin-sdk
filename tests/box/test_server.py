@@ -1025,7 +1025,7 @@ async def test_run_server_cleans_runtime_when_app_setup_fails(monkeypatch):
     class FakeRuntime:
         max_admission_records = 100
 
-        def __init__(self, *, logger):
+        def __init__(self, *, logger, instance_id=None, data_dir=None):
             self.logger = logger
 
         async def initialize(self):
@@ -1064,7 +1064,7 @@ async def test_run_server_fails_closed_and_cleans_up_on_ws_bind_error(
     class FakeRuntime:
         max_admission_records = 100
 
-        def __init__(self, *, logger):
+        def __init__(self, *, logger, instance_id=None, data_dir=None):
             self.logger = logger
 
         async def initialize(self):

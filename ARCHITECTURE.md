@@ -255,7 +255,15 @@ bumped so pre-exception dependency environments are never silently reused.
 Workers in the shared Runtime profile launch through nsjail with policy-owned
 cgroup CPU, memory, and
 PID limits plus file/process rlimits. If `require_hard_limits` is true, missing
-nsjail or cgroup v2 delegation makes configuration fail closed. Their dependency
+nsjail or cgroup v2 delegation makes configuration fail closed. The Runtime
+nests every worker cgroup under its own cgroup (`langbot-runtime/` for its own
+processes, `langbot-plugin-workers/NSJAIL.*` for sandboxes, passed to nsjail as
+`--cgroupv2_mount`) so the container memory limit and accounting cover all
+sandboxes; the workers subtree is capped at the Runtime cgroup's `memory.max`
+minus `LANGBOT_PLUGIN_RUNTIME_MEMORY_RESERVE_MB` (default 2048). Run the
+Runtime container privileged in its private cgroup namespace and never
+bind-mount the host `/sys/fs/cgroup`: delegation refuses the host root cgroup
+because sandboxes there escape every container limit. Their dependency
 tree is prepared in a separate nsjail and mounted read-only into the worker.
 Artifact `.env` files are not loaded in the shared profile. The default
 `oss_dev` profile prepares the same kind of persistent tree with direct pip and
@@ -501,6 +509,12 @@ processes do not. Cancelling a queued execution leaves the active sandbox alone.
 Failed cleanup keeps the session fenced until a later acquire/delete retries it.
 
 There is no supported `python -m langbot_plugin.box` entrypoint; use `lbp box`.
+
+Box ownership is stable across restarts. `box/identity.py` resolves a configured
+or persisted instance ID and holds its local ownership lock. Startup cleanup
+only removes resources owned by that ID; RPC initialization cannot change it.
+See [Box instance identity](docs/box-instance-identity.md) for configuration,
+deployment persistence, and shared-daemon upgrade requirements.
 
 ## Backend Selection
 

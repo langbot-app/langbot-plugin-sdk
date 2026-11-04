@@ -450,12 +450,13 @@ class CLISandboxBackend(BaseSandboxBackend):
         return result.return_code == 0 and result.stdout.strip().lower() == "true"
 
     async def cleanup_orphaned_containers(self, current_instance_id: str = ""):
-        """Remove langbot.box containers from previous instances.
-
-        Only removes containers whose ``langbot.box.instance_id`` label does
-        NOT match *current_instance_id*.  Containers without the label (from
-        older versions) are also removed.
-        """
+        """Remove only containers left by this instance's previous run."""
+        if not current_instance_id:
+            return
+        self.logger.info(
+            "Box cleanup scoped to instance %s; other owners and unlabeled containers are retained",
+            current_instance_id,
+        )
         result = await self._run_command(
             [
                 self.command,
@@ -463,6 +464,8 @@ class CLISandboxBackend(BaseSandboxBackend):
                 "-a",
                 "--filter",
                 "label=langbot.box=true",
+                "--filter",
+                f"label=langbot.box.instance_id={current_instance_id}",
                 "--format",
                 '{{.ID}}\t{{.Label "langbot.box.instance_id"}}',
             ],
@@ -479,8 +482,12 @@ class CLISandboxBackend(BaseSandboxBackend):
             parts = line.split("\t", 1)
             cid = parts[0].strip()
             label_instance = parts[1].strip() if len(parts) > 1 else ""
-            if label_instance != current_instance_id:
+            if label_instance == current_instance_id:
                 orphan_ids.append(cid)
+            else:
+                self.logger.debug(
+                    "Skipping Box container %s: different or missing instance ID", cid
+                )
         if not orphan_ids:
             return
         for cid in orphan_ids:
