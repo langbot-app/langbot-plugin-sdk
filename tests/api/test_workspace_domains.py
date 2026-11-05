@@ -7,7 +7,9 @@ import inspect
 from pathlib import Path
 import sys
 from types import ModuleType
-from typing import Literal, Union, get_args, get_origin, get_type_hints
+from typing import Literal, Union, get_args, get_origin
+
+from typing_extensions import get_type_hints
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -74,10 +76,12 @@ async def test_llm_methods_and_parameter_forwarding():
     workspace = WorkspaceOperationsProxy(None)
     workspace.call = AsyncMock(return_value={"ok": True, "result": "new-model"})
     assert await workspace.model.llm.create(model_data={"name": "test"}) == {
-        "ok": True, "result": "new-model"
+        "ok": True,
+        "result": "new-model",
     }
     workspace.call.assert_awaited_once_with(
-        "model.llm.create", model_data={"name": "test"},
+        "model.llm.create",
+        model_data={"name": "test"},
         auto_set_to_default_pipeline=True,
     )
     await workspace.model.llm.get(model_uuid="model-id")
@@ -108,7 +112,12 @@ async def test_failure_envelope_is_preserved():
 async def test_legacy_signatures_and_calls_are_unchanged():
     assert list(inspect.signature(WorkspaceOperationsProxy.list).parameters) == ["self"]
     signature = inspect.signature(WorkspaceOperationsProxy.call)
-    assert list(signature.parameters) == ["self", "operation_id", "_timeout", "arguments"]
+    assert list(signature.parameters) == [
+        "self",
+        "operation_id",
+        "_timeout",
+        "arguments",
+    ]
     assert signature.parameters["_timeout"].default is None
     handler = Mock(call_action=AsyncMock(return_value={"ok": True, "result": None}))
     workspace = WorkspaceOperationsProxy(handler)
@@ -134,7 +143,10 @@ def test_real_signatures_and_return_types():
     assert llm_get.parameters["model_uuid"].kind is inspect.Parameter.KEYWORD_ONLY
     assert get_type_hints(workspace.model.llm.get)["model_uuid"] is str
     json_value = get_type_hints(domains.OperationError)["details"]
-    assert get_type_hints(workspace.model.llm.create)["model_data"] == dict[str, json_value]
+    assert (
+        get_type_hints(workspace.model.llm.create)["model_data"]
+        == dict[str, json_value]
+    )
     success, failure = get_args(get_type_hints(workspace.bot.list)["return"])
     assert get_origin(success) is domains.OperationSuccess
     assert get_args(success) == (list[dict[str, json_value]],)
@@ -186,18 +198,24 @@ def test_catalog_filters(generator):
         operation("sample.stream", streaming=True),
     ]
     assert [item["id"] for item in generator.eligible_operations(catalog)] == [
-        "sample.plugin", "sample.public"
+        "sample.plugin",
+        "sample.public",
     ]
 
 
 @pytest.mark.asyncio
-async def test_keyword_aliases_nested_schemas_and_optional_fields(generator, monkeypatch):
+async def test_keyword_aliases_nested_schemas_and_optional_fields(
+    generator, monkeypatch
+):
     input_schema = {
         "type": "object",
         "$defs": {
             "Entry": {
                 "type": "object",
-                "properties": {"name": {"type": "string"}, "count": {"type": "integer"}},
+                "properties": {
+                    "name": {"type": "string"},
+                    "count": {"type": "integer"},
+                },
                 "required": ["name"],
             }
         },
@@ -212,19 +230,31 @@ async def test_keyword_aliases_nested_schemas_and_optional_fields(generator, mon
     output_schema = {
         "type": "object",
         "properties": {
-            "items": {"type": "array", "items": {"type": "object", "properties": {
-                "status": {"enum": ["ok", "failed"]},
-                "value": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
-            }, "required": ["status"]}},
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"enum": ["ok", "failed"]},
+                        "value": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                    },
+                    "required": ["status"],
+                },
+            },
         },
         "required": ["items"],
     }
-    module = generated_module(generator, [operation("sample.import", input_schema, output_schema)], monkeypatch)
+    module = generated_module(
+        generator,
+        [operation("sample.import", input_schema, output_schema)],
+        monkeypatch,
+    )
     workspace = Mock(call=AsyncMock(return_value={"ok": True, "result": {"items": []}}))
     method = module.WorkspaceDomains(workspace).sample.import_
     await method(from_="source", entries=[{"name": "first"}])
     workspace.call.assert_awaited_with(
-        "sample.import", **{"from": "source", "entries": [{"name": "first"}], "class": 7}
+        "sample.import",
+        **{"from": "source", "entries": [{"name": "first"}], "class": 7},
     )
     await method(from_="source", entries=[], extra_value="explicit", class_=9)
     assert workspace.call.await_args.kwargs["extra-value"] == "explicit"
@@ -233,7 +263,10 @@ async def test_keyword_aliases_nested_schemas_and_optional_fields(generator, mon
     entry = get_args(hints["entries"])[0]
     assert entry.__required_keys__ == {"name"}
     assert entry.__optional_keys__ == {"count"}
-    assert get_type_hints(entry, include_extras=True) == {"name": str, "count": module.NotRequired[int]}
+    assert get_type_hints(entry, include_extras=True) == {
+        "name": str,
+        "count": module.NotRequired[int],
+    }
     success, _ = get_args(hints["return"])
     output = get_args(success)[0]
     assert output.__required_keys__ == {"items"}
@@ -241,4 +274,7 @@ async def test_keyword_aliases_nested_schemas_and_optional_fields(generator, mon
     assert item.__required_keys__ == {"status"}
     assert item.__optional_keys__ == {"value"}
     assert get_type_hints(item)["status"] == Literal["ok", "failed"]
-    assert get_type_hints(item, include_extras=True)["value"] == module.NotRequired[Union[int, None]]
+    assert (
+        get_type_hints(item, include_extras=True)["value"]
+        == module.NotRequired[Union[int, None]]
+    )
