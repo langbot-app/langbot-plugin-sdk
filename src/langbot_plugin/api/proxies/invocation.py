@@ -94,6 +94,55 @@ def relay_audit_correlation(data):
     return {**data, AUDIT_CORRELATION_FIELD: correlation}
 
 
+@dataclass
+class _EventOrigin:
+    query_uuid: str
+    active: bool = True
+
+
+_event_origin: ContextVar[_EventOrigin | None] = ContextVar(
+    "plugin_event_origin", default=None
+)
+EVENT_ORIGIN_FIELD = "origin_query_uuid"
+
+
+@contextmanager
+def event_origin_scope(query_uuid: str | None):
+    """Mark plugin calls made while handling one event as caused by its Query.
+
+    The origin is attribution only: LangBot uses it to link monitoring
+    records to the triggering message, never to authorize an action.
+    Work that escapes the handler (for example a detached task) stops
+    reporting the origin once the handler returns.
+    """
+    if not query_uuid:
+        yield
+        return
+    origin = _EventOrigin(str(query_uuid))
+    token = _event_origin.set(origin)
+    try:
+        yield
+    finally:
+        origin.active = False
+        _event_origin.reset(token)
+
+
+def current_event_origin() -> str | None:
+    """Return the Query uuid of the event being handled, if still active."""
+    origin = _event_origin.get()
+    if origin is None or not origin.active:
+        return None
+    return origin.query_uuid
+
+
+def relay_event_origin(data: dict[str, Any]) -> dict[str, Any]:
+    """Attach the active event origin to an outbound action payload."""
+    origin = current_event_origin()
+    if origin is None or EVENT_ORIGIN_FIELD in data:
+        return data
+    return {**data, EVENT_ORIGIN_FIELD: origin}
+
+
 @contextmanager
 def bind_invocation(
     handler,

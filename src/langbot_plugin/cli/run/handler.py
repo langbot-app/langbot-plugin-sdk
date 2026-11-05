@@ -22,7 +22,11 @@ from langbot_plugin.api.definition.components.common.event_listener import Event
 from langbot_plugin.entities.io.actions.enums import CommonAction, PluginToRuntimeAction
 from langbot_plugin.entities.io.actions.enums import RuntimeToPluginAction
 from langbot_plugin.entities.io.context import InstallationBinding
-from langbot_plugin.api.proxies.invocation import bind_invocation, thaw_config
+from langbot_plugin.api.proxies.invocation import (
+    bind_invocation,
+    event_origin_scope,
+    thaw_config,
+)
 from langbot_plugin.runtime.plugin.container import PluginInstallationSlot
 from langbot_plugin.api.definition.components.tool.tool import Tool
 from langbot_plugin.api.definition.components.command.command import Command
@@ -382,27 +386,31 @@ class PluginRuntimeHandler(Handler):
 
             emitted: bool = False
 
-            # check if the event is registered
-            for component in self.plugin_container.components:
-                if component.manifest.kind == EventListener.__kind__:
-                    if component.component_instance is None:
-                        return ActionResponse.error("Event listener is not initialized")
+            # Plugin calls made while handling this event are attributed to it.
+            with event_origin_scope(event_context.query_uuid):
+                # check if the event is registered
+                for component in self.plugin_container.components:
+                    if component.manifest.kind == EventListener.__kind__:
+                        if component.component_instance is None:
+                            return ActionResponse.error(
+                                "Event listener is not initialized"
+                            )
 
-                    assert isinstance(component.component_instance, EventListener)
+                        assert isinstance(component.component_instance, EventListener)
 
-                    if (
-                        event_context.event.__class__
-                        not in component.component_instance.registered_handlers
-                    ):
-                        continue
+                        if (
+                            event_context.event.__class__
+                            not in component.component_instance.registered_handlers
+                        ):
+                            continue
 
-                    for handler in component.component_instance.registered_handlers[
-                        event_context.event.__class__
-                    ]:
-                        await handler(event_context)
-                        emitted = True
+                        for handler in component.component_instance.registered_handlers[
+                            event_context.event.__class__
+                        ]:
+                            await handler(event_context)
+                            emitted = True
 
-                    break
+                        break
 
             return ActionResponse.success(
                 data={

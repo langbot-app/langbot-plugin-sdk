@@ -391,6 +391,12 @@ class ReplyChangingFakeHandler(FakeHandler):
         return {"emitted": True, "event_context": event_context}
 
 
+class DefaultPreventingFakeHandler(FakeHandler):
+    async def emit_event(self, event_context):
+        event_context["is_prevent_default"] = True
+        return {"emitted": True, "event_context": event_context}
+
+
 class QueryUuidChangingFakeHandler(FakeHandler):
     async def emit_event(self, event_context):
         event_context["query_uuid"] = "query-forged"
@@ -2146,3 +2152,47 @@ async def test_listener_dispatch_retains_admission_filters(excluded):
     )
     assert emitted == []
     handler.emit_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_emit_event_reports_only_the_plugin_that_prevented_default():
+    manager = _manager()
+    observer = _plugin(
+        name="observer", components=[_component("EventListener", "events")]
+    )
+    taker = _plugin(name="taker", components=[_component("EventListener", "events")])
+    later = _plugin(name="later", components=[_component("EventListener", "events")])
+    observer._runtime_plugin_handler = FakeHandler(observer)
+    taker._runtime_plugin_handler = DefaultPreventingFakeHandler(taker)
+    # A later plugin that sets the flag again must not take the attribution.
+    later._runtime_plugin_handler = DefaultPreventingFakeHandler(later)
+    manager.plugins = [observer, taker, later]
+    event_context = EventContext(
+        query_id=1,
+        event_name="PersonNormalMessageReceived",
+        event=PersonNormalMessageReceived(
+            launcher_type="person",
+            launcher_id="launcher",
+            sender_id="sender",
+            text_message="hello",
+            message_event={
+                "time": 0.0,
+                "self_id": "bot",
+                "sender": {"id": "sender", "nickname": "Sender", "remark": ""},
+                "message_chain": [{"type": "Plain", "text": "hello"}],
+            },
+            message_chain=platform_message.MessageChain(
+                [platform_message.Plain(text="hello")]
+            ),
+        ),
+    )
+
+    _, returned_context, response_sources = await manager.emit_event(event_context)
+
+    assert returned_context.is_prevented_default()
+    assert response_sources == [
+        {
+            "kind": "prevent_default",
+            "plugin": {"author": "tester", "name": "taker"},
+        }
+    ]

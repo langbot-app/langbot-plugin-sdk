@@ -867,3 +867,58 @@ async def test_plugin_runtime_handler_plugin_diagnostic_logs(caplog):
     assert "event=GroupNormalMessageReceived" in caplog.text
     assert "stage=SendResponseBackStage" in caplog.text
     assert "delivery_error=ActionFailed: retcode=1200" in caplog.text
+
+
+async def test_event_listener_calls_carry_the_event_origin_only_while_handling():
+    from langbot_plugin.api.definition.components.common.event_listener import (
+        EventListener,
+    )
+    from langbot_plugin.api.entities import events
+    from langbot_plugin.api.proxies.invocation import current_event_origin
+
+    seen: list[str | None] = []
+
+    class Listener(EventListener):
+        def __init__(self):
+            super().__init__()
+
+            @self.handler(events.PersonNormalMessageReceived)
+            async def on_message(ctx):
+                seen.append(current_event_origin())
+
+    handler, _initialized = _handler()
+    handler.plugin_container.components = [
+        FakeComponentContainer(EventListener.__kind__, "events", Listener())
+    ]
+    event = {
+        "event_name": "PersonNormalMessageReceived",
+        "query_uuid": "query-opaque-9",
+        "launcher_type": "person",
+        "launcher_id": "launcher",
+        "sender_id": "sender",
+        "text_message": "hello",
+        "message_chain": [{"type": "Plain", "text": "hello"}],
+        "message_event": {
+            "time": 0.0,
+            "self_id": "bot",
+            "sender": {"id": "sender", "nickname": "Sender", "remark": ""},
+            "message_chain": [{"type": "Plain", "text": "hello"}],
+        },
+    }
+
+    async with ProtocolSession(handler) as session:
+        response = await session.request(
+            RuntimeToPluginAction.EMIT_EVENT.value,
+            {
+                "event_context": {
+                    "query_id": 9,
+                    "query_uuid": "query-opaque-9",
+                    "event_name": "PersonNormalMessageReceived",
+                    "event": event,
+                }
+            },
+        )
+
+    assert response["data"]["emitted"] is True
+    assert seen == ["query-opaque-9"]
+    assert current_event_origin() is None
