@@ -88,6 +88,21 @@ harness execution policy, process launch details, authentication, workspace
 selection, and provider-specific behavior belong to the runner/plugin package or
 a deployment-owned remote daemon or managed agent platform.
 
+Runner delivery remains backward compatible: `steering_pull()` consumes inputs
+by default; `claim=True` opts into leased delivery and requires `steering_ack()`.
+Acknowledgement and recovery control calls can finish after the source execution
+deadline, subject to Host authorization. `run.cancelled` is a terminal result.
+
+Runners that implement checkpoint recovery declare `spec.resume: true`. Runtime
+advertises it through descriptor metadata, which older Hosts can ignore without
+rejecting the existing capability schema. A Host retry/resume returns a new run
+ID with a fresh deadline and current resource grants; an externally queued run
+retains requeue semantics. Resume receives bounded source events in
+`ctx.runtime.metadata["recovery"]`; it must restore committed work or fail rather
+than silently restart. The cursor fences the latest committed source result and
+does not rewind external effects. This is at-least-once delivery, not a promise
+of exactly-once tool execution.
+
 ## Documentation
 
 - Plugin development tutorial — https://langbot.app/docs/zh/plugin/dev/tutor
