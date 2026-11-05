@@ -224,8 +224,22 @@ envelope. A stale removal is rejected.
 ```
 
 `emitted_plugins` contains plugins whose event handlers ran. `response_sources`
-contains plugins that changed a deferred response field on the event context, such
-as `reply_message_chain`.
+attributes event-context changes to the plugin that made them:
+
+- `reply_message_chain`: the plugin changed the deferred reply on the event.
+- `prevent_default`: the plugin turned on `prevent_default`, i.e. took the
+  message over from the pipeline. Only the first plugin that sets the flag is
+  reported.
+
+Consumers must ignore `kind` values they do not know.
+
+When the Host sets `origin_attribution: true` on the event context, plugin-level
+`invoke_llm`, `invoke_llm_stream` and `send_message` calls made while the event
+handler runs add `origin_query_uuid` (the event's `query_uuid`) to their action
+payload. Hosts that do not set the flag never receive the field, so their strict
+input schemas keep working. LangBot uses it only to attribute monitoring records to the
+triggering message, never for authorization. Calls made after the handler
+returns (for example from a detached task) do not carry it.
 
 ## `list_tools`
 

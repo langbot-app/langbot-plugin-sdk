@@ -6,7 +6,7 @@ from typing import Any, get_args
 
 from langbot_plugin.api.entities.builtin.provider.reasoning import ReasoningLevel
 
-from langbot_plugin.api.proxies.invocation import run_scoped
+from langbot_plugin.api.proxies.invocation import relay_event_origin, run_scoped
 
 from langbot_plugin.runtime.io.handler import Handler
 from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
@@ -175,12 +175,14 @@ class LangBotAPIProxy:
         return (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.SEND_MESSAGE,
-                {
-                    "bot_uuid": bot_uuid,
-                    "target_type": target_type,
-                    "target_id": target_id,
-                    "message_chain": message_chain.model_dump(),
-                },
+                relay_event_origin(
+                    {
+                        "bot_uuid": bot_uuid,
+                        "target_type": target_type,
+                        "target_id": target_id,
+                        "message_chain": message_chain.model_dump(),
+                    }
+                ),
             )
         ).get("result")
 
@@ -259,14 +261,16 @@ class LangBotAPIProxy:
         effective_timeout = timeout if timeout is not None else 120.0
         resp = await self.plugin_runtime_handler.call_action(
             PluginToRuntimeAction.INVOKE_LLM,
-            {
-                **(await self._reasoning_payload(reasoning_level)),
-                "llm_model_uuid": llm_model_uuid,
-                "messages": [m.model_dump() for m in messages],
-                "funcs": [f.model_dump() for f in funcs],
-                "extra_args": extra_args,
-                "timeout": effective_timeout,
-            },
+            relay_event_origin(
+                {
+                    **(await self._reasoning_payload(reasoning_level)),
+                    "llm_model_uuid": llm_model_uuid,
+                    "messages": [m.model_dump() for m in messages],
+                    "funcs": [f.model_dump() for f in funcs],
+                    "extra_args": extra_args,
+                    "timeout": effective_timeout,
+                }
+            ),
             timeout=effective_timeout,
         )
 
@@ -319,13 +323,15 @@ class LangBotAPIProxy:
         async with aclosing(
             self.plugin_runtime_handler.call_action_generator(
                 PluginToRuntimeAction.INVOKE_LLM_STREAM,
-                {
-                    **(await self._reasoning_payload(reasoning_level)),
-                    "llm_model_uuid": llm_model_uuid,
-                    "messages": [m.model_dump() for m in messages],
-                    "funcs": [f.model_dump() for f in funcs],
-                    "extra_args": extra_args,
-                },
+                relay_event_origin(
+                    {
+                        **(await self._reasoning_payload(reasoning_level)),
+                        "llm_model_uuid": llm_model_uuid,
+                        "messages": [m.model_dump() for m in messages],
+                        "funcs": [f.model_dump() for f in funcs],
+                        "extra_args": extra_args,
+                    }
+                ),
             )
         ) as owned_stream:
             async for chunk_data in owned_stream:

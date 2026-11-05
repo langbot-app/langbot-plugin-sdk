@@ -338,3 +338,52 @@ async def test_parser_helpers_preserve_payload_contracts():
         },
         300,
     )
+
+
+@pytest.mark.asyncio
+async def test_event_origin_is_attribution_only_and_scoped_to_the_handler():
+    """Plugin calls made while handling an event carry that event's Query uuid."""
+    import asyncio
+
+    from langbot_plugin.api.proxies.invocation import (
+        EVENT_ORIGIN_FIELD,
+        current_event_origin,
+        event_origin_scope,
+    )
+
+    handler = FakeHandler(
+        responses={
+            PluginToRuntimeAction.INVOKE_LLM: {
+                "message": {"role": "assistant", "content": "ok"}
+            },
+            PluginToRuntimeAction.SEND_MESSAGE: {"result": None},
+        }
+    )
+    proxy = LangBotAPIProxy(handler)
+    escaped: list[asyncio.Task] = []
+
+    async def detached_call():
+        await asyncio.sleep(0)
+        await proxy.invoke_llm("model", [Message(role="user", content="later")])
+
+    # No event being handled: payloads are unchanged.
+    await proxy.invoke_llm("model", [Message(role="user", content="hi")])
+    assert EVENT_ORIGIN_FIELD not in handler.calls[-1][1]
+
+    with event_origin_scope("query-uuid-a"):
+        assert current_event_origin() == "query-uuid-a"
+        await proxy.invoke_llm("model", [Message(role="user", content="hi")])
+        assert handler.calls[-1][1][EVENT_ORIGIN_FIELD] == "query-uuid-a"
+        await proxy.send_message(
+            "bot", "person", "user", MessageChain([Plain(text="hello")])
+        )
+        assert handler.calls[-1][1][EVENT_ORIGIN_FIELD] == "query-uuid-a"
+        escaped.append(asyncio.create_task(detached_call()))
+
+    # Work that outlives the handler stops claiming the event origin.
+    assert current_event_origin() is None
+    await escaped[0]
+    assert EVENT_ORIGIN_FIELD not in handler.calls[-1][1]
+
+    with event_origin_scope(None):
+        assert current_event_origin() is None

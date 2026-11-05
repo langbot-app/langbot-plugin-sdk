@@ -3203,6 +3203,7 @@ class PluginManager:
                 continue
 
             reply_message_chain_before = _dump_reply_message_chain(event_context)
+            prevented_default_before = event_context.is_prevented_default()
             trusted_query_id = event_context.query_id
             trusted_query_uuid = event_context.query_uuid
             resp = await plugin._runtime_plugin_handler.emit_event(
@@ -3229,6 +3230,14 @@ class PluginManager:
                 response_sources.append(
                     {
                         "kind": "reply_message_chain",
+                        "plugin": _plugin_ref(plugin),
+                    }
+                )
+            if event_context.is_prevented_default() and not prevented_default_before:
+                # Lets LangBot attribute a message that a plugin took over.
+                response_sources.append(
+                    {
+                        "kind": "prevent_default",
                         "plugin": _plugin_ref(plugin),
                     }
                 )
