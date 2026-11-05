@@ -403,6 +403,34 @@ PluginGithubReleasesArguments = TypedDict('PluginGithubReleasesArguments', {
     'repo_url': str,
 })
 
+PluginInstallMarketplaceArguments = TypedDict('PluginInstallMarketplaceArguments', {
+    'auto_confirm_permissions': NotRequired[bool],
+    'plugin_author': str,
+    'plugin_name': str,
+    'plugin_version': NotRequired[Union[str, None]],
+})
+
+PluginInstallMarketplaceOutput = TypedDict('PluginInstallMarketplaceOutput', {
+    'task_id': int,
+})
+
+PluginMarketplaceSearchArguments = TypedDict('PluginMarketplaceSearchArguments', {
+    'component_filter': NotRequired[Union[str, None]],
+    'page': NotRequired[int],
+    'page_size': NotRequired[int],
+    'query': NotRequired[str],
+    'sort_by': NotRequired[Literal['install_count', 'like_count', 'created_at', 'updated_at']],
+    'sort_order': NotRequired[Literal['ASC', 'DESC']],
+    'tags_filter': NotRequired[builtins.list[str]],
+})
+
+PluginMarketplaceSearchOutput = TypedDict('PluginMarketplaceSearchOutput', {
+    'page': int,
+    'page_size': int,
+    'plugins': builtins.list[dict[str, JSONValue]],
+    'total': int,
+})
+
 ProviderModelsCountArguments = TypedDict('ProviderModelsCountArguments', {
     'provider_uuid': str,
 })
@@ -731,6 +759,10 @@ SkillGetArguments = TypedDict('SkillGetArguments', {
 SkillUpdateArguments = TypedDict('SkillUpdateArguments', {
     'data': dict[str, JSONValue],
     'skill_name': str,
+})
+
+TaskGetArguments = TypedDict('TaskGetArguments', {
+    'task_id': int,
 })
 
 ToolGetArguments = TypedDict('ToolGetArguments', {
@@ -1196,6 +1228,26 @@ class PluginGithubDomain:
         arguments: PluginGithubReleasesArguments = {'repo_url': repo_url}
         return cast(OperationResult[dict[str, JSONValue]], await self._workspace.call('plugin.github.releases', **arguments))
 
+class PluginInstallDomain:
+    def __init__(self, workspace: "WorkspaceOperationsProxy"):
+        self._workspace = workspace
+
+    async def marketplace(self, *, auto_confirm_permissions: bool = False, plugin_author: str, plugin_name: str, plugin_version: Union[str, None] = None) -> OperationResult[PluginInstallMarketplaceOutput]:
+        'plugin.install.marketplace: Download and install a plugin package from the LangBot Plugin Marketplace. Prerequisites: Call plugin.marketplace.search to find plugin_author and plugin_name. Returns task_id; poll task.get for progress. A new installation stays disabled until a member confirms its permissions. auto_confirm_permissions defaults to false; when true, only an account or support administrator with every declared permission can confirm and activate it. API keys, plugins and Agents cannot grant permissions, and plugins and Agents cannot replace an installed plugin. Side effect: Installs executable code.\nParameters (Python -> wire): auto_confirm_permissions -> auto_confirm_permissions, plugin_author -> plugin_author, plugin_name -> plugin_name, plugin_version -> plugin_version.'
+        arguments: PluginInstallMarketplaceArguments = {'auto_confirm_permissions': auto_confirm_permissions, 'plugin_author': plugin_author, 'plugin_name': plugin_name, 'plugin_version': plugin_version}
+        return cast(OperationResult[PluginInstallMarketplaceOutput], await self._workspace.call('plugin.install.marketplace', **arguments))
+
+class PluginMarketplaceDomain:
+    def __init__(self, workspace: "WorkspaceOperationsProxy"):
+        self._workspace = workspace
+
+    async def search(self, *, component_filter: Union[str, None] = None, page: int = 1, page_size: int = 10, query: str = '', sort_by: Literal['install_count', 'like_count', 'created_at', 'updated_at'] = 'install_count', sort_order: Literal['ASC', 'DESC'] = 'DESC', tags_filter: Union[builtins.list[str], _Unset] = _UNSET) -> OperationResult[PluginMarketplaceSearchOutput]:
+        'plugin.marketplace.search: Search plugins published on the LangBot Plugin Marketplace by keyword, component type or tags. Returns plugin_id, author, name, latest_version, labels, descriptions and component counts; pass author and name to plugin.install.marketplace. Fails with marketplace_disabled when the instance disables the marketplace.\nParameters (Python -> wire): component_filter -> component_filter, page -> page, page_size -> page_size, query -> query, sort_by -> sort_by, sort_order -> sort_order, tags_filter -> tags_filter.'
+        arguments: PluginMarketplaceSearchArguments = {'component_filter': component_filter, 'page': page, 'page_size': page_size, 'query': query, 'sort_by': sort_by, 'sort_order': sort_order}
+        if not isinstance(tags_filter, _Unset):
+            arguments['tags_filter'] = tags_filter
+        return cast(OperationResult[PluginMarketplaceSearchOutput], await self._workspace.call('plugin.marketplace.search', **arguments))
+
 class ProviderModelsDomain:
     def __init__(self, workspace: "WorkspaceOperationsProxy"):
         self._workspace = workspace
@@ -1462,7 +1514,7 @@ class PipelineDomain:
         return cast(OperationResult[dict[str, JSONValue]], await self._workspace.call('pipeline.run', **arguments))
 
     async def update(self, *, pipeline_data: dict[str, JSONValue], pipeline_uuid: str) -> OperationResult[None]:
-        'pipeline.update: Modify pipeline settings or name. Call pipeline.get first: config, when supplied, replaces the complete configuration and must contain trigger, safety, ai, and output objects. Partial config is rejected without writing. Runtime initialization is checked before persistence. Side effect: Updates pipeline definition.\nParameters (Python -> wire): pipeline_data -> pipeline_data, pipeline_uuid -> pipeline_uuid.'
+        'pipeline.update: Modify pipeline settings or name. Call pipeline.get first: config merges top-level sections, preserving omitted sections and replacing each supplied section in full. Supplied sections must be objects. The merged configuration is validated and runtime initialization is checked before persistence. Side effect: Updates pipeline definition.\nParameters (Python -> wire): pipeline_data -> pipeline_data, pipeline_uuid -> pipeline_uuid.'
         arguments: PipelineUpdateArguments = {'pipeline_data': pipeline_data, 'pipeline_uuid': pipeline_uuid}
         return cast(OperationResult[None], await self._workspace.call('pipeline.update', **arguments))
 
@@ -1471,6 +1523,8 @@ class PluginDomain:
         self._workspace = workspace
         self.config = PluginConfigDomain(workspace)
         self.github = PluginGithubDomain(workspace)
+        self.install = PluginInstallDomain(workspace)
+        self.marketplace = PluginMarketplaceDomain(workspace)
 
     async def debug_info(self) -> OperationResult[PluginDebugInfoOutput]:
         'plugin.debug_info: Inspect plugin container/process status, memory consumption, and active communication channels across the workspace.'
@@ -1581,6 +1635,15 @@ class StatsDomain:
         'stats.basic: Retrieve aggregate workspace statistics including total bot count, active pipelines, configured models, and knowledge bases.'
         return cast(OperationResult[dict[str, int]], await self._workspace.call('stats.basic'))
 
+class TaskDomain:
+    def __init__(self, workspace: "WorkspaceOperationsProxy"):
+        self._workspace = workspace
+
+    async def get(self, *, task_id: int) -> OperationResult[dict[str, JSONValue]]:
+        'task.get: Return the status of a Workspace background task by task_id, for example one returned by plugin.install.marketplace. status is running, succeeded, failed or cancelled; pending_permission_confirmation is true when an installed plugin awaits member confirmation.\nParameters (Python -> wire): task_id -> task_id.'
+        arguments: TaskGetArguments = {'task_id': task_id}
+        return cast(OperationResult[dict[str, JSONValue]], await self._workspace.call('task.get', **arguments))
+
 class ToolDomain:
     def __init__(self, workspace: "WorkspaceOperationsProxy"):
         self._workspace = workspace
@@ -1612,4 +1675,5 @@ class WorkspaceDomains:
         self.requester = RequesterDomain(workspace)
         self.skill = SkillDomain(workspace)
         self.stats = StatsDomain(workspace)
+        self.task = TaskDomain(workspace)
         self.tool = ToolDomain(workspace)
