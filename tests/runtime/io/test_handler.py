@@ -894,6 +894,25 @@ async def test_run_sends_error_response_for_unknown_action():
 
 
 @pytest.mark.asyncio
+async def test_forwarded_action_error_preserves_permission_code_and_details():
+    conn = QueueConnection()
+    handler = Handler(conn)
+    details = {"code": "permission_denied", "denied_operations": ["stats.basic"]}
+
+    @handler.action(SampleAction.ECHO)
+    async def denied(_data):
+        raise ActionCallError("Workspace operation has not been granted", data=details)
+
+    task = asyncio.create_task(handler.run())
+    await conn.incoming.put(json.dumps({"seq_id": 9, "action": "echo", "data": {}}))
+    [response] = await _wait_for_sent(conn)
+    await conn.incoming.put(ConnectionClosedError("closed"))
+    await task
+    assert response["code"] == 1
+    assert response["data"] == details
+
+
+@pytest.mark.asyncio
 async def test_run_handles_streaming_action_response():
     conn = QueueConnection()
     handler = Handler(conn)

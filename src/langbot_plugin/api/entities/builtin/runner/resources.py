@@ -89,6 +89,42 @@ class StorageResource(pydantic.BaseModel):
     """Whether workspace storage is accessible."""
 
 
+class WorkspaceOperationResource(pydantic.BaseModel):
+    """Workspace operation resource available to the agent."""
+
+    id: str
+    """Unique operation identifier (e.g. 'domain.operation')."""
+
+    domain: str | None = None
+    """Domain category."""
+
+    label: dict[str, str] = pydantic.Field(default_factory=dict)
+    """Localized labels."""
+
+    summary: str | None = None
+    """Brief summary for model and UI."""
+
+    description: str | None = None
+    """Detailed operation documentation."""
+
+    risk: str | None = None
+    """Risk tier: 'read', 'write', 'dangerous'."""
+
+    side_effect: bool | None = None
+    """Whether invoking causes side effects."""
+
+    permission: str | None = None
+    """Required permission node."""
+
+    input_schema: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """JSON schema for operation input."""
+
+    output_schema: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
+    """JSON schema for operation output."""
+
+    model_config = pydantic.ConfigDict(extra="allow")
+
+
 class AgentResources(pydantic.BaseModel):
     """Resources available to an agent run.
 
@@ -113,3 +149,8 @@ class AgentResources(pydantic.BaseModel):
 
     platform_capabilities: dict[str, typing.Any] = pydantic.Field(default_factory=dict)
     """Platform capabilities available."""
+
+    workspace_operations: list[WorkspaceOperationResource] = pydantic.Field(
+        default_factory=list
+    )
+    """Authorized Application API operations for this run."""

@@ -183,6 +183,10 @@ class ComponentManifest(pydantic.BaseModel):
         )
         self._metadata = Metadata(**manifest["metadata"])
         self._spec = manifest["spec"]
+        if manifest.get("kind") == "Plugin" and "permissions" in self._spec:
+            from langbot_plugin.api.entities.permissions import PluginPermissions
+
+            PluginPermissions.model_validate(self._spec["permissions"])
         if manifest.get("kind") == "Runner":
             try:
                 RunnerUsageSpec.model_validate(self._spec)

@@ -71,11 +71,20 @@ lbp --help
 - **Parser** —— 自定义消息 / 内容解析
 - **Page** —— 嵌入 LangBot 管理面板的自定义网页
 
+## ExecutionAPI 操作一览与作用域说明
+
+LangBot Core 通过统一的 `ExecutionAPI` facade 暴露 69 项核心业务能力。插件与 Agent Runner 统一经由该 facade 与 SDK 入口访问。
+
+- **通用执行入口**: `api.execution.invoke(operation_id, **arguments)` 与 `api.execution.stream(...)`。
+- **Box 沙箱代理扩展**: `LangBotAPIProxy` 现已提供 `@run_scoped` 的 `bind_box`, `import_box_attachments`, `export_box_files`。
+- **完整清单与作用域契约**: 详见 [docs/execution_api.md](docs/execution_api.md)。
+
 ## 文档
 
 - 插件开发教程 —— https://langbot.app/docs/zh/plugin/dev/tutor
 - 调试运行时 / CLI / SDK —— https://langbot.app/docs/zh/develop/plugin-runtime
 - 开发环境配置 —— https://langbot.app/docs/zh/develop/dev-config
+- ExecutionAPI 操作一览与作用域说明 —— [docs/execution_api.md](docs/execution_api.md)
 
 ## 许可证
 

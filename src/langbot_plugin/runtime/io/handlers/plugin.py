@@ -786,24 +786,14 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_COMMANDS)
         async def list_commands(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.resolve_effective_action_context()
-            if isinstance(binding, InstallationBinding):
-                commands = await self.context.plugin_mgr.list_commands(binding=binding)
-            else:
-                commands = await self.context.plugin_mgr.list_commands()
-            return handler.ActionResponse.success(
-                {"commands": [command.model_dump() for command in commands]}
+            return await forward_agent_action(
+                PluginToRuntimeAction.LIST_COMMANDS, data, 30
             )
 
         @self.action(PluginToRuntimeAction.LIST_TOOLS)
         async def list_tools(data: dict[str, Any]) -> handler.ActionResponse:
-            binding = self.resolve_effective_action_context()
-            if isinstance(binding, InstallationBinding):
-                tools = await self.context.plugin_mgr.list_tools(binding=binding)
-            else:
-                tools = await self.context.plugin_mgr.list_tools()
-            return handler.ActionResponse.success(
-                {"tools": [tool.to_plain_dict() for tool in tools]}
+            return await forward_agent_action(
+                PluginToRuntimeAction.LIST_TOOLS, data, 30
             )
 
         @self.action(PluginToRuntimeAction.GET_TOOL_DETAIL)
@@ -863,12 +853,8 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.LIST_PLUGINS_MANIFEST)
         async def list_plugins_manifest(data: dict[str, Any]) -> handler.ActionResponse:
-            return handler.ActionResponse.success(
-                {
-                    "plugins": [
-                        plugin.model_dump()["manifest"] for plugin in scoped_plugins()
-                    ]
-                }
+            return await forward_agent_action(
+                PluginToRuntimeAction.LIST_PLUGINS_MANIFEST, data, 30
             )
 
         @self.action(PluginToRuntimeAction.HISTORY_PAGE)
@@ -1061,6 +1047,24 @@ class PluginConnectionHandler(handler.Handler):
         async def runner_stats(data: dict[str, Any]) -> handler.ActionResponse:
             return await forward_agent_action(
                 PluginToRuntimeAction.RUNNER_STATS, data, 30
+            )
+
+        @self.action(PluginToRuntimeAction.LIST_APPLICATION_OPERATIONS)
+        async def list_application_operations(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.LIST_APPLICATION_OPERATIONS, data, 15
+            )
+
+        @self.action(PluginToRuntimeAction.CALL_APPLICATION_OPERATION)
+        async def call_application_operation(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.CALL_APPLICATION_OPERATION,
+                data,
+                LONG_RUNNING_OPERATION_TIMEOUT,
             )
 
     def validate_inbound_action_context(

@@ -1319,7 +1319,17 @@ class Handler(abc.ABC):
                 if pending_context is not None and pending_context != action_context:
                     self._pending_action_cancellations.pop(current_task, None)
 
-            with self.action_invocation_scope(action_name, action_context):
+            from langbot_plugin.api.proxies.invocation import (
+                AUDIT_CORRELATION_FIELD,
+                audit_correlation_scope,
+            )
+
+            with (
+                audit_correlation_scope(
+                    request.data.pop(AUDIT_CORRELATION_FIELD, None)
+                ),
+                self.action_invocation_scope(action_name, action_context),
+            ):
                 with blocking_work_scope(
                     getattr(action_context, "workspace_uuid", None)
                 ):
@@ -1384,7 +1394,10 @@ class Handler(abc.ABC):
                 protocol_error = f"{exc.__class__.__name__}: {message}"
             else:
                 protocol_error = await self._format_protocol_error(exc)
-            error_response = ActionResponse.error(protocol_error)
+            error_response = ActionResponse.error(
+                protocol_error,
+                data=exc.data if isinstance(exc, ActionCallError) else None,
+            )
             error_response.seq_id = seq_id
             with contextlib.suppress(ConnectionClosedError):
                 if control_scope == TRANSPORT_CONTROL_SCOPE:
@@ -1514,8 +1527,8 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
-            action.value,
-            data,
+            getattr(action, "value", str(action)),
+            self._outbound_action_data(data),
             self.resolve_outbound_action_context(action_context),
         )
         return await self._call_action_request(
@@ -1627,8 +1640,8 @@ class Handler(abc.ABC):
         this_seq_id = self.seq_id_index
         request = ActionRequest.make_request(
             this_seq_id,
-            action.value,
-            data,
+            getattr(action, "value", str(action)),
+            self._outbound_action_data(data),
             resolved_context := self.resolve_outbound_action_context(action_context),
         )
         request.stream_flow_control = 1
@@ -1724,6 +1737,11 @@ class Handler(abc.ABC):
         del action
         del action_context
         yield
+
+    def _outbound_action_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        from langbot_plugin.api.proxies.invocation import relay_audit_correlation
+
+        return relay_audit_correlation(data)
 
     def bind_action_context(
         self,

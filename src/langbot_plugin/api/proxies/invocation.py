@@ -55,6 +55,45 @@ class Invocation:
 _current: ContextVar[Invocation | None] = ContextVar("plugin_invocation", default=None)
 
 
+@dataclass
+class _AuditCorrelation:
+    value: Any
+    active: bool = True
+
+
+_audit_correlation: ContextVar[_AuditCorrelation | None] = ContextVar(
+    "plugin_audit_correlation", default=None
+)
+AUDIT_CORRELATION_FIELD = "_host_audit_id"
+
+
+@contextmanager
+def audit_correlation_scope(value):
+    correlation = _AuditCorrelation(value)
+    token = _audit_correlation.set(correlation)
+    try:
+        yield
+    finally:
+        correlation.active = False
+        _audit_correlation.reset(token)
+
+
+def current_audit_correlation():
+    correlation = _audit_correlation.get()
+    if correlation is None or correlation.value is None:
+        return None
+    if not correlation.active:
+        raise RuntimeError("Plugin audit invocation has ended")
+    return correlation.value
+
+
+def relay_audit_correlation(data):
+    correlation = current_audit_correlation()
+    if correlation is None or AUDIT_CORRELATION_FIELD in data:
+        return data
+    return {**data, AUDIT_CORRELATION_FIELD: correlation}
+
+
 @contextmanager
 def bind_invocation(
     handler,
