@@ -386,8 +386,11 @@ class PluginRuntimeHandler(Handler):
 
             emitted: bool = False
 
-            # Plugin calls made while handling this event are attributed to it.
-            with event_origin_scope(event_context.query_uuid):
+            # Plugin calls made while handling this event are attributed to it,
+            # but only for Hosts that declared they accept the extra field.
+            with event_origin_scope(
+                event_context.query_uuid if event_context.origin_attribution else None
+            ):
                 # check if the event is registered
                 for component in self.plugin_container.components:
                     if component.manifest.kind == EventListener.__kind__:

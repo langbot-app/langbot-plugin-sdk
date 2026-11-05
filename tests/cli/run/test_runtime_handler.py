@@ -869,7 +869,10 @@ async def test_plugin_runtime_handler_plugin_diagnostic_logs(caplog):
     assert "delivery_error=ActionFailed: retcode=1200" in caplog.text
 
 
-async def test_event_listener_calls_carry_the_event_origin_only_while_handling():
+@pytest.mark.parametrize("host_accepts_origin", [True, False])
+async def test_event_listener_calls_carry_the_event_origin_only_while_handling(
+    host_accepts_origin,
+):
     from langbot_plugin.api.definition.components.common.event_listener import (
         EventListener,
     )
@@ -915,10 +918,12 @@ async def test_event_listener_calls_carry_the_event_origin_only_while_handling()
                     "query_uuid": "query-opaque-9",
                     "event_name": "PersonNormalMessageReceived",
                     "event": event,
+                    **({"origin_attribution": True} if host_accepts_origin else {}),
                 }
             },
         )
 
     assert response["data"]["emitted"] is True
-    assert seen == ["query-opaque-9"]
+    # Older Hosts never set the hint and must not receive an unknown field.
+    assert seen == (["query-opaque-9"] if host_accepts_origin else [None])
     assert current_event_origin() is None

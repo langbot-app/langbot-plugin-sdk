@@ -233,9 +233,11 @@ attributes event-context changes to the plugin that made them:
 
 Consumers must ignore `kind` values they do not know.
 
-While an event handler runs, plugin-level `invoke_llm`, `invoke_llm_stream` and
-`send_message` calls add `origin_query_uuid` (the event's `query_uuid`) to their
-action payload. LangBot uses it only to attribute monitoring records to the
+When the Host sets `origin_attribution: true` on the event context, plugin-level
+`invoke_llm`, `invoke_llm_stream` and `send_message` calls made while the event
+handler runs add `origin_query_uuid` (the event's `query_uuid`) to their action
+payload. Hosts that do not set the flag never receive the field, so their strict
+input schemas keep working. LangBot uses it only to attribute monitoring records to the
 triggering message, never for authorization. Calls made after the handler
 returns (for example from a detached task) do not carry it.
 

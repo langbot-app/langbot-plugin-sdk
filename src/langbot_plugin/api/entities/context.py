@@ -42,6 +42,14 @@ class EventContext(WorkspaceExecutionScope):
     is_prevent_postorder: bool = False
     """是否阻止后续插件的执行"""
 
+    origin_attribution: bool = False
+    """Set by Hosts that accept ``origin_query_uuid`` on plugin actions.
+
+    When true, plugin-level calls made while handling this event report the
+    event's ``query_uuid`` so the Host can attribute monitoring records to the
+    triggering message. Older Hosts never set it and receive no extra field.
+    """
+
     # ========== APIs for plugins ==========
 
     ## ========= Query-based APIs =========
