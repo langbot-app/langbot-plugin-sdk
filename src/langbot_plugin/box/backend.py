@@ -59,6 +59,12 @@ class BaseSandboxBackend(abc.ABC):
     async def is_available(self) -> bool:
         pass
 
+    def unavailable_reason(self) -> str:
+        return "environment_unavailable"
+
+    async def probe_available(self) -> bool:
+        return await self.is_available()
+
     @abc.abstractmethod
     async def start_session(self, spec: BoxSpec) -> BoxSessionInfo:
         pass
@@ -171,6 +177,13 @@ class CLISandboxBackend(BaseSandboxBackend):
         self.cpu_limit_enabled = True
         self.artifact_cache_parent: str | None = None
         self._artifact_roots: dict[str, str] = {}
+
+    def unavailable_reason(self) -> str:
+        return (
+            "docker_missing"
+            if shutil.which(self.command) is None
+            else "docker_unreachable"
+        )
 
     async def is_available(self) -> bool:
         if shutil.which(self.command) is None:
