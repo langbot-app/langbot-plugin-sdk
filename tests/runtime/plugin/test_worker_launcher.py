@@ -288,6 +288,8 @@ def test_shared_pool_controller_transfers_process_lifetime_ownership(tmp_path):
     controller = launcher.create_shared_pool_controller(_launch_spec(tmp_path))
 
     assert getattr(controller, "close_process_on_callback_return") is False
+    # A shared pool's stderr mixes every attached tenant; never buffer it.
+    assert controller.capture_stderr is False
 
 
 def test_shared_launcher_fails_without_nsjail_or_required_cgroup():
@@ -378,6 +380,7 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
     assert shared_controller.env == {}
     assert shared_controller.working_dir == "/"
     assert "--chroot" in shared_controller.args
+    assert shared_controller.capture_stderr is True
 
     oss = PluginWorkerLauncher(
         nsjail_path="",
@@ -390,6 +393,7 @@ def test_launcher_builds_profile_specific_controllers(tmp_path):
 
     assert oss_controller.command == sys.executable
     assert oss_controller.working_dir == str(launch_spec.artifact.code_path)
+    assert oss_controller.capture_stderr is True
     runtime_import_root = (
         pathlib.Path(worker_launcher_module.__file__).resolve().parents[3]
     )

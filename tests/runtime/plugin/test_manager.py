@@ -180,7 +180,8 @@ async def test_launch_plugin_uses_sanitized_environment(monkeypatch, tmp_path):
     class FakeStdioClientController:
         process = None
 
-        def __init__(self, command, args, env, working_dir):
+        def __init__(self, command, args, env, working_dir, *, capture_stderr=False):
+            captured["capture_stderr"] = capture_stderr
             captured["command"] = command
             captured["args"] = args
             captured["env"] = env
@@ -207,6 +208,8 @@ async def test_launch_plugin_uses_sanitized_environment(monkeypatch, tmp_path):
     await manager.launch_plugin(str(plugin_path))
 
     assert captured["working_dir"] == str(plugin_path)
+    # Plugin logs page reads the captured stderr stream.
+    assert captured["capture_stderr"] is True
     assert captured["env"] is not os.environ
     assert captured["env"]["PYTHONPATH"] == os.pathsep.join(
         (
@@ -430,7 +433,7 @@ async def test_launch_plugin_passes_registration_capability_not_debug_key(
     class FakeStdioController:
         process = None
 
-        def __init__(self, command, args, env, working_dir):
+        def __init__(self, command, args, env, working_dir, **_kwargs):
             captured.update(
                 command=command,
                 args=args,

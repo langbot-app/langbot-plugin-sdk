@@ -1005,6 +1005,9 @@ class PluginManager:
                     args=args,
                     env=child_env,
                     working_dir=plugin_path,
+                    # Pipe stderr (the plugin's Python `logging` output) so the
+                    # handler's log buffer can serve the plugin logs page.
+                    capture_stderr=True,
                 )
 
                 async def new_plugin_connection_callback(connection: Connection):
