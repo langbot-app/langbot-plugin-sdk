@@ -504,7 +504,7 @@ async def test_plugin_handler_forwards_invoke_llm_with_validated_timeout():
             {"bot_uuid": "bot-1", "message": "hi"},
             PluginToRuntimeAction.SEND_MESSAGE,
             {"bot_uuid": "bot-1", "message": "hi"},
-            15.0,
+            60.0,
         ),
         (
             PluginToRuntimeAction.GET_LLM_MODELS,
@@ -1454,3 +1454,37 @@ def test_shared_pool_relay_requires_an_attached_binding():
 
     with pytest.raises(ValueError, match="requires an attached binding"):
         handler.resolve_outbound_action_context(None)
+
+
+@pytest.mark.parametrize(
+    ("timeout", "expected_timeout"),
+    [
+        (120, 120.0),
+        (2.5, 2.5),
+        (-1, 60.0),
+        (0, 60.0),
+        ("30", 60.0),
+        (True, 60.0),
+        (None, 60.0),
+    ],
+)
+async def test_plugin_handler_forwards_send_message_with_plugin_timeout(
+    timeout, expected_timeout
+):
+    handler, _manager, control = _handler()
+    control.results[PluginToRuntimeAction.SEND_MESSAGE] = {"result": None}
+
+    async with ProtocolSession(handler) as session:
+        await session.request(
+            PluginToRuntimeAction.SEND_MESSAGE.value,
+            {"bot_uuid": "bot-1", "message": "hi", "timeout": timeout},
+        )
+
+    # The timeout is consumed by the Runtime and never forwarded to the host.
+    assert control.calls == [
+        (
+            PluginToRuntimeAction.SEND_MESSAGE,
+            {"bot_uuid": "bot-1", "message": "hi"},
+            expected_timeout,
+        )
+    ]

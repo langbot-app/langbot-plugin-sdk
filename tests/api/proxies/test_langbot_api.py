@@ -84,7 +84,43 @@ async def test_send_message_serializes_message_chain_payload():
     action, data, timeout = handler.calls[0]
     assert action is PluginToRuntimeAction.SEND_MESSAGE
     assert data["message_chain"] == [{"type": "Plain", "text": "hello"}]
-    assert timeout is None
+    assert data["timeout"] == 60.0
+    assert timeout == 60.0
+
+
+@pytest.mark.asyncio
+async def test_send_message_accepts_explicit_timeout():
+    handler = FakeHandler()
+    proxy = LangBotAPIProxy(handler)
+
+    await proxy.send_message(
+        "bot",
+        "person",
+        "target",
+        MessageChain([Plain(text="hello")]),
+        timeout=180,
+    )
+
+    _action, data, timeout = handler.calls[0]
+    assert data["timeout"] == 180.0
+    assert timeout == 180.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_timeout", [0, -1, float("inf"), float("nan"), "60", True])
+async def test_send_message_rejects_invalid_timeout(bad_timeout):
+    handler = FakeHandler()
+    proxy = LangBotAPIProxy(handler)
+
+    with pytest.raises(ValueError, match="timeout"):
+        await proxy.send_message(
+            "bot",
+            "person",
+            "target",
+            MessageChain([Plain(text="hello")]),
+            timeout=bad_timeout,
+        )
+    assert handler.calls == []
 
 
 @pytest.mark.asyncio
