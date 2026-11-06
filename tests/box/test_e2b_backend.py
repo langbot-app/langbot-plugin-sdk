@@ -66,7 +66,13 @@ def mock_e2b_module():
     mock_command_result.exit_code = 0
 
     mock_commands = mock.MagicMock()
-    mock_commands.run = mock.AsyncMock(return_value=mock_command_result)
+
+    async def run(*args, **kwargs):
+        if args and "missing.append(path)" in args[0]:
+            return SimpleNamespace(stdout="[]", stderr="", exit_code=0)
+        return mock_command_result
+
+    mock_commands.run = mock.AsyncMock(side_effect=run)
     mock_async_sandbox.commands = mock_commands
 
     # Mock the module import
@@ -111,7 +117,7 @@ def test_extra_mount_projections_are_excluded_from_workspace_sync(backend):
         ],
     )
 
-    shadowed = backend._main_mount_shadow_paths(spec)
+    shadowed = backend._mount_shadow_paths(spec, spec.mount_path)
 
     assert shadowed == {".skills/demo"}
     assert backend._path_is_shadowed(".skills/demo/run.py", shadowed) is True
@@ -460,7 +466,10 @@ async def test_exec_syncs_mounts_before_running_command(
     assert result.status == BoxExecutionStatus.COMPLETED
     assert result.exit_code == 0
     commands = mock_e2b_module.commands.run.await_args_list
-    assert commands[-1].kwargs["cmd"].endswith("cat /home/user/workspace/input.txt")
+    assert any(
+        call.kwargs.get("cmd", "").endswith("cat /home/user/workspace/input.txt")
+        for call in commands
+    )
     writes = mock_e2b_module.files.write.await_args_list
     assert writes[0].args[1] == b"input"
     if mount_kind == "read_write_primary":
@@ -536,10 +545,11 @@ async def test_exec_writable_primary_excludes_shadowed_extra_mounts(
     assert "/home/user/workspace/.skills/demo.txt" in uploaded_paths
     assert not any(path.endswith("/stale.txt") for path in uploaded_paths)
     assert any(path.endswith("/package/run.py") for path in uploaded_paths)
-    assert (
-        mock_e2b_module.commands.run.await_args_list[-1]
-        .kwargs["cmd"]
-        .endswith("python /home/user/workspace/.skills/demo/run.py")
+    assert any(
+        call.kwargs.get("cmd", "").endswith(
+            "python /home/user/workspace/.skills/demo/run.py"
+        )
+        for call in mock_e2b_module.commands.run.await_args_list
     )
     mock_e2b_module.files.read.assert_not_awaited()
     assert not (shadowed / "run.py").exists()
