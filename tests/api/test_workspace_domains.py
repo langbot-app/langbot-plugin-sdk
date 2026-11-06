@@ -278,3 +278,19 @@ async def test_keyword_aliases_nested_schemas_and_optional_fields(
         get_type_hints(item, include_extras=True)["value"]
         == module.NotRequired[Union[int, None]]
     )
+
+
+@pytest.mark.asyncio
+async def test_workspace_language_get_calls_the_catalog_operation():
+    response = {
+        "ok": True,
+        "result": {"language": "zh_Hans", "supported_languages": []},
+    }
+    handler = Mock(call_action=AsyncMock(return_value=response))
+    workspace = WorkspaceOperationsProxy(handler)
+    assert await workspace.workspace.language.get() is response
+    handler.call_action.assert_awaited_once_with(
+        PluginToRuntimeAction.CALL_APPLICATION_OPERATION,
+        {"operation_id": "workspace.language.get", "arguments": {}},
+        timeout=180.0,
+    )

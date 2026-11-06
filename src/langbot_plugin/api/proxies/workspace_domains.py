@@ -1290,6 +1290,14 @@ class SkillGithubDomain:
         arguments: SkillGithubPreviewArguments = {'data': data}
         return cast(OperationResult[builtins.list[dict[str, JSONValue]]], await self._workspace.call('skill.github.preview', **arguments))
 
+class WorkspaceLanguageDomain:
+    def __init__(self, workspace: "WorkspaceOperationsProxy"):
+        self._workspace = workspace
+
+    async def get(self) -> OperationResult[dict[str, JSONValue]]:
+        "workspace.language.get: Return the Workspace message language (language, for example en_US or zh_Hans) and the supported_languages list. It is independent of any member's personal WebUI language. Use it to localize replies, notices or generated content for this Workspace."
+        return cast(OperationResult[dict[str, JSONValue]], await self._workspace.call('workspace.language.get'))
+
 class AdapterDomain:
     def __init__(self, workspace: "WorkspaceOperationsProxy"):
         self._workspace = workspace
@@ -1658,6 +1666,11 @@ class ToolDomain:
         arguments: ToolListArguments = {'pipeline_uuid': pipeline_uuid}
         return cast(OperationResult[builtins.list[dict[str, JSONValue]]], await self._workspace.call('tool.list', **arguments))
 
+class WorkspaceDomain:
+    def __init__(self, workspace: "WorkspaceOperationsProxy"):
+        self._workspace = workspace
+        self.language = WorkspaceLanguageDomain(workspace)
+
 class WorkspaceDomains:
     def __init__(self, workspace: "WorkspaceOperationsProxy"):
         self._workspace = workspace
@@ -1677,3 +1690,4 @@ class WorkspaceDomains:
         self.stats = StatsDomain(workspace)
         self.task = TaskDomain(workspace)
         self.tool = ToolDomain(workspace)
+        self.workspace = WorkspaceDomain(workspace)
