@@ -240,6 +240,9 @@ class PluginWorkerLauncher:
                 args=self.build_nsjail_args(launch_spec),
                 env={},
                 working_dir="/",
+                # A dedicated worker serves one installation and nsjail runs
+                # with --really_quiet, so stderr is that plugin's own logging.
+                capture_stderr=True,
             )
 
         # OSS development keeps the historical direct-process behavior and
@@ -294,6 +297,9 @@ class PluginWorkerLauncher:
             args=[*worker_args[:-1], "-s", worker_args[-1]],
             env=worker_environment,
             working_dir=str(launch_spec.artifact.code_path),
+            # Pipe stderr (the plugin's Python `logging` output) so the
+            # handler's log buffer can serve the plugin logs page.
+            capture_stderr=True,
         )
 
     async def prepare_dependency_environment(
