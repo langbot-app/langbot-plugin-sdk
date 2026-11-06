@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import math
 from contextlib import aclosing
 from typing import Any, get_args
 
@@ -13,6 +14,24 @@ from langbot_plugin.entities.io.actions.enums import PluginToRuntimeAction
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 from langbot_plugin.api.entities.builtin.provider import message as provider_message
 from langbot_plugin.api.entities.builtin.resource import tool as resource_tool
+
+
+SEND_MESSAGE_DEFAULT_TIMEOUT = 60.0
+"""Default seconds a plugin waits for ``send_message`` to complete."""
+
+
+def resolve_send_message_timeout(timeout: float | None) -> float:
+    """Return the effective ``send_message`` timeout, validating explicit values."""
+    if timeout is None:
+        return SEND_MESSAGE_DEFAULT_TIMEOUT
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or timeout <= 0
+    ):
+        raise ValueError("send_message timeout must be a positive, finite number")
+    return float(timeout)
 
 
 class LangBotAPIProxy:
@@ -163,6 +182,8 @@ class LangBotAPIProxy:
         target_type: str,
         target_id: str,
         message_chain: platform_message.MessageChain,
+        *,
+        timeout: float | None = None,
     ) -> Any:
         """Send a message to a bot
 
@@ -171,7 +192,12 @@ class LangBotAPIProxy:
             target_type: The type of the target, can be "group", "person"
             target_id: The ID of the target
             message_chain: The message chain to send
+            timeout: Seconds to wait for the host to finish sending. Defaults to
+                ``SEND_MESSAGE_DEFAULT_TIMEOUT`` (60s). Media messages may need
+                longer because the platform upload happens before sending. A
+                timeout does not cancel a send already in progress on the host.
         """
+        effective_timeout = resolve_send_message_timeout(timeout)
         return (
             await self.plugin_runtime_handler.call_action(
                 PluginToRuntimeAction.SEND_MESSAGE,
@@ -181,8 +207,10 @@ class LangBotAPIProxy:
                         "target_type": target_type,
                         "target_id": target_id,
                         "message_chain": message_chain.model_dump(),
+                        "timeout": effective_timeout,
                     }
                 ),
+                timeout=effective_timeout,
             )
         ).get("result")
 

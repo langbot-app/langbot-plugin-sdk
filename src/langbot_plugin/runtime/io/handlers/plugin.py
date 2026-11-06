@@ -17,8 +17,10 @@ from langbot_plugin.entities.io.actions.enums import (
 )
 from langbot_plugin.runtime import context as context_module
 import asyncio
+import math
 
 from langbot_plugin.runtime.plugin.logbuffer import PluginLogBuffer
+from langbot_plugin.api.proxies.langbot_api import SEND_MESSAGE_DEFAULT_TIMEOUT
 from langbot_plugin.entities.io.context import (
     ActionContext,
     ActionEnvelopeContext,
@@ -367,11 +369,22 @@ class PluginConnectionHandler(handler.Handler):
 
         @self.action(PluginToRuntimeAction.SEND_MESSAGE)
         async def send_message(data: dict[str, Any]) -> handler.ActionResponse:
+            # Older SDKs send no timeout; give them the same 60s budget instead
+            # of the generic 15s relay default.
+            timeout = data.pop("timeout", None)
+            if (
+                isinstance(timeout, bool)
+                or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout)
+                or timeout <= 0
+            ):
+                timeout = SEND_MESSAGE_DEFAULT_TIMEOUT
             result = await call_host_action(
                 PluginToRuntimeAction.SEND_MESSAGE,
                 {
                     **data,
                 },
+                timeout=float(timeout),
             )
             return handler.ActionResponse.success(result)
 
