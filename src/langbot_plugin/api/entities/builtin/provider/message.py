@@ -171,6 +171,13 @@ class Message(pydantic.BaseModel):
                         mc.append(
                             platform_message.File(url=ce.file_url, name=ce.file_name)
                         )
+                elif ce.type == "file_base64":
+                    if ce.file_base64 is not None:
+                        mc.append(
+                            platform_message.File(
+                                base64=ce.file_base64, name=ce.file_name or ""
+                            )
+                        )
                 elif ce.type == "image_url":
                     if ce.image_url is None:
                         raise ValueError("image_url content requires image_url payload")
@@ -282,6 +289,13 @@ class MessageChunk(pydantic.BaseModel):
                     if ce.file_url is not None:
                         mc.append(
                             platform_message.File(url=ce.file_url, name=ce.file_name)
+                        )
+                elif ce.type == "file_base64":
+                    if ce.file_base64 is not None:
+                        mc.append(
+                            platform_message.File(
+                                base64=ce.file_base64, name=ce.file_name or ""
+                            )
                         )
                 elif ce.type == "image_url":
                     if ce.image_url is None:
