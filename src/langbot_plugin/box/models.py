@@ -234,7 +234,26 @@ ARTIFACT_MOUNT_ROOT = "/opt/langbot-artifacts"
 
 
 class BoxMountSpec(pydantic.BaseModel):
-    """A generic additional bind mount specification."""
+    """A generic additional bind mount specification.
+
+    Bind-mounting is not available on remote backends, so E2B emulates a mount
+    by copying the host tree into the sandbox before every execution and back
+    afterwards. The two directions do not have equal authority:
+
+    * upload is additive (host -> sandbox copy);
+    * download treats the sandbox as authoritative for the paths this mount
+      owns, and deletes host copies the sandbox no longer has.
+
+    A file deleted inside the sandbox is therefore not restored by the next
+    execution, while a complete round-trip leaves host and sandbox equal.
+    Deletion is skipped when the remote listing failed or was truncated by the
+    depth, entry, or file caps. ``READ_ONLY`` mounts are materialized by digest
+    and never synced back.
+
+    Symlinks are not compared: the listing names the link, never the file
+    behind it, so pruning keeps both the link and its target. A link therefore
+    survives even when the file it points at was deleted in the sandbox.
+    """
 
     host_path: str
     mount_path: str
