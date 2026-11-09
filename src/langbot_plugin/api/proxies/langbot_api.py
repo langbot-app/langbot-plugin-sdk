@@ -134,6 +134,25 @@ class LangBotAPIProxy:
         return [BoxFile.model_validate(item) for item in result.get("items", [])]
 
     @run_scoped
+    async def read_input_attachment(self, ref: str):
+        """Read the bytes of one current-event attachment by ref."""
+        from langbot_plugin.api.entities.builtin.runner.input import (
+            InputAttachmentData,
+        )
+
+        result = await self.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.READ_INPUT_ATTACHMENT,
+            {"ref": ref},
+            180,
+        )
+        return InputAttachmentData(
+            ref=str(result.get("ref") or ref),
+            name=result.get("name"),
+            mime_type=result.get("mime_type"),
+            data=base64.b64decode(result["content"], validate=True),
+        )
+
+    @run_scoped
     async def export_box_files(self, paths: list[str] | None = None):
         from langbot_plugin.api.entities.builtin.runner.box import BoxFile
 

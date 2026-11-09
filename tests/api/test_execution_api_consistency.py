@@ -24,7 +24,7 @@ def _load_catalog() -> list[dict]:
 
 def test_catalog_has_all_operations():
     catalog = _load_catalog()
-    assert len(catalog) == 72
+    assert len(catalog) == 73
     assert "execution.request_interaction" in {item["id"] for item in catalog}
     for item in catalog:
         assert item["id"].startswith("execution.")

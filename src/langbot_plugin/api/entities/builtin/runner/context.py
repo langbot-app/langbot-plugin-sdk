@@ -23,7 +23,11 @@ from langbot_plugin.api.entities.builtin.runner.steering import SteeringPullResu
 
 import pydantic
 from langbot_plugin.api.entities.builtin.runner.trigger import AgentTrigger
-from langbot_plugin.api.entities.builtin.runner.input import AgentInput
+from langbot_plugin.api.entities.builtin.runner.input import (
+    AgentInput,
+    InputAttachment,
+    InputAttachmentData,
+)
 from langbot_plugin.api.entities.builtin.runner.resources import AgentResources
 from langbot_plugin.api.entities.builtin.runner.runtime import AgentRuntimeContext
 from langbot_plugin.api.entities.builtin.runner.state import AgentRunState
@@ -169,6 +173,19 @@ class RunnerContext(pydantic.BaseModel):
     async def bind_box(self, box_id: str) -> "BoxBinding":
         """Bind one authorized Box to this run; cannot switch after binding."""
         return await self.api.bind_box(box_id)
+
+    async def read_input_attachment(
+        self, attachment: InputAttachment | str
+    ) -> InputAttachmentData | None:
+        """Read the bytes of an input attachment by ref.
+
+        Returns None when the attachment has no ref or the Host does not offer
+        this API, so Runners can fall back to older attachment handling.
+        """
+        ref = attachment if isinstance(attachment, str) else attachment.ref
+        if not ref or not self.context.available_apis.input_attachments:
+            return None
+        return await self.api.read_input_attachment(ref)
 
     async def import_box_attachments(
         self, attachment_ids: list[str] | None = None

@@ -37,6 +37,9 @@ class ContextAPICapabilities(pydantic.BaseModel):
     box: bool = False
     """Whether invocation Box binding and file APIs are available."""
 
+    input_attachments: bool = False
+    """Whether input attachment bytes can be read by ref with read_input_attachment."""
+
     reply_stream: bool = False
     """Whether explicit streaming replies are available (independent of model streaming)."""
 
