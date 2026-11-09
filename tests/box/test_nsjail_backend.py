@@ -625,6 +625,16 @@ async def test_readiness_omits_pid_limit_scope_with_cgroup_v2(backend):
     assert "pid_limit_scope" not in readiness
 
 
+def test_pid_limit_scope_property_tracks_the_cgroup_path(backend):
+    """`get_backend_info` reads the property, so it must match readiness."""
+
+    backend._cgroup_v2_available = False
+    assert backend.pid_limit_scope == "uid"
+
+    backend._cgroup_v2_available = True
+    assert backend.pid_limit_scope is None
+
+
 # ── exec ──────────────────────────────────────────────────────────────
 
 

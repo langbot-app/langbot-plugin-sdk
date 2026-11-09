@@ -1727,6 +1727,14 @@ done
         result = {"name": backend.name, "available": available}
         if getattr(backend, "unsafe_direct_execution", False):
             result["unsafe_direct_execution"] = True
+        # Community Edition runs without admission, so this branch is the only
+        # place /api/v1/box/status can learn that the fallback pid cap is
+        # UID-scoped rather than sandbox-scoped (langbot-app/LangBot#2602).
+        # The admission branch reports it through get_readiness() instead.
+        if available:
+            backend_readiness = getattr(backend, "pid_limit_scope", None)
+            if backend_readiness is not None:
+                result["pid_limit_scope"] = backend_readiness
         return result
 
     def get_sessions(self) -> list[dict]:

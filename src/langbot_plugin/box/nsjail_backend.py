@@ -80,6 +80,18 @@ class NsjailBackend(BaseSandboxBackend):
     execution_scoped_mounts = True
     name = "nsjail"
 
+    @property
+    def pid_limit_scope(self) -> str | None:
+        """``"uid"`` when the pid cap covers the whole UID, else ``None``.
+
+        Without cgroup v2 there is no sandbox-scoped pid accounting: the
+        ``--rlimit_nproc`` fallback is shared with every other thread of the
+        account, which operators need to know when sizing ``pids_limit``
+        (langbot-app/LangBot#2602).
+        """
+
+        return "uid" if self._cgroup_v2_available is False else None
+
     def __init__(
         self,
         logger: logging.Logger,
