@@ -11,12 +11,17 @@ from langbot_plugin.api.entities.builtin.provider.message import ContentElement
 class InputAttachment(pydantic.BaseModel):
     """Metadata for a current-event attachment.
 
-    Current-run files should be accessed through authorized sandbox/workspace
-    tools. This model only carries lightweight event metadata.
+    Each attachment describes one media component of the current message, in
+    order of appearance. Read its bytes with ``RunnerContext.read_input_attachment``
+    or import it into a Box with ``import_box_attachments``; both use ``ref``.
     """
 
     ref: str | None = None
-    """Host-issued reference for importing this input into the selected Box."""
+    """Host-issued reference, such as ``att-1``.
+
+    The same ref appears as ``[attachment att-1: ...]`` in the input text at the
+    position of the media.
+    """
 
     type: str | None = None
     """Attachment type, such as image, file, or voice."""
@@ -31,7 +36,9 @@ class InputAttachment(pydantic.BaseModel):
     """File name, if available."""
 
     source: str | None = None
-    """Attachment source, such as url, base64, or platform message-chain."""
+    """Where the media appeared: ``message`` for the current message, or
+    ``quote`` for a message quoted by it. Older Hosts used transport names
+    such as url, base64 or message_chain."""
 
     url: str | None = None
     """External URL when the attachment is backed by a URL."""
@@ -40,12 +47,35 @@ class InputAttachment(pydantic.BaseModel):
     """Sandbox/workspace path when Host has staged the attachment as a file."""
 
     content: str | None = None
-    """Base64 or data URL content for small current-event attachments."""
+    """Deprecated inline base64 content; current Hosts leave it empty.
+
+    Use ``RunnerContext.read_input_attachment`` instead.
+    """
 
     id: str | None = None
     """Platform-native attachment identifier when available."""
 
     model_config = pydantic.ConfigDict(extra="forbid")
+
+
+class InputAttachmentData(pydantic.BaseModel):
+    """Bytes of one current-event attachment, read by ref from the Host."""
+
+    ref: str
+    """Attachment ref that was read."""
+
+    name: str | None = None
+    """File name, if available."""
+
+    mime_type: str | None = None
+    """MIME type, if known."""
+
+    data: bytes
+    """Attachment bytes."""
+
+    @property
+    def size(self) -> int:
+        return len(self.data)
 
 
 class AgentInput(pydantic.BaseModel):

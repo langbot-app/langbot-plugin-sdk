@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import typing
@@ -34,6 +35,10 @@ class BindBoxArgs(EmptyArgs):
 
 class ImportBoxArgs(EmptyArgs):
     attachment_ids: list[str] | None = None
+
+
+class ReadInputAttachmentArgs(EmptyArgs):
+    ref: str = pydantic.Field(min_length=1)
 
 
 class ReplyFilesArgs(EmptyArgs):
@@ -164,6 +169,8 @@ class AgentRunExternalTools:
         names = {"langbot_get_current_event", "langbot_list_assets"}
 
         available_apis = self.ctx.context.available_apis
+        if available_apis.input_attachments and self.ctx.input.attachments:
+            names.add("langbot_read_input_attachment")
         if available_apis.box:
             names.update(
                 {
@@ -493,6 +500,21 @@ class AgentRunExternalTools:
     )
     async def import_box_attachments(self, args: ImportBoxArgs):
         return await self.api.import_box_attachments(args.attachment_ids)
+
+    @agent_tool(
+        name="langbot_read_input_attachment",
+        description="Read one current input attachment by ref, such as att-1 from [attachment att-1: ...] in the message. Returns name, mime_type, size and base64 content.",
+        args_model=ReadInputAttachmentArgs,
+    )
+    async def read_input_attachment(self, args: ReadInputAttachmentArgs):
+        data = await self.api.read_input_attachment(args.ref)
+        return {
+            "ref": data.ref,
+            "name": data.name,
+            "mime_type": data.mime_type,
+            "size": data.size,
+            "content_base64": base64.b64encode(data.data).decode("ascii"),
+        }
 
     @agent_tool(
         name="langbot_export_box_files",

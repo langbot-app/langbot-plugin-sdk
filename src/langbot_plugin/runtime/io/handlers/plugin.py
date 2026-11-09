@@ -912,6 +912,16 @@ class PluginConnectionHandler(handler.Handler):
                 LONG_RUNNING_OPERATION_TIMEOUT,
             )
 
+        @self.action(PluginToRuntimeAction.READ_INPUT_ATTACHMENT)
+        async def read_input_attachment(
+            data: dict[str, Any],
+        ) -> handler.ActionResponse:
+            return await forward_agent_action(
+                PluginToRuntimeAction.READ_INPUT_ATTACHMENT,
+                data,
+                LONG_RUNNING_OPERATION_TIMEOUT,
+            )
+
         @self.action(PluginToRuntimeAction.EXPORT_BOX_FILES)
         async def export_box_files(data: dict[str, Any]) -> handler.ActionResponse:
             return await forward_agent_action(

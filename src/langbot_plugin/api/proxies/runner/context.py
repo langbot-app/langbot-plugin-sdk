@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from langbot_plugin.api.entities.builtin.runner.errors import (
@@ -14,6 +15,7 @@ from langbot_plugin.api.entities.builtin.runner.page_results import (
     HistoryPage,
     HistorySearchResult,
 )
+from langbot_plugin.api.entities.builtin.runner.input import InputAttachmentData
 from langbot_plugin.api.entities.builtin.runner.steering import (
     SteeringPullResult,
 )
@@ -228,3 +230,48 @@ class RunnerContextAPIMixin:
             timeout,
         )
         return SteeringPullResult.model_validate(resp)
+
+    async def read_input_attachment(self, ref: str) -> InputAttachmentData:
+        """Read the bytes of one current-event attachment by its ref.
+
+        Args:
+            ref: ``InputAttachment.ref`` of an attachment in ``ctx.input``.
+
+        Returns:
+            InputAttachmentData with the bytes, file name and MIME type.
+
+        Raises:
+            PermissionDeniedError: If the Host does not offer this API.
+            AgentAPIException: If the ref is unknown, the media cannot be
+                resolved, or a size limit is exceeded.
+        """
+        self._require_context_api("input_attachments")
+        timeout = self._bounded_timeout(default=120.0)
+        resp = await self._api.plugin_runtime_handler.call_action(
+            PluginToRuntimeAction.READ_INPUT_ATTACHMENT,
+            {"run_id": self.run_id, "ref": ref},
+            timeout,
+        )
+        content = self._expect_key(
+            resp, "content", PluginToRuntimeAction.READ_INPUT_ATTACHMENT
+        )
+        try:
+            data = base64.b64decode(content, validate=True)
+        except (TypeError, ValueError) as exc:
+            raise AgentAPIException(
+                AgentAPIError(
+                    code="host.malformed_response",
+                    message=f"{PluginToRuntimeAction.READ_INPUT_ATTACHMENT.value} response content is not base64",
+                    retryable=False,
+                    details={
+                        "action": PluginToRuntimeAction.READ_INPUT_ATTACHMENT.value,
+                        "field": "content",
+                    },
+                )
+            ) from exc
+        return InputAttachmentData(
+            ref=str(resp.get("ref") or ref),
+            name=resp.get("name"),
+            mime_type=resp.get("mime_type"),
+            data=data,
+        )

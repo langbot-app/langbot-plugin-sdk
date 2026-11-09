@@ -55,6 +55,7 @@ async for chunk in api.execution.stream(
 - `await api.bind_box(box_id: str) -> BoxBinding`: 绑定当前运行至指定 Box 沙箱。
 - `await api.import_box_attachments(attachment_ids: list[str] | None = None) -> list[BoxFile]`: 将附件导入至绑定的 Box 沙箱。
 - `await api.export_box_files(paths: list[str] | None = None) -> list[BoxFile]`: 从 Box 沙箱导出生成的文件。
+- `await api.read_input_attachment(ref: str) -> InputAttachmentData`: 按 ref 读取当前事件输入附件的字节，无需绑定 Box。Runner 中优先使用 `await ctx.read_input_attachment(attachment)`：Host 不支持时返回 `None`，便于回退到旧逻辑。
 
 ---
 
@@ -116,6 +117,7 @@ async for chunk in api.execution.stream(
 | `execution.acquire_box` | `plugin_or_run` | 是 | 否 | 申请或复用 Box 沙箱实例 |
 | `execution.bind_box` | `run` | 是 | 否 | 将特定 Box 实例与当前运行绑定 |
 | `execution.import_box_attachments` | `run` | 是 | 否 | 导入附件至绑定的 Box 沙箱 |
+| `execution.read_input_attachment` | `run` | 否 | 否 | 按 ref 读取当前事件输入附件的字节 |
 | `execution.export_box_files` | `run` | 是 | 否 | 导出 Box 沙箱生成的文件 |
 | `execution.run_get` | `runner_admin` | 否 | 否 | 管理员查询指定 Agent Run 状态 |
 | `execution.run_list` | `runner_admin` | 否 | 否 | 管理员分页查询历史 Agent Run 列表 |

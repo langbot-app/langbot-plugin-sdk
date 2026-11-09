@@ -3655,6 +3655,82 @@
     }
   },
   {
+    "id": "execution.read_input_attachment",
+    "version": "1",
+    "scope": "run",
+    "authorization": "installation_binding_and_existing_host_capabilities",
+    "side_effect": false,
+    "streaming": false,
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "ExecutionReadInputAttachmentInput",
+      "type": "object"
+    },
+    "output_schema": {
+      "$defs": {
+        "JsonValue": {}
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "properties": {
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "mime_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mime Type"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "size",
+        "content"
+      ],
+      "title": "ExecutionInputAttachmentOutput",
+      "type": "object"
+    }
+  },
+  {
     "id": "execution.export_box_files",
     "version": "1",
     "scope": "run",

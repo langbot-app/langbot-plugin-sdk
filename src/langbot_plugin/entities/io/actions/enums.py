@@ -40,6 +40,7 @@ class PluginToRuntimeAction(ActionType):
     ACQUIRE_BOX = "acquire_box"
     BIND_BOX = "bind_box"
     IMPORT_BOX_ATTACHMENTS = "import_box_attachments"
+    READ_INPUT_ATTACHMENT = "read_input_attachment"
     EXPORT_BOX_FILES = "export_box_files"
 
     GET_BOTS = "get_bots"

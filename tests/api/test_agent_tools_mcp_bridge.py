@@ -216,6 +216,39 @@ async def test_external_box_tools_use_authorized_run_api(
     operation.assert_awaited_once_with(*forwarded, **kwargs)
 
 
+@pytest.mark.asyncio
+async def test_external_input_attachment_tool_reads_by_ref():
+    from langbot_plugin.api.entities.builtin.runner.input import (
+        InputAttachment,
+        InputAttachmentData,
+    )
+
+    ctx = _authorized_ctx()
+    ctx.input.attachments = [InputAttachment(ref="att-1", type="file")]
+    api = MagicMock()
+    api.read_input_attachment = AsyncMock(
+        return_value=InputAttachmentData(
+            ref="att-1", name="a.txt", mime_type="text/plain", data=b"hi"
+        )
+    )
+    tools = AgentRunExternalTools(api, ctx)
+    assert "langbot_read_input_attachment" not in {
+        tool["name"] for tool in tools.mcp_tools()
+    }
+    ctx.context.available_apis.input_attachments = True
+    assert "langbot_read_input_attachment" in {
+        tool["name"] for tool in tools.mcp_tools()
+    }
+    assert await tools.call_tool("langbot_read_input_attachment", {"ref": "att-1"}) == {
+        "ref": "att-1",
+        "name": "a.txt",
+        "mime_type": "text/plain",
+        "size": 2,
+        "content_base64": "aGk=",
+    }
+    api.read_input_attachment.assert_awaited_once_with("att-1")
+
+
 def test_external_box_file_reply_requires_reply_permission():
     ctx = _ctx()
     ctx.context.available_apis.box = True
