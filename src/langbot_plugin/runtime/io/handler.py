@@ -1059,7 +1059,10 @@ class Handler(abc.ABC):
                 and payload.stream_index is not None
                 and len(encoded.encode("utf-8")) > MAX_STREAM_FRAME_BYTES
             ):
-                raise ActionCallError("Streaming response exceeds frame byte limit")
+                raise ActionCallError(
+                    f"Streaming response exceeds frame byte limit ({MAX_STREAM_FRAME_BYTES} bytes). "
+                    "Return smaller chunks or pass attachments by reference instead of inline base64."
+                )
             await self.conn.send(encoded)
 
     async def _format_protocol_error(

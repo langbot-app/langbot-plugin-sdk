@@ -38,7 +38,9 @@ class WebSocketConnection(io_connection.Connection):
             message_size = len(message_bytes)
             if message_size > MAX_MESSAGE_BYTES:
                 raise ValueError(
-                    f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit"
+                    f"Runtime message exceeds {MAX_MESSAGE_BYTES} byte limit "
+                    f"({message_size} bytes). Reduce attachment size or pass files "
+                    "by reference instead of inline base64."
                 )
             if message_size > self.chunk_size * MAX_MESSAGE_FRAGMENTS:
                 raise ValueError(
