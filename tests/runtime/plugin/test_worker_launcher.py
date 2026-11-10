@@ -488,6 +488,8 @@ def test_windows_oss_worker_keeps_required_system_env_without_runtime_secrets(
     assert controller.env["PATH"] == r"C:\Windows\System32"
     assert controller.env["PATHEXT"] == ".COM;.EXE;.BAT"
     assert controller.env["RUNTIME_WS_URL"] == "ws://localhost:5401/plugin/ws"
+    assert controller.env["PYTHONUTF8"] == "1"
+    assert controller.env["PYTHONIOENCODING"] == "utf-8"
     assert "-s" not in controller.args
     assert "LANGBOT_PLUGIN_RUNTIME_CONTROL_TOKEN" not in controller.env
     assert "LANGBOT_BOX_CONTROL_TOKEN" not in controller.env
@@ -522,6 +524,7 @@ async def test_windows_oss_worker_controller_reaps_process_when_cancelled(
         assert kwargs == {
             "env": controller.env,
             "cwd": controller.working_dir,
+            "stdout": sys.stderr,
         }
         return process
 

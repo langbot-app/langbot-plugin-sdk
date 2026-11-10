@@ -137,6 +137,8 @@ class PluginWorkerProcessController(Controller):
             *self.args,
             env=self.env,
             cwd=self.working_dir,
+            # This worker uses WebSocket; stdout belongs to the host protocol.
+            stdout=sys.stderr,
         )
         try:
             await self.process.wait()
@@ -803,9 +805,13 @@ class PluginWorkerLauncher:
         if self.platform != "win32":
             return {}
         return {
-            name: value
-            for name in _WINDOWS_WORKER_ENV_ALLOWLIST
-            if (value := os.environ.get(name)) is not None
+            **{
+                name: value
+                for name in _WINDOWS_WORKER_ENV_ALLOWLIST
+                if (value := os.environ.get(name)) is not None
+            },
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
         }
 
     def _write_dependency_requirements(
