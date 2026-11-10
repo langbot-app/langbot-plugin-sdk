@@ -533,6 +533,37 @@ def test_build_resource_limits_rlimit_fallback(backend):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "failure", [None, OSError("launch failed"), asyncio.CancelledError()]
+)
+async def test_large_exec_script_is_preserved_and_cleaned(backend, failure):
+    from langbot_plugin.box.backend import _CommandResult
+
+    command = "printf '%s' '" + "附件" * 2000 + "'"
+    spec = BoxSpec(session_id="large", cmd=command)
+    info = await backend.start_session(spec)
+    script_dir = pathlib.Path(info.backend_session_id) / "tmp"
+
+    async def run(args, timeout_sec):
+        scripts = list(script_dir.glob(".langbot-exec-*.sh"))
+        assert len(scripts) == 1
+        assert scripts[0].read_text(encoding="utf-8").endswith(command)
+        assert args[-1] == f". /tmp/{scripts[0].name}"
+        assert max(len(arg.encode("utf-8")) for arg in args) < 8192
+        if failure is not None:
+            raise failure
+        return _CommandResult(return_code=0, stdout="ok", stderr="")
+
+    with mock.patch.object(backend, "_run_nsjail", side_effect=run):
+        if failure is None:
+            assert (await backend.exec(info, spec)).ok
+        else:
+            with pytest.raises(type(failure)):
+                await backend.exec(info, spec)
+    assert not list(script_dir.glob(".langbot-exec-*.sh"))
+
+
+@pytest.mark.anyio
 async def test_exec_success(backend, tmp_base):
     tmp_base.mkdir(parents=True, exist_ok=True)
     spec = BoxSpec(session_id="exec1", cmd="echo hello")

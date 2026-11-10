@@ -387,7 +387,24 @@ class NsjailBackend(BaseSandboxBackend):
             f"env_keys={sorted(spec.env.keys())} cmd={cmd_preview}"
         )
 
-        result = await self._run_nsjail(args, timeout_sec=spec.timeout_sec)
+        script_path = None
+        try:
+            # Attachment manifests and generated code can exceed Linux's
+            # per-argument limit. Source a file without consuming command stdin.
+            if len(args[-1].encode("utf-8")) > 8192:
+                script_path = (
+                    session_dir / "tmp" / f".langbot-exec-{uuid.uuid4().hex}.sh"
+                )
+                await bounded_executor.run_blocking_atomic(
+                    self._write_exec_script, script_path, args[-1]
+                )
+                args[-1] = f". {shlex.quote('/tmp/' + script_path.name)}"
+            result = await self._run_nsjail(args, timeout_sec=spec.timeout_sec)
+        finally:
+            if script_path is not None:
+                await bounded_executor.run_blocking_cleanup(
+                    script_path.unlink, missing_ok=True
+                )
         duration_ms = int(
             (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
         )
@@ -413,6 +430,11 @@ class NsjailBackend(BaseSandboxBackend):
             stderr=result.stderr,
             duration_ms=duration_ms,
         )
+
+    @staticmethod
+    def _write_exec_script(path: pathlib.Path, command: str) -> None:
+        with path.open("x", encoding="utf-8") as script:
+            script.write(command)
 
     async def stop_session(self, session: BoxSessionInfo):
         session_dir = pathlib.Path(session.backend_session_id)
