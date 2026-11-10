@@ -495,6 +495,9 @@ async def test_windows_launch_uses_minimal_env_and_fences_runtime_url(
     assert "UNRELATED_SECRET" not in child_env
     assert len(child_env["LANGBOT_PLUGIN_REGISTRATION_CAPABILITY"]) >= 32
     assert child_env["RUNTIME_WS_URL"] == "ws://localhost:18080/plugin/ws"
+    assert child_env["PYTHONUTF8"] == "1"
+    assert child_env["PYTHONIOENCODING"] == "utf-8"
+    assert captured["kwargs"]["stdout"] is manager_module.sys.stderr
 
 
 @pytest.mark.asyncio

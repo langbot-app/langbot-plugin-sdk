@@ -964,12 +964,15 @@ class PluginManager:
                 child_env["RUNTIME_WS_URL"] = (
                     f"ws://localhost:{self.context.ws_debug_port}/plugin/ws"
                 )
+                child_env["PYTHONUTF8"] = "1"
+                child_env["PYTHONIOENCODING"] = "utf-8"
 
                 process: asyncio.subprocess.Process = (
                     await asyncio.create_subprocess_exec(
                         *cmd_args,
                         env=child_env,
                         cwd=plugin_path,
+                        stdout=sys.stderr,
                     )
                 )
 

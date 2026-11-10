@@ -158,7 +158,11 @@ class StdioConnection(connection.Connection):
                     else:
                         # process is None but still received EOF - connection is closed
                         raise ConnectionClosedError("标准输出流已关闭。")
-                return s_bytes.decode().strip()
+                try:
+                    return s_bytes.decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    logger.warning("Skipping non-UTF-8 output on stdio connection")
+                    return ""
 
             raise ConnectionClosedError("Unexpected error in reading")
         finally:
@@ -211,9 +215,18 @@ class StdioConnection(connection.Connection):
                                         if not chunk_line or not self._is_valid_json(
                                             chunk_line
                                         ):
+                                            if chunk_line:
+                                                logger.warning(
+                                                    "Skipping non-JSON output on stdio connection"
+                                                )
                                             continue
 
                                         chunk_data = json.loads(chunk_line)
+                                        if not isinstance(chunk_data, dict):
+                                            logger.warning(
+                                                "Skipping non-object output on stdio connection"
+                                            )
+                                            continue
                                         if chunk_data.get("type") == "chunk_data":
                                             chunk_text = chunk_data.get("data", "")
                                             if (
@@ -271,9 +284,9 @@ class StdioConnection(connection.Connection):
                             self._first_message_control_available = False
                             return line
                     else:
-                        # Not valid JSON, but looks like JSON format
-                        self._first_message_control_available = False
-                        return line
+                        logger.warning("Skipping non-JSON output on stdio connection")
+                else:
+                    logger.warning("Skipping non-JSON output on stdio connection")
 
         except Exception as e:
             logger.error(f"Error receiving message: {e}")
