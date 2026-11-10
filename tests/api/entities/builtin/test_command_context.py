@@ -34,6 +34,23 @@ def test_command_return_serializes_command_error_to_message():
     assert ret.model_dump(mode="json", by_alias=True)["error"] == "failed"
 
 
+def test_command_return_validates_str_error_without_attribute_error():
+    # Validating serialized dict with error as string
+    ret1 = CommandReturn.model_validate({"error": "failed"})
+    assert isinstance(ret1.error, CommandError)
+    assert ret1.error.message == "failed"
+
+    # Direct string assignment
+    ret2 = CommandReturn(error="direct error string")
+    assert isinstance(ret2.error, CommandError)
+    assert ret2.error.message == "direct error string"
+
+    # Dict error assignment
+    ret3 = CommandReturn.model_validate({"error": {"message": "dict error"}})
+    assert isinstance(ret3.error, CommandError)
+    assert ret3.error.message == "dict error"
+
+
 def test_execute_context_shift_advances_current_command_and_params():
     context = ExecuteContext(
         query_id=1,

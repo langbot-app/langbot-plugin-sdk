@@ -41,16 +41,26 @@ class CommandReturn(pydantic.BaseModel):
     @pydantic.field_validator("error", mode="before")
     @classmethod
     def _validate_error(
-        cls, v: Optional[errors.CommandError]
+        cls, v: Optional[Any]
     ) -> Optional[errors.CommandError]:
-        if v is not None:
-            return errors.CommandError(message=v.message)
-        return v
+        if v is None:
+            return None
+        if isinstance(v, errors.CommandError):
+            return v
+        if isinstance(v, str):
+            return errors.CommandError(message=v)
+        if isinstance(v, dict):
+            return errors.CommandError(message=str(v.get("message", v)))
+        if hasattr(v, "message"):
+            return errors.CommandError(message=str(getattr(v, "message")))
+        return errors.CommandError(message=str(v))
 
     @pydantic.field_serializer("error")
     def _serialize_error(self, v: Optional[errors.CommandError]) -> Optional[str]:
         if v is not None:
-            return v.message
+            if isinstance(v, str):
+                return v
+            return getattr(v, "message", str(v))
         return v
 
     class Config:
