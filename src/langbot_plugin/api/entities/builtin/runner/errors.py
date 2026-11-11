@@ -22,6 +22,8 @@ class AgentAPIError(pydantic.BaseModel):
 class AgentAPIException(Exception):
     """Exception wrapper carrying a stable AgentAPIError payload."""
 
-    def __init__(self, error: AgentAPIError):
+    def __init__(self, error: AgentAPIError | str):
+        if isinstance(error, str):
+            error = AgentAPIError(code="runner_error", message=error)
         self.error = error
         super().__init__(error.message)

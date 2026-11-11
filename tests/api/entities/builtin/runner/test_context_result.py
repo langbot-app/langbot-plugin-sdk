@@ -791,3 +791,12 @@ def test_runner_manifest_rejects_missing_or_invalid_usages(usages):
         data["usages"] = usages
     with pytest.raises(pydantic.ValidationError):
         RunnerManifest.model_validate(data)
+
+
+def test_agent_api_exception_handles_string_argument():
+    from langbot_plugin.api.entities.builtin.runner.errors import AgentAPIException
+
+    exc = AgentAPIException("plain error string")
+    assert exc.error.message == "plain error string"
+    assert exc.error.code == "runner_error"
+    assert str(exc) == "plain error string"
