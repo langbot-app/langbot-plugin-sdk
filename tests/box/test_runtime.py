@@ -1312,6 +1312,36 @@ async def test_get_backend_info_none_when_no_backend(logger):
 
 
 @pytest.mark.anyio
+async def test_get_backend_info_surfaces_uid_scoped_pid_limit_without_admission(logger):
+    """Community Edition has no admission, so this branch is its only view.
+
+    `/api/v1/box/status` reads here; without it the `pid_limit_scope` that the
+    readiness branch gained would be invisible to every community install.
+    """
+
+    backend = FakeBackend(logger)
+    backend.pid_limit_scope = "uid"
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        runtime._backend = backend
+        info = await runtime.get_backend_info()
+
+    assert info["pid_limit_scope"] == "uid"
+
+
+@pytest.mark.anyio
+async def test_get_backend_info_omits_pid_limit_scope_when_sandbox_scoped(logger):
+    backend = FakeBackend(logger)
+    backend.pid_limit_scope = None
+    with mock.patch("os.getenv", return_value=""):
+        runtime = BoxRuntime(logger, backends=[backend])
+        runtime._backend = backend
+        info = await runtime.get_backend_info()
+
+    assert "pid_limit_scope" not in info
+
+
+@pytest.mark.anyio
 async def test_get_sessions_and_get_session(logger):
     backend = FakeBackend(logger)
     with mock.patch("os.getenv", return_value=""):
