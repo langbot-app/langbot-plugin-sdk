@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> **This repository has moved.** The plugin SDK, `lbp` CLI, Plugin Runtime and Box Runtime now live in the [`sdk/`](https://github.com/langbot-app/LangBot/tree/master/sdk) directory of the [LangBot](https://github.com/langbot-app/LangBot) repository. Please open issues and pull requests there.
+> This repository is kept for history only (up to `v0.7.24`) and no longer receives changes. The PyPI package is unchanged: `pip install langbot-plugin`. New versions are released from LangBot with `sdk/vX.Y.Z` tags.
+
 <div align="center">
 
 <h1>LangBot Plugin Infra</h1>
