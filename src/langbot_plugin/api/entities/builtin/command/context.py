@@ -40,9 +40,7 @@ class CommandReturn(pydantic.BaseModel):
 
     @pydantic.field_validator("error", mode="before")
     @classmethod
-    def _validate_error(
-        cls, v: Optional[Any]
-    ) -> Optional[errors.CommandError]:
+    def _validate_error(cls, v: Optional[Any]) -> Optional[errors.CommandError]:
         if v is None:
             return None
         if isinstance(v, errors.CommandError):
