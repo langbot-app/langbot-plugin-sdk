@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> **本仓库已迁移。** 插件 SDK、`lbp` CLI、插件运行时与 Box 运行时现位于 [LangBot](https://github.com/langbot-app/LangBot) 仓库的 [`sdk/`](https://github.com/langbot-app/LangBot/tree/master/sdk) 目录，请在那里提交 Issue 与 Pull Request。
+> 本仓库仅保留历史记录（截至 `v0.7.24`），不再更新。PyPI 包名不变：`pip install langbot-plugin`，新版本由 LangBot 仓库以 `sdk/vX.Y.Z` tag 发布。
+
 <div align="center">
 
 <h1>LangBot Plugin Infra</h1>
