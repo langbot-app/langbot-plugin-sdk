@@ -9,7 +9,10 @@ import os
 import posixpath
 import re
 import shlex
+import stat
+import textwrap
 import uuid
+from contextlib import contextmanager
 
 from ..artifact import build_tree_manifest, load_tree_manifest
 from .backend import BaseSandboxBackend, _MAX_RAW_OUTPUT_BYTES
@@ -48,6 +51,114 @@ def _write_e2b_host_file(path: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as file:
         file.write(data)
+
+
+@contextmanager
+def _open_sync_file(root: str, relative_path: str):
+    """Anchor every directory and reject links before reading or deleting."""
+    parts = relative_path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("Invalid E2B sync path")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open("/", flags)
+    directories = []
+    try:
+        for part in [*os.path.abspath(root).split("/")[1:], *parts[:-1]]:
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            directories.append((info.st_dev, info.st_ino))
+        file_fd = os.open(
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
+        )
+        with os.fdopen(file_fd, "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise ValueError("E2B sync requires a regular file")
+            yield source, fd, parts[-1], tuple(directories)
+    finally:
+        os.close(fd)
+
+
+def _sync_file_version(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _read_sync_file(root: str, relative_path: str):
+    if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+        return _read_e2b_host_file_limited(os.path.join(root, relative_path)), None
+    with _open_sync_file(root, relative_path) as (source, _, _, directories):
+        before = _sync_file_version(os.fstat(source.fileno()))
+        if before[2] > _MAX_E2B_SYNC_FILE_BYTES:
+            raise ValueError("E2B host sync file exceeds the size limit")
+        data = source.read(_MAX_E2B_SYNC_FILE_BYTES + 1)
+        if len(data) > _MAX_E2B_SYNC_FILE_BYTES:
+            raise ValueError("E2B host sync file exceeds the size limit")
+        if before != _sync_file_version(os.fstat(source.fileno())):
+            raise ValueError("E2B host file changed during upload")
+        return data, (directories, before, hashlib.sha256(data).digest())
+
+
+def _delete_sync_file(root: str, relative_path: str, expected) -> None:
+    try:
+        with _open_sync_file(root, relative_path) as (
+            source,
+            parent,
+            name,
+            directories,
+        ):
+            data = source.read(_MAX_E2B_SYNC_FILE_BYTES + 1)
+            current = (
+                directories,
+                _sync_file_version(os.fstat(source.fileno())),
+                hashlib.sha256(data).digest(),
+            )
+            if (
+                current != expected
+                or _sync_file_version(
+                    os.stat(name, dir_fd=parent, follow_symlinks=False)
+                )
+                != expected[1]
+            ):
+                raise ValueError("host file changed after upload")
+            # shortcut: compare/unlink can race writers; add shared locking for atomic updates.
+            os.unlink(name, dir_fd=parent)
+    except FileNotFoundError:
+        return
+
+
+_DELETED_SYNC_FILES_SCRIPT = textwrap.dedent("""\
+    import json, os, stat, sys
+    root, paths = json.loads(sys.argv[1])
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open('/', flags)
+    try:
+        for part in root.split('/')[1:]:
+            child = os.open(part, flags, dir_fd=root_fd)
+            os.close(root_fd)
+            root_fd = child
+        missing = []
+        for path in paths:
+            parts = path.split('/')
+            if any(p in ('', '.', '..') for p in parts):
+                raise ValueError('Invalid sync path')
+            parent = os.dup(root_fd)
+            try:
+                for part in parts[:-1]:
+                    child = os.open(part, flags, dir_fd=parent)
+                    os.close(parent)
+                    parent = child
+                info = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError('Sync path is no longer a regular file')
+            except FileNotFoundError:
+                missing.append(path)
+            finally:
+                os.close(parent)
+        print(json.dumps(missing))
+    finally:
+        os.close(root_fd)
+    """)
 
 
 def _build_e2b_host_manifest(host_root: str) -> tuple[str, dict]:
@@ -308,7 +419,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
         except Exception as exc:
             raise BoxError(f"Failed to connect to E2B sandbox: {exc}")
 
-        await self._sync_mounts_to_e2b(sandbox, spec)
+        uploaded = await self._sync_mounts_to_e2b(sandbox, spec)
 
         # Run the command
         # Note: E2B requires cwd to exist before running command. We create it
@@ -340,7 +451,7 @@ class E2BSandboxBackend(BaseSandboxBackend):
                 )
             raise BoxError(f"E2B command execution failed: {exc}")
 
-        await self._sync_mounts_from_e2b(sandbox, spec)
+        await self._sync_mounts_from_e2b(sandbox, spec, uploaded)
 
         duration_ms = int(
             (dt.datetime.now(dt.timezone.utc) - start).total_seconds() * 1000
@@ -360,9 +471,10 @@ class E2BSandboxBackend(BaseSandboxBackend):
             duration_ms=duration_ms,
         )
 
-    async def _sync_mounts_to_e2b(self, sandbox, spec: BoxSpec) -> None:
+    async def _sync_mounts_to_e2b(self, sandbox, spec: BoxSpec) -> dict:
         """Upload Workspace data and atomically materialize immutable mounts."""
-        shadowed_paths = self._main_mount_shadow_paths(spec)
+        shadowed_paths = self._mount_shadow_paths(spec, spec.mount_path)
+        uploaded = {}
         if spec.host_path is not None and spec.host_path_mode != BoxHostMountMode.NONE:
             if spec.host_path_mode == BoxHostMountMode.READ_ONLY:
                 await self._materialize_immutable_mount(
@@ -371,7 +483,9 @@ class E2BSandboxBackend(BaseSandboxBackend):
                     remote_root=_adapt_path_for_e2b(spec.mount_path),
                 )
             else:
-                await self._sync_host_tree_to_e2b(
+                uploaded[
+                    (spec.host_path, _adapt_path_for_e2b(spec.mount_path))
+                ] = await self._sync_host_tree_to_e2b(
                     sandbox,
                     host_root=spec.host_path,
                     remote_root=_adapt_path_for_e2b(spec.mount_path),
@@ -390,11 +504,17 @@ class E2BSandboxBackend(BaseSandboxBackend):
                     manifest_path=mount.manifest_path,
                 )
             else:
-                await self._sync_host_tree_to_e2b(
+                uploaded[
+                    (mount.host_path, _adapt_path_for_e2b(mount.mount_path))
+                ] = await self._sync_host_tree_to_e2b(
                     sandbox,
                     host_root=mount.host_path,
                     remote_root=_adapt_path_for_e2b(mount.mount_path),
+                    excluded_relative_paths=self._mount_shadow_paths(
+                        spec, mount.mount_path
+                    ),
                 )
+        return uploaded
 
     async def _materialize_immutable_mount(
         self,
@@ -667,8 +787,11 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
             stderr = str(getattr(result, "stderr", "") or "").strip()
             raise BoxError(f"Failed to {subject}: {stderr or 'remote command failed'}")
 
-    async def _sync_mounts_from_e2b(self, sandbox, spec: BoxSpec) -> None:
+    async def _sync_mounts_from_e2b(
+        self, sandbox, spec: BoxSpec, uploaded=None
+    ) -> None:
         """Best-effort download of writable E2B mounts into host paths."""
+        uploaded = uploaded or {}
         if (
             spec.host_path is not None
             and spec.host_path_mode == BoxHostMountMode.READ_WRITE
@@ -677,7 +800,10 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                 sandbox,
                 remote_root=_adapt_path_for_e2b(spec.mount_path),
                 host_root=spec.host_path,
-                excluded_relative_paths=self._main_mount_shadow_paths(spec),
+                excluded_relative_paths=self._mount_shadow_paths(spec, spec.mount_path),
+                uploaded=uploaded.get(
+                    (spec.host_path, _adapt_path_for_e2b(spec.mount_path)), {}
+                ),
             )
 
         for mount in spec.extra_mounts:
@@ -687,6 +813,12 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                 sandbox,
                 remote_root=_adapt_path_for_e2b(mount.mount_path),
                 host_root=mount.host_path,
+                excluded_relative_paths=self._mount_shadow_paths(
+                    spec, mount.mount_path
+                ),
+                uploaded=uploaded.get(
+                    (mount.host_path, _adapt_path_for_e2b(mount.mount_path)), {}
+                ),
             )
 
     async def _sync_host_tree_to_e2b(
@@ -696,15 +828,26 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
         host_root: str,
         remote_root: str,
         excluded_relative_paths: set[str] | None = None,
-    ) -> None:
+    ) -> dict:
         """Best-effort sync for public E2B, which has no local bind mounts."""
         if not os.path.isdir(host_root):
-            return
+            return {}
+        if os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+            self.logger.warning(
+                "Safe E2B deletion sync is unavailable on this host; host files will be retained"
+            )
 
         synced_files = 0
         synced_bytes = 0
         pending = []
         pending_bytes = 0
+        versions = {}
+        uploaded = {}
+
+        def accepted(entry):
+            relative = entry["path"][len(remote_root.rstrip("/")) + 1 :]
+            if versions[entry["path"]] is not None:
+                uploaded[relative] = versions[entry["path"]]
 
         async def flush():
             nonlocal synced_files, synced_bytes, pending_bytes
@@ -717,6 +860,8 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                     await sandbox.files.write_files(list(pending))
                 synced_files += len(pending)
                 synced_bytes += pending_bytes
+                for entry in pending:
+                    accepted(entry)
             except Exception as exc:
                 self.logger.debug(f"Failed to upload E2B sync batch: {exc}")
                 if len(pending) > 1:
@@ -726,6 +871,7 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                             await sandbox.files.write(entry["path"], entry["data"])
                             synced_files += 1
                             synced_bytes += len(entry["data"])
+                            accepted(entry)
                         except Exception as file_exc:
                             self.logger.debug(
                                 f"Failed to sync host file to E2B {entry['path']}: {file_exc}"
@@ -765,23 +911,25 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                     continue
                 if synced_files + len(pending) >= _MAX_E2B_SYNC_FILES:
                     await flush()
-                    return
+                    return uploaded
                 host_file = os.path.join(root, filename)
                 try:
-                    data = await asyncio.to_thread(
-                        _read_e2b_host_file_limited,
-                        host_file,
+                    data, version = await asyncio.to_thread(
+                        _read_sync_file,
+                        host_root,
+                        relative_file,
                     )
                     if (
                         synced_bytes + pending_bytes + len(data)
                         > _MAX_E2B_SYNC_TOTAL_BYTES
                     ):
                         await flush()
-                        return
+                        return uploaded
                     remote_file = posixpath.join(remote_dir, filename)
                     if pending and pending_bytes + len(data) > _E2B_UPLOAD_BATCH_BYTES:
                         await flush()
                     pending.append({"path": remote_file, "data": data})
+                    versions[remote_file] = version
                     pending_bytes += len(data)
                     if len(pending) >= _E2B_UPLOAD_BATCH_FILES:
                         await flush()
@@ -790,6 +938,7 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
                         f"Failed to sync host file to E2B {host_file}: {exc}"
                     )
         await flush()
+        return uploaded
 
     async def _sync_e2b_tree_to_host(
         self,
@@ -798,6 +947,7 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
         remote_root: str,
         host_root: str,
         excluded_relative_paths: set[str] | None = None,
+        uploaded: dict | None = None,
     ) -> None:
         """Best-effort download of an E2B mount into the matching host path."""
         await asyncio.to_thread(os.makedirs, host_root, exist_ok=True)
@@ -805,7 +955,53 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
             entries = await sandbox.files.list(remote_root, depth=16)
         except Exception as exc:
             self.logger.debug(f"Failed to list E2B mount for sync {remote_root}: {exc}")
+            if uploaded:
+                raise BoxError(
+                    "E2B deletion sync could not list the mount; host files retained"
+                ) from exc
             return
+
+        # Listing absence only selects candidates; a direct no-follow probe must
+        # confirm ENOENT before any host deletion, even when the list is bounded.
+        listed = {entry.path for entry in entries}
+        candidates = [
+            path
+            for path in uploaded or {}
+            if posixpath.join(remote_root, path) not in listed
+            and not self._path_is_shadowed(path, excluded_relative_paths or set())
+        ]
+        for offset in range(0, len(candidates), _E2B_UPLOAD_BATCH_FILES):
+            batch = candidates[offset : offset + _E2B_UPLOAD_BATCH_FILES]
+            arguments = json.dumps([remote_root, batch])
+            try:
+                probe = await sandbox.commands.run(
+                    "python3 -c "
+                    + shlex.quote(_DELETED_SYNC_FILES_SCRIPT)
+                    + " "
+                    + shlex.quote(arguments),
+                    timeout=30,
+                )
+                if probe.exit_code != 0:
+                    raise ValueError("remote deletion probe failed")
+                missing = json.loads(probe.stdout)
+                if (
+                    not isinstance(missing, list)
+                    or any(
+                        not isinstance(path, str) or path not in batch
+                        for path in missing
+                    )
+                    or len(set(missing)) != len(missing)
+                ):
+                    raise ValueError("invalid deletion probe response")
+                for path in missing:
+                    await asyncio.to_thread(
+                        _delete_sync_file, host_root, path, uploaded[path]
+                    )
+            except Exception as exc:
+                raise BoxError(
+                    f"E2B deletion sync conflict or verification failure in {remote_root}; "
+                    f"unverified or changed host files retained: {exc}"
+                ) from exc
 
         synced_files = 0
         synced_bytes = 0
@@ -899,8 +1095,8 @@ if candidate != manifest or 'sha256:'+hashlib.sha256(body).hexdigest() != expect
             await flush_downloads()
 
     @staticmethod
-    def _main_mount_shadow_paths(spec: BoxSpec) -> set[str]:
-        main_root = _adapt_path_for_e2b(spec.mount_path).rstrip("/")
+    def _mount_shadow_paths(spec: BoxSpec, mount_path: str) -> set[str]:
+        main_root = _adapt_path_for_e2b(mount_path).rstrip("/")
         shadowed: set[str] = set()
         for mount in spec.extra_mounts:
             if mount.mode == BoxHostMountMode.NONE:
